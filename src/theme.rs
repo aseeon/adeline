@@ -320,7 +320,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("adeline-bundled-themes-{}", std::process::id()));
         assert!(!root.exists());
-        assert_eq!(BUNDLED_THEMES.len(), 14);
+        assert_eq!(BUNDLED_THEMES.len(), 15);
         seed_bundled_themes(&root).unwrap();
         let (choices, errors) = discover_in(&root).unwrap();
         assert!(errors.is_empty(), "{errors:?}");

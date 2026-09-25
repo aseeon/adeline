@@ -44,7 +44,7 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo build --release --locked
 ```
 
-The tests verify the bundled projects and live-demo state, search/status/completed filters, linked demo content, and notification totals as conversations change. `.github/workflows/build.yml` builds and tests separately on Windows, macOS, and Linux. macOS and Linux have not been run locally on this Windows host; the workflow must run on those hosts to confirm their builds.
+The tests verify the bundled projects and live-demo state, search/status/completed filters, linked demo content, and notification totals as conversations change. `.github/workflows/build.yml` builds and tests separately on Windows, macOS, and Linux. The workflow is commented out for now, so it does not run. macOS and Linux have not been run locally on this Windows host; the workflow must run on those hosts to confirm their builds.
 
 ## Source map
 

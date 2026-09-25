@@ -18,4 +18,6 @@ Community palettes adapted from tweakcn. Sources for the themes bundled with Ade
 | Vescrow 1.2 | Abdulmuiz Adelaja | [vescrow-1-2.yml](https://tweakcn.com/themes/cml5dyjea000004jr66ytcg0l) |
 | Japan Blues | Gavri Sharabi | [japan-blues.yml](https://tweakcn.com/themes/cmmhql9yf000404jshrdebgfj) |
 
+Rose (`rose.yml`) is a dark pink palette adapted from the Rosé Desktop design file. Its translucent hover, selection, and border colors were blended onto their backgrounds to get solid hex values.
+
 The customized lightos palette derives from [LifeOS-V1](https://tweakcn.com/themes/cmnxpdhkt000004l49lq9b07w).
