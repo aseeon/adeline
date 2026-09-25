@@ -8,7 +8,7 @@ use gpui::{
     WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative,
     rgb, rgba, size, white, yellow,
 };
-use unicode_segmentation::*;
+use unicode_segmentation::UnicodeSegmentation;
 
 actions!(
     text_input,
@@ -105,7 +105,7 @@ impl TextInput {
         if self.selected_range.is_empty() {
             self.move_to(self.previous_boundary(self.cursor_offset()), cx);
         } else {
-            self.move_to(self.selected_range.start, cx)
+            self.move_to(self.selected_range.start, cx);
         }
     }
 
@@ -113,7 +113,7 @@ impl TextInput {
         if self.selected_range.is_empty() {
             self.move_to(self.next_boundary(self.selected_range.end), cx);
         } else {
-            self.move_to(self.selected_range.end, cx)
+            self.move_to(self.selected_range.end, cx);
         }
     }
 
@@ -127,7 +127,7 @@ impl TextInput {
 
     fn select_all(&mut self, _: &SelectAll, _: &mut Window, cx: &mut Context<Self>) {
         self.move_to(0, cx);
-        self.select_to(self.content.len(), cx)
+        self.select_to(self.content.len(), cx);
     }
 
     fn home(&mut self, _: &Home, _: &mut Window, cx: &mut Context<Self>) {
@@ -190,16 +190,16 @@ impl TextInput {
 
     fn backspace(&mut self, _: &Backspace, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            self.select_to(self.previous_boundary(self.cursor_offset()), cx)
+            self.select_to(self.previous_boundary(self.cursor_offset()), cx);
         }
-        self.replace_text_in_range(None, "", window, cx)
+        self.replace_text_in_range(None, "", window, cx);
     }
 
     fn delete(&mut self, _: &Delete, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected_range.is_empty() {
-            self.select_to(self.next_boundary(self.cursor_offset()), cx)
+            self.select_to(self.next_boundary(self.cursor_offset()), cx);
         }
-        self.replace_text_in_range(None, "", window, cx)
+        self.replace_text_in_range(None, "", window, cx);
     }
 
     fn on_mouse_down(
@@ -214,7 +214,7 @@ impl TextInput {
         if event.modifiers.shift {
             self.select_to(self.index_for_mouse_position(event.position), cx);
         } else {
-            self.move_to(self.index_for_mouse_position(event.position), cx)
+            self.move_to(self.index_for_mouse_position(event.position), cx);
         }
     }
 
@@ -239,7 +239,7 @@ impl TextInput {
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.replace_text_in_range(None, &text.replace("\n", " "), window, cx);
+            self.replace_text_in_range(None, &text.replace('\n', " "), window, cx);
         }
     }
 
@@ -255,14 +255,14 @@ impl TextInput {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
-            self.replace_text_in_range(None, "", window, cx)
+            self.replace_text_in_range(None, "", window, cx);
         }
     }
 
     fn move_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.selected_range = offset..offset;
         self.selection_reversed = false;
-        cx.notify()
+        cx.notify();
     }
 
     fn cursor_offset(&self) -> usize {
@@ -293,15 +293,15 @@ impl TextInput {
 
     fn select_to(&mut self, offset: usize, cx: &mut Context<Self>) {
         if self.selection_reversed {
-            self.selected_range.start = offset
+            self.selected_range.start = offset;
         } else {
-            self.selected_range.end = offset
-        };
+            self.selected_range.end = offset;
+        }
         if self.selected_range.end < self.selected_range.start {
             self.selection_reversed = !self.selection_reversed;
             self.selected_range = self.selected_range.end..self.selected_range.start;
         }
-        cx.notify()
+        cx.notify();
     }
 
     fn offset_from_utf16(&self, offset: usize) -> usize {
@@ -453,16 +453,18 @@ impl EntityInputHandler for TextInput {
         self.content =
             (self.content[0..range.start].to_owned() + new_text + &self.content[range.end..])
                 .into();
-        if !new_text.is_empty() {
-            self.marked_range = Some(range.start..range.start + new_text.len());
-        } else {
+        if new_text.is_empty() {
             self.marked_range = None;
+        } else {
+            self.marked_range = Some(range.start..range.start + new_text.len());
         }
         self.selected_range = new_selected_range_utf16
             .as_ref()
             .map(|range_utf16| self.range_from_utf16(range_utf16))
-            .map(|new_range| new_range.start + range.start..new_range.end + range.end)
-            .unwrap_or_else(|| range.start + new_text.len()..range.start + new_text.len());
+            .map_or_else(
+                || range.start + new_text.len()..range.start + new_text.len(),
+                |new_range| new_range.start + range.start..new_range.end + range.end,
+            );
 
         cx.emit(ContentChanged);
         cx.notify();
@@ -491,7 +493,7 @@ impl EntityInputHandler for TextInput {
 
     fn character_index_for_point(
         &mut self,
-        point: gpui::Point<Pixels>,
+        point: Point<Pixels>,
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<usize> {
@@ -665,7 +667,7 @@ impl Element for TextElement {
             cx,
         );
         if let Some(selection) = prepaint.selection.take() {
-            window.paint_quad(selection)
+            window.paint_quad(selection);
         }
         let line = prepaint.line.take().unwrap();
         line.paint(bounds.origin, window.line_height(), window, cx)

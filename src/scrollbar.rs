@@ -177,6 +177,7 @@ mod tests {
         assert_eq!(thumb(400., 400., 400.), Some((200., 200.)));
     }
     #[test]
+    #[expect(clippy::float_cmp, reason = "these thumb positions are exact in f32")]
     fn thumb_stays_usable_and_inside_short_or_long_panels() {
         let (top, height) = thumb(100., 100_000., 200_000.).unwrap();
         assert_eq!(height, 24.);

@@ -11,7 +11,6 @@ ui-profiling = []
 [dependencies]
 gpui = "=0.2.2"
 unicode-segmentation = "1.12"
-anyhow = "1"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"
@@ -22,3 +21,46 @@ debug = 0
 [profile.release]
 lto = "thin"
 strip = true
+
+# Static analysis — the Rust counterpart of basedpyright's strict mode. `rustc`
+# already type-checks; these lints add the checks basedpyright layers on top.
+# Warnings are errors in CI (see `.cargo/ci-config.toml` and `scripts/clippy`).
+# The explicit denies mirror Zed's `[workspace.lints]`.
+[lints.rust]
+unsafe_code = "deny"
+unused_qualifications = "warn"
+
+[lints.clippy]
+# Default groups (correctness, suspicious, style, complexity, perf) stay on.
+pedantic = { level = "warn", priority = -1 }
+
+# Adopted from Zed.
+dbg_macro = "deny"
+todo = "deny"
+declare_interior_mutable_const = "deny"
+redundant_clone = "deny"
+disallowed_methods = "deny"
+disallowed_types = "deny"
+
+# Like basedpyright's `reportUnnecessaryTypeIgnoreComment`: suppressions must
+# use `#[expect]`, which fails once the lint no longer fires, and give a reason.
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+undocumented_unsafe_blocks = "deny"
+unimplemented = "deny"
+
+# Pedantic lints that don't fit GPUI UI code.
+too_many_lines = "allow"         # render functions are long by nature
+unreadable_literal = "allow"     # 0xRRGGBB colour literals
+cast_precision_loss = "allow"    # usize -> f32 layout math
+struct_excessive_bools = "allow" # view state flags
+must_use_candidate = "allow"
+module_name_repetitions = "allow"
+similar_names = "allow"
+too_many_arguments = "allow"     # Zed: splitting args fights the borrow checker
+type_complexity = "allow"        # Zed: GPUI callback types are long
+wildcard_imports = "allow"       # `use super::*` and GPUI prelude imports
+enum_glob_use = "allow"          # `use Action::*` inside large action matches
+default_trait_access = "allow"   # `..Default::default()` is the GPUI/Zed idiom
+redundant_closure_for_method_calls = "allow" # keep `.when(c, |d| d.pl_6())` builder closures
+unused_self = "allow"            # render helpers stay methods on their view

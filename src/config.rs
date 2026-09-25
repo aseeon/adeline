@@ -136,6 +136,10 @@ impl Default for CollaborationPanels {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "field names are the settings YAML keys"
+)]
 #[serde(default, deny_unknown_fields)]
 pub struct Chats {
     pub show_completed_chats: bool,
@@ -160,6 +164,10 @@ pub struct Docs {
     pub show_document_details: bool,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "field names are the settings YAML keys"
+)]
 #[serde(default, deny_unknown_fields)]
 pub struct Workflows {
     pub only_scheduled_workflows: bool,
@@ -343,15 +351,15 @@ impl super::Adeline {
             Action::Raw => s.modes.docs.show_raw_markdown = self.raw,
             Action::Archive => s.modes.docs.show_archived_documents = self.archived,
             Action::Collection(_) => {
-                s.modes.workflows.only_scheduled_workflows = self.collection == "Scheduled"
+                s.modes.workflows.only_scheduled_workflows = self.collection == "Scheduled";
             }
             Action::Wrap => s.modes.services.wrap_output_lines = self.wrap,
             Action::Follow => s.modes.services.follow_latest_output = self.follow,
             Action::LeftPanel(section) | Action::RightPanel(section) => {
-                self.save_panel(s, *section, matches!(action, Action::LeftPanel(_)))
+                self.save_panel(s, *section, matches!(action, Action::LeftPanel(_)));
             }
             Action::ToggleLeftPanel | Action::ToggleSidePanel => {
-                self.save_panel(s, self.section, matches!(action, Action::ToggleLeftPanel))
+                self.save_panel(s, self.section, matches!(action, Action::ToggleLeftPanel));
             }
             _ => (),
         })

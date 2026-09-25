@@ -1,0 +1,11 @@
+# Clippy settings. Lint levels live in `[lints]` in Cargo.toml.
+# Modelled on Zed's clippy.toml.
+avoid-breaking-exported-api = false
+disallowed-methods = [
+    { path = "std::process::Command::spawn", reason = "Spawning a process can block the UI thread for an unknown duration. Run it on `cx.background_executor()`." },
+    { path = "std::process::Command::output", reason = "Spawning a process can block the UI thread for an unknown duration. Run it on `cx.background_executor()`." },
+    { path = "std::process::Command::status", reason = "Spawning a process can block the UI thread for an unknown duration. Run it on `cx.background_executor()`." },
+    { path = "std::thread::sleep", reason = "Blocks the UI thread. Use `cx.background_executor().timer(..)` instead." },
+    { path = "serde_json::from_reader", reason = "Parsing from a reader is much slower than reading into a buffer first, see https://github.com/serde-rs/json/issues/160#issuecomment-253446892. Use `serde_json::from_slice` instead." },
+    { path = "serde_yaml_ng::from_reader", reason = "Read the file into a String first and use `serde_yaml_ng::from_str`." },
+]

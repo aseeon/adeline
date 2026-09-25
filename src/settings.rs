@@ -180,7 +180,7 @@ fn open_at(owner: WindowHandle<Adeline>, mode: Option<Section>, cx: &mut Context
             },
             |window, cx| {
                 cx.new(|cx| {
-                    let mut settings = SettingsWindow::new(owner, entity, window, cx);
+                    let mut settings = SettingsWindow::new(owner, &entity, window, cx);
                     if let Some(mode) = mode {
                         settings.select_mode(mode, cx);
                     }
@@ -218,7 +218,7 @@ impl SettingsWindow {
         let colors = theme::current_colors();
         for (i, &(key, _, _)) in theme::ROLES.iter().enumerate() {
             self.color_inputs[i].update(cx, |input, cx| {
-                input.set(format!("#{:06X}", colors[key]), cx)
+                input.set(format!("#{:06X}", colors[key]), cx);
             });
         }
     }
@@ -277,7 +277,7 @@ impl SettingsWindow {
                 .child(
                     canvas(
                         move |bounds, _, _| trigger_bounds.set(bounds),
-                        |_, _, _, _| {},
+                        |_, (), _, _| {},
                     )
                     .absolute()
                     .top_0()
@@ -411,7 +411,7 @@ impl SettingsWindow {
                                         Some("Enter System or a font family name.".into());
                                 } else {
                                     match config::update(|s| {
-                                        s.general.appearance.interface_font = font
+                                        s.general.appearance.interface_font = font;
                                     }) {
                                         Ok(()) => {
                                             this.theme_status =
@@ -481,7 +481,7 @@ impl SettingsWindow {
 
     fn new(
         owner: WindowHandle<Adeline>,
-        entity: Entity<Adeline>,
+        entity: &Entity<Adeline>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -500,7 +500,7 @@ impl SettingsWindow {
                 this.scroll.handle.set_offset(point(px(0.), px(0.)));
                 cx.notify();
             }),
-            cx.observe(&entity, |_, _, cx| cx.notify()),
+            cx.observe(entity, |_, _, cx| cx.notify()),
             cx.observe_window_bounds(window, |_, _, cx| cx.notify()),
             cx.observe_window_activation(window, |_, _, cx| cx.notify()),
         ];

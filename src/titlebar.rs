@@ -1,5 +1,5 @@
 //! Windows client-drawn chrome using GPUI's native non-client hit testing.
-//! See docs/WINDOWS_TITLEBAR.md for the Zed implementation this follows.
+//! See `docs/WINDOWS_TITLEBAR.md` for the Zed implementation this follows.
 use super::*;
 
 pub(super) fn render(title: String, window: &Window) -> Div {

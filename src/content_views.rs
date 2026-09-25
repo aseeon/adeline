@@ -157,7 +157,7 @@ impl DocumentView {
             .iter()
             .map(|&r| self.parsed.blocks[r].raw.clone())
             .collect();
-        let (old_range, new_range) = crate::prepared::changed_range(&before, &after);
+        let (old_range, new_range) = prepared::changed_range(&before, &after);
         self.focus = self
             .rows
             .iter()
@@ -332,8 +332,7 @@ impl LogView {
         self.key = app.service;
         self.lines = app
             .service
-            .map(|i| app.services[i].lines.clone())
-            .unwrap_or_else(|| Arc::from([]));
+            .map_or_else(|| Arc::from([]), |i| app.services[i].lines.clone());
         self.max_width = app
             .service
             .map_or(0., |i| app.services[i].max_line_chars as f32 * 8. + 48.);
@@ -347,7 +346,7 @@ impl LogView {
         if changed || wrap_changed {
             self.state.splice(0..self.state.item_count(), count);
         } else if !Arc::ptr_eq(&old_lines, &self.lines) {
-            let (old, new) = crate::prepared::changed_range(&old_lines, &self.lines);
+            let (old, new) = prepared::changed_range(&old_lines, &self.lines);
             self.state.splice(old, new.len());
             if was_stopped != self.stopped {
                 self.state.splice(
@@ -417,7 +416,7 @@ impl Render for LogView {
 }
 
 impl Adeline {
-    pub(super) fn sync_content_regions(&mut self, action: &crate::Action, cx: &mut Context<Self>) {
+    pub(super) fn sync_content_regions(&mut self, action: &Action, cx: &mut Context<Self>) {
         use crate::Action::*;
         if matches!(
             action,

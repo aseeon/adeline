@@ -12,9 +12,9 @@ impl Adeline {
         }
         let revision = doc.revision;
         let source = doc.content.clone();
-        let task = cx.background_executor().spawn(async move {
-            std::sync::Arc::new(crate::prepared::PreparedDocument::parse(&source))
-        });
+        let task = cx
+            .background_executor()
+            .spawn(async move { std::sync::Arc::new(prepared::PreparedDocument::parse(&source)) });
         self.document_tasks.insert(
             key,
             cx.spawn(async move |this, cx| {
@@ -115,7 +115,7 @@ impl Adeline {
                         .into_any_element();
                 }
                 BlockKind::Separator => return div().into_any_element(),
-                _ => {}
+                BlockKind::Text { .. } => {}
             }
         }
         let (display, heading) = if self.raw {

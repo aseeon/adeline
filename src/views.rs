@@ -6,8 +6,7 @@ impl Adeline {
         let mut main = col().flex_1().min_w_0().h_full();
         let title = self
             .selected
-            .map(|i| threads[i].title.clone())
-            .unwrap_or("New chat".into());
+            .map_or("New chat".into(), |i| threads[i].title.clone());
         main = main.child(
             row()
                 .min_h(px(if self.selected.is_some() { 70. } else { 50. }))

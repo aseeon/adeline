@@ -1,0 +1,138 @@
+# Disabled for now: remove the "# " prefixes to turn this workflow back on.
+# # Job layout follows Zed's run_tests workflow: a fast style gate, then clippy
+# # and tests on every OS, a dependency check, and one `tests_pass` job to use
+# # as the required status check. Actions are pinned to commit SHAs.
+# name: CI
+#
+# env:
+#   CARGO_TERM_COLOR: always
+#   RUST_BACKTRACE: '1'
+#   CARGO_INCREMENTAL: '0'
+#
+# on:
+#   push:
+#     branches:
+#       - main
+#   pull_request:
+#   workflow_dispatch:
+#
+# permissions:
+#   contents: read
+#
+# concurrency:
+#   group: ${{ github.workflow }}-${{ github.ref }}
+#   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+#
+# jobs:
+#   check_style:
+#     runs-on: ubuntu-24.04
+#     timeout-minutes: 15
+#     steps:
+#       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+#       - name: cargo fmt
+#         run: cargo fmt --all -- --check
+#       - name: check-todos
+#         run: ./scripts/check-todos
+#       - name: check for typos
+#         uses: crate-ci/typos@00f422f3b19c57bc6338715ebfe3316d38768461 # v1.50.3
+#         with:
+#           config: ./.config/typos.toml
+#
+#   clippy:
+#     needs: check_style
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         os: [windows-latest, macos-latest, ubuntu-24.04]
+#     runs-on: ${{ matrix.os }}
+#     timeout-minutes: 60
+#     steps:
+#       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+#       - name: setup CI cargo config
+#         shell: bash
+#         run: |
+#           mkdir -p ../.cargo
+#           cp .cargo/ci-config.toml ../.cargo/config.toml
+#       - name: install Linux libraries
+#         if: runner.os == 'Linux'
+#         run: ./scripts/linux
+#       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+#       - name: clippy
+#         shell: bash
+#         run: ./scripts/clippy
+#
+#   run_tests:
+#     needs: check_style
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         os: [windows-latest, macos-latest, ubuntu-24.04]
+#     runs-on: ${{ matrix.os }}
+#     timeout-minutes: 60
+#     steps:
+#       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+#       - name: setup CI cargo config
+#         shell: bash
+#         run: |
+#           mkdir -p ../.cargo
+#           cp .cargo/ci-config.toml ../.cargo/config.toml
+#       - name: install Linux libraries
+#         if: runner.os == 'Linux'
+#         run: ./scripts/linux
+#       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+#       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+#         with:
+#           tool: cargo-nextest
+#       - name: cargo nextest
+#         run: cargo nextest run --locked --all-features --profile ci --no-tests=warn
+#
+#   check_dependencies:
+#     runs-on: ubuntu-24.04
+#     timeout-minutes: 15
+#     steps:
+#       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+#       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+#         with:
+#           tool: cargo-shear
+#       - name: unused dependencies
+#         run: cargo shear --locked --deny-warnings --check-test-targets
+#       - name: Cargo.lock is up to date
+#         run: cargo update --locked --workspace
+#       - name: vulnerable dependencies
+#         if: github.event_name == 'pull_request'
+#         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+#         with:
+#           license-check: false
+#
+#   build:
+#     needs: [clippy, run_tests]
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         os: [windows-latest, macos-latest, ubuntu-24.04]
+#     runs-on: ${{ matrix.os }}
+#     timeout-minutes: 60
+#     steps:
+#       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+#       - name: install Linux libraries
+#         if: runner.os == 'Linux'
+#         run: ./scripts/linux
+#       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+#       - name: cargo build --release
+#         run: cargo build --release --locked
+#       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+#         with:
+#           name: adeline-${{ runner.os }}
+#           path: |
+#             target/release/adeline
+#             target/release/adeline.exe
+#           if-no-files-found: error
+#
+#   tests_pass:
+#     needs: [check_style, clippy, run_tests, check_dependencies, build]
+#     if: always()
+#     runs-on: ubuntu-24.04
+#     steps:
+#       - name: check results
+#         run: |
+#           [[ "${{ contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') }}" == "false" ]]

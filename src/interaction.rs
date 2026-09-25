@@ -51,7 +51,7 @@ impl Adeline {
             | Action::IssueStatus(_)
             | Action::NewIssue
             | Action::BoardTool(_)
-            | Action::BoardUndo => self.collaboration_action(action, window, cx),
+            | Action::BoardUndo => self.collaboration_action(&action, window, cx),
             Action::AppSettings => {
                 self.menu = None;
                 settings::open(window.window_handle().downcast::<Adeline>().unwrap(), cx);
@@ -361,8 +361,10 @@ impl Adeline {
             }
             Action::Format(mark) => {
                 if let Some(d) = self.document {
-                    std::sync::Arc::make_mut(&mut self.projects[self.project].docs[d].content)
-                        .push_str(&format!("\n\n{mark}New text{mark}"));
+                    use std::fmt::Write as _;
+                    let content =
+                        std::sync::Arc::make_mut(&mut self.projects[self.project].docs[d].content);
+                    let _ = write!(content, "\n\n{mark}New text{mark}");
                     self.notify_toast("Added a text block. Click it to edit.", cx);
                 }
             }
@@ -554,7 +556,7 @@ impl Adeline {
                     if !title.is_empty() {
                         self.projects[self.project].docs[i].search_title =
                             title.to_lowercase().into();
-                        self.projects[self.project].docs[i].title = title.clone();
+                        self.projects[self.project].docs[i].title.clone_from(&title);
                         self.projects[self.project].docs[i].filename = format!("{title}.md");
                     }
                 }

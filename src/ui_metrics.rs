@@ -27,6 +27,7 @@ pub(crate) fn record(region: Region) {
 }
 
 #[cfg(feature = "ui-profiling")]
+#[expect(clippy::format_collect, reason = "one-off profiling fixture")]
 pub(crate) fn stress_content(
     mut projects: Vec<crate::Workspace>,
     mut services: Vec<crate::Service>,
@@ -107,6 +108,10 @@ mod profiling {
     static START: Once = Once::new();
     static COUNTS: [AtomicU64; 15] = [const { AtomicU64::new(0) }; 15];
 
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the sleep runs on a dedicated sampling thread, not the UI thread"
+    )]
     pub fn record(region: Region) {
         COUNTS[region as usize].fetch_add(1, Ordering::Relaxed);
         START.call_once(|| {

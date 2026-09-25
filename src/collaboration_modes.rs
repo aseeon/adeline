@@ -177,12 +177,12 @@ impl Adeline {
     }
     pub(super) fn collaboration_action(
         &mut self,
-        action: Action,
+        action: &Action,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let state = &mut self.collaboration[self.project];
-        match action {
+        match *action {
             Action::Group(i) => state.group = i,
             Action::SendGroup => {
                 let message = self.group_input.read(cx).content.trim().to_owned();
@@ -402,15 +402,13 @@ impl Adeline {
             theme::muted_foreground(),
         ));
         for member in std::iter::once(None).chain(members.into_iter().map(Some)) {
-            let (name, glyph, role) = member
-                .map(|i| {
-                    (
-                        AGENTS[i],
-                        ["claude", "codex", "grok", "sparkle"][i],
-                        "Agent • Demo participant",
-                    )
-                })
-                .unwrap_or(("You", "user", "Project owner"));
+            let (name, glyph, role) = member.map_or(("You", "user", "Project owner"), |i| {
+                (
+                    AGENTS[i],
+                    ["claude", "codex", "grok", "sparkle"][i],
+                    "Agent • Demo participant",
+                )
+            });
             content = content.child(
                 row().gap_3().child(icon(glyph).size(px(26.))).child(
                     col()
@@ -711,9 +709,14 @@ impl Adeline {
                     move |bounds, _, cx| {
                         let _ = owner.update(cx, |app, _| app.board_bounds = bounds);
                     },
-                    move |bounds, _, window, _| {
+                    move |bounds, (), window, _| {
                         let w = f32::from(bounds.size.width);
                         let h = f32::from(bounds.size.height);
+                        #[expect(
+                            clippy::cast_possible_truncation,
+                            clippy::cast_sign_loss,
+                            reason = "canvas sizes are non-negative; whole-pixel steps are intended"
+                        )]
                         for x in (0..w as usize).step_by(24) {
                             for y in (0..h as usize).step_by(24) {
                                 window.paint_quad(fill(

@@ -76,10 +76,8 @@ impl PreparedDocument {
                         .into(),
                     heading: if raw.starts_with("###") {
                         3
-                    } else if raw.starts_with('#') {
-                        1
                     } else {
-                        0
+                        u8::from(raw.starts_with('#'))
                     },
                 }
             };
@@ -116,7 +114,7 @@ impl PreparedDocument {
         let mut low = 0;
         let mut high = self.blocks.len();
         while low < high {
-            let mid = (low + high) / 2;
+            let mid = usize::midpoint(low, high);
             if self.blocks[mid].line < line {
                 low = mid + 1;
             } else {

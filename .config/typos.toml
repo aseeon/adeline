@@ -1,0 +1,16 @@
+# Spell-checker config for https://github.com/crate-ci/typos (as in Zed).
+[files]
+ignore-files = true
+ignore-hidden = false
+extend-exclude = [
+    ".git/",
+    # Generated.
+    "Cargo.lock",
+]
+
+[default]
+check-filename = true
+
+[default.extend-words]
+# Upstream theme name, spelled as published.
+porfolio = "porfolio"

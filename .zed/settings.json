@@ -1,0 +1,23 @@
+// Project settings for the Zed editor, trimmed from Zed's own .zed/settings.json.
+{
+  "languages": {
+    "Markdown": { "tab_size": 2 },
+    "YAML": { "tab_size": 2 },
+    "JSON": { "tab_size": 2 },
+    "JSONC": { "tab_size": 2 },
+  },
+  "lsp": {
+    "rust-analyzer": {
+      "initialization_options": {
+        // Show clippy diagnostics (with the [lints] in Cargo.toml) in the editor.
+        "check": { "command": "clippy", "extraArgs": ["--all-targets", "--all-features"] },
+      },
+    },
+  },
+  "hard_tabs": false,
+  "formatter": "auto",
+  "format_on_save": "on",
+  "remove_trailing_whitespace_on_save": true,
+  "ensure_final_newline_on_save": true,
+  "read_only_files": ["**/.rustup/**", "**/.cargo/registry/**", "**/.cargo/git/**", "target/**/*.rs", "**/*.lock"],
+}

@@ -6,7 +6,6 @@ version = 4
 name = "adeline"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "gpui",
  "serde",
  "serde_json",

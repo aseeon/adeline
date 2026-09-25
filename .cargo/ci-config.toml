@@ -1,0 +1,8 @@
+# CI-only Cargo config, copied from Zed's approach. CI copies this file to
+# ../.cargo/config.toml, where Cargo merges it with any config in this repo.
+# Local builds stay warning-tolerant; CI turns every warning into an error.
+# RUSTFLAGS is avoided because it replaces all other rustflags settings, see
+# https://github.com/rust-lang/cargo/issues/5376. `[target.'cfg(all())']`
+# is used instead of `[build]` because target rustflags are cumulative.
+[target.'cfg(all())']
+rustflags = ["-D", "warnings"]

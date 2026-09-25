@@ -1,6 +1,6 @@
 # Adeline
 
-Agentic Development Environment offering many differnt modes of operations.
+Agentic Development Environment offering many different modes of operations.
 
 
 ## Platform setup
@@ -22,14 +22,10 @@ cargo run --release --locked
 
 ### Linux
 
-Install Rust and the native build dependencies. On Ubuntu / Debian:
+Install Rust and the native build dependencies. On Ubuntu / Debian, `scripts/linux` installs them (CI uses the same script):
 
 ```sh
-sudo apt-get update
-sudo apt-get install build-essential clang libclang-dev cmake pkg-config \
-  libfontconfig1-dev libfreetype6-dev libxcb1-dev libxkbcommon-dev \
-  libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libvulkan-dev \
-  libssl-dev libdbus-1-dev libasound2-dev zlib1g-dev
+./scripts/linux
 cargo run --release --locked
 ```
 
@@ -37,14 +33,34 @@ GPUI's default features include X11 and Wayland. Run inside a graphical session 
 
 ## Validation
 
+The checks follow [Zed's setup](https://github.com/zed-industries/zed). `rust-toolchain.toml` pins the Rust version, so rustup installs the right toolchain the first time you run `cargo`.
+
 ```sh
-cargo fmt --check
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
+cargo fmt --all -- --check
+./scripts/clippy
+./scripts/check-todos
+cargo nextest run --locked --all-features
 cargo build --release --locked
 ```
 
-The tests verify the bundled projects and live-demo state, search/status/completed filters, linked demo content, and notification totals as conversations change. `.github/workflows/build.yml` builds and tests separately on Windows, macOS, and Linux. The workflow is commented out for now, so it does not run. macOS and Linux have not been run locally on this Windows host; the workflow must run on those hosts to confirm their builds.
+On Windows, use `scripts\clippy.ps1`. Running `cargo test --locked` works too if nextest isn't installed.
+
+`scripts/clippy` is the type checker and linter, the Rust counterpart of basedpyright. The lint levels are in `[lints]` in `Cargo.toml`: the default clippy groups plus `pedantic`, and Zed's denies (`dbg!`, `todo!`, redundant clones, disallowed methods). To silence a lint, use `#[expect(lint, reason = "...")]` rather than `#[allow]`. `expect` fails once the lint stops firing, like basedpyright's unnecessary-ignore check. `clippy.toml` bans calls that block the UI thread. Warnings are errors in both the script and CI.
+
+If they are installed, `scripts/clippy` also runs these tools:
+
+- [`cargo-shear`](https://github.com/Boshen/cargo-shear) finds unused dependencies.
+- [`typos`](https://github.com/crate-ci/typos) spell-checks the code, using `.config/typos.toml`.
+
+To install them:
+
+```sh
+cargo install --locked cargo-shear typos-cli cargo-nextest
+```
+
+The tests verify the bundled projects and live-demo state, search/status/completed filters, linked demo content, and notification totals as conversations change.
+
+`.github/workflows/ci.yml` follows the layout of Zed's `run_tests` workflow. First comes a style job (rustfmt, TODO check, typos). Then clippy and nextest run on Windows, macOS, and Linux, alongside a dependency job (cargo-shear, lockfile, dependency review). Release builds run last, and a `tests_pass` job gives branch protection a single check to require. CI copies `.cargo/ci-config.toml` so that compiler warnings fail the build. The workflow is commented out for now, so it does not run. macOS and Linux have not been run locally on this Windows host; the workflow must run on those hosts to confirm their builds.
 
 ## Source map
 

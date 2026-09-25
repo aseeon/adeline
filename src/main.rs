@@ -6,7 +6,11 @@ mod config;
 mod content_views;
 mod data;
 mod document_render;
-#[allow(unused_imports, dead_code)]
+#[expect(
+    unused_imports,
+    dead_code,
+    reason = "adapted from GPUI's text input example; unused helpers kept for parity"
+)]
 mod input;
 mod interaction;
 mod panes;
@@ -50,10 +54,10 @@ const MACHINES: [Machine; 3] = [
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 struct Assets;
 impl AssetSource for Assets {
-    fn load(&self, path: &str) -> anyhow::Result<Option<Cow<'static, [u8]>>> {
+    fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         Ok(embedded(path).map(Cow::Borrowed))
     }
-    fn list(&self, _: &str) -> anyhow::Result<Vec<SharedString>> {
+    fn list(&self, _: &str) -> Result<Vec<SharedString>> {
         Ok(vec![])
     }
 }
@@ -322,7 +326,7 @@ struct Adeline {
     instructions: bool,
     focus: FocusHandle,
     toast: Option<String>,
-    _subscriptions: Vec<Subscription>,
+    subscriptions: Vec<Subscription>,
     archived_docs: std::collections::HashSet<(usize, usize)>,
     project_tints: [usize; 3],
     chat_list: Entity<chat::ChatList>,
@@ -340,7 +344,7 @@ struct Adeline {
 }
 impl Adeline {
     fn new(cx: &mut Context<Self>) -> Self {
-        let (projects, services) = data::load();
+        let (projects, services) = load();
         #[cfg(feature = "ui-profiling")]
         let (projects, services) = ui_metrics::stress_content(projects, services);
         #[cfg(feature = "ui-profiling")]
@@ -369,10 +373,10 @@ impl Adeline {
                 cx.notify();
             }),
             cx.subscribe(&project_query, |_, _, _: &input::ContentChanged, cx| {
-                cx.notify()
+                cx.notify();
             }),
             cx.subscribe(&agent_query, |_, _, _: &input::ContentChanged, cx| {
-                cx.notify()
+                cx.notify();
             }),
         ];
         let owner = cx.weak_entity();
@@ -445,7 +449,7 @@ impl Adeline {
             instructions: false,
             focus: cx.focus_handle(),
             toast: None,
-            _subscriptions: subscriptions,
+            subscriptions,
             archived_docs: Default::default(),
             project_tints: [0, 2, 3],
             chat_list,
@@ -522,7 +526,7 @@ impl Adeline {
                         move |bounds, _, _| {
                             triggers.borrow_mut().insert(target, bounds);
                         },
-                        |_, _, _, _| {},
+                        |_, (), _, _| {},
                     )
                     .absolute()
                     .inset_0(),
@@ -954,7 +958,7 @@ impl Render for Adeline {
                     },
                     w,
                     cx,
-                )
+                );
             }))
             .on_action(cx.listener(|_, _: &NextFocus, w, _| w.focus_next()))
             .on_action(cx.listener(|_, _: &PreviousFocus, w, _| w.focus_prev()))
@@ -1049,7 +1053,7 @@ impl Render for Adeline {
         let shell = col()
             .size_full()
             .bg(rgb(theme::sidebar()))
-            .font_family(font.clone());
+            .font_family(font);
         #[cfg(target_os = "windows")]
         let shell = shell.child(titlebar::render(
             format!("{} · Adeline", self.workspace().config.name),
@@ -1082,9 +1086,9 @@ fn main() {
                     let view = cx.new(Adeline::new);
                     #[cfg(target_os = "windows")]
                     view.update(cx, |app, cx| {
-                        app._subscriptions
+                        app.subscriptions
                             .push(cx.observe_window_bounds(window, |_, _, cx| cx.notify()));
-                        app._subscriptions
+                        app.subscriptions
                             .push(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
                     });
                     window.focus(&view.read(cx).focus);

@@ -317,9 +317,10 @@ impl Adeline {
             Section::Docs => (
                 "Doc details",
                 text(
-                    self.document
-                        .map(|i| self.workspace().docs[i].filename.clone())
-                        .unwrap_or_else(|| "Select a document to see its details.".into()),
+                    self.document.map_or_else(
+                        || "Select a document to see its details.".into(),
+                        |i| self.workspace().docs[i].filename.clone(),
+                    ),
                     13.,
                     theme::muted_foreground(),
                 )
@@ -333,9 +334,10 @@ impl Adeline {
             Section::Services => (
                 "Service details",
                 text(
-                    self.service
-                        .map(|i| self.services[i].name.clone())
-                        .unwrap_or_else(|| "Select a service to see its details.".into()),
+                    self.service.map_or_else(
+                        || "Select a service to see its details.".into(),
+                        |i| self.services[i].name.clone(),
+                    ),
                     13.,
                     theme::muted_foreground(),
                 )

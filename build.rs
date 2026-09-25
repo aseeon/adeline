@@ -1,4 +1,8 @@
-use std::{env, fs, path::PathBuf};
+#![expect(
+    clippy::unnecessary_debug_formatting,
+    reason = "`{:?}` writes each path as a quoted, escaped Rust string literal for `include_*!`"
+)]
+use std::{env, fmt::Write as _, fs, path::PathBuf};
 
 fn main() {
     println!("cargo:rerun-if-changed=assets");
@@ -8,10 +12,12 @@ fn main() {
         let path = entry.unwrap().path();
         if path.is_file() {
             let name = path.file_name().unwrap().to_str().unwrap();
-            source.push_str(&format!(
-                "{name:?} => Some(include_bytes!({:?})),\n",
+            writeln!(
+                source,
+                "{name:?} => Some(include_bytes!({:?})),",
                 fs::canonicalize(&path).unwrap()
-            ));
+            )
+            .unwrap();
         }
     }
     source.push_str("_ => None } }");
@@ -35,11 +41,13 @@ fn main() {
     paths.sort();
     let mut themes = String::from("const BUNDLED_THEMES: &[(&str, &str)] = &[\n");
     for path in paths {
-        themes.push_str(&format!(
-            "({:?}, include_str!({:?})),\n",
+        writeln!(
+            themes,
+            "({:?}, include_str!({:?})),",
             path.file_name().unwrap().to_str().unwrap(),
             fs::canonicalize(&path).unwrap()
-        ));
+        )
+        .unwrap();
     }
     themes.push_str("];\n");
     fs::write(

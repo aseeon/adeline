@@ -34,7 +34,10 @@ fn seed_bundled_themes(directory: &Path) -> Result<(), String> {
 macro_rules! palette {
     ($($name:ident, $label:literal, $color:literal;)*) => {
         pub const ROLES: &[(&str, &str, u32)] = &[$((stringify!($name), $label, $color)),*];
-        $(pub fn $name() -> u32 { ACTIVE.with(|s| s.borrow().colors[stringify!($name)]) })*
+        $(
+            #[expect(clippy::allow_attributes, reason = "`#[expect(dead_code)]` would fail on the used accessors")]
+            #[allow(dead_code, reason = "every palette role gets an accessor; not all are drawn yet")]
+            pub fn $name() -> u32 { ACTIVE.with(|s| s.borrow().colors[stringify!($name)]) })*
     };
 }
 palette! {
@@ -239,7 +242,7 @@ pub fn init() {
     ACTIVE.with(|s| match result {
         Ok(state) => *s.borrow_mut() = state,
         Err(error) => {
-            s.borrow_mut().load_error = Some(format!("{error} Using lightos until this is fixed."))
+            s.borrow_mut().load_error = Some(format!("{error} Using lightos until this is fixed."));
         }
     });
 }
@@ -281,6 +284,11 @@ pub fn apply_colors(theme: ThemeFile, cx: &mut gpui::App) -> Result<(), String> 
     cx.refresh_windows();
     Ok(())
 }
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "blending two 0..=255 channels stays in 0.0..=255.0"
+)]
 pub fn blend(color: u32, base: u32, amount: f32) -> u32 {
     [16, 8, 0].into_iter().fold(0, |result, shift| {
         let a = ((color >> shift) & 255) as f32;

@@ -10,8 +10,8 @@ pub(super) struct ChatList {
     scrollbar: scrollbar::Scrollbar,
     visible: Arc<[usize]>,
     keys: Vec<Arc<str>>,
-    records: crate::prepared::SearchCatalog,
-    generation: crate::prepared::Generation,
+    records: prepared::SearchCatalog,
+    generation: prepared::Generation,
     pending: Option<Task<()>>,
     searching: bool,
     search_bytes: usize,
@@ -48,9 +48,9 @@ impl ChatList {
 
     pub fn sync(&mut self, app: &Adeline, query: &str, cx: &mut Context<Self>) {
         let threads = &app.workspace().threads;
-        let records: crate::prepared::SearchCatalog = threads
+        let records: prepared::SearchCatalog = threads
             .iter()
-            .map(|t| crate::prepared::SearchRecord {
+            .map(|t| prepared::SearchRecord {
                 id: Arc::from(t.id.as_str()),
                 text: t.search_text.clone(),
                 completed: !t.matches_status(0, false),
@@ -97,7 +97,7 @@ impl ChatList {
                 return;
             }
             let old = &self.records[index];
-            let record = crate::prepared::SearchRecord {
+            let record = prepared::SearchRecord {
                 id: old.id.clone(),
                 text: thread.search_text.clone(),
                 completed: thread.status == "completed",
@@ -178,14 +178,14 @@ impl ChatList {
         cx: &mut Context<Self>,
     ) {
         self.pending.take();
-        self.query = query.clone();
+        self.query.clone_from(&query);
         self.filter = filter;
         self.completed = completed;
         let ticket = self.generation.next();
         let records = self.records.clone();
         if query.is_empty() || (records.len() < 256 && self.search_bytes < 64 * 1024) {
             self.publish(
-                crate::prepared::search_records(records.iter(), &query, filter, completed),
+                prepared::search_records(records.iter(), &query, filter, completed),
                 cx,
             );
         } else {
@@ -197,7 +197,7 @@ impl ChatList {
                 }
                 let rows = executor
                     .spawn(async move {
-                        crate::prepared::search_records(records.iter(), &query, filter, completed)
+                        prepared::search_records(records.iter(), &query, filter, completed)
                     })
                     .await;
                 let _ = this.update(cx, |this, cx| {
@@ -215,7 +215,7 @@ impl ChatList {
             .iter()
             .map(|&i| self.records[i].id.clone())
             .collect();
-        let (old, new) = crate::prepared::changed_range(&self.keys, &keys);
+        let (old, new) = prepared::changed_range(&self.keys, &keys);
         if !old.is_empty() || !new.is_empty() {
             self.state.splice(old, new.len());
         }
@@ -228,7 +228,7 @@ impl ChatList {
 
 impl Render for ChatList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::ui_metrics::record(crate::ui_metrics::Region::Sidebar);
+        ui_metrics::record(ui_metrics::Region::Sidebar);
         let owner = self.owner.clone();
         let visible = self.visible.clone();
         let rows = if visible.is_empty() {
@@ -251,7 +251,7 @@ impl Render for ChatList {
                 .min_h_0()
                 .child(
                     list(self.state.clone(), move |row, _, cx| {
-                        crate::ui_metrics::record(crate::ui_metrics::Region::ChatRow);
+                        ui_metrics::record(ui_metrics::Region::ChatRow);
                         owner
                             .update(cx, |app, cx| app.chat_card(visible[row], cx))
                             .unwrap_or_else(|_| div().into_any_element())
@@ -341,7 +341,7 @@ impl Transcript {
 
 impl Render for Transcript {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::ui_metrics::record(crate::ui_metrics::Region::Transcript);
+        ui_metrics::record(ui_metrics::Region::Transcript);
         let Some(selected) = self.selected else {
             return self
                 .owner
@@ -352,7 +352,7 @@ impl Render for Transcript {
         let messages = self.messages;
         let footer_focus = self.footer_focus.clone();
         let rows = list(self.state.clone(), move |row, _, cx| {
-            crate::ui_metrics::record(crate::ui_metrics::Region::MessageRow);
+            ui_metrics::record(ui_metrics::Region::MessageRow);
             owner
                 .update(cx, |app, cx| {
                     if row < messages {
@@ -407,7 +407,7 @@ impl Composer {
 
 impl Render for Composer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::ui_metrics::record(crate::ui_metrics::Region::Composer);
+        ui_metrics::record(ui_metrics::Region::Composer);
         self.owner
             .update(cx, |app, cx| app.composer_view(cx).into_any_element())
             .unwrap_or_else(|_| div().into_any_element())
@@ -417,7 +417,7 @@ impl Render for Composer {
 pub(super) struct Header(pub WeakEntity<Adeline>);
 impl Render for Header {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        crate::ui_metrics::record(crate::ui_metrics::Region::Header);
+        ui_metrics::record(ui_metrics::Region::Header);
         self.0
             .update(cx, |app, cx| app.header(cx).size_full().into_any_element())
             .unwrap_or_else(|_| div().into_any_element())
@@ -433,7 +433,7 @@ impl Adeline {
                 || list.filter != self.filter
                 || list.completed != self.show_completed
             {
-                list.search(query, self.filter, self.show_completed, true, cx)
+                list.search(query, self.filter, self.show_completed, true, cx);
             }
         });
     }
