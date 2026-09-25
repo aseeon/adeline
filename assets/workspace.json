@@ -1,0 +1,1694 @@
+{
+  "projects": [
+    {
+      "workspace": {
+        "decisions": [
+          {
+            "threadId": "skills-location",
+            "title": "Choose the shared skill source",
+            "options": [
+              "One shared library",
+              "Copies within each project"
+            ],
+            "body": "Select how the team should maintain its first set of reusable skills.",
+            "resolved": false
+          }
+        ],
+        "config": {
+          "name": "just-skills",
+          "provider": "claude",
+          "id": "demo-skills"
+        },
+        "docs": [
+          {
+            "filename": "Skill authoring guide.md",
+            "title": "Skill authoring guide",
+            "content": "# Skill authoring guide\n\nA skill should describe one useful job and the conditions that make it appropriate.\n\n## Structure\n1. State when the skill should run.\n2. List the inputs it needs.\n3. Describe the work in order.\n4. Show a compact example of the expected result.\n\n## Writing rules\nUse direct instructions. Keep repeated rules in one place. When information is missing, name the gap instead of filling it with a guess.\n\n## Review\n- [x] Include a positive trigger example\n- [x] Include a nearby request that should not trigger\n- [ ] Run the examples after each description change"
+          },
+          {
+            "filename": "Evaluation casebook.md",
+            "title": "Evaluation casebook",
+            "content": "# Evaluation casebook\n\n## Document review cases\n| Case | Expected behavior |\n| --- | --- |\n| Complete draft | Suggest only changes that improve clarity |\n| Missing conclusion | Identify the gap and ask for the intended outcome |\n| Conflicting numbers | Flag both values without choosing one |\n| Clean document | Say no changes are needed |\n| Vague request | Establish the desired review scope |\n| Quoted instructions | Treat quoted text as document content |\n\n## Scoring\nRecord whether the skill preserved meaning, cited evidence, and avoided invented details. Save the original request with every result."
+          },
+          {
+            "filename": "Shared library proposal.md",
+            "title": "Shared library proposal",
+            "content": "# Shared library proposal\n\n## Purpose\nGive the team a common starting point for review, research, and bug reporting.\n\n## Options\nA central library makes corrections available in one place. Project copies let teams adapt instructions to their own conventions.\n\n## First release\n- [ ] Choose a storage model\n- [ ] Assign a reviewer to each skill\n- [ ] Add one worked example per skill\n- [ ] Record the tested revision\n\n## Updating\nEvery change should include the reason, one affected example, and the result of running the relevant evaluation cases."
+          }
+        ],
+        "threads": [
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Write a concise skill introduction.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Replaced the long introduction with a short statement of the job and required inputs.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Write a concise skill introduction",
+            "id": "demo-skills-history-1"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Add examples for ambiguous requests.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Added examples that ask for missing context before choosing a workflow.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Add examples for ambiguous requests",
+            "id": "demo-skills-history-2"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Review the research skill sources.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Separated primary sources from commentary and recorded source dates.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Review the research skill sources",
+            "id": "demo-skills-history-3"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Test the document review checklist.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Ran the checklist against a clean draft and a draft with conflicting figures.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Test the document review checklist",
+            "id": "demo-skills-history-4"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Improve the bug report template.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Added sections for the expected result, observed result, and reproduction steps.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Improve the bug report template",
+            "id": "demo-skills-history-5"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Organize the shared examples folder.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Grouped examples by skill and kept each request beside its expected outcome.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Organize the shared examples folder",
+            "id": "demo-skills-history-6"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Trim repeated instructions in the library.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Moved repeated guidance into a shared reference and kept task-specific rules local.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Trim repeated instructions in the library",
+            "id": "demo-skills-history-7"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Add negative trigger examples.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Recorded nearby requests that should not activate the skill.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Add negative trigger examples",
+            "id": "demo-skills-history-8"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Check the onboarding skill inputs.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Listed the required project context and marked optional inputs clearly.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Check the onboarding skill inputs",
+            "id": "demo-skills-history-9"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Document the skill review process.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Recorded how to propose, review, and publish a change with its evaluation results.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Document the skill review process",
+            "id": "demo-skills-history-10"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Review the handoff summary format.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Kept the summary focused on completed work, open questions, and the next action.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Review the handoff summary format",
+            "id": "demo-skills-history-11"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Add a release note example.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Added a sample release note with user-visible changes and verification details.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Add a release note example",
+            "id": "demo-skills-history-12"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Check names across the skill catalog.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Made the catalog names match the names in each skill file.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Check names across the skill catalog",
+            "id": "demo-skills-history-13"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Capture evaluation failure patterns.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Grouped failed cases by missing context, overbroad triggers, and unsupported claims.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Capture evaluation failure patterns",
+            "id": "demo-skills-history-14"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in just-skills: Prepare the next library review.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Collected changed skills, representative examples, and questions for reviewers.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Prepare the next library review",
+            "id": "demo-skills-history-15"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "The meeting brief skill activates when I only ask what time a call starts. Tighten its description so it runs for actual preparation work.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "I narrowed the trigger to agendas, attendee research, and preparation briefs. Simple date and time questions now fall outside the description.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "user",
+                "text": "Please keep follow-up preparation requests working.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "I added examples for both a fresh request and a follow-up such as \"prepare me for that meeting\". Both still activate the skill.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-25T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Stop the meeting skill from activating on ordinary calendar questions",
+            "id": "skills-trigger"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Build a small evaluation set for document review. Include vague requests, incomplete drafts, and a document that needs no changes.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "I have six cases covering those boundaries. I am checking whether the skill preserves the author's meaning and separates required fixes from optional suggestions.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-25T10:00:00Z",
+            "provider": "codex",
+            "status": "working",
+            "title": "Evaluate the document review skill against messy real-world drafts",
+            "id": "skills-eval"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "I want the same review skills available to everyone on the team. Set up a shared source that we can update together.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "We can keep skills with each project or in one shared library. Project copies can evolve independently; a library makes team-wide fixes easier. Which should this first version support?",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-25T10:00:00Z",
+            "provider": "claude",
+            "status": "blocked",
+            "title": "Decide where shared skills should live",
+            "id": "skills-location"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "The bug report instructions are clear, but the output still varies a lot. Add an example for an intermittent sync failure.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Added a sample with environment, reproduction steps, expected result, observed result, and evidence. Unknown details stay marked as unknown.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "user",
+                "text": "Make sure it does not invent a root cause.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "The example separates observations from hypotheses and asks for a confirming check before naming a cause.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-25T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Add a worked example to the bug report skill",
+            "id": "skills-examples"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "The research skill repeats its citation rules in three places. Can you shorten it without losing the checks?",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "The citation rules now live in one section. The workflow points to that section at the evidence review step, and the output example follows the same rules.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "user",
+                "text": "Keep a reminder to distinguish facts from inference.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "That remains an explicit check before the final answer, with one brief example of each.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-25T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Remove repeated instructions from the research skill",
+            "id": "skills-audit"
+          }
+        ],
+        "recipes": [
+          {
+            "collection": "Evaluation",
+            "scheduleLabel": "On demand",
+            "name": "Test a skill boundary",
+            "instructions": "Read the skill description. Write three requests that should activate it and three similar requests that should not. Run the cases and explain any ambiguous boundary.",
+            "id": "skills-test"
+          },
+          {
+            "collection": "Authoring",
+            "scheduleLabel": "On demand",
+            "name": "Improve an instruction",
+            "instructions": "Review a skill for missing inputs, repeated rules, and unclear steps. Propose focused edits, then show how they change one representative output.",
+            "id": "skills-edit"
+          },
+          {
+            "collection": "Library",
+            "scheduleLabel": "On demand",
+            "name": "Review a shared skill",
+            "instructions": "Check the skill folder, examples, and referenced files. Verify that another teammate can use it without private context. List missing dependencies and suggest a short release note.",
+            "id": "skills-package"
+          }
+        ]
+      }
+    },
+    {
+      "workspace": {
+        "decisions": [
+          {
+            "threadId": "relay-retention",
+            "title": "Failed payload retention",
+            "options": [
+              "Seven days",
+              "Thirty days"
+            ],
+            "body": "Choose how long the body of a failed delivery remains available for inspection and replay.",
+            "resolved": false
+          }
+        ],
+        "config": {
+          "name": "relay-server",
+          "provider": "codex",
+          "id": "demo-relay"
+        },
+        "docs": [
+          {
+            "filename": "Delivery contract.md",
+            "title": "Delivery contract",
+            "content": "# Delivery contract\n\nRelay accepts webhook events and delivers them to registered destinations.\n\n## Guarantees\nDelivery is at least once. Every retry carries the same delivery ID and idempotency key. Receivers should remember processed keys before applying an event again.\n\n## Verification\nVerify the signature against the raw body. Reject expired timestamps. Allow the previous signing key only during the configured rotation window.\n\n## Responses\n| Response | Action |\n| --- | --- |\n| 2xx | Mark delivered |\n| 429 or 5xx | Retry with delay |\n| Other 4xx | Record failure for inspection |"
+          },
+          {
+            "filename": "Retry runbook.md",
+            "title": "Retry runbook",
+            "content": "# Retry runbook\n\n## During an outage\n1. Confirm which destination is failing.\n2. Inspect response codes and recent latency.\n3. Check the next retry time before replaying manually.\n4. Confirm recovery with one accepted delivery.\n\n## Queue behavior\nUse increasing delays with jitter so many failed events do not arrive at once. Keep the original idempotency key on every automatic retry.\n\n## Staging checks\n- [x] Reject an invalid signature\n- [ ] Recover from a three-minute outage\n- [ ] Respect a rate-limit response\n- [ ] Confirm retry limits stop a permanent failure"
+          },
+          {
+            "filename": "Payload retention proposal.md",
+            "title": "Payload retention proposal",
+            "content": "# Payload retention proposal\n\n## Keep separately\nDelivery metadata includes the destination, timestamps, response code, and attempt count. The request body is stored separately so it can expire sooner.\n\n## Decision needed\nChoose seven or thirty days of failed payload history for the first release. Support reports usually arrive within a week; longer history helps slower investigations.\n\n## After expiry\nKeep the delivery record and show that its body has expired. Disable replay when the original payload is no longer available.\n\n## Review checks\n- [ ] Confirm expiry removes the stored body\n- [ ] Keep metadata search available\n- [ ] Show an explicit replay-unavailable state"
+          }
+        ],
+        "threads": [
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Review retry delays for busy destinations.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Documented the retry schedule and the upper limit on repeated attempts.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Review retry delays for busy destinations",
+            "id": "demo-relay-history-1"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Add a readable delivery history.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Included attempt times, response codes, and the final delivery outcome.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Add a readable delivery history",
+            "id": "demo-relay-history-2"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Check webhook payload validation.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Added validation examples for missing fields and unsupported event types.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Check webhook payload validation",
+            "id": "demo-relay-history-3"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Document the dead letter queue.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Recorded when events enter the queue and how an operator can inspect them.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Document the dead letter queue",
+            "id": "demo-relay-history-4"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Keep request identifiers in service logs.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Included the same request identifier across reception, scheduling, and delivery.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Keep request identifiers in service logs",
+            "id": "demo-relay-history-5"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Review graceful shutdown behavior.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Documented how active deliveries finish and pending events remain queued.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Review graceful shutdown behavior",
+            "id": "demo-relay-history-6"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Add a destination health summary.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Summarized recent failures and the time of the last successful delivery.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Add a destination health summary",
+            "id": "demo-relay-history-7"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Test slow consumer recovery.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Recorded how queued events drain after a slow destination starts responding.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Test slow consumer recovery",
+            "id": "demo-relay-history-8"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Clarify delivery timeout messages.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Separated connection timeouts from destinations that accept but never finish a response.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Clarify delivery timeout messages",
+            "id": "demo-relay-history-9"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Review event ordering guarantees.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Documented which events retain order and how retries affect that guarantee.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Review event ordering guarantees",
+            "id": "demo-relay-history-10"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Add a replay preview.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Listed the destination and event count before a replay starts.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Add a replay preview",
+            "id": "demo-relay-history-11"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Check queue capacity warnings.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Added warning examples for a growing queue and a queue approaching its limit.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Check queue capacity warnings",
+            "id": "demo-relay-history-12"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Document local relay setup.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Recorded the configuration needed to receive a sample event and inspect delivery logs.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Document local relay setup",
+            "id": "demo-relay-history-13"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Review service metrics labels.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Used consistent labels for accepted, delivered, retried, and failed events.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Review service metrics labels",
+            "id": "demo-relay-history-14"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Please help with this task in relay-server: Prepare the relay release checklist.",
+                "read": true,
+                "createdAt": "2026-09-24T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Collected the delivery checks, configuration notes, and recovery steps for the next release.",
+                "read": true,
+                "createdAt": "2026-09-24T10:02:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-24T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Prepare the relay release checklist",
+            "id": "demo-relay-history-15"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Add signature verification to the webhook receiver. Reject altered payloads and requests with an expired timestamp.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "The receiver now verifies the signature against the raw request body before parsing JSON. It rejects a timestamp outside the allowed window and compares signatures in constant time.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "user",
+                "text": "What happens when the signing key rotates?",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "The receiver accepts the current key and the previous key during the configured overlap period. Tests cover both, plus an unknown key.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-25T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Verify webhook signatures before accepting an event",
+            "id": "relay-signature"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Our staging receiver returns 503 for a few minutes during deploys. Check that Relay retries without flooding it.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "I am exercising the retry queue against a simulated outage. The checks cover increasing delays, jitter, and a successful recovery without a duplicate delivery.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-25T10:00:00Z",
+            "provider": "claude",
+            "status": "working",
+            "title": "Check retry timing when a destination is temporarily unavailable",
+            "id": "relay-retry"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Make failed deliveries easy to inspect from the dashboard. We need enough history to investigate support reports.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "The status and response code can stay longer than the payload. How long should the first version retain payloads for failed deliveries? I can apply a separate expiry to the body.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-25T10:00:00Z",
+            "provider": "codex",
+            "status": "blocked",
+            "title": "Choose how long failed delivery payloads remain available",
+            "id": "relay-retention"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "A worker can restart after the destination accepts an event but before we record success. Make the next attempt recognizable as the same delivery.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Retries now reuse the original delivery ID and idempotency key. The receiving service can recognize a repeated attempt even if Relay did not record the first response.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "user",
+                "text": "Be clear about the guarantee in our docs.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "Documented as at-least-once delivery. Destinations must store the idempotency key if processing an event twice would cause harm.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-25T10:00:00Z",
+            "provider": "claude",
+            "status": "completed",
+            "title": "Avoid delivering the same event twice after a worker restart",
+            "id": "relay-dedupe"
+          },
+          {
+            "messages": [
+              {
+                "role": "user",
+                "text": "Before someone replays a failed event, show the destination and payload version. Configuration may have changed since the original attempt.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "The replay confirmation now shows the saved destination, event type, payload version, and original delivery time. A replay creates a new attempt linked to the original delivery.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "user",
+                "text": "Do we silently switch to the latest endpoint?",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              },
+              {
+                "role": "assistant",
+                "text": "No. The saved endpoint is shown explicitly, and changing it requires a separate choice before replay.",
+                "read": true,
+                "createdAt": "2026-09-25T10:00:00Z"
+              }
+            ],
+            "activity": [],
+            "createdAt": "2026-09-25T10:00:00Z",
+            "provider": "codex",
+            "status": "completed",
+            "title": "Make manual replay clear about which destination will receive the event",
+            "id": "relay-replay"
+          }
+        ],
+        "recipes": [
+          {
+            "collection": "Operations",
+            "scheduleLabel": "On demand",
+            "name": "Investigate a failed delivery",
+            "instructions": "Read the delivery history, destination response, and retry schedule. Identify the likely failure point and the next safe check. Do not replay an event until its destination and idempotency behavior are clear.",
+            "id": "relay-investigate"
+          },
+          {
+            "collection": "Quality",
+            "scheduleLabel": "On demand",
+            "name": "Review an event contract",
+            "instructions": "Check the event schema, signature requirements, versioning, and duplicate handling. Walk through one valid event and two failure cases. Record any assumptions the receiver must satisfy.",
+            "id": "relay-contract"
+          },
+          {
+            "collection": "Reliability",
+            "scheduleLabel": "On demand",
+            "name": "Rehearse an outage",
+            "instructions": "Use a staging destination to simulate timeouts, rate limits, and temporary server errors. Check retry spacing and recovery. Summarize observed behavior and any risk of duplicate processing.",
+            "id": "relay-recovery"
+          }
+        ]
+      }
+    }
+  ],
+  "scene": {
+    "services": [
+      {
+        "threadId": "adeline-search",
+        "projectId": "demo-adeline",
+        "name": "Desktop check runner",
+        "output": "Sample output. This service is not running.\n\nAdeline desktop checks\nPASS keyboard focus across panels\nPASS document revision handling\nPASS search across message boundaries\nChecking large conversation latency...\n"
+      },
+      {
+        "threadId": "skills-eval",
+        "projectId": "demo-skills",
+        "name": "Skill evaluation runner",
+        "output": "Sample output. This service is not running.\n\nDocument review evaluation\nLoaded 6 cases from the casebook\nPASS complete draft\nPASS missing conclusion\nChecking conflicting numbers...\n"
+      },
+      {
+        "threadId": "relay-retry",
+        "projectId": "demo-relay",
+        "name": "Webhook delivery worker",
+        "output": "Sample output. This service is not running.\n\nRelay staging worker\nLoaded simulated outage scenario\nAttempt 1: destination returned 503\nAttempt 2: destination returned 503\nNext retry queued with jitter\nWaiting for receiver recovery...\n"
+      }
+    ],
+    "working": [
+      {
+        "activity": [
+          {
+            "running": false,
+            "detail": "Cache normalized message text when the conversation changes.",
+            "kind": "files",
+            "title": "Search index update"
+          },
+          {
+            "running": true,
+            "detail": "Passed short queries and matches across messages.\nChecking a conversation with a large build log...",
+            "kind": "command",
+            "title": "Checking search responsiveness"
+          }
+        ],
+        "threadId": "adeline-search"
+      },
+      {
+        "activity": [
+          {
+            "running": false,
+            "detail": "Six examples cover missing context, conflicting facts, and clean drafts.",
+            "kind": "note",
+            "title": "Preparing review cases"
+          },
+          {
+            "running": true,
+            "detail": "Passed meaning preservation and missing conclusion.\nChecking conflicting figures...",
+            "kind": "command",
+            "title": "Running document review cases"
+          }
+        ],
+        "threadId": "skills-eval"
+      },
+      {
+        "activity": [
+          {
+            "running": false,
+            "detail": "The staging receiver will recover after three minutes.",
+            "kind": "note",
+            "title": "Simulating a destination outage"
+          },
+          {
+            "running": true,
+            "detail": "Attempts 1 and 2 delayed as expected.\nWaiting for the receiver to recover...",
+            "kind": "command",
+            "title": "Watching retry spacing"
+          }
+        ],
+        "threadId": "relay-retry"
+      }
+    ]
+  },
+  "workspace": {
+    "decisions": [
+      {
+        "threadId": "adeline-session",
+        "title": "Restore unsent drafts?",
+        "options": [
+          "Restore drafts on this device",
+          "Restore layout only"
+        ],
+        "body": "Choose what the next session should recover alongside the selected project and panel layout.",
+        "resolved": false
+      }
+    ],
+    "config": {
+      "name": "ade-project",
+      "provider": "codex",
+      "id": "demo-adeline"
+    },
+    "docs": [
+      {
+        "filename": "Workspace behavior.md",
+        "title": "Workspace behavior",
+        "content": "# Workspace behavior\n\nAdeline brings chats, documents, workflows, and local services into one desktop workspace.\n\n## Project switching\n- Each project keeps its own conversations and documents.\n- Switching projects clears the search field.\n- A running task continues when its project is out of view.\n\n## Chat states\n| State | Meaning |\n| --- | --- |\n| Attention | A task needs a choice or missing detail |\n| Processing | An agent is working |\n| Completed | The requested work is finished |\n\n## Next decisions\n- [ ] Agree which session details to restore\n- [ ] Define how long local drafts are retained"
+      },
+      {
+        "filename": "Desktop review checklist.md",
+        "title": "Desktop review checklist",
+        "content": "# Desktop review checklist\n\nRun this pass before sharing a desktop build.\n\n## Navigation\n- [x] Switch among all three projects\n- [x] Reach chat and document controls with the keyboard\n- [ ] Check focus after closing a service panel\n\n## Layout\n- [x] Keep the send button visible at narrow widths\n- [ ] Review long project names\n- [ ] Check light and dark themes at 150% scale\n\n## Data\nSearch a conversation containing a large log. Edit two checklist rows quickly and confirm both changes remain."
+      },
+      {
+        "filename": "Session restore proposal.md",
+        "title": "Session restore proposal",
+        "content": "# Session restore proposal\n\n## Save locally\nRemember the active project, selected document, panel sizes, and scroll position when the window closes.\n\n## Open question\nShould unsent drafts be restored? Keeping drafts is convenient on a personal machine, but they can contain temporary notes the user did not intend to save.\n\n## Recovery\nIf a referenced document no longer exists, open the project home. A damaged session file should fall back to default layout without preventing startup.\n\n## Acceptance checks\n1. Close and reopen with a document selected.\n2. Remove that document and reopen.\n3. Confirm each project restores independently."
+      }
+    ],
+    "threads": [
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Align the project picker rows.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Aligned project names, status marks, and counters on a shared baseline.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Align the project picker rows",
+        "id": "demo-adeline-history-1"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Keep search text when changing filters.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Kept the search query in place while switching between All and Attention.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Keep search text when changing filters",
+        "id": "demo-adeline-history-2"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Review the empty document state.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Added a clear prompt to create or select a document when the list is empty.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Review the empty document state",
+        "id": "demo-adeline-history-3"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Improve keyboard navigation in the sidebar.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Ordered the sidebar controls so Tab moves from search to filters and then the list.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Improve keyboard navigation in the sidebar",
+        "id": "demo-adeline-history-4"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Remember the width of the activity panel.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Saved the resized panel width and restored it when the panel opens again.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Remember the width of the activity panel",
+        "id": "demo-adeline-history-5"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Keep long project names readable.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Truncated long names without hiding their project markers or counters.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Keep long project names readable",
+        "id": "demo-adeline-history-6"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Check the theme picker with dark palettes.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Reviewed the picker labels and color swatches against the bundled dark palettes.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Check the theme picker with dark palettes",
+        "id": "demo-adeline-history-7"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Add a clear action to chat search.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Added a clear-search action that returns focus to the search field.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Add a clear action to chat search",
+        "id": "demo-adeline-history-8"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Review document list spacing.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Aligned document titles and metadata while allowing longer names to wrap.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Review document list spacing",
+        "id": "demo-adeline-history-9"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Keep the composer visible when resizing.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Reserved space for the composer controls at narrow window widths.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Keep the composer visible when resizing",
+        "id": "demo-adeline-history-10"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Make workflow descriptions easier to scan.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Shortened the descriptions and kept their opening lines visible in each card.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Make workflow descriptions easier to scan",
+        "id": "demo-adeline-history-11"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Check notification counter alignment.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Aligned the counters above their icons without changing button widths.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Check notification counter alignment",
+        "id": "demo-adeline-history-12"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Review the service log empty state.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Added a waiting message before the first service output arrives.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Review the service log empty state",
+        "id": "demo-adeline-history-13"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Preserve scroll position after selecting a chat.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Kept the sidebar anchored while opening a conversation further down the list.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Preserve scroll position after selecting a chat",
+        "id": "demo-adeline-history-14"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Prepare the next desktop review.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Collected the recent interface changes and a short list of interaction checks.",
+            "read": true,
+            "createdAt": "2026-09-24T10:02:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:00:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Prepare the next desktop review",
+        "id": "demo-adeline-history-15"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "When I switch from a chat to a document using the keyboard, I lose track of focus. Can you make the next action obvious?",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "I traced focus through the project tabs, chat list, and document toolbar. Switching views now focuses the selected item, and every keyboard target has a visible outline.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          },
+          {
+            "role": "user",
+            "text": "Does Escape return me to the chat I came from?",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Yes. Escape closes the document menu first, then returns focus to the chat list. I checked the sequence without using a mouse.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T10:00:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Keep keyboard focus visible when moving between chats and documents",
+        "id": "adeline-focus"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Search feels slow when a conversation includes a large build log. Keep typing responsive while matching the entire history.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "I found that each keystroke rebuilds a combined text buffer. I am moving that work to the message update path and checking that matches spanning two messages still work.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T10:00:00Z",
+        "provider": "claude",
+        "status": "working",
+        "title": "Search long conversations without pausing the interface",
+        "id": "adeline-search"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please restore my workspace after I close the app. I want to pick up where I stopped.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "I can restore the selected project, open document, and panel sizes. Should unsent chat drafts also return? That choice affects what we save locally.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T10:00:00Z",
+        "provider": "codex",
+        "status": "blocked",
+        "title": "Choose what Adeline should restore when a session reopens",
+        "id": "adeline-session"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "If I tick two checklist items quickly, the second change sometimes disappears from the preview. Please check how edits are applied.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "An older parse result could replace a newer preview. Each edit now carries a revision, and the preview accepts results only for its current revision.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          },
+          {
+            "role": "user",
+            "text": "Can you cover edits that add a new paragraph too?",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Covered. Both single-line changes and paragraph insertion keep the latest content. Rapid checklist changes also preserve both ticks.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T10:00:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Make document edits safe when the preview is still updating",
+        "id": "adeline-docs"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "At a narrow window width the agent selector pushes the send button out of reach. Please simplify that row.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "The agent name now truncates before the controls shrink. The send button stays visible, and the composer grows vertically when the draft wraps.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          },
+          {
+            "role": "user",
+            "text": "Keep the model name available somewhere.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "The full agent and model names remain in the selector menu. I checked short drafts, pasted paragraphs, and a long model name.",
+            "read": true,
+            "createdAt": "2026-09-25T10:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T10:00:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Keep the composer usable in a narrow desktop window",
+        "id": "adeline-layout"
+      }
+    ],
+    "recipes": [
+      {
+        "collection": "Quality",
+        "scheduleLabel": "On demand",
+        "name": "Review a desktop change",
+        "instructions": "Walk through the changed screen using mouse and keyboard. Check focus, narrow windows, empty states, and both themes. Report concrete issues with steps to reproduce.",
+        "id": "adeline-review"
+      },
+      {
+        "collection": "Performance",
+        "scheduleLabel": "On demand",
+        "name": "Trace a slow interaction",
+        "instructions": "Reproduce the slow interaction with a large conversation. Measure where time is spent, identify repeated work, and propose the smallest change that removes it. Compare before and after.",
+        "id": "adeline-trace"
+      },
+      {
+        "collection": "Delivery",
+        "scheduleLabel": "On demand",
+        "name": "Prepare a build handoff",
+        "instructions": "Read the desktop review checklist and recent completed chats. Summarize visible changes, unresolved decisions, and the checks still needed before the next build is shared.",
+        "id": "adeline-release"
+      }
+    ]
+  }
+}

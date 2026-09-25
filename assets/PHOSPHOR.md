@@ -1,0 +1,55 @@
+# Phosphor assets
+
+Regular-weight SVGs from [Phosphor Icons](https://phosphoricons.com/).
+Application aliases retain the names used by the UI. Codex currently uses a generic
+Phosphor code symbol. Branded provider SVGs are documented separately in `LOBE.md`.
+See `PHOSPHOR-LICENSE.txt` for the original MIT license.
+
+| Asset | Phosphor source |
+| --- | --- |
+| `archive.svg` | `archive.svg` |
+| `arrow.svg` | `arrow-right.svg` |
+| `arrow-counter-clockwise.svg` | `arrow-counter-clockwise.svg` |
+| `at.svg` | `at.svg` |
+| `caret-right.svg` | `caret-right.svg` |
+| `chat.svg` | `chat-circle.svg` |
+| `chat-illustration.svg` | `chats-circle.svg` |
+| `check.svg` | `check.svg` |
+| `check-square.svg` | `check-square.svg` |
+| `chevron.svg` | `caret-down.svg` |
+| `close.svg` | `x.svg` |
+| `code.svg` | `code.svg` |
+| `codex.svg` | `code.svg` |
+| `copy.svg` | `copy.svg` |
+| `devices.svg` | `devices.svg` |
+| `file.svg` | `file-text.svg` |
+| `flag.svg` | `flag.svg` |
+| `folder.svg` | `folder.svg` |
+| `house.svg` | `house.svg` |
+| `link.svg` | `link.svg` |
+| `list-bullets.svg` | `list-bullets.svg` |
+| `list-numbers.svg` | `list-numbers.svg` |
+| `logo.svg` | `circles-four.svg` |
+| `menu.svg` | `list.svg` |
+| `minus.svg` | `minus.svg` |
+| `more.svg` | `dots-three.svg` |
+| `panel-left.svg` | `sidebar-simple.svg` |
+| `pin.svg` | `push-pin.svg` |
+| `play.svg` | `play.svg` |
+| `plus.svg` | `plus.svg` |
+| `quotes.svg` | `quotes.svg` |
+| `search.svg` | `magnifying-glass.svg` |
+| `send.svg` | `arrow-up.svg` |
+| `service.svg` | `stack.svg` |
+| `settings.svg` | `gear-six.svg` |
+| `sparkle.svg` | `sparkle.svg` |
+| `square.svg` | `square.svg` |
+| `stop.svg` | `stop.svg` |
+| `text-align-left.svg` | `text-align-left.svg` |
+| `text-b.svg` | `text-b.svg` |
+| `text-italic.svg` | `text-italic.svg` |
+| `text-strikethrough.svg` | `text-strikethrough.svg` |
+| `user.svg` | `user-circle.svg` |
+| `workflow.svg` | `flow-arrow.svg` |
+| `working.svg` | `spinner-gap.svg` |
+
