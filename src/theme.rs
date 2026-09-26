@@ -188,7 +188,8 @@ fn read(path: &Path) -> Result<ThemeFile, String> {
 }
 fn theme_path(file: &str) -> Result<std::path::PathBuf, String> {
     let path = Path::new(file);
-    if path.components().count() != 1
+    if file.contains(['/', '\\', ':'])
+        || path.components().count() != 1
         || !matches!(
             path.components().next(),
             Some(std::path::Component::Normal(_))
@@ -422,6 +423,8 @@ mod tests {
         );
         assert!(theme_path("../outside.yml").is_err());
         assert!(theme_path("C:\\outside.yml").is_err());
+        assert!(theme_path("C:outside.yml").is_err());
+        assert!(theme_path("..\\outside.yml").is_err());
         assert_eq!(parse_hex("#aBc123"), Some(0xabc123));
         assert_eq!(parse_hex("１２３"), None);
     }

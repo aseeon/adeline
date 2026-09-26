@@ -76,6 +76,8 @@ The tests verify the bundled projects and live-demo state, search/status/complet
 
 `.github/workflows/ci.yml` runs on pushes to `main`, pull requests, and manual dispatches. It follows the layout of Zed's `run_tests` workflow. First comes a style job (rustfmt, TODO check, typos). Then clippy and nextest run on Windows, macOS, and Linux, alongside a dependency job (cargo-shear, lockfile, dependency review). Release builds run last and upload an executable for each platform, and a `tests_pass` job gives branch protection a single check to require. CI copies `.cargo/ci-config.toml` so that compiler warnings fail the build.
 
+Theme selection accepts YAML filenames within the themes folder. Path separators and Windows drive prefixes are rejected on every platform.
+
 ## Source map
 
 | File | Responsibility |
