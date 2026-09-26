@@ -2,7 +2,7 @@
 
 ## Bundled themes
 
-Adeline embeds [bundled-themes](../../bundled-themes) and installs missing theme files on startup. See [theme sources](SOURCES.md) for attribution.
+Adeline embeds [bundled-themes](../../bundled-themes) and installs missing theme files on startup. Each theme file names its source in a header comment.
 
 ## Settings format
 

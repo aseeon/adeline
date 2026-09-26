@@ -1,6 +1,6 @@
 //! lightos theme. All rendering reads the UI-thread palette; changing it refreshes
 //! every GPUI window, including cached child views. YAML preferences are saved separately
-//! from workspace data. Source: docs/themes/SOURCES.md.
+//! from workspace data.
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, path::Path};
 

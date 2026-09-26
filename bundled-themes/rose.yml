@@ -1,3 +1,5 @@
+# Source: adapted from the Rosé Desktop design file. Translucent hover, selection,
+# and border colors were blended onto their backgrounds to get solid hex values.
 name: Rose
 brightness: Dark
 colors:
