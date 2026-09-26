@@ -1,4 +1,4 @@
-//! lightos theme. All rendering reads the UI-thread palette; changing it refreshes
+//! Application themes. All rendering reads the UI-thread palette; changing it refreshes
 //! every GPUI window, including cached child views. YAML preferences are saved separately
 //! from workspace data.
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ fn seed_bundled_themes(directory: &Path) -> Result<(), String> {
             Err(e) => return Err(format!("{}: {e}", path.display())),
         }
     }
-    crate::config::seed_yaml(&directory.join("lightos.yml"), &ThemeFile::builtin())
+    Ok(())
 }
 
 macro_rules! palette {
@@ -80,11 +80,18 @@ pub enum Brightness {
     #[serde(rename = "Very Dark")]
     VeryDark,
     Dark,
+    #[serde(alias = "Very Light")]
     Light,
-    #[serde(rename = "Very Light")]
-    VeryLight,
 }
 impl Brightness {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::VeryDark => "Very Dark",
+            Self::Dark => "Dark",
+            Self::Light => "Light",
+        }
+    }
+
     pub fn is_dark(&self) -> bool {
         matches!(self, Self::VeryDark | Self::Dark)
     }
@@ -98,14 +105,8 @@ pub struct ThemeFile {
 }
 impl ThemeFile {
     pub fn builtin() -> Self {
-        Self {
-            name: "lightos".into(),
-            brightness: Brightness::Light,
-            colors: ROLES
-                .iter()
-                .map(|&(key, _, color)| (key.into(), format!("#{color:06X}")))
-                .collect(),
-        }
+        serde_yaml_ng::from_str(include_str!("../bundled-themes/claude-plus.yml"))
+            .expect("valid bundled Claude Plus theme")
     }
     fn validate(&self) -> Result<BTreeMap<&'static str, u32>, String> {
         if self.name.trim().is_empty() {
@@ -130,9 +131,9 @@ impl ThemeFile {
 pub struct ThemeChoice {
     pub file: String,
     pub name: String,
+    pub brightness: Brightness,
 }
 struct State {
-    file: String,
     theme: ThemeFile,
     colors: BTreeMap<&'static str, u32>,
     load_error: Option<String>,
@@ -141,10 +142,18 @@ impl Default for State {
     fn default() -> Self {
         let theme = ThemeFile::builtin();
         Self {
-            file: "lightos.yml".into(),
             colors: theme.validate().unwrap(),
             theme,
             load_error: None,
+        }
+    }
+}
+impl State {
+    fn fallback(mut error: String) -> Self {
+        error.push_str(" Using Claude Plus until this is fixed.");
+        Self {
+            load_error: Some(error),
+            ..Self::default()
         }
     }
 }
@@ -152,17 +161,13 @@ thread_local! { static ACTIVE: RefCell<State> = RefCell::new(State::default()); 
 pub fn active_theme() -> ThemeFile {
     ACTIVE.with(|s| s.borrow().theme.clone())
 }
-pub fn active_file() -> String {
-    ACTIVE.with(|s| s.borrow().file.clone())
-}
+
 pub fn load_error() -> Option<String> {
     ACTIVE
         .with(|s| s.borrow().load_error.clone())
         .or_else(crate::config::error)
 }
-pub fn current_colors() -> BTreeMap<&'static str, u32> {
-    ACTIVE.with(|s| s.borrow().colors.clone())
-}
+
 pub fn is_dark() -> bool {
     ACTIVE.with(|s| s.borrow().theme.brightness.is_dark())
 }
@@ -218,6 +223,7 @@ fn discover_in(directory: &Path) -> Result<(Vec<ThemeChoice>, Vec<String>), Stri
             Ok(theme) => choices.push(ThemeChoice {
                 file: entry.file_name().to_string_lossy().into(),
                 name: theme.name,
+                brightness: theme.brightness,
             }),
             Err(error) => errors.push(error),
         }
@@ -233,17 +239,13 @@ pub fn init() {
         let theme = read(&theme_path(&file)?)?;
         let colors = theme.validate()?;
         Ok::<_, String>(State {
-            file,
             theme,
             colors,
             load_error: None,
         })
     })();
-    ACTIVE.with(|s| match result {
-        Ok(state) => *s.borrow_mut() = state,
-        Err(error) => {
-            s.borrow_mut().load_error = Some(format!("{error} Using lightos until this is fixed."));
-        }
+    ACTIVE.with(|s| {
+        *s.borrow_mut() = result.unwrap_or_else(State::fallback);
     });
 }
 pub fn select(file: &str, cx: &mut gpui::App) -> Result<(), String> {
@@ -252,7 +254,6 @@ pub fn select(file: &str, cx: &mut gpui::App) -> Result<(), String> {
     crate::config::update(|s| s.general.appearance.theme = file.into())?;
     ACTIVE.with(|s| {
         *s.borrow_mut() = State {
-            file: file.into(),
             theme,
             colors,
             load_error: None,
@@ -261,29 +262,7 @@ pub fn select(file: &str, cx: &mut gpui::App) -> Result<(), String> {
     cx.refresh_windows();
     Ok(())
 }
-pub fn apply_colors(theme: ThemeFile, cx: &mut gpui::App) -> Result<(), String> {
-    if let Some(error) = ACTIVE.with(|s| s.borrow().load_error.clone()) {
-        return Err(format!(
-            "Select a valid theme before saving colors. {error}"
-        ));
-    }
-    let colors = theme.validate()?;
-    let file = active_file();
-    let path = theme_path(&file)?;
-    // Do not silently overwrite a malformed file loaded with fallback colors.
-    read(&path)?;
-    crate::config::write_yaml(&path, &theme)?;
-    ACTIVE.with(|s| {
-        *s.borrow_mut() = State {
-            file,
-            theme,
-            colors,
-            load_error: None,
-        }
-    });
-    cx.refresh_windows();
-    Ok(())
-}
+
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -298,13 +277,6 @@ pub fn blend(color: u32, base: u32, amount: f32) -> u32 {
 }
 pub fn display_tint(color: u32) -> u32 {
     blend(color, card(), if is_dark() { 0.15 } else { 0.25 })
-}
-pub fn success() -> u32 {
-    if is_dark() {
-        chart_3()
-    } else {
-        blend(chart_3(), foreground(), 0.55)
-    }
 }
 pub fn project_colors() -> [u32; 5] {
     [chart_1(), chart_2(), chart_3(), chart_4(), chart_5()]
@@ -328,7 +300,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("adeline-bundled-themes-{}", std::process::id()));
         assert!(!root.exists());
-        assert_eq!(BUNDLED_THEMES.len(), 15);
+        assert_eq!(BUNDLED_THEMES.len(), 13);
         seed_bundled_themes(&root).unwrap();
         let (choices, errors) = discover_in(&root).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
@@ -401,13 +373,31 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
     #[test]
+    fn missing_theme_falls_back_to_embedded_claude_plus() {
+        let missing = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("bundled-themes")
+            .join("missing-theme-for-test.yml");
+        let state = State::fallback(read(&missing).unwrap_err());
+        assert_eq!(state.theme.name, "Claude Plus");
+        assert_eq!(state.theme.brightness, Brightness::Dark);
+        assert_eq!(state.colors, ThemeFile::builtin().validate().unwrap());
+        let error = state.load_error.unwrap();
+        assert!(error.contains("missing-theme-for-test.yml"));
+        assert!(error.contains("Using Claude Plus"));
+    }
+    #[test]
     fn theme_yaml_round_trip_and_validation() {
         let default = State::default();
-        assert_eq!(default.file, "lightos.yml");
-        assert_eq!(default.theme.name, "lightos");
-        assert_eq!(default.theme.brightness, Brightness::Light);
-        assert_eq!(default.colors["background"], 0xfcfbf7);
-        assert_eq!(crate::config::Appearance::default().theme, default.file);
+        assert_eq!(default.theme.name, "Claude Plus");
+        let legacy: Brightness = serde_yaml_ng::from_str("Very Light").unwrap();
+        assert_eq!(legacy, Brightness::Light);
+        assert_eq!(serde_yaml_ng::to_string(&legacy).unwrap().trim(), "Light");
+        assert_eq!(default.theme.brightness, Brightness::Dark);
+        assert_eq!(default.colors["background"], 0x262626);
+        assert_eq!(
+            crate::config::Appearance::default().theme,
+            "claude-plus.yml"
+        );
         {
             let theme = ThemeFile::builtin();
             let yaml = serde_yaml_ng::to_string(&theme).unwrap();

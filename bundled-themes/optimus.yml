@@ -1,0 +1,38 @@
+# Source: https://tweakcn.com/themes/cmq0utlyd000004l78zpe1sm5
+# Author: Melvern Mogens
+# Dark palette adapted to Adeline; CSS colors converted to sRGB hex.
+name: "Optimus"
+brightness: Dark
+colors:
+  background: '#0F1115'
+  foreground: '#E5E7EB'
+  card: '#15181E'
+  card_foreground: '#E5E7EB'
+  popover: '#15181E'
+  popover_foreground: '#E5E7EB'
+  primary: '#DC2626'
+  primary_foreground: '#FFFFFF'
+  secondary: '#2563EB'
+  secondary_foreground: '#FFFFFF'
+  muted: '#262B33'
+  muted_foreground: '#9CA3AF'
+  accent: '#F59E0B'
+  accent_foreground: '#0F1115'
+  destructive: '#B91C1C'
+  destructive_foreground: '#FFFFFF'
+  border: '#2D343F'
+  input: '#0F1115'
+  ring: '#DC2626'
+  chart_1: '#DC2626'
+  chart_2: '#2563EB'
+  chart_3: '#F59E0B'
+  chart_4: '#374151'
+  chart_5: '#7C3AED'
+  sidebar: '#15181E'
+  sidebar_foreground: '#E5E7EB'
+  sidebar_primary: '#DC2626'
+  sidebar_primary_foreground: '#FFFFFF'
+  sidebar_accent: '#0F1115'
+  sidebar_accent_foreground: '#F59E0B'
+  sidebar_border: '#2D343F'
+  sidebar_ring: '#DC2626'

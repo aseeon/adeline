@@ -723,8 +723,8 @@ impl Render for TextInput {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .bg(rgba(crate::theme::background() << 8))
-            .line_height(px(24.))
-            .text_size(px(14.))
+            .line_height(crate::config::text_pixels(24.))
+            .text_size(crate::config::text_pixels(14.))
             .child(
                 div()
                     .h(px(32.))

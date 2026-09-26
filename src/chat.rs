@@ -7,6 +7,7 @@ use std::sync::Arc;
 pub(super) struct ChatList {
     owner: WeakEntity<Adeline>,
     state: ListState,
+    typography: config::Typography,
     scrollbar: scrollbar::Scrollbar,
     visible: Arc<[usize]>,
     keys: Vec<Arc<str>>,
@@ -30,6 +31,7 @@ impl ChatList {
             owner,
             scrollbar: scrollbar::Scrollbar::list(state.clone()),
             state,
+            typography: config::typography(),
             visible: Arc::from([]),
             keys: Vec::new(),
             records: Default::default(),
@@ -228,6 +230,14 @@ impl ChatList {
 
 impl Render for ChatList {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let typography = config::typography();
+        if self.typography != typography {
+            self.typography = typography;
+            let top = self.state.logical_scroll_top();
+            let count = self.state.item_count();
+            self.state.splice(0..count, count);
+            self.state.scroll_to(top);
+        }
         ui_metrics::record(ui_metrics::Region::Sidebar);
         let owner = self.owner.clone();
         let visible = self.visible.clone();
@@ -272,6 +282,7 @@ impl Render for ChatList {
 pub(super) struct Transcript {
     owner: WeakEntity<Adeline>,
     state: ListState,
+    typography: config::Typography,
     scrollbar: scrollbar::Scrollbar,
     thread: Option<(usize, String)>,
     selected: Option<usize>,
@@ -286,6 +297,7 @@ impl Transcript {
             owner,
             scrollbar: scrollbar::Scrollbar::list(state.clone()),
             state,
+            typography: config::typography(),
             thread: None,
             selected: None,
             messages: 0,
@@ -341,11 +353,19 @@ impl Transcript {
 
 impl Render for Transcript {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let typography = config::typography();
+        if self.typography != typography {
+            self.typography = typography;
+            let top = self.state.logical_scroll_top();
+            let count = self.state.item_count();
+            self.state.splice(0..count, count);
+            self.state.scroll_to(top);
+        }
         ui_metrics::record(ui_metrics::Region::Transcript);
         let Some(selected) = self.selected else {
             return self
                 .owner
-                .update(cx, |app, cx| app.welcome(cx).size_full().into_any_element())
+                .update(cx, |app, _cx| app.welcome().size_full().into_any_element())
                 .unwrap_or_else(|_| div().into_any_element());
         };
         let owner = self.owner.clone();
@@ -361,7 +381,7 @@ impl Render for Transcript {
                         col()
                             .w_full()
                             .track_focus(&footer_focus)
-                            .px_6()
+                            .px(relative(0.075))
                             .child(app.decision_row(selected, cx))
                             .into_any_element()
                     }

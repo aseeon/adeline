@@ -12,11 +12,22 @@ const SUBGROUPS: [&[&str]; 3] = [
         "Issues",
         "Whiteboard",
     ],
-    &["Phosphor Icons", "Lobe Icons · Mono", "GPUI"],
+    &[
+        "Phosphor Icons",
+        "Lobe Icons · Mono",
+        "GPUI",
+        "Chivo & Chivo Mono",
+    ],
 ];
-const THEME: [(&str, &str); 2] = [
-    ("Appearance", "lightos colors customize reset"),
-    ("Interface font", "System font"),
+const THEME: [(&str, &str); 5] = [
+    ("Theme", "Claude Plus lightos colors appearance dropdown"),
+    ("Interface font size", "text size smaller larger pixels"),
+    ("Code font", "installed system fonts Chivo Mono dropdown"),
+    ("Code font size", "code text size smaller larger pixels"),
+    (
+        "Interface font",
+        "installed system fonts Chivo Mono dropdown",
+    ),
 ];
 const KEYMAP: [(&str, &str); 7] = [
     ("Open settings", "Ctrl/Cmd+,"),
@@ -56,6 +67,12 @@ const MODES: [(Section, &str); 7] = [
     (Section::Whiteboard, "Whiteboard"),
 ];
 type SettingOption = (&'static str, &'static str, bool, Action);
+const MACHINE_SELECTOR: [&str; 4] = [
+    "General",
+    "Features",
+    "Machine selector",
+    "Show the machine selector in the top bar.",
+];
 
 impl Adeline {
     pub(super) fn mode_options(&self, section: Section) -> Vec<SettingOption> {
@@ -194,11 +211,32 @@ fn open_at(owner: WindowHandle<Adeline>, mode: Option<Section>, cx: &mut Context
     });
 }
 
+fn selected_font_size(which: usize) -> u16 {
+    if which == 0 {
+        config::font_size()
+    } else {
+        config::code_font_size()
+    }
+}
+
+fn font_label(which: usize) -> &'static str {
+    if which == 0 {
+        "Interface font"
+    } else {
+        "Code font"
+    }
+}
+
 struct SettingsWindow {
     owner: WindowHandle<Adeline>,
     query: Entity<TextInput>,
-    color_inputs: Vec<Entity<TextInput>>,
-    font_input: Entity<TextInput>,
+    font_query: Entity<TextInput>,
+    font_size_inputs: [Entity<TextInput>; 2],
+    font_size_errors: [Option<String>; 2],
+    font_dropdown: Option<usize>,
+    font_trigger_bounds: [std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>; 2],
+    font_choices: Vec<String>,
+    font_list_scroll: scrollbar::PanelScroll,
     theme_status: Option<String>,
     theme_dropdown: bool,
     theme_trigger_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
@@ -214,44 +252,271 @@ struct SettingsWindow {
     _subscriptions: Vec<Subscription>,
 }
 impl SettingsWindow {
-    fn refresh_colors(&mut self, cx: &mut Context<Self>) {
-        let colors = theme::current_colors();
-        for (i, &(key, _, _)) in theme::ROLES.iter().enumerate() {
-            self.color_inputs[i].update(cx, |input, cx| {
-                input.set(format!("#{:06X}", colors[key]), cx);
-            });
-        }
-    }
-    fn change_theme(&mut self, reload: bool, cx: &mut Context<Self>) {
-        let result = if reload {
-            theme::select(&theme::active_file(), cx)
+    fn save_font_size(&mut self, which: usize, size: u16, cx: &mut Context<Self>) {
+        if !(config::MIN_FONT_SIZE..=config::MAX_FONT_SIZE).contains(&size) {
+            self.font_size_errors[which] = Some("Enter a whole number from 10 to 24.".into());
+        } else if size == selected_font_size(which) {
+            self.font_size_errors[which] = None;
         } else {
-            let mut selected = theme::active_theme();
-            for (i, &(key, _, _)) in theme::ROLES.iter().enumerate() {
-                selected.colors.insert(
-                    key.into(),
-                    self.color_inputs[i].read(cx).content.to_string(),
-                );
+            match config::update(|s| {
+                if which == 0 {
+                    s.general.appearance.font_size = size;
+                } else {
+                    s.general.appearance.code_font_size = size;
+                }
+            }) {
+                Ok(()) => {
+                    self.font_size_errors[which] = None;
+                    cx.refresh_windows();
+                }
+                Err(error) => self.font_size_errors[which] = Some(error),
             }
-            theme::apply_colors(selected, cx)
-        };
-        match result {
-            Ok(()) => {
-                self.refresh_colors(cx);
-                self.theme_status = Some(
-                    if reload {
-                        "Saved colors reloaded."
+        }
+        cx.notify();
+    }
+
+    fn font_size_picker(&self, which: usize, cx: &Context<Self>) -> Div {
+        let button = |id, label, increase| {
+            row()
+                .id((id, which))
+                .focusable()
+                .tab_stop(true)
+                .cursor_pointer()
+                .justify_center()
+                .w(px(36.))
+                .py_2()
+                .rounded(px(3.))
+                .bg(rgb(theme::secondary()))
+                .border_1()
+                .border_color(rgb(theme::border()))
+                .focus(|s| s.border_color(rgb(theme::ring())))
+                .child(text(label, 16., theme::secondary_foreground()))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let size = if increase {
+                        selected_font_size(which) + 1
                     } else {
-                        "Theme file saved. Changes apply to all windows."
+                        selected_font_size(which) - 1
                     }
-                    .into(),
-                );
+                    .clamp(config::MIN_FONT_SIZE, config::MAX_FONT_SIZE);
+                    this.save_font_size(which, size, cx);
+                    let saved = selected_font_size(which);
+                    this.font_size_inputs[which]
+                        .update(cx, |input, cx| input.set(saved.to_string(), cx));
+                }))
+        };
+        col()
+            .gap_2()
+            .child(text(
+                if which == 0 {
+                    "Interface font size"
+                } else {
+                    "Code font size"
+                },
+                13.,
+                theme::foreground(),
+            ))
+            .child(
+                row()
+                    .gap_2()
+                    .child(button("decrease-font-size", "−", false))
+                    .child(
+                        div()
+                            .w(px(64.))
+                            .px_2()
+                            .py_2()
+                            .bg(rgb(theme::input()))
+                            .border_1()
+                            .border_color(rgb(theme::border()))
+                            .rounded(px(3.))
+                            .child(self.font_size_inputs[which].clone()),
+                    )
+                    .child(button("increase-font-size", "+", true))
+                    .child(text("px", 12., theme::muted_foreground())),
+            )
+            .when_some(self.font_size_errors[which].clone(), |d, error| {
+                d.child(text(error, 12., theme::destructive()))
+            })
+    }
+
+    fn choose_font(
+        &mut self,
+        which: usize,
+        family: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match config::update(|s| {
+            if which == 0 {
+                s.general.appearance.interface_font = family.into();
+            } else {
+                s.general.appearance.code_font = family.into();
+            }
+        }) {
+            Ok(()) => {
+                self.font_dropdown = None;
+                self.theme_status = Some(format!("{} saved.", font_label(which)));
+                window.focus(&self.focus);
+                cx.refresh_windows();
             }
             Err(error) => self.theme_status = Some(error),
         }
         cx.notify();
     }
-    fn theme_editor(&self, cx: &Context<Self>) -> Div {
+
+    fn font_picker(&self, which: usize, cx: &Context<Self>) -> Div {
+        let selected = if which == 0 {
+            config::font()
+        } else {
+            config::code_font()
+        };
+        let bounds = self.font_trigger_bounds[which].clone();
+        let label = if matches!(selected.as_str(), fonts::DEFAULT | fonts::CODE_DEFAULT) {
+            format!("{selected} (built in)")
+        } else {
+            selected.clone()
+        };
+        let mut picker = col().relative().w_full().child(
+            row()
+                .id(("font-dropdown", which))
+                .relative()
+                .focusable()
+                .tab_stop(true)
+                .cursor_pointer()
+                .px_3()
+                .py_2()
+                .gap_3()
+                .rounded(px(3.))
+                .border_1()
+                .border_color(rgb(theme::border()))
+                .bg(rgb(theme::secondary()))
+                .focus(|s| s.border_color(rgb(theme::ring())))
+                .child(text(label, 13., theme::secondary_foreground()).flex_1())
+                .child(icon("chevron"))
+                .child(
+                    canvas(move |area, _, _| bounds.set(area), |_, (), _, _| {})
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full(),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.theme_dropdown = false;
+                    this.font_dropdown = if this.font_dropdown == Some(which) {
+                        None
+                    } else {
+                        Some(which)
+                    };
+                    if this.font_dropdown.is_some() {
+                        fonts::refresh(cx);
+                        this.font_choices = fonts::families();
+                        this.font_query.update(cx, |input, cx| input.set("", cx));
+                        this.font_list_scroll
+                            .handle
+                            .set_offset(point(px(0.), px(0.)));
+                        window.focus(&this.font_query.read(cx).focus_handle(cx));
+                    }
+                    cx.notify();
+                })),
+        );
+        if self.font_dropdown == Some(which) {
+            let query = self.font_query.read(cx).content.to_lowercase();
+            let mut options = col();
+            let mut count = 0;
+            for (i, family) in self.font_choices.iter().enumerate() {
+                if !family.to_lowercase().contains(query.trim()) {
+                    continue;
+                }
+                count += 1;
+                let family = family.clone();
+                let label = if matches!(family.as_str(), fonts::DEFAULT | fonts::CODE_DEFAULT) {
+                    format!("{family} (built in)")
+                } else {
+                    family.clone()
+                };
+                options = options.child(
+                    row()
+                        .id(("interface-font-option", i))
+                        .focusable()
+                        .tab_stop(true)
+                        .cursor_pointer()
+                        .px_3()
+                        .py_2()
+                        .rounded(px(3.))
+                        .when(family == selected, |d| d.bg(rgb(theme::secondary())))
+                        .hover(|s| s.bg(rgb(theme::secondary())))
+                        .focus(|s| s.border_1().border_color(rgb(theme::ring())))
+                        .child(text(label, 13., theme::foreground()))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.choose_font(which, &family, window, cx);
+                        })),
+                );
+            }
+            if count == 0 {
+                options =
+                    options.child(text("No matching fonts.", 13., theme::muted_foreground()).p_3());
+            }
+            picker = picker.child(
+                deferred(
+                    anchored()
+                        .position(self.font_trigger_bounds[which].get().bottom_left())
+                        .snap_to_window()
+                        .child(
+                            menu_surface()
+                                .id("interface-font-popup")
+                                .w(self.font_trigger_bounds[which].get().size.width)
+                                .on_mouse_down_out(cx.listener(
+                                    move |this, event: &MouseDownEvent, _, cx| {
+                                        if !this.font_trigger_bounds[which]
+                                            .get()
+                                            .contains(&event.position)
+                                        {
+                                            this.font_dropdown = None;
+                                            cx.notify();
+                                        }
+                                    },
+                                ))
+                                .child(
+                                    col()
+                                        .gap_2()
+                                        .child(
+                                            div()
+                                                .p_2()
+                                                .bg(rgb(theme::input()))
+                                                .child(self.font_query.clone()),
+                                        )
+                                        .child(
+                                            div()
+                                                .h(px((count.max(1) as f32 * 38.).min(230.)))
+                                                .child(
+                                                    self.font_list_scroll
+                                                        .wrap("interface-font-options", options),
+                                                ),
+                                        ),
+                                ),
+                        ),
+                )
+                .with_priority(2),
+            );
+        }
+        col()
+            .gap_2()
+            .child(text(font_label(which), 13., theme::foreground()))
+            .child(picker)
+            .child(text(
+                format!(
+                    "{} is built in and is used if your selected font is unavailable.",
+                    if which == 0 {
+                        fonts::DEFAULT
+                    } else {
+                        fonts::CODE_DEFAULT
+                    }
+                ),
+                12.,
+                theme::muted_foreground(),
+            ))
+    }
+
+    fn appearance_settings(&self, cx: &Context<Self>) -> Div {
         let trigger_bounds = self.theme_trigger_bounds.clone();
         let mut modes = col().relative().child(
             row()
@@ -285,6 +550,7 @@ impl SettingsWindow {
                     .size_full(),
                 )
                 .on_click(cx.listener(|this, _, _, cx| {
+                    this.font_dropdown = None;
                     this.theme_dropdown = !this.theme_dropdown;
                     if this.theme_dropdown {
                         match theme::discover() {
@@ -314,15 +580,25 @@ impl SettingsWindow {
                         .bg(rgb(theme::sidebar()))
                         .hover(|s| s.bg(rgb(theme::secondary())))
                         .focus(|s| s.border_1().border_color(rgb(theme::ring())))
-                        .child(text(
-                            format!("{} · {}", choice.name, choice.file),
-                            13.,
-                            theme::sidebar_foreground(),
-                        ))
+                        .child(text(choice.name.clone(), 13., theme::sidebar_foreground()))
+                        .child(
+                            div()
+                                .ml_3()
+                                .px_2()
+                                .py(px(2.))
+                                .rounded_full()
+                                .border_1()
+                                .border_color(rgb(theme::border()))
+                                .bg(rgb(theme::muted()))
+                                .child(text(
+                                    choice.brightness.label(),
+                                    11.,
+                                    theme::muted_foreground(),
+                                )),
+                        )
                         .on_click(cx.listener(move |this, _, _, cx| {
                             match theme::select(&file, cx) {
                                 Ok(()) => {
-                                    this.refresh_colors(cx);
                                     this.theme_dropdown = false;
                                     this.theme_status = Some("Theme selected and saved.".into());
                                 }
@@ -362,114 +638,30 @@ impl SettingsWindow {
                 .with_priority(1),
             );
         }
-        let mut editor = col().w_full().gap_3().mt_4()
+        col()
+            .w_full()
+            .gap_3()
+            .mt_4()
             .child(text("Appearance", 18., theme::foreground()))
-            .child(modes).child(row().child(badge("Accent preview", theme::accent(), theme::accent_foreground())))
-            .child(text("Edit colors below, then Apply colors. Apply saves to the selected YAML file. Selecting another theme discards unapplied edits.", 12., theme::muted_foreground()))
-            .child(row().gap_3()
-                .child(row().id("apply-theme").focusable().tab_stop(true).cursor_pointer().px_4().py_2().rounded(px(8.))
-                    .bg(rgb(theme::primary())).border_1().border_color(rgb(theme::primary()))
-                    .focus(|s| s.border_color(rgb(theme::foreground())))
-                    .child(text("Apply colors", 13., theme::primary_foreground()))
-                    .on_click(cx.listener(|this, _, _, cx| this.change_theme(false, cx))))
-                .child(row().id("reset-theme").focusable().tab_stop(true).cursor_pointer().px_4().py_2().rounded(px(8.))
-                    .bg(rgb(theme::secondary())).border_1().border_color(rgb(theme::border()))
-                    .focus(|s| s.border_color(rgb(theme::ring())))
-                    .child(text("Reload saved colors", 13., theme::secondary_foreground()))
-                    .on_click(cx.listener(|this, _, _, cx| this.change_theme(true, cx)))))
-            .when_some(self.theme_status.clone(), |d, status| d.child(text(status, 12., theme::foreground())))
-            .child(text("Themes are loaded from ~/.config/adeline/themes.", 12., theme::muted_foreground()));
-        editor = editor
             .child(
-                row()
-                    .gap_3()
-                    .child(text("Interface font", 13., theme::foreground()))
-                    .child(
-                        div()
-                            .w(px(180.))
-                            .p_2()
-                            .bg(rgb(theme::input()))
-                            .rounded(px(3.))
-                            .child(self.font_input.clone()),
-                    )
-                    .child(
-                        row()
-                            .id("save-interface-font")
-                            .focusable()
-                            .tab_stop(true)
-                            .cursor_pointer()
-                            .px_3()
-                            .py_2()
-                            .bg(rgb(theme::secondary()))
-                            .rounded(px(3.))
-                            .focus(|s| s.border_1().border_color(rgb(theme::ring())))
-                            .child(text("Save font", 13., theme::secondary_foreground()))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                let font = this.font_input.read(cx).content.trim().to_string();
-                                if font.is_empty() {
-                                    this.theme_status =
-                                        Some("Enter System or a font family name.".into());
-                                } else {
-                                    match config::update(|s| {
-                                        s.general.appearance.interface_font = font;
-                                    }) {
-                                        Ok(()) => {
-                                            this.theme_status =
-                                                Some("Interface font saved.".into());
-                                            cx.refresh_windows();
-                                        }
-                                        Err(error) => this.theme_status = Some(error),
-                                    }
-                                }
-                                cx.notify();
-                            })),
-                    ),
+                col()
+                    .gap_2()
+                    .child(text("Theme", 13., theme::foreground()))
+                    .child(modes),
             )
+            .when_some(self.theme_status.clone(), |d, status| {
+                d.child(text(status, 12., theme::foreground()))
+            })
             .child(text(
-                "Use System for the default font.",
+                "Themes are loaded from ~/.config/adeline/themes.",
                 12.,
                 theme::muted_foreground(),
-            ));
-        for (i, &(_, label, _)) in theme::ROLES.iter().enumerate() {
-            let value = self.color_inputs[i].read(cx).content.as_ref();
-            let preview = theme::parse_hex(value);
-            editor = editor.child(
-                row()
-                    .w_full()
-                    .gap_3()
-                    .py_2()
-                    .border_b_1()
-                    .border_color(rgb(theme::border()))
-                    .child(
-                        div()
-                            .size(px(24.))
-                            .flex_shrink_0()
-                            .rounded(px(3.))
-                            .border_1()
-                            .border_color(rgb(theme::border()))
-                            .bg(rgb(preview.unwrap_or(theme::background()))),
-                    )
-                    .child(text(label, 13., theme::foreground()).flex_1())
-                    .child(
-                        div()
-                            .w(px(125.))
-                            .flex_shrink_0()
-                            .bg(rgb(theme::card()))
-                            .text_color(rgb(theme::card_foreground()))
-                            .border_1()
-                            .border_color(rgb(if preview.is_some() {
-                                theme::input()
-                            } else {
-                                theme::destructive()
-                            }))
-                            .rounded(px(3.))
-                            .child(self.color_inputs[i].clone()),
-                    ),
-            );
-        }
-        editor
+            ))
+            .child(self.font_picker(0, cx))
+            .child(self.font_size_picker(0, cx))
+            .child(self.font_picker(1, cx))
+            .child(self.font_size_picker(1, cx))
     }
-
     fn select_mode(&mut self, mode: Section, cx: &mut Context<Self>) {
         self.group = 1;
         self.subgroup = Some(mode as usize);
@@ -487,42 +679,58 @@ impl SettingsWindow {
     ) -> Self {
         let query = cx.new(|cx| TextInput::search("Search settings...", cx));
         let focus = cx.focus_handle();
-        let font_input = cx.new(|cx| {
-            let mut input = TextInput::new("System", cx);
-            input.set(config::current().general.appearance.interface_font, cx);
-            input
+        fonts::refresh(cx);
+        let font_query = cx.new(|cx| TextInput::search("Search fonts...", cx));
+        let font_size_inputs = std::array::from_fn(|which| {
+            cx.new(|cx| {
+                let mut input = TextInput::new("14", cx);
+                input.set(selected_font_size(which).to_string(), cx);
+                input
+            })
         });
         window.focus(&focus);
-        let mut subscriptions = vec![
+        let mut subscriptions = Vec::new();
+        for (which, size_input) in font_size_inputs.iter().enumerate() {
+            subscriptions.push(cx.subscribe(
+                size_input,
+                move |this, input, _: &input::ContentChanged, cx| {
+                    if let Ok(size) = input.read(cx).content.trim().parse::<u16>() {
+                        this.save_font_size(which, size, cx);
+                    } else {
+                        this.font_size_errors[which] =
+                            Some("Enter a whole number from 10 to 24.".into());
+                        cx.notify();
+                    }
+                },
+            ));
+        }
+        subscriptions.extend([
             cx.subscribe(&query, |this, _, _: &input::ContentChanged, cx| {
                 this.search_page = None;
                 this.nav_scroll.handle.set_offset(point(px(0.), px(0.)));
                 this.scroll.handle.set_offset(point(px(0.), px(0.)));
                 cx.notify();
             }),
+            cx.subscribe(&font_query, |this, _, _: &input::ContentChanged, cx| {
+                this.font_list_scroll
+                    .handle
+                    .set_offset(point(px(0.), px(0.)));
+                cx.notify();
+            }),
             cx.observe(entity, |_, _, cx| cx.notify()),
             cx.observe_window_bounds(window, |_, _, cx| cx.notify()),
             cx.observe_window_activation(window, |_, _, cx| cx.notify()),
-        ];
-        let colors = theme::current_colors();
-        let color_inputs = theme::ROLES
-            .iter()
-            .map(|&(key, _, _)| {
-                let input = cx.new(|cx| {
-                    let mut input = TextInput::new("#RRGGBB", cx);
-                    input.set(format!("#{:06X}", colors[key]), cx);
-                    input
-                });
-                subscriptions
-                    .push(cx.subscribe(&input, |_, _, _: &input::ContentChanged, cx| cx.notify()));
-                input
-            })
-            .collect();
+        ]);
         Self {
             owner,
             query,
-            color_inputs,
-            font_input,
+            font_query,
+            font_size_inputs,
+            font_size_errors: [None, None],
+            font_dropdown: None,
+            font_trigger_bounds: Default::default(),
+            font_choices: fonts::families(),
+            font_list_scroll: Default::default(),
             theme_status: theme::load_error(),
             theme_dropdown: false,
             theme_trigger_bounds: Default::default(),
@@ -568,7 +776,10 @@ impl SettingsWindow {
                     .min_w_0()
                     .gap_2()
                     .child(text(label, 14., theme::foreground()))
-                    .child(text(description, 12., theme::muted_foreground()).line_height(px(19.))),
+                    .child(
+                        text(description, 12., theme::muted_foreground())
+                            .line_height(config::text_pixels(19.)),
+                    ),
             )
             .child(
                 div()
@@ -606,25 +817,24 @@ impl SettingsWindow {
 }
 fn general_matches(child: usize, query: &str) -> bool {
     match child {
-        0 => MODES.iter().any(|(_, name)| {
-            matches_query(
-                query,
-                &[
-                    "General",
-                    "Features",
-                    name,
-                    "Enable mode in the main view",
-                    "Chats is always enabled and cannot be disabled",
-                ],
-            )
-        }),
-        1 => {
-            THEME.iter().any(|(label, value)| {
-                matches_query(query, &["General", "Appearance", label, value])
-            }) || theme::ROLES.iter().any(|(_, label, _)| {
-                matches_query(query, &["General", "Appearance", "color", label])
-            })
+        0 => {
+            matches_query(query, &MACHINE_SELECTOR)
+                || MODES.iter().any(|(_, name)| {
+                    matches_query(
+                        query,
+                        &[
+                            "General",
+                            "Features",
+                            name,
+                            "Enable mode in the main view",
+                            "Chats is always enabled and cannot be disabled",
+                        ],
+                    )
+                })
         }
+        1 => THEME
+            .iter()
+            .any(|(label, value)| matches_query(query, &["General", "Appearance", label, value])),
         2 => KEYMAP
             .iter()
             .any(|(label, value)| matches_query(query, &["General", "Keymap", label, value])),
@@ -790,10 +1000,22 @@ impl Render for SettingsWindow {
                     content = content.child(text("Features", 16., theme::foreground()).mt_4());
                 }
                 content = content.child(text(
-                        "Choose which modes are available in the main view. Chats is always enabled and cannot be disabled.",
+                        "Choose which features are available in the main view. Chats is always enabled and cannot be disabled.",
                         12., theme::muted_foreground(),
                     ));
                 let features = config::current().general.features;
+                if matches_query(&query, &MACHINE_SELECTOR) {
+                    content = content.child(self.setting_row(
+                        0,
+                        (
+                            MACHINE_SELECTOR[2],
+                            MACHINE_SELECTOR[3],
+                            features.machine_selector,
+                            Action::ToggleMachineSelector,
+                        ),
+                        cx,
+                    ));
+                }
                 for (index, (section, name)) in MODES.into_iter().enumerate().skip(1) {
                     if matches_query(
                         &query,
@@ -814,7 +1036,7 @@ impl Render for SettingsWindow {
             }
             if show_page(0, 1) && general_matches(1, &query) {
                 found = true;
-                content = content.child(self.theme_editor(cx));
+                content = content.child(self.appearance_settings(cx));
             }
             let keymap = keymap_rows();
             for (index, name, rows) in [(2, "Keymap", keymap.as_slice())] {
@@ -892,7 +1114,12 @@ impl Render for SettingsWindow {
                 (
                     "GPUI",
                     "Native interface toolkit and adapted text input · Apache-2.0 · Zed Industries",
-                    include_str!("../LICENSE"),
+                    include_str!("../assets/GPUI-LICENSE.txt"),
+                ),
+                (
+                    "Chivo & Chivo Mono",
+                    "Bundled interface and code fonts · SIL Open Font License 1.1",
+                    fonts::LICENSE,
                 ),
             ]
             .into_iter()
@@ -910,7 +1137,7 @@ impl Render for SettingsWindow {
                         .child(text(description, 12., theme::muted_foreground()))
                         .child(
                             text(license, 12., theme::foreground())
-                                .line_height(px(20.))
+                                .line_height(config::text_pixels(20.))
                                 .p_4()
                                 .bg(rgb(theme::muted()))
                                 .rounded(px(3.)),
@@ -955,7 +1182,11 @@ impl Render for SettingsWindow {
             .items_start()
             .track_focus(&self.focus)
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
-                if this.theme_dropdown {
+                if this.font_dropdown.is_some() {
+                    this.font_dropdown = None;
+                    window.focus(&this.focus);
+                    cx.notify();
+                } else if this.theme_dropdown {
                     this.theme_dropdown = false;
                     cx.notify();
                 } else {
@@ -982,6 +1213,8 @@ mod tests {
     #[test]
     fn navigation_matches_setting_descriptions_and_omits_unrelated_subgroups() {
         assert!(general_matches(0, "whiteboard"));
+        assert!(general_matches(0, "machine selector"));
+        assert!(general_matches(0, "top bar"));
         assert!(!general_matches(1, "model"));
         assert!(!general_matches(2, "model"));
         assert!(general_matches(2, "focus search"));

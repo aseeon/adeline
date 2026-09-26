@@ -1,0 +1,38 @@
+# Source: https://tweakcn.com/themes/cmmjgn9pc000404lg7c2q0fl6
+# Author: Anton Grouchtchak
+# Dark palette adapted to Adeline; CSS colors converted to sRGB hex.
+name: "Chalk"
+brightness: Dark
+colors:
+  background: '#141D2B'
+  foreground: '#E5ECF1'
+  card: '#1A2533'
+  card_foreground: '#E5ECF1'
+  popover: '#202C3C'
+  popover_foreground: '#E5ECF1'
+  primary: '#D7DFE5'
+  primary_foreground: '#182230'
+  secondary: '#243040'
+  secondary_foreground: '#E5ECF1'
+  muted: '#232D3C'
+  muted_foreground: '#8794A1'
+  accent: '#2B3A4D'
+  accent_foreground: '#E5ECF1'
+  destructive: '#FF6467'
+  destructive_foreground: '#FAFAFA'
+  border: '#2B3646'
+  input: '#273444'
+  ring: '#6E7C8C'
+  chart_1: '#91C5FF'
+  chart_2: '#3A81F6'
+  chart_3: '#2563EF'
+  chart_4: '#1A4EDA'
+  chart_5: '#1F3FAD'
+  sidebar: '#17212F'
+  sidebar_foreground: '#E5ECF1'
+  sidebar_primary: '#1048E6'
+  sidebar_primary_foreground: '#FAFAFA'
+  sidebar_accent: '#243040'
+  sidebar_accent_foreground: '#E5ECF1'
+  sidebar_border: '#25303E'
+  sidebar_ring: '#6E7C8C'

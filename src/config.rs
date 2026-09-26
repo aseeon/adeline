@@ -24,6 +24,7 @@ pub struct Features {
     // Accept old settings files; picker selections now always close the popup.
     #[serde(skip_serializing)]
     pub close_picker_after_selection: bool,
+    pub machine_selector: bool,
     pub docs: bool,
     pub workflows: bool,
     pub services: bool,
@@ -35,12 +36,13 @@ impl Default for Features {
     fn default() -> Self {
         Self {
             close_picker_after_selection: true,
-            docs: true,
-            workflows: true,
-            services: true,
+            machine_selector: false,
+            docs: false,
+            workflows: false,
+            services: false,
             groupchats: true,
-            issues: true,
-            whiteboard: true,
+            issues: false,
+            whiteboard: false,
         }
     }
 }
@@ -76,12 +78,18 @@ impl Features {
 pub struct Appearance {
     pub theme: String,
     pub interface_font: String,
+    pub font_size: u16,
+    pub code_font: String,
+    pub code_font_size: u16,
 }
 impl Default for Appearance {
     fn default() -> Self {
         Self {
-            theme: "lightos.yml".into(),
-            interface_font: "System".into(),
+            theme: "claude-plus.yml".into(),
+            interface_font: crate::fonts::DEFAULT.into(),
+            font_size: 14,
+            code_font: crate::fonts::CODE_DEFAULT.into(),
+            code_font_size: 14,
         }
     }
 }
@@ -211,17 +219,66 @@ pub fn error() -> Option<String> {
     ACTIVE.with(|s| s.borrow().error.clone())
 }
 pub fn font() -> String {
-    let value = current().general.appearance.interface_font;
-    if value == "System" {
-        if cfg!(windows) {
-            "Segoe UI"
-        } else {
-            ".SystemUIFont"
-        }
-        .into()
-    } else {
-        value
+    crate::fonts::resolve(
+        &current().general.appearance.interface_font,
+        crate::fonts::DEFAULT,
+    )
+}
+pub fn code_font() -> String {
+    crate::fonts::resolve(
+        &current().general.appearance.code_font,
+        crate::fonts::CODE_DEFAULT,
+    )
+}
+
+pub fn code_font_size() -> u16 {
+    ACTIVE.with(|s| {
+        s.borrow()
+            .settings
+            .general
+            .appearance
+            .code_font_size
+            .clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+    })
+}
+
+pub fn code_text_pixels(base: f32) -> gpui::Pixels {
+    gpui::px(base * f32::from(code_font_size()) / 14.)
+}
+
+/// Virtual rows must be measured again when either font family or size changes.
+#[derive(PartialEq)]
+pub struct Typography {
+    interface: String,
+    interface_size: u16,
+    code: String,
+    code_size: u16,
+}
+
+pub fn typography() -> Typography {
+    Typography {
+        interface: font(),
+        interface_size: font_size(),
+        code: code_font(),
+        code_size: code_font_size(),
     }
+}
+pub const MIN_FONT_SIZE: u16 = 10;
+pub const MAX_FONT_SIZE: u16 = 24;
+
+pub fn font_size() -> u16 {
+    ACTIVE.with(|s| {
+        s.borrow()
+            .settings
+            .general
+            .appearance
+            .font_size
+            .clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
+    })
+}
+
+pub fn text_pixels(base: f32) -> gpui::Pixels {
+    gpui::px(base * f32::from(font_size()) / 14.)
 }
 pub fn bind_keys(cx: &mut gpui::App) {
     use super::*;
@@ -394,7 +451,60 @@ impl super::Adeline {
 mod tests {
     use super::*;
     #[test]
-    fn legacy_features_load_and_disabled_modes_persist() {
+    fn interface_and_code_preferences_are_independent_and_backward_compatible() {
+        let defaults: Appearance = serde_yaml_ng::from_str("{}").unwrap();
+        assert_eq!(defaults.interface_font, "Chivo");
+        assert_eq!(defaults.code_font, "Chivo Mono");
+        assert_eq!(defaults.code_font_size, 14);
+        let legacy: Appearance =
+            serde_yaml_ng::from_str("interface_font: Arial\nfont_size: 18").unwrap();
+        assert_eq!(legacy.interface_font, "Arial");
+        assert_eq!(legacy.font_size, 18);
+        assert_eq!(legacy.code_font, "Chivo Mono");
+        assert_eq!(legacy.code_font_size, 14);
+        let original = current();
+        ACTIVE.with(|state| {
+            let mut state = state.borrow_mut();
+            state.settings.general.appearance = legacy;
+            state.settings.general.appearance.code_font = "Missing code family".into();
+            state.settings.general.appearance.interface_font = "Missing interface family".into();
+        });
+        assert_eq!(font(), "Chivo");
+        assert_eq!(code_font(), "Chivo Mono");
+        for (requested, expected) in [(0, 10), (14, 14), (20, 20), (65535, 24)] {
+            ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.code_font_size = requested);
+            assert_eq!(font_size(), 18);
+            assert_eq!(code_font_size(), expected);
+            assert_eq!(code_text_pixels(14.), gpui::px(f32::from(expected)));
+        }
+        let settings = current();
+        assert_eq!(
+            serde_yaml_ng::from_str::<Settings>(&serde_yaml_ng::to_string(&settings).unwrap())
+                .unwrap(),
+            settings
+        );
+        ACTIVE.with(|s| s.borrow_mut().settings = original);
+    }
+
+    #[test]
+    fn font_size_defaults_round_trips_and_bounds_rendering() {
+        let mut appearance: Appearance = serde_yaml_ng::from_str("theme: custom.yml").unwrap();
+        assert_eq!(appearance.font_size, 14);
+        appearance.font_size = 18;
+        let restored: Appearance =
+            serde_yaml_ng::from_str(&serde_yaml_ng::to_string(&appearance).unwrap()).unwrap();
+        assert_eq!(restored.font_size, 18);
+        let original = current();
+        for (requested, expected) in [(0, 10), (14, 14), (18, 18), (65535, 24)] {
+            ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.font_size = requested);
+            assert_eq!(font_size(), expected);
+            assert_eq!(text_pixels(14.), gpui::px(f32::from(expected)));
+            assert_eq!(text_pixels(21.), gpui::px(f32::from(expected) * 1.5));
+        }
+        ACTIVE.with(|s| s.borrow_mut().settings = original);
+    }
+    #[test]
+    fn legacy_features_use_new_defaults_and_explicit_choices_persist() {
         use crate::Section;
         let mut settings: Settings = serde_yaml_ng::from_str(
             "general:\n  features:\n    close_picker_after_selection: false\n",
@@ -408,14 +518,20 @@ mod tests {
             Section::Issues,
             Section::Whiteboard,
         ] {
-            assert!(settings.general.features.enabled(section));
+            assert_eq!(
+                settings.general.features.enabled(section),
+                section == Section::Groupchats
+            );
             settings.general.features.toggle(section);
         }
+        assert!(!settings.general.features.machine_selector);
+        settings.general.features.machine_selector = true;
         settings.general.features.toggle(Section::Chats);
         let yaml = serde_yaml_ng::to_string(&settings).unwrap();
         assert!(!yaml.contains("close_picker_after_selection"));
         let restored: Settings = serde_yaml_ng::from_str(&yaml).unwrap();
         assert!(restored.general.features.enabled(Section::Chats));
+        assert!(restored.general.features.machine_selector);
         for section in [
             Section::Docs,
             Section::Workflows,
@@ -424,7 +540,10 @@ mod tests {
             Section::Issues,
             Section::Whiteboard,
         ] {
-            assert!(!restored.general.features.enabled(section));
+            assert_eq!(
+                restored.general.features.enabled(section),
+                section != Section::Groupchats
+            );
         }
     }
     #[test]

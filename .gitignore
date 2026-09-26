@@ -2,6 +2,7 @@
 /target/
 /debug/
 /artifacts/
+/output/
 *.pdb
 **/mutants.out*/
 

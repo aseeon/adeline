@@ -9,56 +9,32 @@ impl Adeline {
             .map_or("New chat".into(), |i| threads[i].title.clone());
         main = main.child(
             row()
-                .min_h(px(if self.selected.is_some() { 70. } else { 50. }))
+                .h(config::text_pixels(48.))
+                .flex_shrink_0()
                 .px_5()
                 .gap_3()
                 .border_b_1()
                 .border_color(rgb(theme::border()))
                 .child(
-                    col()
+                    row()
                         .flex_1()
                         .min_w_0()
-                        .gap_1()
-                        .child(text(title, 20., theme::foreground()).truncate())
+                        .gap_2()
+                        .child(
+                            text(title, 14., theme::foreground())
+                                .min_w_0()
+                                .line_height(config::text_pixels(24.))
+                                .truncate(),
+                        )
                         .when_some(self.selected, |d, i| {
                             let status = match threads[i].status.as_str() {
-                                "blocked" => Some(("flag", "Needs input", theme::primary())),
-                                "completed" => Some(("check", "Idle", theme::success())),
-                                _ => None,
+                                "blocked" => "Attention",
+                                "working" => "Active",
+                                _ => "Idle",
                             };
                             d.child(
-                                row()
-                                    .gap(px(10.))
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .when_some(status, |d, (ico, label, color)| {
-                                        d.child(
-                                            row()
-                                                .gap(px(4.))
-                                                .flex_shrink_0()
-                                                .child(
-                                                    icon(ico).size(px(12.)).text_color(rgb(color)),
-                                                )
-                                                .child(text(label, 10., color)),
-                                        )
-                                    })
-                                    .child(
-                                        row()
-                                            .gap(px(5.))
-                                            .min_w_0()
-                                            .child(icon("file").size(px(12.)))
-                                            .child(
-                                                text(
-                                                    format!(
-                                                        ".adeline/threads/{}/messages.md",
-                                                        threads[i].id
-                                                    ),
-                                                    10.,
-                                                    theme::muted_foreground(),
-                                                )
-                                                .truncate(),
-                                            ),
-                                    ),
+                                badge(status, theme::card(), theme::card_foreground())
+                                    .flex_shrink_0(),
                             )
                         }),
                 )
@@ -672,7 +648,7 @@ impl Adeline {
                         )
                         .child(
                             text(short(&r.instructions, 136), 13., theme::muted_foreground())
-                                .line_height(px(21.))
+                                .line_height(config::text_pixels(21.))
                                 .max_h(px(64.))
                                 .overflow_hidden(),
                         )
@@ -785,7 +761,7 @@ impl Adeline {
                     14.,
                     theme::sidebar_foreground(),
                 )
-                .line_height(px(23.)),
+                .line_height(config::text_pixels(23.)),
             )
             .child(
                 text(
@@ -1019,7 +995,7 @@ impl Adeline {
                             self.button("follow", "", Action::Follow, cx)
                                 .child(checkbox(self.follow))
                                 .child("Following latest")
-                                .text_size(px(10.))
+                                .text_size(config::text_pixels(10.))
                                 .text_color(rgb(theme::primary())),
                         ),
                 );
@@ -1034,17 +1010,39 @@ impl Adeline {
     }
     pub(super) fn menu_view(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let menu = self.menu.unwrap_or("");
+        if menu == "files" {
+            let trigger = self
+                .menu_triggers
+                .borrow()
+                .get("files")
+                .copied()
+                .unwrap_or_default();
+            return anchored()
+                .anchor(Corner::BottomLeft)
+                .position(trigger.origin - point(px(0.), px(6.)))
+                .snap_to_window()
+                .child(
+                    menu_surface()
+                        .w(px(210.))
+                        .child(self.menu_button("add-file", "Add a file", Action::AddFile, cx))
+                        .child(self.menu_button(
+                            "add-directory",
+                            "Add a directory",
+                            Action::AddDirectory,
+                            cx,
+                        )),
+                )
+                .into_any_element();
+        }
         if menu == "agent" {
             let groups: [(&str, Vec<&str>, usize); 5] = [
                 (
                     "Agent",
-                    MACHINES[self.machine]
-                        .agents
+                    self.available_agents[self.machine]
                         .iter()
-                        .map(|&i| AGENTS[i])
+                        .map(|&i| self.agents[i].as_str())
                         .collect(),
-                    MACHINES[self.machine]
-                        .agents
+                    self.available_agents[self.machine]
                         .iter()
                         .position(|&i| i == self.agent)
                         .unwrap_or(0),
@@ -1084,7 +1082,7 @@ impl Adeline {
                     .child(text(name, 11., theme::muted_foreground()).px_2().py_2());
                 for (i, option) in options.into_iter().enumerate() {
                     let a = match g {
-                        0 => Action::Agent(MACHINES[self.machine].agents[i]),
+                        0 => Action::Agent(self.available_agents[self.machine][i]),
                         1 => Action::Model(i),
                         2 => Action::Effort(i),
                         3 => Action::Speed(i),
@@ -1093,11 +1091,11 @@ impl Adeline {
                     column = column.child(
                         self.menu_button(
                             (SharedString::from(format!("agent-group-{g}")), i),
-                            option,
+                            option.to_owned(),
                             a,
                             cx,
                         )
-                        .text_size(px(11.))
+                        .text_size(config::text_pixels(11.))
                         .px_2()
                         .when(selected == i, |d| {
                             d.bg(rgb(theme::secondary())).child(icon("check"))
@@ -1173,27 +1171,86 @@ impl Adeline {
                     );
             }
             "machines" => {
-                popup = popup.left(px(16.)).top(px(48.)).child(
-                    text("Machines", 11., theme::muted_foreground())
-                        .px_2()
-                        .py_2(),
-                );
-                for (i, machine) in MACHINES.iter().enumerate() {
-                    popup = popup.child(
-                        self.menu_button(("machine", i), "", Action::Machine(i), cx)
-                            .w_full()
-                            .h(px(56.))
-                            .when(self.machine == i, |d| d.bg(rgb(theme::secondary())))
-                            .child(icon("devices"))
+                popup = popup
+                    .top(px(48.))
+                    .right(px(248.))
+                    .w(px(360.))
+                    .p_3()
+                    .gap_2()
+                    .rounded(px(4.))
+                    .child(
+                        row()
+                            .h(px(32.))
+                            .justify_between()
                             .child(
-                                col()
+                                text("Machines", 11., theme::muted_foreground())
+                                    .font_weight(FontWeight::BOLD),
+                            )
+                            .child(
+                                self.ib("close-machine-picker", "close", Action::Close, cx)
+                                    .h(px(32.)),
+                            ),
+                    )
+                    .child(
+                        row()
+                            .h(px(40.))
+                            .w_full()
+                            .gap_2()
+                            .px_2()
+                            .bg(rgb(theme::input()))
+                            .border_1()
+                            .border_color(rgb(theme::border()))
+                            .rounded(px(3.))
+                            .when(
+                                self.machine_query.focus_handle(cx).is_focused(window),
+                                |d| {
+                                    d.border_color(rgb(theme::ring()))
+                                        .shadow(vec![theme::shadow(3.)])
+                                },
+                            )
+                            .child(icon("search"))
+                            .child(div().flex_1().min_w_0().child(self.machine_query.clone())),
+                    );
+                let query = self.machine_query.read(cx).content.trim().to_lowercase();
+                let mut list = col()
+                    .id("machine-picker-list")
+                    .max_h(px(320.))
+                    .overflow_y_scroll();
+                let mut count = 0;
+                for (i, machine) in MACHINES.iter().enumerate().filter(|(_, machine)| {
+                    machine.name.to_lowercase().contains(&query)
+                        || machine.kind.to_lowercase().contains(&query)
+                }) {
+                    count += 1;
+                    list = list.child(
+                        self.menu_button(("machine-option", i), "", Action::Machine(i), cx)
+                            .h(px(44.))
+                            .flex_shrink_0()
+                            .min_w_0()
+                            .px_2()
+                            .gap_3()
+                            .when(self.machine == i, |d| d.bg(rgb(theme::secondary())))
+                            .child(
+                                row()
+                                    .w(px(24.))
+                                    .justify_center()
+                                    .flex_shrink_0()
+                                    .child(icon("devices").size(px(20.))),
+                            )
+                            .child(
+                                text(machine.name, 13., theme::sidebar_foreground())
                                     .flex_1()
-                                    .child(text(machine.name, 13., theme::sidebar_foreground()))
-                                    .child(text(machine.kind, 11., theme::muted_foreground())),
+                                    .min_w_0()
+                                    .truncate(),
                             )
                             .when(self.machine == i, |d| d.child(icon("check"))),
                     );
                 }
+                if count == 0 {
+                    list =
+                        list.child(text("No machines found", 13., theme::muted_foreground()).p_4());
+                }
+                popup = popup.child(list);
             }
             "agents" => {
                 popup = popup
@@ -1208,12 +1265,8 @@ impl Adeline {
                             .h(px(32.))
                             .justify_between()
                             .child(
-                                text(
-                                    format!("Agents on {}", MACHINES[self.machine].name),
-                                    11.,
-                                    theme::muted_foreground(),
-                                )
-                                .font_weight(FontWeight::BOLD),
+                                text("Agents", 11., theme::muted_foreground())
+                                    .font_weight(FontWeight::BOLD),
                             )
                             .child(
                                 self.ib("close-agent-picker", "close", Action::Close, cx)
@@ -1243,10 +1296,9 @@ impl Adeline {
                     .max_h(px(320.))
                     .overflow_y_scroll();
                 let mut count = 0;
-                for &i in MACHINES[self.machine]
-                    .agents
+                for &i in self.available_agents[self.machine]
                     .iter()
-                    .filter(|&&i| AGENTS[i].to_lowercase().contains(&query))
+                    .filter(|&&i| self.agents[i].to_lowercase().contains(&query))
                 {
                     count += 1;
                     list = list.child(
@@ -1257,11 +1309,14 @@ impl Adeline {
                             .px_2()
                             .gap_3()
                             .when(self.agent == i, |d| d.bg(rgb(theme::secondary())))
-                            .child(row().w(px(24.)).justify_center().flex_shrink_0().child(
-                                icon(["claude", "chatgpt", "grok", "sparkle"][i]).size(px(20.)),
-                            ))
                             .child(
-                                text(AGENTS[i], 13., theme::sidebar_foreground())
+                                row().w(px(24.)).justify_center().flex_shrink_0().child(
+                                    icon(["claude", "chatgpt", "grok", "sparkle"][i.min(3)])
+                                        .size(px(20.)),
+                                ),
+                            )
+                            .child(
+                                text(self.agents[i].clone(), 13., theme::sidebar_foreground())
                                     .flex_1()
                                     .min_w_0()
                                     .truncate(),
@@ -1270,10 +1325,33 @@ impl Adeline {
                     );
                 }
                 if count == 0 {
-                    list =
-                        list.child(text("No agents found", 13., theme::muted_foreground()).p_4());
+                    list = list.child(
+                        text(
+                            if self.available_agents[self.machine].is_empty() {
+                                "Currently there are no agents defined. Please add one below"
+                            } else {
+                                "No agents found"
+                            },
+                            13.,
+                            theme::muted_foreground(),
+                        )
+                        .p_4(),
+                    );
                 }
-                popup = popup.child(list);
+                popup = popup
+                    .child(list)
+                    .child(div().h(px(1.)).bg(rgb(theme::border())))
+                    .child(
+                        self.button("add-agents", "", Action::AddAgent, cx)
+                            .w_full()
+                            .h(px(38.))
+                            .justify_center()
+                            .rounded(px(4.))
+                            .bg(rgb(theme::secondary()))
+                            .text_color(rgb(theme::secondary_foreground()))
+                            .child(icon("plus").size(px(15.)))
+                            .child("Add an Agent"),
+                    );
             }
             "app" => {
                 let modifier = if cfg!(target_os = "macos") {
@@ -1335,10 +1413,16 @@ impl Adeline {
                     .p_1()
                     .rounded(px(4.));
                 for (group_index, group) in groups.into_iter().enumerate() {
+                    if group_index == 2 && !self.has_open_project() {
+                        continue;
+                    }
                     if group_index > 0 {
                         popup = popup.child(div().h(px(1.)).my_1().bg(rgb(theme::border())));
                     }
                     for (item_index, (label, shortcut, action)) in group.into_iter().enumerate() {
+                        if matches!(action, Action::Settings) && !self.has_open_project() {
+                            continue;
+                        }
                         if let Action::Section(section) = &action
                             && !config::current().general.features.enabled(*section)
                         {
@@ -1427,7 +1511,9 @@ impl Adeline {
                             .h(px(44.))
                             .flex_shrink_0()
                             .rounded(px(3.))
-                            .when(i == self.project, |d| d.bg(rgb(theme::secondary())))
+                            .when(i == self.project && self.open_projects[i], |d| {
+                                d.bg(rgb(theme::secondary()))
+                            })
                             .child(
                                 self.menu_button(("project-menu", i), "", Action::Project(i), cx)
                                     .h_full()
@@ -1447,18 +1533,48 @@ impl Adeline {
                                         .truncate(),
                                     )
                                     .child(
-                                        self.project_notifications(
-                                            self.projects[i].notifications(),
-                                        ),
+                                        text(
+                                            if self.open_projects[i] {
+                                                "Open"
+                                            } else {
+                                                "Closed"
+                                            },
+                                            11.,
+                                            theme::muted_foreground(),
+                                        )
+                                        .flex_shrink_0(),
                                     ),
                             ),
                     );
                 }
                 if count == 0 {
-                    list =
-                        list.child(text("No projects found", 13., theme::muted_foreground()).p_4());
+                    list = list.child(
+                        text(
+                            if self.projects.is_empty() {
+                                "Currently there are no projects defined. Please add one below"
+                            } else {
+                                "No projects found"
+                            },
+                            13.,
+                            theme::muted_foreground(),
+                        )
+                        .p_4(),
+                    );
                 }
-                popup = popup.child(list);
+                popup = popup
+                    .child(list)
+                    .child(div().h(px(1.)).bg(rgb(theme::border())))
+                    .child(
+                        self.button("add-projects", "", Action::AddProject, cx)
+                            .w_full()
+                            .h(px(38.))
+                            .justify_center()
+                            .rounded(px(4.))
+                            .bg(rgb(theme::secondary()))
+                            .text_color(rgb(theme::secondary_foreground()))
+                            .child(icon("plus").size(px(15.)))
+                            .child("Add a project"),
+                    );
             }
             "chat" => {
                 popup = popup
@@ -1500,30 +1616,7 @@ impl Adeline {
                     ),
                 );
             }
-            _ => {
-                popup = popup
-                    .bottom(px(113.))
-                    .right(px(25.))
-                    .child(text("Files and workflows", 12., theme::muted_foreground()).p_2());
-                for (i, d) in self
-                    .workspace()
-                    .docs
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, d)| d.search_title.contains(&self.query(cx)))
-                {
-                    popup = popup.child(
-                        self.menu_button(("mention", i), short(&d.title, 32), Action::Close, cx)
-                            .on_click(cx.listener(move |s, _, _, cx| {
-                                let title = s.workspace().docs[i].title.clone();
-                                let value = format!("{} @{} ", s.composer.read(cx).content, title);
-                                s.composer.update(cx, |v, cx| v.set(value, cx));
-                                s.menu = None;
-                                cx.notify();
-                            })),
-                    );
-                }
-            }
+            _ => return div().into_any_element(),
         }
         popup.into_any_element()
     }
@@ -1593,7 +1686,10 @@ impl Adeline {
                     );
                 }
             }
-        } else if matches!(self.modal, Some("workflow" | "collection" | "title")) {
+        } else if matches!(
+            self.modal,
+            Some("workflow" | "collection" | "title" | "add-project" | "add-agent")
+        ) {
             let workflow = self.modal == Some("workflow");
             let title = match self.modal {
                 Some("workflow") => {
@@ -1603,11 +1699,15 @@ impl Adeline {
                         "New workflow"
                     }
                 }
+                Some("add-project") => "Add a project",
+                Some("add-agent") => "Add an Agent",
                 Some("collection") => "New collection",
                 _ => "Document title",
             };
             let action = match self.modal {
                 Some("workflow") => Action::SaveWorkflow,
+                Some("add-project") => Action::SaveProject,
+                Some("add-agent") => Action::SaveAgent,
                 Some("collection") => Action::SaveCollection,
                 _ => Action::SaveTitle,
             };
@@ -1724,7 +1824,7 @@ impl Adeline {
                                                 "project-circle",
                                                 "project-triangle",
                                                 "project-square",
-                                            ][self.project],
+                                            ][self.project.min(2)],
                                         )
                                         .size(px(36.))
                                         .text_color(rgb(

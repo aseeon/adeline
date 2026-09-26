@@ -1,6 +1,29 @@
 use super::*;
 impl Adeline {
     pub(super) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.open_projects.iter().any(|&open| open)
+            && !matches!(
+                action,
+                Action::Project(_)
+                    | Action::AddProject
+                    | Action::SaveProject
+                    | Action::AddAgent
+                    | Action::SaveAgent
+                    | Action::Agents
+                    | Action::Agent(_)
+                    | Action::Projects
+                    | Action::Machines
+                    | Action::Machine(_)
+                    | Action::AppMenu
+                    | Action::AppSettings
+                    | Action::About
+                    | Action::KeyboardShortcuts
+                    | Action::QuitApp
+                    | Action::Close
+            )
+        {
+            return;
+        }
         if matches!(
             action,
             Action::EditLine(_) | Action::CheckLine(_) | Action::SaveLine | Action::Raw
@@ -67,14 +90,25 @@ impl Adeline {
                 self.sync_content_regions(&Action::ToggleSidePanel, cx);
             }
             Action::Machines => {
+                if !config::current().general.features.machine_selector {
+                    return;
+                }
                 self.menu = if self.menu == Some("machines") {
                     None
                 } else {
                     Some("machines")
                 };
-                window.focus(&self.focus);
+                if self.menu.is_some() {
+                    self.machine_query.update(cx, |v, cx| v.set("", cx));
+                    window.focus(&self.machine_query.focus_handle(cx));
+                } else {
+                    window.focus(&self.focus);
+                }
             }
             Action::Machine(i) => {
+                if !config::current().general.features.machine_selector {
+                    return;
+                }
                 if i < MACHINES.len() {
                     self.machine = i;
                     self.agent = self.machine_agents[i];
@@ -95,8 +129,88 @@ impl Adeline {
             Action::About => self.modal = Some("about"),
             Action::KeyboardShortcuts => self.modal = Some("shortcuts"),
             Action::QuitApp => cx.quit(),
+            Action::AddProject | Action::AddAgent => {
+                self.menu = None;
+                self.modal = Some(if matches!(action, Action::AddProject) {
+                    "add-project"
+                } else {
+                    "add-agent"
+                });
+                self.name_input.update(cx, |v, cx| v.set("", cx));
+                window.focus(&self.name_input.focus_handle(cx));
+            }
+            Action::SaveProject => {
+                let name = self.name_input.read(cx).content.trim().to_owned();
+                if name.is_empty() {
+                    return;
+                }
+                let i = self.projects.len();
+                let project = Workspace {
+                    config: Config {
+                        id: format!("local-project-{i}"),
+                        name,
+                        provider: "claude".into(),
+                    },
+                    ..Default::default()
+                };
+                self.collaboration
+                    .push(collaboration_modes::ProjectCollaboration::seed(&project));
+                self.projects.push(project);
+                self.open_projects.push(false);
+                self.project_tints.push(0);
+                self.modal = None;
+                self.act(Action::Project(i), window, cx);
+                return;
+            }
+            Action::SaveAgent => {
+                let name = self.name_input.read(cx).content.trim().to_owned();
+                if name.is_empty() {
+                    return;
+                }
+                if self.available_agents[self.machine]
+                    .iter()
+                    .any(|&i| self.agents[i].eq_ignore_ascii_case(&name))
+                {
+                    self.notify_toast("An agent with this name already exists.", cx);
+                    return;
+                }
+                let i = self.agents.len();
+                self.agents.push(name);
+                self.available_agents[self.machine].push(i);
+                self.modal = None;
+                self.act(Action::Agent(i), window, cx);
+                return;
+            }
+            Action::CloseProject(i) => {
+                let next = close_project_tab(&mut self.open_projects, self.project, i);
+                if let Some(next) = next {
+                    if self.project != next {
+                        self.act(Action::Project(next), window, cx);
+                    }
+                } else {
+                    self.selected = None;
+                    self.document = None;
+                    self.workflow = None;
+                    self.service = None;
+                    self.edit_line = None;
+                    self.editing_workflow = false;
+                    self.modal = None;
+                    self.menu = None;
+                    self.section = Section::Chats;
+                    self.composer.update(cx, |v, cx| v.set("", cx));
+                    window.set_window_title("Adeline");
+                    self.sync_regions(&Action::Project(self.project), cx);
+                    self.sync_content_regions(&Action::Project(self.project), cx);
+                }
+                window.focus(&self.focus);
+                self.header_region.update(cx, |_, cx| cx.notify());
+                cx.notify();
+                return;
+            }
             Action::Project(i) => {
-                if self.project == i {
+                let was_open = self.open_projects[i];
+                self.open_projects[i] = true;
+                if self.project == i && was_open {
                     self.menu = None;
                     window.focus(&self.focus);
                     cx.notify();
@@ -251,7 +365,7 @@ impl Adeline {
                 }
             }
             Action::Agent(i) => {
-                if !MACHINES[self.machine].agents.contains(&i) {
+                if !self.available_agents[self.machine].contains(&i) {
                     return;
                 }
                 self.agent = i;
@@ -272,19 +386,31 @@ impl Adeline {
                 self.menu = None;
             }
             Action::Permission(i) => self.permission = i,
-            Action::ToggleMode(section) => {
-                if let Err(error) = config::update(|s| s.general.features.toggle(section)) {
+            Action::ToggleMode(_) | Action::ToggleMachineSelector => {
+                if let Err(error) = config::update(|s| {
+                    if let Action::ToggleMode(section) = action {
+                        s.general.features.toggle(section);
+                    } else {
+                        s.general.features.machine_selector = !s.general.features.machine_selector;
+                    }
+                }) {
                     self.toast = Some(format!("Could not save settings: {error}"));
                 } else {
                     cx.defer(|cx| {
                         for handle in cx.windows() {
                             if let Some(handle) = handle.downcast::<Adeline>() {
                                 let _ = handle.update(cx, |app, window, cx| {
+                                    if !config::current().general.features.machine_selector
+                                        && app.menu == Some("machines")
+                                    {
+                                        app.menu = None;
+                                        window.focus(&app.focus);
+                                    }
                                     if !config::current().general.features.enabled(app.section) {
                                         app.modal = None;
                                         app.act(Action::Section(Section::Chats), window, cx);
                                     }
-                                    // Mode visibility is rendered by the separately cached header.
+                                    // Feature visibility is rendered by the separately cached header.
                                     app.header_region.update(cx, |_, cx| cx.notify());
                                     cx.notify();
                                 });
@@ -470,6 +596,45 @@ impl Adeline {
                     Some("files")
                 }
             }
+            Action::AddFile | Action::AddDirectory => {
+                let directory = matches!(action, Action::AddDirectory);
+                self.menu = None;
+                window.focus(&self.composer.focus_handle(cx));
+                let selection = cx.prompt_for_paths(PathPromptOptions {
+                    files: !directory,
+                    directories: directory,
+                    multiple: false,
+                    prompt: Some(
+                        if directory {
+                            "Add a directory"
+                        } else {
+                            "Add a file"
+                        }
+                        .into(),
+                    ),
+                });
+                cx.spawn(async move |this, cx| {
+                    let result = selection.await;
+                    let _ = this.update(cx, |s, cx| {
+                        match result {
+                            Ok(Ok(Some(paths))) => {
+                                let mut value = s.composer.read(cx).content.to_string();
+                                for path in paths {
+                                    if !value.is_empty() && !value.ends_with(char::is_whitespace) {
+                                        value.push(' ');
+                                    }
+                                    value = format!("{value}@\"{}\" ", path.display());
+                                }
+                                s.composer.update(cx, |v, cx| v.set(value, cx));
+                            }
+                            Ok(Ok(None)) => {}
+                            _ => s.notify_toast("Could not open the file picker.", cx),
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
+            }
             Action::Tint(i) => self.selected_tint = i,
             Action::Instructions => self.instructions = !self.instructions,
             Action::NewWorkflow => {
@@ -647,5 +812,40 @@ impl Adeline {
         t.push_message(Message{role:"assistant".into(),text:"I've added this to our local demo chat. We can work through the next step here. This preview uses sample responses and doesn't run commands or connect to external services.".into(),read:true,..Default::default()});
         t.status = "idle".into();
         self.composer.update(cx, |v, cx| v.set("", cx));
+    }
+}
+
+/// Keep selection on an open tab, preferring the next tab to the right and wrapping.
+fn close_project_tab(open: &mut [bool], active: usize, closing: usize) -> Option<usize> {
+    *open.get_mut(closing)? = false;
+    if open.get(active).copied().unwrap_or(false) {
+        return Some(active);
+    }
+    (closing + 1..open.len())
+        .chain(0..closing)
+        .find(|&i| open[i])
+}
+
+#[cfg(test)]
+mod project_tab_tests {
+    use super::close_project_tab;
+
+    #[test]
+    fn closing_active_tab_selects_the_next_open_tab_and_wraps() {
+        let mut open = [true, true, true];
+        assert_eq!(close_project_tab(&mut open, 1, 1), Some(2));
+        assert_eq!(open, [true, false, true]);
+        assert_eq!(close_project_tab(&mut open, 2, 2), Some(0));
+        assert_eq!(close_project_tab(&mut open, 0, 0), None);
+        assert_eq!(open, [false; 3]);
+        open[1] = true;
+        assert_eq!(close_project_tab(&mut open, 1, 1), None);
+    }
+
+    #[test]
+    fn closing_background_tab_keeps_the_active_project() {
+        let mut open = [true, true, true];
+        assert_eq!(close_project_tab(&mut open, 1, 0), Some(1));
+        assert_eq!(open, [false, true, true]);
     }
 }

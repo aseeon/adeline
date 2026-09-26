@@ -1,0 +1,38 @@
+# Source: https://tweakcn.com/themes/cmtnntb9i000104l5a1bp4tdm
+# Author: Rand Aijala
+# Dark palette adapted to Adeline; CSS colors converted to sRGB hex.
+name: "Catppuccin"
+brightness: Dark
+colors:
+  background: '#24273A'
+  foreground: '#CAD3F5'
+  card: '#1E2030'
+  card_foreground: '#CAD3F5'
+  popover: '#1E2030'
+  popover_foreground: '#CAD3F5'
+  primary: '#C6A0F6'
+  primary_foreground: '#24273A'
+  secondary: '#363A4F'
+  secondary_foreground: '#CAD3F5'
+  muted: '#363A4F'
+  muted_foreground: '#939AB7'
+  accent: '#363A4F'
+  accent_foreground: '#CAD3F5'
+  destructive: '#ED8796'
+  destructive_foreground: '#24273A'
+  border: '#494D64'
+  input: '#494D64'
+  ring: '#C6A0F6'
+  chart_1: '#F5A97F'
+  chart_2: '#A6DA95'
+  chart_3: '#8AADF4'
+  chart_4: '#EED49F'
+  chart_5: '#F5BDE6'
+  sidebar: '#1E2030'
+  sidebar_foreground: '#CAD3F5'
+  sidebar_primary: '#C6A0F6'
+  sidebar_primary_foreground: '#24273A'
+  sidebar_accent: '#363A4F'
+  sidebar_accent_foreground: '#CAD3F5'
+  sidebar_border: '#494D64'
+  sidebar_ring: '#C6A0F6'

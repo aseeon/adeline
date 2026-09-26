@@ -1,6 +1,4 @@
-# Source: adapted from the Rosé Desktop design file. Translucent hover, selection,
-# and border colors were blended onto their backgrounds to get solid hex values.
-name: Rose
+name: "Rose"
 brightness: Dark
 colors:
   accent: '#403539'

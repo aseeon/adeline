@@ -1,0 +1,38 @@
+# Source: https://tweakcn.com/themes/cmlk6zefr000004lbe9jygsqc
+# Author: Fernando Divino de Moraes Junior
+# Dark palette adapted to Adeline; CSS colors converted to sRGB hex.
+name: "Astrovista"
+brightness: Dark
+colors:
+  background: '#1A1A1A'
+  foreground: '#E5E5E5'
+  card: '#202020'
+  card_foreground: '#E5E5E5'
+  popover: '#202020'
+  popover_foreground: '#E5E5E5'
+  primary: '#DF6035'
+  primary_foreground: '#FFFFFF'
+  secondary: '#284167'
+  secondary_foreground: '#E5E5E5'
+  muted: '#2A2A2A'
+  muted_foreground: '#808080'
+  accent: '#2A3656'
+  accent_foreground: '#BFDBFE'
+  destructive: '#EF4444'
+  destructive_foreground: '#FFFFFF'
+  border: '#353535'
+  input: '#303030'
+  ring: '#E05D38'
+  chart_1: '#85A6C7'
+  chart_2: '#E16F41'
+  chart_3: '#D54450'
+  chart_4: '#E2B146'
+  chart_5: '#3C4C76'
+  sidebar: '#1F1F1F'
+  sidebar_foreground: '#E5E5E5'
+  sidebar_primary: '#E05D38'
+  sidebar_primary_foreground: '#FFFFFF'
+  sidebar_accent: '#2A3656'
+  sidebar_accent_foreground: '#BFDBFE'
+  sidebar_border: '#353535'
+  sidebar_ring: '#E05D38'

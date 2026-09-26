@@ -46,6 +46,7 @@ impl Render for Services {
 pub(super) struct DocumentView {
     owner: WeakEntity<Adeline>,
     state: ListState,
+    typography: config::Typography,
     scrollbar: scrollbar::Scrollbar,
     key: Option<(usize, usize)>,
     parsed: Arc<PreparedDocument>,
@@ -62,6 +63,7 @@ impl DocumentView {
             owner,
             scrollbar: scrollbar::Scrollbar::list(state.clone()),
             state,
+            typography: config::typography(),
             key: None,
             parsed: Default::default(),
             rows: Arc::from([]),
@@ -220,6 +222,14 @@ impl DocumentView {
 }
 impl Render for DocumentView {
     fn render(&mut self, _: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        let typography = config::typography();
+        if self.typography != typography {
+            self.typography = typography;
+            let top = self.state.logical_scroll_top();
+            let count = self.state.item_count();
+            self.state.splice(0..count, count);
+            self.state.scroll_to(top);
+        }
         ui_metrics::record(ui_metrics::Region::Document);
         if self.loading && self.parsed.blocks.is_empty() {
             return text("Preparing document…", 14., theme::muted_foreground())
@@ -304,6 +314,7 @@ impl Render for DocumentView {
 
 pub(super) struct LogView {
     state: ListState,
+    typography: config::Typography,
     scrollbar: scrollbar::Scrollbar,
     lines: Arc<[Arc<str>]>,
     key: Option<usize>,
@@ -317,6 +328,7 @@ impl LogView {
         Self {
             scrollbar: scrollbar::Scrollbar::list(state.clone()),
             state,
+            typography: config::typography(),
             lines: Arc::from([]),
             key: None,
             stopped: false,
@@ -373,6 +385,14 @@ impl LogView {
 }
 impl Render for LogView {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let typography = config::typography();
+        if self.typography != typography {
+            self.typography = typography;
+            let top = self.state.logical_scroll_top();
+            let count = self.state.item_count();
+            self.state.splice(0..count, count);
+            self.state.scroll_to(top);
+        }
         ui_metrics::record(ui_metrics::Region::Log);
         let lines = self.lines.clone();
         let wrap = self.wrap;
@@ -386,19 +406,16 @@ impl Render for LogView {
                 .w_full()
                 .min_h(px(23.))
                 .px_6()
-                .font_family(if cfg!(target_os = "windows") {
-                    "Consolas"
-                } else {
-                    "monospace"
-                })
-                .line_height(px(23.))
+                .font_family(config::code_font())
+                .text_size(config::code_text_pixels(14.))
+                .line_height(config::code_text_pixels(23.))
                 .when(!wrap, |d| d.whitespace_nowrap())
                 .into_any_element()
         })
         .w_full()
         .h_full()
         .py_6()
-        .when(!wrap, |d| d.min_w(px(self.max_width)));
+        .when(!wrap, |d| d.min_w(config::code_text_pixels(self.max_width)));
         div()
             .relative()
             .size_full()

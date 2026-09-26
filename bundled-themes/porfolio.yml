@@ -1,7 +1,7 @@
 # Source: https://tweakcn.com/themes/cmkqudn9u000904l4h6ii267o
 # Author: Atul Verma
-name: "Porfolio theme"
-brightness: Dark
+name: "Porfolio"
+brightness: Very Dark
 colors:
   background: '#141412'
   foreground: '#F8F7F2'

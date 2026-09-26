@@ -39,28 +39,39 @@ impl Render for ControlPane {
                     .bg(rgb(theme::background()))
                     .text_color(rgb(theme::foreground()))
                     .child(app.ib("app-menu", "menu", Action::AppMenu, cx))
-                    .child(app.ib("mode-settings", "settings", Action::ModeSettings, cx))
-                    .child(
-                        app.ib(
-                            "toggle-left-panel",
-                            "panel-left",
-                            Action::ToggleLeftPanel,
-                            cx,
+                    .child(app.ib(
+                        "mode-settings",
+                        "settings",
+                        if app.has_open_project() {
+                            Action::ModeSettings
+                        } else {
+                            Action::AppSettings
+                        },
+                        cx,
+                    ))
+                    .when(app.has_open_project(), |d| {
+                        d.child(
+                            app.ib(
+                                "toggle-left-panel",
+                                "panel-left",
+                                Action::ToggleLeftPanel,
+                                cx,
+                            )
+                            .flex_shrink_0(),
                         )
-                        .flex_shrink_0(),
-                    )
+                    })
                     .child(div().flex_1())
-                    .child(
-                        app.button("side-panel", "", Action::ToggleSidePanel, cx)
-                            .w(px(34.))
-                            .px_0()
-                            .justify_center()
-                            .child(
-                                icon("panel-left").with_transformation(Transformation::rotate(
-                                    radians(std::f32::consts::PI),
+                    .when(app.has_open_project(), |d| {
+                        d.child(
+                            app.button("side-panel", "", Action::ToggleSidePanel, cx)
+                                .w(px(34.))
+                                .px_0()
+                                .justify_center()
+                                .child(icon("panel-left").with_transformation(
+                                    Transformation::rotate(radians(std::f32::consts::PI)),
                                 )),
-                            ),
-                    )
+                        )
+                    })
                     .into_any_element()
             })
             .unwrap_or_else(|_| div().into_any_element())

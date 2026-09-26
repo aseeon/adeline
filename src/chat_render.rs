@@ -31,9 +31,9 @@ impl Adeline {
             .child(
                 div()
                     .child(t.title.trim().to_string())
-                    .text_size(px(14.))
+                    .text_size(config::text_pixels(14.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .line_height(px(21.))
+                    .line_height(config::text_pixels(21.))
                     .max_h(px(63.))
                     .overflow_hidden(),
             )
@@ -50,7 +50,7 @@ impl Adeline {
                             .child(
                                 div()
                                     .child(provider(&t.provider))
-                                    .text_size(px(12.))
+                                    .text_size(config::text_pixels(12.))
                                     .min_w_0()
                                     .truncate(),
                             )
@@ -62,21 +62,24 @@ impl Adeline {
                                     .child(
                                         div()
                                             .child(t.messages.len().to_string())
-                                            .text_size(px(12.)),
+                                            .text_size(config::text_pixels(12.)),
                                     ),
                             ),
                     )
-                    .child(div().child(status).text_size(px(12.)).flex_shrink_0().when(
-                        t.status == "blocked",
-                        |d| {
-                            d.font_weight(FontWeight::SEMIBOLD)
-                                .px(px(7.))
-                                .py(px(3.))
-                                .rounded(px(4.))
-                                .bg(rgb(theme::primary()))
-                                .text_color(rgb(theme::primary_foreground()))
-                        },
-                    )),
+                    .child(
+                        div()
+                            .child(status)
+                            .text_size(config::text_pixels(12.))
+                            .flex_shrink_0()
+                            .when(t.status == "blocked", |d| {
+                                d.font_weight(FontWeight::SEMIBOLD)
+                                    .px(px(7.))
+                                    .py(px(3.))
+                                    .rounded(px(4.))
+                                    .bg(rgb(theme::primary()))
+                                    .text_color(rgb(theme::primary_foreground()))
+                            }),
+                    ),
             );
         col().w_full().px_3().pb_1().child(card).into_any_element()
     }
@@ -101,7 +104,7 @@ impl Adeline {
             let count_label = if needs_you {
                 text(count.to_string(), 10., theme::primary_foreground())
                     .font_weight(FontWeight::SEMIBOLD)
-                    .line_height(px(15.))
+                    .line_height(config::text_pixels(15.))
                     .px(px(4.))
                     .py(px(1.))
                     .rounded(px(5.))
@@ -109,7 +112,7 @@ impl Adeline {
             } else {
                 div()
                     .child(count.to_string())
-                    .text_size(px(10.))
+                    .text_size(config::text_pixels(10.))
                     .font_weight(FontWeight::SEMIBOLD)
             };
             filters = filters.child(
@@ -122,7 +125,7 @@ impl Adeline {
                     .px(px(6.))
                     .h(px(30.))
                     .rounded(px(6.))
-                    .text_size(px(11.))
+                    .text_size(config::text_pixels(11.))
                     .font_weight(if needs_you {
                         FontWeight::SEMIBOLD
                     } else {
@@ -145,7 +148,7 @@ impl Adeline {
                         })
                     })
                     .when(self.sidebar_width < 320., |d| {
-                        d.text_size(px(10.)).gap(px(3.)).px(px(3.))
+                        d.text_size(config::text_pixels(10.)).gap(px(3.)).px(px(3.))
                     })
                     .when(i == 2 && self.sidebar_width >= 320., |d| {
                         d.child(icon("working").size(px(10.)))
@@ -174,45 +177,13 @@ impl Adeline {
             .child(filters)
             .child(list)
     }
-    pub(super) fn welcome(&self, cx: &Context<Self>) -> Div {
-        let mut cards = row().gap_2().w_full();
-        for (i, r) in self.workspace().recipes.iter().take(3).enumerate() {
-            cards = cards.child(
-                col()
-                    .id(("suggested", i))
-                    .flex_1()
-                    .min_w_0()
-                    .h(px(134.))
-                    .p_3()
-                    .gap_3()
-                    .border_1()
-                    .border_color(rgb(theme::border()))
-                    .rounded(px(12.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(rgb(theme::muted())))
-                    .on_click(cx.listener(move |s, _, w, cx| {
-                        s.act(Action::Section(Section::Workflows), w, cx);
-                        s.act(Action::Workflow(i), w, cx);
-                    }))
-                    .child(
-                        row()
-                            .justify_between()
-                            .child(icon("workflow"))
-                            .child(icon("play")),
-                    )
-                    .child(text(r.name.clone(), 12., theme::muted_foreground()))
-                    .child(
-                        text(short(&r.instructions, 72), 11., theme::muted_foreground())
-                            .max_h(px(35.))
-                            .overflow_hidden(),
-                    ),
-            );
-        }
+    pub(super) fn welcome(&self) -> Div {
         col()
             .flex_1()
             .min_h_0()
             .justify_center()
             .items_center()
+            .text_center()
             .p_6()
             .gap_3()
             .child(icon("chat-illustration").size(px(96.)))
@@ -222,44 +193,6 @@ impl Adeline {
                 14.,
                 theme::muted_foreground(),
             ))
-            .child(
-                col()
-                    .w_full()
-                    .max_w(px(575.))
-                    .mt_3()
-                    .gap_2()
-                    .child(text(
-                        "Start with a workflow",
-                        12.,
-                        theme::muted_foreground(),
-                    ))
-                    .child(cards)
-                    .child(
-                        row()
-                            .justify_center()
-                            .mt_1()
-                            .gap_3()
-                            .child(
-                                self.button(
-                                    "browse-workflows",
-                                    "Browse all workflows",
-                                    Action::Section(Section::Workflows),
-                                    cx,
-                                )
-                                .child(icon("arrow")),
-                            )
-                            .child(
-                                self.button(
-                                    "new-workflow",
-                                    "New workflow",
-                                    Action::NewWorkflow,
-                                    cx,
-                                )
-                                .child(icon("plus"))
-                                .text_color(rgb(theme::muted_foreground())),
-                            ),
-                    ),
-            )
     }
 
     pub(super) fn message_row(&self, index: usize, i: usize, _cx: &Context<Self>) -> AnyElement {
@@ -287,17 +220,22 @@ impl Adeline {
             .py(px(17.))
             .gap(px(12.))
             .rounded(px(22.))
-            .rounded_tl(px(6.))
-            .border_1()
-            .border_color(rgb(theme::border()))
+            .when(user, |d| {
+                d.ml(relative(0.2))
+                    .rounded_tr(px(6.))
+                    .border_1()
+                    .border_color(rgb(theme::border()))
+            })
             .bg(rgb(if user {
                 theme::card()
             } else {
                 theme::background()
             }));
         for paragraph in m.text.split("\n\n") {
-            bubble = bubble
-                .child(text(paragraph.to_owned(), 14., theme::foreground()).line_height(px(26.)));
+            bubble = bubble.child(
+                text(paragraph.to_owned(), 14., theme::foreground())
+                    .line_height(config::text_pixels(26.)),
+            );
         }
         for path in &m.images {
             let asset = image_asset(path);
@@ -321,11 +259,12 @@ impl Adeline {
         col()
             .id(("message", i))
             .w_full()
-            .px_6()
+            .px(relative(0.075))
             .pb_6()
             .gap_2()
             .child(
                 row()
+                    .when(user, |d| d.justify_end())
                     .gap_2()
                     .child(avatar)
                     .child(text(
@@ -377,7 +316,7 @@ impl Adeline {
                 )
                 .child(
                     text(d.body.clone(), 14., theme::secondary_foreground())
-                        .line_height(px(26.))
+                        .line_height(config::text_pixels(26.))
                         .mt(px(8.))
                         .mb(px(12.)),
                 );
@@ -389,7 +328,7 @@ impl Adeline {
                         .px(px(12.))
                         .gap(px(12.))
                         .rounded(px(10.))
-                        .text_size(px(14.))
+                        .text_size(config::text_pixels(14.))
                         .border_1()
                         .border_color(rgb(if chosen {
                             theme::primary()
@@ -443,8 +382,8 @@ impl Adeline {
         col()
             .w_full()
             .flex_shrink_0()
-            .bg(rgb(theme::secondary()))
-            .text_color(rgb(theme::secondary_foreground()))
+            .bg(rgb(theme::input()))
+            .text_color(rgb(theme::foreground()))
             .border_t_1()
             .border_color(rgb(theme::border()))
             .overflow_hidden()
@@ -453,19 +392,7 @@ impl Adeline {
                     .px_3()
                     .py_2()
                     .gap_2()
-                    .child(div().flex_1().min_w_0().child(self.composer.clone()))
-                    .child(
-                        self.button("references", "", Action::InsertFiles, cx)
-                            .h(px(26.))
-                            .px(px(8.))
-                            .gap(px(4.))
-                            .rounded(px(8.))
-                            .bg(rgb(theme::secondary()))
-                            .text_size(px(11.))
-                            .text_color(rgb(theme::secondary_foreground()))
-                            .child(icon("at").size(px(12.)))
-                            .child("Files and workflows"),
-                    ),
+                    .child(div().flex_1().min_w_0().child(self.composer.clone())),
             )
             .child(
                 row()
@@ -489,8 +416,12 @@ impl Adeline {
                             .child(
                                 col()
                                     .child(
-                                        text(AGENTS[self.agent], 12., theme::sidebar_foreground())
-                                            .font_weight(FontWeight::SEMIBOLD),
+                                        text(
+                                            self.agents[self.agent].clone(),
+                                            12.,
+                                            theme::sidebar_foreground(),
+                                        )
+                                        .font_weight(FontWeight::SEMIBOLD),
                                     )
                                     .child(text(
                                         format!(

@@ -277,7 +277,7 @@ impl Adeline {
                                 row().w_full().gap_2().child(icon("group")).child(
                                     div()
                                         .child(group.title.clone())
-                                        .text_size(px(14.))
+                                        .text_size(config::text_pixels(14.))
                                         .font_weight(FontWeight::SEMIBOLD),
                                 ),
                             )
@@ -291,12 +291,12 @@ impl Adeline {
                                             .unwrap_or_default(),
                                         70,
                                     ))
-                                    .text_size(px(12.)),
+                                    .text_size(config::text_pixels(12.)),
                             )
                             .child(
                                 div()
                                     .child(format!("{} members", group.members.len() + 1))
-                                    .text_size(px(11.)),
+                                    .text_size(config::text_pixels(11.)),
                             ),
                     );
                 }

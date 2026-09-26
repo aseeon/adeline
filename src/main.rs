@@ -6,6 +6,7 @@ mod config;
 mod content_views;
 mod data;
 mod document_render;
+mod fonts;
 #[expect(
     unused_imports,
     dead_code,
@@ -79,7 +80,7 @@ fn menu_surface() -> Div {
 }
 fn text(s: impl Into<SharedString>, size: f32, color: u32) -> Div {
     div()
-        .text_size(px(size))
+        .text_size(config::text_pixels(size))
         .text_color(rgb(color))
         .child(s.into())
 }
@@ -124,7 +125,7 @@ fn count_chip(label: impl Into<SharedString>) -> Div {
         .flex()
         .items_center()
         .justify_center()
-        .line_height(px(15.))
+        .line_height(config::text_pixels(15.))
         .rounded(px(6.))
         .bg(rgb(theme::primary()))
 }
@@ -173,6 +174,11 @@ enum Action {
     BoardTool(usize),
     BoardUndo,
     Project(usize),
+    CloseProject(usize),
+    AddProject,
+    SaveProject,
+    AddAgent,
+    SaveAgent,
     Section(Section),
     Chat(usize),
     NewChat,
@@ -206,6 +212,7 @@ enum Action {
     Speed(usize),
     Permission(usize),
     ToggleMode(Section),
+    ToggleMachineSelector,
     Send,
     DocsHome,
     Document(usize),
@@ -230,6 +237,8 @@ enum Action {
     CopyOutput,
     Decision(usize),
     InsertFiles,
+    AddFile,
+    AddDirectory,
     Tint(usize),
     Instructions,
     NewWorkflow,
@@ -272,6 +281,10 @@ actions!(
 );
 struct Adeline {
     projects: Vec<Workspace>,
+    open_projects: Vec<bool>,
+    empty_workspace: Workspace,
+    agents: Vec<String>,
+    available_agents: [Vec<usize>; 3],
     services: Vec<Service>,
     project: usize,
     machine: usize,
@@ -296,6 +309,7 @@ struct Adeline {
     query: Entity<TextInput>,
     project_query: Entity<TextInput>,
     agent_query: Entity<TextInput>,
+    machine_query: Entity<TextInput>,
     composer: Entity<TextInput>,
     name_input: Entity<TextInput>,
     edit_input: Entity<TextInput>,
@@ -328,7 +342,7 @@ struct Adeline {
     toast: Option<String>,
     subscriptions: Vec<Subscription>,
     archived_docs: std::collections::HashSet<(usize, usize)>,
-    project_tints: [usize; 3],
+    project_tints: Vec<usize>,
     chat_list: Entity<chat::ChatList>,
     transcript: Entity<chat::Transcript>,
     composer_region: Entity<chat::Composer>,
@@ -356,6 +370,7 @@ impl Adeline {
         let query = cx.new(|cx| TextInput::search("Search…", cx));
         let project_query = cx.new(|cx| TextInput::search("Find a project…", cx));
         let agent_query = cx.new(|cx| TextInput::search("Find an agent…", cx));
+        let machine_query = cx.new(|cx| TextInput::search("Find a machine…", cx));
         let composer = cx.new(|cx| TextInput::new("Ask your agent to do anything…", cx));
         let name_input = cx.new(|cx| TextInput::new("Project name", cx));
         let edit_input = cx.new(|cx| TextInput::new("Write here…", cx));
@@ -376,6 +391,9 @@ impl Adeline {
                 cx.notify();
             }),
             cx.subscribe(&agent_query, |_, _, _: &input::ContentChanged, cx| {
+                cx.notify();
+            }),
+            cx.subscribe(&machine_query, |_, _, _: &input::ContentChanged, cx| {
                 cx.notify();
             }),
         ];
@@ -402,6 +420,11 @@ impl Adeline {
             dragging_right: false,
             board_bounds: Bounds::default(),
             drawing: false,
+            empty_workspace: Workspace::default(),
+            open_projects: vec![true; projects.len()],
+            project_tints: (0..projects.len()).map(|i| [0, 2, 3][i.min(2)]).collect(),
+            agents: AGENTS.iter().map(|name| (*name).to_owned()).collect(),
+            available_agents: std::array::from_fn(|i| MACHINES[i].agents.to_vec()),
             projects,
             services,
             project: 0,
@@ -420,6 +443,7 @@ impl Adeline {
             query,
             project_query,
             agent_query,
+            machine_query,
             composer,
             name_input,
             edit_input,
@@ -451,7 +475,6 @@ impl Adeline {
             toast: None,
             subscriptions,
             archived_docs: Default::default(),
-            project_tints: [0, 2, 3],
             chat_list,
             transcript,
             composer_region,
@@ -481,8 +504,19 @@ impl Adeline {
             .update(cx, |view, cx| view.sync(&app, false, cx));
         app
     }
+    fn has_open_project(&self) -> bool {
+        self.open_projects
+            .get(self.project)
+            .copied()
+            .unwrap_or(false)
+    }
     fn workspace(&self) -> &Workspace {
-        &self.projects[self.project]
+        if !self.has_open_project() {
+            return &self.empty_workspace;
+        }
+        self.projects
+            .get(self.project)
+            .unwrap_or(&self.empty_workspace)
     }
     fn query(&self, cx: &App) -> String {
         self.query.read(cx).content.to_lowercase()
@@ -498,7 +532,11 @@ impl Adeline {
         let label: SharedString = label.into();
         let state_styled = matches!(
             action,
-            Action::Project(_) | Action::Section(_) | Action::Filter(_) | Action::Group(_)
+            Action::Project(_)
+                | Action::Section(_)
+                | Action::Filter(_)
+                | Action::Group(_)
+                | Action::Send
         );
         let chrome_button = matches!(
             action,
@@ -507,7 +545,9 @@ impl Adeline {
                 | Action::ToggleSidePanel
                 | Action::ModeSettings
                 | Action::Agents
+                | Action::Machines
                 | Action::Projects
+                | Action::CloseProject(_)
         );
         row()
             .id(id)
@@ -518,7 +558,7 @@ impl Adeline {
             .h(px(34.))
             .rounded(px(8.))
             .cursor_pointer()
-            .text_size(px(12.))
+            .text_size(config::text_pixels(12.))
             .when_some(action.menu_target(), |d, target| {
                 let triggers = self.menu_triggers.clone();
                 d.relative().child(
@@ -622,53 +662,9 @@ impl Adeline {
             .h(px(32.))
             .px(px(10.))
             .rounded(px(3.))
-            .text_size(px(13.))
+            .text_size(config::text_pixels(13.))
             .text_color(rgb(theme::sidebar_foreground()))
             .hover(|s| s.bg(rgb(theme::secondary())))
-    }
-    fn project_notifications(&self, (working, unread): (usize, usize)) -> Div {
-        row()
-            .gap_2()
-            .flex_shrink_0()
-            .when(working > 0, |d| {
-                d.child(
-                    row()
-                        .gap(px(3.))
-                        .child(icon("working").size(px(12.)))
-                        .child(count_chip(working.to_string())),
-                )
-            })
-            .when(unread > 0, |d| {
-                d.child(
-                    div()
-                        .relative()
-                        .w(px(26.))
-                        .h(px(24.))
-                        .child(
-                            icon("chat")
-                                .size(px(17.))
-                                .absolute()
-                                .left_0()
-                                .bottom(px(2.)),
-                        )
-                        .child(
-                            text(unread.to_string(), 9., theme::primary_foreground())
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .absolute()
-                                .top(px(-2.))
-                                .right_0()
-                                .min_w(px(14.))
-                                .h(px(14.))
-                                .px(px(2.))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .line_height(px(12.))
-                                .bg(rgb(theme::primary()))
-                                .rounded_full(),
-                        ),
-                )
-            })
     }
     fn header(&self, cx: &Context<Self>) -> Div {
         let mut tabs = row()
@@ -689,13 +685,6 @@ impl Adeline {
                     .bottom_0()
                     .h(px(1.))
                     .bg(rgb(theme::border())),
-            )
-            .child(
-                self.button("machines", "", Action::Machines, cx)
-                    .flex_shrink_0()
-                    .child(icon("devices"))
-                    .child(MACHINES[self.machine].name)
-                    .child(icon("chevron").size(px(12.))),
             );
         let mut project_tabs = row()
             .id("project-tabs-scroll")
@@ -704,7 +693,7 @@ impl Adeline {
             .min_w_0()
             .overflow_x_scroll()
             .gap_2();
-        for i in 0..self.projects.len() {
+        for i in (0..self.projects.len()).filter(|&i| self.open_projects[i]) {
             let active = i == self.project;
             let p = &self.projects[i];
             // The 18px SVG sits in a 24px box and each shape has its own
@@ -712,6 +701,7 @@ impl Adeline {
             let shape_inset = 3. + [3., 2., 4.][i.min(2)] * 18. / 24.;
             project_tabs = project_tabs.child(
                 row()
+                    .relative()
                     .flex_shrink_0()
                     .h(px(40.))
                     .mt(px(6.))
@@ -721,7 +711,7 @@ impl Adeline {
                             .relative()
                             .rounded(px(0.))
                             .pl(px(11. - shape_inset))
-                            .pr(px(11.))
+                            .pr(px(36.))
                             // Reserve identical border space in every state.
                             .border_t_1()
                             .border_l_1()
@@ -776,7 +766,7 @@ impl Adeline {
                                         .flex()
                                         .items_center()
                                         .justify_center()
-                                        .line_height(px(12.))
+                                        .line_height(config::text_pixels(12.))
                                         .font_weight(FontWeight::SEMIBOLD)
                                         .bg(rgb(theme::primary()))
                                         .rounded_full(),
@@ -786,14 +776,40 @@ impl Adeline {
                             .child(
                                 div()
                                     .child(p.config.name.clone())
-                                    .text_size(px(14.))
+                                    .text_size(config::text_pixels(14.))
                                     .font_weight(FontWeight::SEMIBOLD),
                             ),
+                    )
+                    .child(
+                        self.button(("close-project", i), "", Action::CloseProject(i), cx)
+                            .occlude()
+                            .absolute()
+                            .right(px(5.))
+                            .top(px(8.))
+                            .size(px(24.))
+                            .px_0()
+                            .justify_center()
+                            .text_color(rgb(theme::muted_foreground()))
+                            .child(icon("close").size(px(12.))),
                     ),
             );
         }
+        project_tabs = project_tabs.child(
+            self.ib("add-project-tab", "plus", Action::AddProject, cx)
+                .flex_shrink_0()
+                .mt(px(6.)),
+        );
         tabs = tabs
             .child(project_tabs)
+            .when(config::current().general.features.machine_selector, |d| {
+                d.child(
+                    self.button("machines", "", Action::Machines, cx)
+                        .flex_shrink_0()
+                        .child(icon("devices"))
+                        .child(MACHINES[self.machine].name)
+                        .child(icon("chevron").size(px(12.))),
+                )
+            })
             .child(
                 self.button("machine-agents", "", Action::Agents, cx)
                     .flex_shrink_0()
@@ -831,7 +847,7 @@ impl Adeline {
         .into_iter()
         .enumerate()
         {
-            if !config::current().general.features.enabled(s) {
+            if !self.has_open_project() || !config::current().general.features.enabled(s) {
                 continue;
             }
             let active = self.section == s;
@@ -883,7 +899,7 @@ impl Adeline {
                                     .flex()
                                     .items_center()
                                     .justify_center()
-                                    .line_height(px(12.))
+                                    .line_height(config::text_pixels(12.))
                                     .font_weight(FontWeight::SEMIBOLD)
                                     .bg(rgb(theme::primary()))
                                     .rounded_full(),
@@ -900,30 +916,77 @@ impl Render for Adeline {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         ui_metrics::record(ui_metrics::Region::Shell);
         let font: SharedString = config::font().into();
-        let body = match self.section {
-            Section::Chats => self.chats(cx),
-            Section::Docs => self.files_region.clone().into_any_element(),
-            Section::Workflows => self.workflows(cx),
-            Section::Services => self.services_region.clone().into_any_element(),
-            Section::Groupchats | Section::Issues | Section::Whiteboard => {
-                self.collaboration_body(cx)
-            }
+        let body = if self.has_open_project() {
+            let body = match self.section {
+                Section::Chats => self.chats(cx),
+                Section::Docs => self.files_region.clone().into_any_element(),
+                Section::Workflows => self.workflows(cx),
+                Section::Services => self.services_region.clone().into_any_element(),
+                Section::Groupchats | Section::Issues | Section::Whiteboard => {
+                    self.collaboration_body(cx)
+                }
+            };
+            let body = self.workspace_with_left_panel(body, cx);
+            let body = row()
+                .size_full()
+                .items_start()
+                .child(div().flex_1().min_w_0().h_full().child(body))
+                .when(self.side_panel_is_open(), |d| {
+                    d.child(self.page_side_panel(cx))
+                });
+            body.into_any_element()
+        } else {
+            col()
+                .size_full()
+                .items_center()
+                .justify_center()
+                .gap_4()
+                .px_6()
+                .child(
+                    icon("folder")
+                        .size(px(40.))
+                        .text_color(rgb(theme::muted_foreground())),
+                )
+                .child(
+                    text(
+                        "No open projects, either create a new one or open an existing one",
+                        18.,
+                        theme::muted_foreground(),
+                    )
+                    .max_w(px(600.))
+                    .text_center(),
+                )
+                .child(
+                    row()
+                        .gap_3()
+                        .child(
+                            self.button(
+                                "empty-add-project",
+                                "Add a project",
+                                Action::AddProject,
+                                cx,
+                            )
+                            .bg(rgb(theme::secondary())),
+                        )
+                        .child(
+                            self.button(
+                                "empty-open-project",
+                                "Open a project",
+                                Action::Projects,
+                                cx,
+                            )
+                            .bg(rgb(theme::secondary())),
+                        ),
+                )
+                .into_any_element()
         };
-        let body = self.workspace_with_left_panel(body, cx);
-        let body = row()
-            .size_full()
-            .items_start()
-            .child(div().flex_1().min_w_0().h_full().child(body))
-            .when(self.side_panel_is_open(), |d| {
-                d.child(self.page_side_panel(cx))
-            });
         let content = div()
             .w_full()
             .flex_1()
             .min_h_0()
             .relative()
             .font_family(font.clone())
-            .text_size(px(14.))
+            .text_size(config::text_pixels(14.))
             .line_height(relative(1.5))
             .text_color(rgb(theme::foreground()))
             .bg(rgb(theme::background()))
@@ -933,7 +996,11 @@ impl Render for Adeline {
             .on_action(cx.listener(|s, _: &OpenSettings, w, cx| s.act(Action::AppSettings, w, cx)))
             .on_action(cx.listener(|s, _: &NewThread, w, cx| s.act(Action::NewChat, w, cx)))
             .on_action(cx.listener(|s, _: &Search, w, cx| {
-                if !matches!(s.menu, Some("projects" | "agents"))
+                if !s.has_open_project() && s.menu.is_none() {
+                    s.act(Action::Projects, w, cx);
+                    return;
+                }
+                if !matches!(s.menu, Some("projects" | "agents" | "machines"))
                     && matches!(s.section, Section::Chats | Section::Services)
                 {
                     s.left_panel_open[s.section as usize] = true;
@@ -944,6 +1011,8 @@ impl Render for Adeline {
                     &s.project_query
                 } else if s.menu == Some("agents") {
                     &s.agent_query
+                } else if s.menu == Some("machines") {
+                    &s.machine_query
                 } else {
                     &s.query
                 };
@@ -1056,7 +1125,11 @@ impl Render for Adeline {
             .font_family(font);
         #[cfg(target_os = "windows")]
         let shell = shell.child(titlebar::render(
-            format!("{} · Adeline", self.workspace().config.name),
+            if self.has_open_project() {
+                format!("{} · Adeline", self.workspace().config.name)
+            } else {
+                "Adeline".into()
+            },
             window,
         ));
         shell.child(content)
@@ -1064,6 +1137,7 @@ impl Render for Adeline {
 }
 fn main() {
     Application::new().with_assets(Assets).run(|cx: &mut App| {
+        fonts::init(cx);
         config::init();
         theme::init();
         input::init(cx);
@@ -1074,7 +1148,7 @@ fn main() {
             .open_window(
                 WindowOptions {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(900.), px(620.))),
+                    window_min_size: Some(size(px(800.), px(600.))),
                     titlebar: Some(TitlebarOptions {
                         title: Some("ade-project".into()),
                         appears_transparent: cfg!(target_os = "windows"),

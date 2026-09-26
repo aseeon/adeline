@@ -145,9 +145,13 @@ impl Adeline {
                 )
                 .w_full()
                 .min_w_0()
-                .line_height(px(26.))
+                .line_height(config::text_pixels(26.))
                 .when(heading > 0, |d| d.mt_3().font_weight(FontWeight::SEMIBOLD))
-                .when(self.raw, |d| d.font_family("monospace")),
+                .when(self.raw, |d| {
+                    d.font_family(config::code_font())
+                        .text_size(config::code_text_pixels(14.))
+                        .line_height(config::code_text_pixels(26.))
+                }),
             )
             .into_any_element()
     }

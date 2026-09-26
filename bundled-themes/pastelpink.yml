@@ -1,0 +1,38 @@
+# Source: https://tweakcn.com/themes/cmqw831ct000004ld8s7g5t26
+# Author: HT S
+# Dark palette adapted to Adeline; CSS colors converted to sRGB hex.
+name: "Pastelpink"
+brightness: Light
+colors:
+  background: '#FFFFFF'
+  foreground: '#500724'
+  card: '#FFF1F2'
+  card_foreground: '#500724'
+  popover: '#FFFFFF'
+  popover_foreground: '#500724'
+  primary: '#FB7185'
+  primary_foreground: '#FFFFFF'
+  secondary: '#FFE4E6'
+  secondary_foreground: '#BE123C'
+  muted: '#FFF1F2'
+  muted_foreground: '#FB7185'
+  accent: '#FFE4E6'
+  accent_foreground: '#FB7185'
+  destructive: '#EF4444'
+  destructive_foreground: '#FFFFFF'
+  border: '#FFE4E6'
+  input: '#FFE4E6'
+  ring: '#FB7185'
+  chart_1: '#FB7185'
+  chart_2: '#F43F5E'
+  chart_3: '#FDA4AF'
+  chart_4: '#E11D48'
+  chart_5: '#FF85A1'
+  sidebar: '#FFFFFF'
+  sidebar_foreground: '#500724'
+  sidebar_primary: '#FB7185'
+  sidebar_primary_foreground: '#FFFFFF'
+  sidebar_accent: '#FFF1F2'
+  sidebar_accent_foreground: '#FB7185'
+  sidebar_border: '#FFE4E6'
+  sidebar_ring: '#FB7185'

@@ -1,0 +1,38 @@
+# Source: https://tweakcn.com/themes/cmmzwuwhc000404jp7hlhd42k
+# Author: Dev Pathak
+# Dark palette adapted to Adeline; CSS colors converted to sRGB hex.
+name: "Retro"
+brightness: Very Dark
+colors:
+  background: '#0E0A07'
+  foreground: '#E7E4E2'
+  card: '#252422'
+  card_foreground: '#E7E4E2'
+  popover: '#1A1512'
+  popover_foreground: '#E7E4E2'
+  primary: '#F97015'
+  primary_foreground: '#FFFFFF'
+  secondary: '#231E1B'
+  secondary_foreground: '#E7E4E2'
+  muted: '#231E1B'
+  muted_foreground: '#827873'
+  accent: '#242422'
+  accent_foreground: '#E7E4E2'
+  destructive: '#7F1D1D'
+  destructive_foreground: '#FAFAFA'
+  border: '#2B2522'
+  input: '#231E1B'
+  ring: '#F97015'
+  chart_1: '#FE8A4D'
+  chart_2: '#1FC094'
+  chart_3: '#00ADEB'
+  chart_4: '#FB788D'
+  chart_5: '#9F85E5'
+  sidebar: '#0E0A07'
+  sidebar_foreground: '#C9C3C0'
+  sidebar_primary: '#F97015'
+  sidebar_primary_foreground: '#FFFFFF'
+  sidebar_accent: '#242422'
+  sidebar_accent_foreground: '#2A2927'
+  sidebar_border: '#211C19'
+  sidebar_ring: '#F97015'
