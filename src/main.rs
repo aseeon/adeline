@@ -340,6 +340,13 @@ struct Adeline {
     instructions: bool,
     focus: FocusHandle,
     toast: Option<String>,
+    #[cfg_attr(
+        not(target_os = "windows"),
+        expect(
+            dead_code,
+            reason = "Keeps input subscriptions alive until the app closes"
+        )
+    )]
     subscriptions: Vec<Subscription>,
     archived_docs: std::collections::HashSet<(usize, usize)>,
     project_tints: Vec<usize>,

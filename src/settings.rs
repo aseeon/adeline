@@ -851,6 +851,8 @@ fn matches_query(query: &str, parts: &[&str]) -> bool {
 }
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(not(target_os = "windows"))]
+        let _ = window;
         let query = self.query.read(cx).content.to_lowercase();
         let searching = !query.trim().is_empty();
         let mut sidebar = col()
