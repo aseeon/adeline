@@ -511,10 +511,7 @@ impl Adeline {
             self.transcript
                 .update(cx, |view, cx| view.sync(self, end, cx));
         }
-        if matches!(
-            action,
-            Project(_) | Chat(_) | Agent(_) | Model(_) | Effort(_) | Machine(_)
-        ) {
+        if matches!(action, Project(_) | Chat(_) | Agent(_) | Machine(_)) {
             self.composer_region.update(cx, |_, cx| cx.notify());
         }
         if matches!(

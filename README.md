@@ -6,6 +6,38 @@
 
 Agentic Development Environment offering many different modes of operations.
 
+## Agents
+
+Normal startup loads saved agents and starts without sample projects, conversations, documents, workflows, services, or collaboration content. **Agents → Add an Agent** opens a separate creation window. Edit, rename, or delete saved agents under **Settings → Agents**.
+
+Each agent has one definition at `~/.config/adeline/agents/<normalized-name>/agent.yml`, including on Windows. For example, Josh is stored as:
+
+```yaml
+name: Josh
+harness: OMP
+driver: ACP
+command: omp.exe acp
+model: openai-codex/gpt-6-luna
+effort: Max
+system_instructions: You are a helpful coding assistant.
+```
+
+OMP with ACP is supported. All fields except system instructions are required. Effort is one of Low, Medium, High, Extra High, or Max. Names become lowercase folder names with punctuation and spaces collapsed into hyphens; invalid names and existing destinations are rejected.
+
+Both agent selectors use these definitions. The composer displays the selected agent's saved model and effort; edit those values in Settings. Creating the first agent selects it. Later creations preserve the selection. Removing or invalidating the selected definition clears it without selecting a replacement.
+
+Filesystem changes are watched automatically. Invalid definitions report their filename and error while valid agents remain available. Unsaved forms offer Save, Discard, and Cancel when leaving or closing. If an external edit conflicts with a dirty Settings form, Save offers Reload, Overwrite, or Cancel.
+
+Agent commands and system instructions are stored only. Normal-mode Send does nothing; this version never starts a harness or contacts a provider.
+
+### Demo mode
+
+```sh
+cargo run --release --locked -- --demo
+```
+
+Or launch `Adeline.exe --demo`. Demo mode restores the bundled workspace and simulated chat replies. It excludes real agents. Agents created, edited, or deleted in demo mode affect only that run and never modify the user's agent definitions.
+
 
 ## Platform setup
 
@@ -84,6 +116,8 @@ Theme selection accepts YAML filenames within the themes folder. Path separators
 | --- | --- |
 | `src/main.rs` | App shell, design values, shared controls, startup |
 | `src/settings.rs` | Settings window, search, shared mode controls, embedded license notices |
+| `src/agents.rs` | Agent definitions, YAML persistence, validation, discovery, demo catalog |
+| `src/agent_form.rs` | Shared creation and editing fields |
 | `src/views.rs` | Workspace views, popups, dialogs |
 | `src/chat.rs` | Chat entities, cache invalidation, virtual list state |
 | `src/chat_render.rs` | Chat rows, message rows and composer presentation |

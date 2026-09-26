@@ -1035,32 +1035,34 @@ impl Adeline {
                 .into_any_element();
         }
         if menu == "agent" {
-            let groups: [(&str, Vec<&str>, usize); 5] = [
-                (
-                    "Agent",
-                    self.available_agents[self.machine]
-                        .iter()
-                        .map(|&i| self.agents[i].as_str())
-                        .collect(),
-                    self.available_agents[self.machine]
-                        .iter()
-                        .position(|&i| i == self.agent)
-                        .unwrap_or(0),
-                ),
-                (
-                    "Model",
-                    if self.agent == 0 {
-                        vec!["Opus 5", "Sonnet", "Haiku"]
-                    } else {
-                        vec!["Astra", "Sol", "Terra", "Luna"]
-                    },
-                    self.model,
-                ),
-                (
-                    "Effort",
-                    vec!["Low", "Medium", "High", "Extra high", "Max", "Ultra"],
-                    self.effort,
-                ),
+            let mut columns = row().items_start().p_3().gap_2();
+            let mut agents = col()
+                .flex_1()
+                .min_w_0()
+                .gap_1()
+                .child(text("Agent", 11., theme::muted_foreground()).px_2().py_2());
+            for (i, entry) in self.agent_catalog.entries.iter().enumerate() {
+                agents = agents.child(
+                    self.menu_button(
+                        ("agent-group", i),
+                        entry.definition.name.clone(),
+                        Action::Agent(i),
+                        cx,
+                    )
+                    .text_size(config::text_pixels(11.))
+                    .px_2()
+                    .when(
+                        self.selected_agent.as_deref() == Some(entry.id.as_str()),
+                        |d| d.bg(rgb(theme::secondary())).child(icon("check")),
+                    ),
+                );
+            }
+            if self.agent_catalog.entries.is_empty() {
+                agents =
+                    agents.child(text("No agents defined", 11., theme::muted_foreground()).px_2());
+            }
+            columns = columns.child(agents);
+            for (g, (name, options, selected)) in [
                 ("Speed", vec!["Standard", "Fast"], self.speed),
                 (
                     "Permissions",
@@ -1072,27 +1074,26 @@ impl Adeline {
                     ],
                     self.permission,
                 ),
-            ];
-            let mut columns = row().items_start().p_3().gap_2();
-            for (g, (name, options, selected)) in groups.into_iter().enumerate() {
+            ]
+            .into_iter()
+            .enumerate()
+            {
                 let mut column = col()
                     .flex_1()
                     .min_w_0()
                     .gap_1()
                     .child(text(name, 11., theme::muted_foreground()).px_2().py_2());
                 for (i, option) in options.into_iter().enumerate() {
-                    let a = match g {
-                        0 => Action::Agent(self.available_agents[self.machine][i]),
-                        1 => Action::Model(i),
-                        2 => Action::Effort(i),
-                        3 => Action::Speed(i),
-                        _ => Action::Permission(i),
+                    let action = if g == 0 {
+                        Action::Speed(i)
+                    } else {
+                        Action::Permission(i)
                     };
                     column = column.child(
                         self.menu_button(
-                            (SharedString::from(format!("agent-group-{g}")), i),
-                            option.to_owned(),
-                            a,
+                            (SharedString::from(format!("agent-group-{}", g + 1)), i),
+                            option,
+                            action,
                             cx,
                         )
                         .text_size(config::text_pixels(11.))
@@ -1104,7 +1105,43 @@ impl Adeline {
                 }
                 columns = columns.child(column);
             }
-            return menu_surface().p_0().absolute().left(px(self.left_panel_width()+20.)).bottom(px(116.)).w(px((f32::from(window.viewport_size().width)-self.left_panel_width()-42.).max(540.))).child(columns).child(row().h(px(35.)).px_3().border_t_1().border_color(rgb(theme::border())).justify_between().child(text("Work within the project. Auto-review checks requests for additional access.",10.,theme::muted_foreground()))).into_any_element();
+            let mut surface = menu_surface()
+                .p_0()
+                .absolute()
+                .left(px(self.left_panel_width() + 20.))
+                .bottom(px(116.))
+                .w(px((f32::from(window.viewport_size().width)
+                    - self.left_panel_width()
+                    - 42.)
+                    .max(540.)))
+                .child(columns);
+            for error in &self.agent_catalog.errors {
+                surface = surface.child(
+                    text(error.clone(), 11., theme::destructive())
+                        .px_3()
+                        .py_1()
+                        .whitespace_normal(),
+                );
+            }
+            return surface
+                .child(
+                    row()
+                        .h(px(35.))
+                        .px_3()
+                        .border_t_1()
+                        .border_color(rgb(theme::border()))
+                        .justify_between()
+                        .child(text(
+                            if self.demo_mode {
+                                "Work within the project. Auto-review checks requests for additional access."
+                            } else {
+                                "Model and effort are managed in Agent Settings."
+                            },
+                            10.,
+                            theme::muted_foreground(),
+                        )),
+                )
+                .into_any_element();
         }
         let mut popup = menu_surface().absolute().w(px(270.));
         match menu {
@@ -1217,9 +1254,13 @@ impl Adeline {
                     .max_h(px(320.))
                     .overflow_y_scroll();
                 let mut count = 0;
-                for (i, machine) in MACHINES.iter().enumerate().filter(|(_, machine)| {
-                    machine.name.to_lowercase().contains(&query)
-                        || machine.kind.to_lowercase().contains(&query)
+                for (i, machine) in MACHINES.iter().enumerate().filter(|(i, machine)| {
+                    if self.demo_mode {
+                        machine.name.to_lowercase().contains(&query)
+                            || machine.kind.to_lowercase().contains(&query)
+                    } else {
+                        *i == 0 && "local machine".contains(&query)
+                    }
                 }) {
                     count += 1;
                     list = list.child(
@@ -1238,10 +1279,18 @@ impl Adeline {
                                     .child(icon("devices").size(px(20.))),
                             )
                             .child(
-                                text(machine.name, 13., theme::sidebar_foreground())
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate(),
+                                text(
+                                    if self.demo_mode {
+                                        machine.name
+                                    } else {
+                                        "Local machine"
+                                    },
+                                    13.,
+                                    theme::sidebar_foreground(),
+                                )
+                                .flex_1()
+                                .min_w_0()
+                                .truncate(),
                             )
                             .when(self.machine == i, |d| d.child(icon("check"))),
                     );
@@ -1296,11 +1345,15 @@ impl Adeline {
                     .max_h(px(320.))
                     .overflow_y_scroll();
                 let mut count = 0;
-                for &i in self.available_agents[self.machine]
+                for (i, entry) in self
+                    .agent_catalog
+                    .entries
                     .iter()
-                    .filter(|&&i| self.agents[i].to_lowercase().contains(&query))
+                    .enumerate()
+                    .filter(|(_, entry)| entry.definition.name.to_lowercase().contains(&query))
                 {
                     count += 1;
+                    let selected = self.selected_agent.as_deref() == Some(entry.id.as_str());
                     list = list.child(
                         self.menu_button(("machine-agent", i), "", Action::Agent(i), cx)
                             .h(px(44.))
@@ -1308,26 +1361,34 @@ impl Adeline {
                             .min_w_0()
                             .px_2()
                             .gap_3()
-                            .when(self.agent == i, |d| d.bg(rgb(theme::secondary())))
+                            .when(selected, |d| d.bg(rgb(theme::secondary())))
                             .child(
                                 row().w(px(24.)).justify_center().flex_shrink_0().child(
-                                    icon(["claude", "chatgpt", "grok", "sparkle"][i.min(3)])
-                                        .size(px(20.)),
+                                    icon(if self.demo_mode {
+                                        ["claude", "chatgpt", "grok", "sparkle"][i.min(3)]
+                                    } else {
+                                        "sparkle"
+                                    })
+                                    .size(px(20.)),
                                 ),
                             )
                             .child(
-                                text(self.agents[i].clone(), 13., theme::sidebar_foreground())
-                                    .flex_1()
-                                    .min_w_0()
-                                    .truncate(),
+                                text(
+                                    entry.definition.name.clone(),
+                                    13.,
+                                    theme::sidebar_foreground(),
+                                )
+                                .flex_1()
+                                .min_w_0()
+                                .truncate(),
                             )
-                            .when(self.agent == i, |d| d.child(icon("check"))),
+                            .when(selected, |d| d.child(icon("check"))),
                     );
                 }
                 if count == 0 {
                     list = list.child(
                         text(
-                            if self.available_agents[self.machine].is_empty() {
+                            if self.agent_catalog.entries.is_empty() {
                                 "Currently there are no agents defined. Please add one below"
                             } else {
                                 "No agents found"
@@ -1338,20 +1399,26 @@ impl Adeline {
                         .p_4(),
                     );
                 }
-                popup = popup
-                    .child(list)
-                    .child(div().h(px(1.)).bg(rgb(theme::border())))
-                    .child(
-                        self.button("add-agents", "", Action::AddAgent, cx)
+                popup = popup.child(list);
+                for error in &self.agent_catalog.errors {
+                    popup = popup.child(
+                        text(error.clone(), 11., theme::destructive())
                             .w_full()
-                            .h(px(38.))
-                            .justify_center()
-                            .rounded(px(4.))
-                            .bg(rgb(theme::secondary()))
-                            .text_color(rgb(theme::secondary_foreground()))
-                            .child(icon("plus").size(px(15.)))
-                            .child("Add an Agent"),
+                            .whitespace_normal()
+                            .p_2(),
                     );
+                }
+                popup = popup.child(div().h(px(1.)).bg(rgb(theme::border()))).child(
+                    self.button("add-agents", "", Action::AddAgent, cx)
+                        .w_full()
+                        .h(px(38.))
+                        .justify_center()
+                        .rounded(px(4.))
+                        .bg(rgb(theme::secondary()))
+                        .text_color(rgb(theme::secondary_foreground()))
+                        .child(icon("plus").size(px(15.)))
+                        .child("Add an Agent"),
+                );
             }
             "app" => {
                 let modifier = if cfg!(target_os = "macos") {
@@ -1688,7 +1755,7 @@ impl Adeline {
             }
         } else if matches!(
             self.modal,
-            Some("workflow" | "collection" | "title" | "add-project" | "add-agent")
+            Some("workflow" | "collection" | "title" | "add-project")
         ) {
             let workflow = self.modal == Some("workflow");
             let title = match self.modal {
@@ -1700,14 +1767,12 @@ impl Adeline {
                     }
                 }
                 Some("add-project") => "Add a project",
-                Some("add-agent") => "Add an Agent",
                 Some("collection") => "New collection",
                 _ => "Document title",
             };
             let action = match self.modal {
                 Some("workflow") => Action::SaveWorkflow,
                 Some("add-project") => Action::SaveProject,
-                Some("add-agent") => Action::SaveAgent,
                 Some("collection") => Action::SaveCollection,
                 _ => Action::SaveTitle,
             };

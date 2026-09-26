@@ -1,6 +1,9 @@
 use super::*;
 impl Adeline {
     pub(super) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
+        if !self.demo_mode && matches!(action, Action::Send | Action::SendGroup) {
+            return;
+        }
         if !self.open_projects.iter().any(|&open| open)
             && !matches!(
                 action,
@@ -8,9 +11,9 @@ impl Adeline {
                     | Action::AddProject
                     | Action::SaveProject
                     | Action::AddAgent
-                    | Action::SaveAgent
                     | Action::Agents
                     | Action::Agent(_)
+                    | Action::AgentMenu
                     | Action::Projects
                     | Action::Machines
                     | Action::Machine(_)
@@ -109,10 +112,8 @@ impl Adeline {
                 if !config::current().general.features.machine_selector {
                     return;
                 }
-                if i < MACHINES.len() {
+                if i < if self.demo_mode { MACHINES.len() } else { 1 } {
                     self.machine = i;
-                    self.agent = self.machine_agents[i];
-                    self.model = 0;
                 }
                 self.menu = None;
                 self.control_pane.update(cx, |_, cx| cx.notify());
@@ -128,14 +129,17 @@ impl Adeline {
             }
             Action::About => self.modal = Some("about"),
             Action::KeyboardShortcuts => self.modal = Some("shortcuts"),
-            Action::QuitApp => cx.quit(),
-            Action::AddProject | Action::AddAgent => {
+            Action::QuitApp => {
+                let owner = window.window_handle().downcast::<Adeline>().unwrap();
+                cx.defer(move |cx| settings::request_close(owner, cx));
+            }
+            Action::AddAgent => {
                 self.menu = None;
-                self.modal = Some(if matches!(action, Action::AddProject) {
-                    "add-project"
-                } else {
-                    "add-agent"
-                });
+                settings::open_agent(window.window_handle().downcast::<Adeline>().unwrap(), cx);
+            }
+            Action::AddProject => {
+                self.menu = None;
+                self.modal = Some("add-project");
                 self.name_input.update(cx, |v, cx| v.set("", cx));
                 window.focus(&self.name_input.focus_handle(cx));
             }
@@ -153,32 +157,16 @@ impl Adeline {
                     },
                     ..Default::default()
                 };
-                self.collaboration
-                    .push(collaboration_modes::ProjectCollaboration::seed(&project));
+                self.collaboration.push(if self.demo_mode {
+                    collaboration_modes::ProjectCollaboration::seed(&project)
+                } else {
+                    collaboration_modes::ProjectCollaboration::default()
+                });
                 self.projects.push(project);
                 self.open_projects.push(false);
                 self.project_tints.push(0);
                 self.modal = None;
                 self.act(Action::Project(i), window, cx);
-                return;
-            }
-            Action::SaveAgent => {
-                let name = self.name_input.read(cx).content.trim().to_owned();
-                if name.is_empty() {
-                    return;
-                }
-                if self.available_agents[self.machine]
-                    .iter()
-                    .any(|&i| self.agents[i].eq_ignore_ascii_case(&name))
-                {
-                    self.notify_toast("An agent with this name already exists.", cx);
-                    return;
-                }
-                let i = self.agents.len();
-                self.agents.push(name);
-                self.available_agents[self.machine].push(i);
-                self.modal = None;
-                self.act(Action::Agent(i), window, cx);
                 return;
             }
             Action::CloseProject(i) => {
@@ -225,7 +213,6 @@ impl Adeline {
                 self.menu = None;
                 self.filter = 0;
                 self.query.update(cx, |v, cx| v.set("", cx));
-                self.agent = usize::from(self.workspace().config.provider != "claude");
                 window.set_window_title(&format!("{} — Adeline", self.workspace().config.name));
                 window.focus(&self.focus);
             }
@@ -243,7 +230,6 @@ impl Adeline {
                 self.expanded_event = None;
                 let t = &mut self.projects[self.project].threads[i];
                 t.mark_read();
-                self.agent = usize::from(t.provider != "claude");
             }
             Action::NewChat => {
                 self.section = Section::Chats;
@@ -365,20 +351,10 @@ impl Adeline {
                 }
             }
             Action::Agent(i) => {
-                if !self.available_agents[self.machine].contains(&i) {
+                let Some(entry) = self.agent_catalog.entries.get(i) else {
                     return;
-                }
-                self.agent = i;
-                self.machine_agents[self.machine] = i;
-                self.model = 0;
-                self.menu = None;
-            }
-            Action::Model(i) => {
-                self.model = i;
-                self.menu = None;
-            }
-            Action::Effort(i) => {
-                self.effort = i;
+                };
+                self.selected_agent = Some(entry.id.clone());
                 self.menu = None;
             }
             Action::Speed(i) => {
@@ -781,6 +757,9 @@ impl Adeline {
         cx.notify();
     }
     fn send(&mut self, cx: &mut Context<Self>) {
+        if !self.demo_mode {
+            return;
+        }
         let prompt = self.composer.read(cx).content.trim().to_owned();
         if prompt.is_empty() {
             return;
@@ -794,7 +773,12 @@ impl Adeline {
                 Thread {
                     id,
                     title: short(&prompt, 100),
-                    provider: if self.agent == 0 { "claude" } else { "codex" }.into(),
+                    provider: if self.selected_agent.as_deref() == Some("claude-code") {
+                        "claude"
+                    } else {
+                        "codex"
+                    }
+                    .into(),
                     status: "idle".into(),
                     ..Default::default()
                 },

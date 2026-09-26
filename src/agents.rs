@@ -1,0 +1,739 @@
+//! User agent definitions, stored under the Adeline configuration directory.
+use serde::{Deserialize, Serialize};
+use std::{
+    fs::{self, OpenOptions},
+    io::{self, Write},
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+};
+
+pub const EFFORTS: [&str; 5] = ["Low", "Medium", "High", "Extra High", "Max"];
+static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentDefinition {
+    pub name: String,
+    pub harness: String,
+    pub driver: String,
+    pub command: String,
+    pub model: String,
+    pub effort: String,
+    #[serde(default)]
+    pub system_instructions: String,
+}
+
+impl AgentDefinition {
+    fn validate(&self) -> Result<String, String> {
+        for (field, value) in [
+            ("Name", &self.name),
+            ("Harness", &self.harness),
+            ("Driver", &self.driver),
+            ("Command", &self.command),
+            ("Provider/model", &self.model),
+            ("Effort", &self.effort),
+        ] {
+            if value.trim().is_empty() {
+                return Err(format!("{field} is required."));
+            }
+        }
+        if self.harness != "OMP" || self.driver != "ACP" {
+            return Err("Only the OMP harness with the ACP driver is supported.".into());
+        }
+        if !EFFORTS.contains(&self.effort.as_str()) {
+            return Err(format!("Effort must be one of: {}.", EFFORTS.join(", ")));
+        }
+        normalize_name(&self.name)
+    }
+}
+
+/// A folder ID is made only from letters, digits and single separators.
+fn normalize_name(name: &str) -> Result<String, String> {
+    let mut id = String::new();
+    for c in name.trim().chars().flat_map(char::to_lowercase) {
+        if c.is_alphanumeric() {
+            id.push(c);
+        } else if !id.is_empty() && !id.ends_with('-') {
+            id.push('-');
+        }
+    }
+    let id = id.trim_end_matches('-').to_owned();
+    let reserved = matches!(id.as_str(), "con" | "prn" | "aux" | "nul")
+        || ["com", "lpt"].iter().any(|prefix| {
+            id.strip_prefix(*prefix).is_some_and(|number| {
+                matches!(
+                    number,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+        });
+    if id.is_empty() || reserved || id.len() > 255 || id.encode_utf16().count() > 255 {
+        return Err("Name does not produce a valid agent folder name.".into());
+    }
+    Ok(id)
+}
+
+fn checked_id(id: &str) -> Result<(), String> {
+    if normalize_name(id).as_deref() == Ok(id) {
+        Ok(())
+    } else {
+        Err(format!("Invalid agent folder: {id}"))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AgentEntry {
+    pub id: String,
+    pub definition: AgentDefinition,
+}
+
+pub struct AgentCatalog {
+    pub entries: Vec<AgentEntry>,
+    pub errors: Vec<String>,
+    root: Result<PathBuf, String>,
+    demo: bool,
+}
+
+impl AgentCatalog {
+    pub fn new(demo: bool) -> Self {
+        Self::with_root(
+            crate::config::directory().map(|path| path.join("agents")),
+            demo,
+        )
+    }
+
+    fn with_root(root: Result<PathBuf, String>, demo: bool) -> Self {
+        let mut catalog = Self {
+            entries: Vec::new(),
+            errors: Vec::new(),
+            root,
+            demo,
+        };
+        if !demo && let Ok(path) = &catalog.root {
+            // Create this directory before the parent starts watching for changes.
+            if let Err(error) = fs::create_dir_all(path) {
+                catalog.errors.push(file_error(path, error));
+                return catalog;
+            }
+        }
+        if demo {
+            for (name, model) in [
+                ("Claude Code", "anthropic/claude-opus-5"),
+                ("Codex", "openai-codex/gpt-6-luna"),
+                ("Grok Build", "xai/grok-build"),
+                ("Antigravity", "google/antigravity"),
+            ] {
+                catalog.entries.push(AgentEntry {
+                    id: normalize_name(name).expect("valid demo agent name"),
+                    definition: AgentDefinition {
+                        name: name.into(),
+                        harness: "OMP".into(),
+                        driver: "ACP".into(),
+                        command: "omp.exe acp".into(),
+                        model: model.into(),
+                        effort: "High".into(),
+                        system_instructions: String::new(),
+                    },
+                });
+            }
+        } else {
+            catalog.refresh();
+        }
+        catalog
+    }
+
+    /// Returns whether visible definitions or filesystem errors changed.
+    pub fn refresh(&mut self) -> bool {
+        if self.demo {
+            return false;
+        }
+        let (mut entries, mut errors) = match &self.root {
+            Ok(root) => discover(root),
+            Err(error) => (Vec::new(), vec![error.clone()]),
+        };
+        entries.sort_by(|a, b| {
+            a.definition
+                .name
+                .to_lowercase()
+                .cmp(&b.definition.name.to_lowercase())
+                .then(a.id.cmp(&b.id))
+        });
+        errors.sort();
+        let changed = self.entries != entries || self.errors != errors;
+        self.entries = entries;
+        self.errors = errors;
+        changed
+    }
+
+    /// `expected` is the definition loaded when editing began. A changed, deleted,
+    /// or invalid file requires an explicit overwrite decision.
+    pub fn save(
+        &mut self,
+        original: Option<&str>,
+        definition: AgentDefinition,
+        expected: Option<&AgentDefinition>,
+        overwrite: bool,
+    ) -> Result<String, String> {
+        let id = definition.validate()?;
+        if self.demo {
+            if let Some(original) = original
+                && !self.entries.iter().any(|entry| entry.id == original)
+                && !overwrite
+            {
+                return Err(format!(
+                    "Agent {original} changed outside this form. Reload or overwrite it."
+                ));
+            }
+            if original != Some(id.as_str()) && self.entries.iter().any(|entry| entry.id == id) {
+                return Err(format!("Agent folder {id} already exists."));
+            }
+            if let Some(entry) = self
+                .entries
+                .iter_mut()
+                .find(|entry| Some(entry.id.as_str()) == original)
+            {
+                entry.id.clone_from(&id);
+                entry.definition = definition;
+            } else {
+                self.entries.push(AgentEntry {
+                    id: id.clone(),
+                    definition,
+                });
+            }
+            return Ok(id);
+        }
+
+        let root = self.root.as_ref().map_err(Clone::clone)?;
+        if let Some(original) = original {
+            checked_id(original)?;
+        }
+        fs::create_dir_all(root).map_err(|e| file_error(root, e))?;
+        let old = original.map(|id| root.join(id));
+        if let Some(path) = old.as_deref() {
+            match fs::symlink_metadata(path) {
+                Ok(meta) if !meta.file_type().is_dir() => {
+                    return Err(format!(
+                        "{}: agent folder is not a directory.",
+                        path.join("agent.yml").display()
+                    ));
+                }
+                Err(error) if error.kind() != io::ErrorKind::NotFound => {
+                    return Err(file_error(&path.join("agent.yml"), error));
+                }
+                _ => {}
+            }
+        }
+        if let Some(path) = old.as_deref() {
+            let disk = load(path);
+            if !overwrite && (expected.is_none() || disk.as_ref().ok() != expected) {
+                return Err(format!(
+                    "{}: definition changed outside this form. Reload or overwrite it.",
+                    path.join("agent.yml").display()
+                ));
+            }
+        }
+        if original != Some(id.as_str())
+            && let Some(path) = old.as_deref()
+            && path.exists()
+        {
+            ensure_only_definition(path)?;
+        }
+        let destination = root.join(&id);
+        if original == Some(id.as_str()) {
+            if !destination.exists() {
+                fs::create_dir(&destination).map_err(|e| file_error(&destination, e))?;
+            }
+            let path = destination.join("agent.yml");
+            if path.exists() {
+                replace(&path, &definition)?;
+            } else {
+                write_new(&path, &definition)?;
+            }
+        } else {
+            // The directory itself is reserved exclusively. No invalid or missing
+            // definition can be overwritten by a new agent or a rename.
+            ensure_no_collision(root, &id)?;
+            fs::create_dir(&destination).map_err(|e| file_error(&destination, e))?;
+            if let Err(error) = write_new(&destination.join("agent.yml"), &definition) {
+                let _ = fs::remove_dir(&destination);
+                return Err(error);
+            }
+            if let Some(old) = old.as_deref()
+                && old.exists()
+                && let Err(error) = fs::remove_dir_all(old)
+            {
+                // Keep the complete new definition if removing the old directory
+                // fails or stops partway through.
+                self.refresh();
+                return Err(file_error(old, error));
+            }
+        }
+        self.refresh();
+        Ok(id)
+    }
+
+    pub fn delete(&mut self, id: &str) -> Result<(), String> {
+        checked_id(id)?;
+        if self.demo {
+            let index = self
+                .entries
+                .iter()
+                .position(|entry| entry.id == id)
+                .ok_or_else(|| format!("Agent {id} no longer exists."))?;
+            self.entries.remove(index);
+            return Ok(());
+        }
+        let root = self.root.as_ref().map_err(Clone::clone)?;
+        let old = self
+            .entries
+            .iter()
+            .find(|entry| entry.id == id)
+            .ok_or_else(|| format!("Agent {id} no longer exists."))?;
+        let path = root.join(id);
+        if load(&path).as_ref().ok() != Some(&old.definition) {
+            return Err(format!(
+                "{}: definition changed outside this form. Reload before deleting it.",
+                path.join("agent.yml").display()
+            ));
+        }
+        fs::remove_dir_all(&path).map_err(|e| file_error(&path, e))?;
+        self.refresh();
+        Ok(())
+    }
+}
+
+fn file_error(path: &Path, error: impl std::fmt::Display) -> String {
+    format!("{}: {error}", path.display())
+}
+
+fn load(folder: &Path) -> Result<AgentDefinition, String> {
+    let path = folder.join("agent.yml");
+    if !fs::symlink_metadata(folder)
+        .map_err(|e| file_error(&path, e))?
+        .file_type()
+        .is_dir()
+    {
+        return Err(format!(
+            "{}: agent folder is not a directory.",
+            path.display()
+        ));
+    }
+    let text = fs::read_to_string(&path).map_err(|e| file_error(&path, e))?;
+    let definition: AgentDefinition =
+        serde_yaml_ng::from_str(&text).map_err(|e| file_error(&path, e))?;
+    definition.validate().map_err(|e| file_error(&path, e))?;
+    Ok(definition)
+}
+
+fn discover(root: &Path) -> (Vec<AgentEntry>, Vec<String>) {
+    let directory = match fs::read_dir(root) {
+        Ok(directory) => directory,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return (Vec::new(), Vec::new()),
+        Err(error) => return (Vec::new(), vec![file_error(root, error)]),
+    };
+    let (mut entries, mut errors) = (Vec::new(), Vec::new());
+    for entry in directory {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(error) => {
+                errors.push(file_error(root, error));
+                continue;
+            }
+        };
+        let path = entry.path();
+        match entry.file_type() {
+            Ok(kind) if kind.is_dir() => {}
+            Ok(_) => continue,
+            Err(error) => {
+                errors.push(file_error(&path, error));
+                continue;
+            }
+        }
+        let id = entry.file_name().to_string_lossy().into_owned();
+        let result = checked_id(&id)
+            .map_err(|e| file_error(&path.join("agent.yml"), e))
+            .and_then(|()| load(&path));
+        match result {
+            Ok(definition) => entries.push(AgentEntry { id, definition }),
+            Err(error) => errors.push(error),
+        }
+    }
+    (entries, errors)
+}
+
+fn ensure_only_definition(folder: &Path) -> Result<(), String> {
+    for entry in fs::read_dir(folder).map_err(|e| file_error(folder, e))? {
+        let entry = entry.map_err(|e| file_error(folder, e))?;
+        if entry.file_name() != "agent.yml" {
+            return Err(format!(
+                "{}: cannot rename a folder containing other files.",
+                entry.path().display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn ensure_no_collision(root: &Path, id: &str) -> Result<(), String> {
+    for entry in fs::read_dir(root).map_err(|e| file_error(root, e))? {
+        let entry = entry.map_err(|e| file_error(root, e))?;
+        if entry.file_name().to_string_lossy().to_lowercase() == id {
+            return Err(format!(
+                "{}: agent folder already exists.",
+                entry.path().display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn yaml(definition: &AgentDefinition, path: &Path) -> Result<String, String> {
+    serde_yaml_ng::to_string(definition).map_err(|e| file_error(path, e))
+}
+
+fn write_new(path: &Path, definition: &AgentDefinition) -> Result<(), String> {
+    let text = yaml(definition, path)?;
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|e| file_error(path, e))?;
+    if let Err(error) = file
+        .write_all(text.as_bytes())
+        .and_then(|()| file.sync_all())
+    {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(file_error(path, error));
+    }
+    Ok(())
+}
+
+fn temporary(path: &Path, suffix: &str) -> PathBuf {
+    path.with_file_name(format!(
+        "agent.yml.{suffix}.{}.{}",
+        std::process::id(),
+        NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+fn replace(path: &Path, definition: &AgentDefinition) -> Result<(), String> {
+    let text = yaml(definition, path)?;
+    let temp_path = loop {
+        let temporary = temporary(path, "tmp");
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+        {
+            Ok(mut file) => {
+                if let Err(error) = file
+                    .write_all(text.as_bytes())
+                    .and_then(|()| file.sync_all())
+                {
+                    drop(file);
+                    let _ = fs::remove_file(&temporary);
+                    return Err(file_error(&temporary, error));
+                }
+                break temporary;
+            }
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(error) => return Err(file_error(&temporary, error)),
+        }
+    };
+    let result = fs::rename(&temp_path, path).map_err(|e| file_error(path, e));
+    if result.is_err() {
+        let _ = fs::remove_file(&temp_path);
+    }
+    result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestRoot(PathBuf);
+    impl TestRoot {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!(
+                "adeline-agent-test-{}-{}",
+                std::process::id(),
+                NEXT_FILE.fetch_add(1, Ordering::Relaxed)
+            ));
+            fs::create_dir(&path).unwrap();
+            Self(path)
+        }
+        fn catalog(&self, demo: bool) -> AgentCatalog {
+            AgentCatalog::with_root(Ok(self.0.join("agents")), demo)
+        }
+        fn file(&self, id: &str) -> PathBuf {
+            self.0.join("agents").join(id).join("agent.yml")
+        }
+    }
+    impl Drop for TestRoot {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.0).unwrap();
+        }
+    }
+    fn agent(name: &str) -> AgentDefinition {
+        AgentDefinition {
+            name: name.into(),
+            harness: "OMP".into(),
+            driver: "ACP".into(),
+            command: "omp.exe acp".into(),
+            model: "openai-codex/gpt-6-luna".into(),
+            effort: "Max".into(),
+            system_instructions: "Answer plainly.".into(),
+        }
+    }
+
+    #[test]
+    fn persists_complete_definitions_and_refreshes_external_changes() {
+        let root = TestRoot::new();
+        let mut catalog = root.catalog(false);
+        let josh = agent("Josh");
+        assert_eq!(
+            catalog.save(None, josh.clone(), None, false).unwrap(),
+            "josh"
+        );
+        assert_eq!(
+            serde_yaml_ng::from_str::<AgentDefinition>(
+                &fs::read_to_string(root.file("josh")).unwrap()
+            )
+            .unwrap(),
+            josh
+        );
+        assert_eq!(root.catalog(false).entries[0].definition, josh);
+        let external = agent("Outside");
+        fs::create_dir(root.file("outside").parent().unwrap()).unwrap();
+        fs::write(
+            root.file("outside"),
+            serde_yaml_ng::to_string(&external).unwrap(),
+        )
+        .unwrap();
+        assert!(catalog.refresh());
+        assert_eq!(catalog.entries.len(), 2);
+        let mut edited = josh;
+        edited.command = "omp --verbose acp".into();
+        edited.name = "Renamed externally".into();
+        fs::write(
+            root.file("josh"),
+            serde_yaml_ng::to_string(&edited).unwrap(),
+        )
+        .unwrap();
+        assert!(catalog.refresh());
+        assert_eq!(
+            catalog
+                .entries
+                .iter()
+                .find(|entry| entry.id == "josh")
+                .unwrap()
+                .definition,
+            edited
+        );
+        fs::remove_dir_all(root.file("josh").parent().unwrap()).unwrap();
+        assert!(catalog.refresh());
+        assert_eq!(catalog.entries.len(), 1);
+        assert_eq!(catalog.entries[0].definition, external);
+    }
+
+    #[test]
+    fn normalizes_names_but_never_overwrites_collisions() {
+        let root = TestRoot::new();
+        let mut catalog = root.catalog(false);
+        assert_eq!(
+            catalog
+                .save(None, agent(" -- Josh...  Smith !! "), None, false)
+                .unwrap(),
+            "josh-smith"
+        );
+        let before = fs::read(root.file("josh-smith")).unwrap();
+        assert!(catalog.save(None, agent("Josh Smith"), None, true).is_err());
+        assert_eq!(fs::read(root.file("josh-smith")).unwrap(), before);
+        for invalid in [" -- !!! ", "CON", "com1", "COM¹", "LPT9"] {
+            assert!(
+                catalog.save(None, agent(invalid), None, false).is_err(),
+                "{invalid}"
+            );
+        }
+        assert!(
+            catalog
+                .save(None, agent(&"a".repeat(256)), None, false)
+                .is_err()
+        );
+        fs::create_dir(root.0.join("agents").join("JOSH")).unwrap();
+        assert!(catalog.save(None, agent("Josh"), None, true).is_err());
+    }
+
+    #[test]
+    fn validates_fields_and_reports_bad_neighbors_without_hiding_valid_agents() {
+        let root = TestRoot::new();
+        let mut catalog = root.catalog(false);
+        for change in [
+            ("name", ""),
+            ("command", "  "),
+            ("model", ""),
+            ("harness", "Unknown"),
+            ("driver", "Unknown"),
+            ("effort", "Ultra"),
+        ] {
+            let mut bad = agent("Bad");
+            match change.0 {
+                "name" => bad.name = change.1.into(),
+                "command" => bad.command = change.1.into(),
+                "model" => bad.model = change.1.into(),
+                "harness" => bad.harness = change.1.into(),
+                "driver" => bad.driver = change.1.into(),
+                _ => bad.effort = change.1.into(),
+            }
+            assert!(
+                catalog.save(None, bad, None, false).is_err(),
+                "{}",
+                change.0
+            );
+        }
+        let mut good = agent("Good");
+        good.system_instructions.clear();
+        catalog.save(None, good.clone(), None, false).unwrap();
+        fs::write(root.file("good"), "name: Good\nharness: OMP\ndriver: ACP\ncommand: omp.exe acp\nmodel: openai-codex/gpt-6-luna\neffort: Max\n").unwrap();
+        fs::create_dir(root.0.join("agents/bad")).unwrap();
+        let mut bad = agent("Bad");
+        bad.effort = "Ultra".into();
+        fs::write(root.file("bad"), serde_yaml_ng::to_string(&bad).unwrap()).unwrap();
+        fs::create_dir(root.0.join("agents/missing")).unwrap();
+        assert!(catalog.refresh());
+        assert_eq!(catalog.entries[0].definition, good);
+        assert_eq!(catalog.errors.len(), 2);
+        assert!(catalog.errors.iter().any(|error| error.contains("bad")
+            && error.contains("agent.yml")
+            && error.contains("Effort")));
+        assert!(
+            catalog
+                .errors
+                .iter()
+                .any(|error| error.contains("missing") && error.contains("agent.yml"))
+        );
+    }
+
+    #[test]
+    fn external_edit_or_invalid_or_deleted_file_conflicts_until_overwrite() {
+        let root = TestRoot::new();
+        let mut catalog = root.catalog(false);
+        let original = agent("Josh");
+        catalog.save(None, original.clone(), None, false).unwrap();
+        let mut mine = original.clone();
+        mine.model = "openai-codex/my-model".into();
+        let mut theirs = original.clone();
+        theirs.command = "external acp".into();
+        fs::write(
+            root.file("josh"),
+            serde_yaml_ng::to_string(&theirs).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            catalog
+                .save(Some("josh"), mine.clone(), Some(&original), false)
+                .unwrap_err()
+                .contains("agent.yml")
+        );
+        assert_eq!(
+            fs::read_to_string(root.file("josh")).unwrap(),
+            serde_yaml_ng::to_string(&theirs).unwrap()
+        );
+        fs::write(root.file("josh"), "name: Broken\n").unwrap();
+        assert!(
+            catalog
+                .save(Some("josh"), mine.clone(), Some(&original), false)
+                .is_err()
+        );
+        fs::remove_file(root.file("josh")).unwrap();
+        assert!(
+            catalog
+                .save(Some("josh"), mine.clone(), Some(&original), false)
+                .is_err()
+        );
+        catalog
+            .save(Some("josh"), mine.clone(), Some(&original), true)
+            .unwrap();
+        assert_eq!(root.catalog(false).entries[0].definition, mine);
+    }
+
+    #[test]
+    fn renames_and_deletes_without_damaging_existing_destinations() {
+        let root = TestRoot::new();
+        let mut catalog = root.catalog(false);
+        let josh = agent("Josh");
+        let alice = agent("Alice");
+        catalog.save(None, josh.clone(), None, false).unwrap();
+        catalog.save(None, alice.clone(), None, false).unwrap();
+        assert!(
+            catalog
+                .save(Some("josh"), alice.clone(), Some(&josh), true)
+                .is_err()
+        );
+        assert_eq!(
+            fs::read_to_string(root.file("alice")).unwrap(),
+            serde_yaml_ng::to_string(&alice).unwrap()
+        );
+        let mut renamed = josh.clone();
+        renamed.name = "Josh Smith".into();
+        let extra = root.file("josh").parent().unwrap().join("notes.txt");
+        fs::write(&extra, "keep this").unwrap();
+        assert!(
+            catalog
+                .save(Some("josh"), renamed.clone(), Some(&josh), false)
+                .is_err()
+        );
+        assert_eq!(fs::read_to_string(&extra).unwrap(), "keep this");
+        assert!(!root.file("josh-smith").exists());
+        fs::remove_file(extra).unwrap();
+        catalog
+            .save(Some("josh"), renamed.clone(), Some(&josh), false)
+            .unwrap();
+        assert!(!root.file("josh").exists());
+        assert_eq!(
+            root.catalog(false)
+                .entries
+                .iter()
+                .find(|entry| entry.id == "josh-smith")
+                .unwrap()
+                .definition,
+            renamed
+        );
+        let mut changed = renamed;
+        changed.command = "external change".into();
+        fs::write(
+            root.file("josh-smith"),
+            serde_yaml_ng::to_string(&changed).unwrap(),
+        )
+        .unwrap();
+        assert!(catalog.delete("josh-smith").is_err());
+        assert!(root.file("josh-smith").exists());
+        catalog.refresh();
+        catalog.delete("josh-smith").unwrap();
+        assert!(!root.file("josh-smith").parent().unwrap().exists());
+        assert_eq!(catalog.entries.len(), 1);
+        assert_eq!(catalog.entries[0].definition, alice);
+    }
+
+    #[test]
+    fn demo_store_never_reads_or_writes_real_definitions() {
+        let root = TestRoot::new();
+        let mut real = root.catalog(false);
+        real.save(None, agent("Personal"), None, false).unwrap();
+        let mut demo = root.catalog(true);
+        assert_eq!(demo.entries.len(), 4);
+        assert!(!demo.entries.iter().any(|entry| entry.id == "personal"));
+        let first = demo.entries[0].clone();
+        let mut edited = first.definition.clone();
+        edited.command = "demo-only".into();
+        demo.save(Some(&first.id), edited, Some(&first.definition), false)
+            .unwrap();
+        demo.delete(&first.id).unwrap();
+        demo.save(None, agent("Session"), None, false).unwrap();
+        assert!(demo.entries.iter().any(|entry| entry.id == "session"));
+        assert_eq!(root.catalog(true).entries.len(), 4);
+        assert_eq!(root.catalog(false).entries[0].definition.name, "Personal");
+        assert!(!root.file("session").exists());
+    }
+}

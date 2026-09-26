@@ -21,6 +21,7 @@ pub(super) struct Mark {
     label: String,
     author: String,
 }
+#[derive(Default)]
 pub(super) struct ProjectCollaboration {
     groups: Vec<Group>,
     tickets: Vec<Ticket>,
@@ -186,7 +187,7 @@ impl Adeline {
             Action::Group(i) => state.group = i,
             Action::SendGroup => {
                 let message = self.group_input.read(cx).content.trim().to_owned();
-                if !message.is_empty() {
+                if !message.is_empty() && !state.groups.is_empty() {
                     state.groups[state.group]
                         .messages
                         .push(("You".into(), message));
@@ -200,8 +201,12 @@ impl Adeline {
                 state.groups.push(Group {
                     title: format!("Planning group {}", state.groups.len() + 1),
                     topic: "A place to plan the next piece of work".into(),
-                    members: vec![0, 1],
-                    messages: vec![("You".into(), "Let's plan our next steps here.".into())],
+                    members: if self.demo_mode { vec![0, 1] } else { vec![] },
+                    messages: if self.demo_mode {
+                        vec![("You".into(), "Let's plan our next steps here.".into())]
+                    } else {
+                        vec![]
+                    },
                 });
                 state.group = state.groups.len() - 1;
                 self.query.update(cx, |v, cx| v.set("", cx));
@@ -316,7 +321,11 @@ impl Adeline {
                 for (i, label) in [
                     "All tickets",
                     "High priority",
-                    "Assigned to Codex",
+                    if self.demo_mode {
+                        "Assigned to Codex"
+                    } else {
+                        "Assigned"
+                    },
                     "Open tickets",
                 ]
                 .iter()
@@ -391,8 +400,17 @@ impl Adeline {
     }
     pub(super) fn collaboration_members(&self) -> AnyElement {
         let state = self.collaboration_state();
+        if !self.demo_mode {
+            return text("No participants", 13., theme::muted_foreground())
+                .p_4()
+                .into_any_element();
+        }
         let members = if self.section == Section::Groupchats {
-            state.groups[state.group].members.clone()
+            state
+                .groups
+                .get(state.group)
+                .map(|group| group.members.clone())
+                .unwrap_or_default()
         } else {
             vec![0, 1]
         };
@@ -422,7 +440,11 @@ impl Adeline {
     }
     pub(super) fn issue_details(&self, cx: &Context<Self>) -> AnyElement {
         let state = self.collaboration_state();
-        let ticket = &state.tickets[state.issue];
+        let Some(ticket) = state.tickets.get(state.issue) else {
+            return text("No issue selected", 13., theme::muted_foreground())
+                .p_4()
+                .into_any_element();
+        };
         let mut content = col()
             .p_4()
             .gap_4()
@@ -443,7 +465,14 @@ impl Adeline {
         }
         content
             .child(text(
-                format!("Assignee   {}", AGENTS[ticket.assignee]),
+                format!(
+                    "Assignee   {}",
+                    if self.demo_mode {
+                        AGENTS[ticket.assignee]
+                    } else {
+                        "Unassigned"
+                    }
+                ),
                 13.,
                 theme::foreground(),
             ))
@@ -460,7 +489,11 @@ impl Adeline {
             )
             .child(text("Activity", 12., theme::muted_foreground()).mt_4())
             .child(text(
-                "Codex added acceptance criteria.\nYou added this to the team review.",
+                if self.demo_mode {
+                    "Codex added acceptance criteria.\nYou added this to the team review."
+                } else {
+                    "No activity"
+                },
                 12.,
                 theme::muted_foreground(),
             ))
@@ -487,7 +520,11 @@ impl Adeline {
     }
     fn group_body(&self, cx: &Context<Self>) -> AnyElement {
         let state = self.collaboration_state();
-        let group = &state.groups[state.group];
+        let Some(group) = state.groups.get(state.group) else {
+            return text("No group selected", 13., theme::muted_foreground())
+                .p_5()
+                .into_any_element();
+        };
         let mut messages = col()
             .p_5()
             .gap_5()
@@ -642,7 +679,11 @@ impl Adeline {
                                     },
                                 ))
                                 .child(text(
-                                    AGENTS[ticket.assignee],
+                                    if self.demo_mode {
+                                        AGENTS[ticket.assignee]
+                                    } else {
+                                        "Unassigned"
+                                    },
                                     11.,
                                     theme::muted_foreground(),
                                 )),
@@ -849,7 +890,11 @@ impl Adeline {
                     .border_t_1()
                     .border_color(rgb(theme::border()))
                     .child(text(
-                        "Shared team sketch • Demo",
+                        if self.demo_mode {
+                            "Shared team sketch • Demo"
+                        } else {
+                            "Shared team sketch"
+                        },
                         11.,
                         theme::muted_foreground(),
                     ))

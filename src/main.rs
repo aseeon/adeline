@@ -1,4 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+mod agent_form;
+mod agents;
 mod chat;
 mod chat_render;
 mod collaboration_modes;
@@ -32,24 +34,20 @@ mod theme;
 struct Machine {
     name: &'static str,
     kind: &'static str,
-    agents: &'static [usize],
 }
 const AGENTS: [&str; 4] = ["Claude Code", "Codex", "Grok Build", "Antigravity"];
 const MACHINES: [Machine; 3] = [
     Machine {
         name: "Nexus",
         kind: "Local machine",
-        agents: &[0, 1, 2, 3],
     },
     Machine {
         name: "Matrix",
         kind: "Remote machine",
-        agents: &[0, 1, 2, 3],
     },
     Machine {
         name: "Vortex",
         kind: "Remote machine",
-        agents: &[0, 1, 2, 3],
     },
 ];
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
@@ -178,7 +176,6 @@ enum Action {
     AddProject,
     SaveProject,
     AddAgent,
-    SaveAgent,
     Section(Section),
     Chat(usize),
     NewChat,
@@ -207,8 +204,6 @@ enum Action {
     SaveSettings,
     AgentMenu,
     Agent(usize),
-    Model(usize),
-    Effort(usize),
     Speed(usize),
     Permission(usize),
     ToggleMode(Section),
@@ -283,12 +278,13 @@ struct Adeline {
     projects: Vec<Workspace>,
     open_projects: Vec<bool>,
     empty_workspace: Workspace,
-    agents: Vec<String>,
-    available_agents: [Vec<usize>; 3],
+    demo_mode: bool,
+    agent_catalog: agents::AgentCatalog,
+    selected_agent: Option<String>,
+    agent_watcher: Option<notify::RecommendedWatcher>,
     services: Vec<Service>,
     project: usize,
     machine: usize,
-    machine_agents: [usize; 3],
     section: Section,
     selected: Option<usize>,
     filter: usize,
@@ -317,9 +313,6 @@ struct Adeline {
     menu: Option<&'static str>,
     menu_triggers:
         std::rc::Rc<std::cell::RefCell<std::collections::HashMap<&'static str, Bounds<Pixels>>>>,
-    agent: usize,
-    model: usize,
-    effort: usize,
     speed: usize,
     permission: usize,
     document: Option<usize>,
@@ -364,12 +357,20 @@ struct Adeline {
     document_tasks: std::collections::HashMap<(usize, usize), Task<()>>,
 }
 impl Adeline {
-    fn new(cx: &mut Context<Self>) -> Self {
-        let (projects, services) = load();
+    fn new(demo_mode: bool, cx: &mut Context<Self>) -> Self {
+        let (projects, services) = if demo_mode { load() } else { (vec![], vec![]) };
         #[cfg(feature = "ui-profiling")]
-        let (projects, services) = ui_metrics::stress_content(projects, services);
+        let (projects, services) = if demo_mode {
+            ui_metrics::stress_content(projects, services)
+        } else {
+            (projects, services)
+        };
         #[cfg(feature = "ui-profiling")]
-        let projects = ui_metrics::stress_fixture(projects);
+        let projects = if demo_mode {
+            ui_metrics::stress_fixture(projects)
+        } else {
+            projects
+        };
         let mut projects = projects;
         for project in &mut projects {
             project.rebuild_counts();
@@ -430,13 +431,14 @@ impl Adeline {
             empty_workspace: Workspace::default(),
             open_projects: vec![true; projects.len()],
             project_tints: (0..projects.len()).map(|i| [0, 2, 3][i.min(2)]).collect(),
-            agents: AGENTS.iter().map(|name| (*name).to_owned()).collect(),
-            available_agents: std::array::from_fn(|i| MACHINES[i].agents.to_vec()),
+            demo_mode,
+            agent_catalog: agents::AgentCatalog::new(demo_mode),
+            selected_agent: None,
+            agent_watcher: None,
             projects,
             services,
             project: 0,
             machine: 0,
-            machine_agents: [0; 3],
             section: Section::Chats,
             selected: None,
             filter: 0,
@@ -457,9 +459,6 @@ impl Adeline {
             modal: None,
             menu: None,
             menu_triggers: Default::default(),
-            agent: 0,
-            model: 0,
-            effort: 2,
             speed: 0,
             permission: 2,
             document: None,
@@ -496,6 +495,14 @@ impl Adeline {
             log_region,
         };
         app.load_settings();
+        if demo_mode {
+            app.selected_agent = app
+                .agent_catalog
+                .entries
+                .first()
+                .map(|entry| entry.id.clone());
+        }
+        app.watch_agents(cx);
         for project in 0..app.projects.len() {
             app.project = project;
             for index in 0..app.projects[project].docs.len() {
@@ -510,6 +517,101 @@ impl Adeline {
         app.transcript
             .update(cx, |view, cx| view.sync(&app, false, cx));
         app
+    }
+    fn selected_definition(&self) -> Option<&agents::AgentDefinition> {
+        let id = self.selected_agent.as_ref()?;
+        self.agent_catalog
+            .entries
+            .iter()
+            .find(|entry| &entry.id == id)
+            .map(|entry| &entry.definition)
+    }
+
+    fn refresh_agents(&mut self, cx: &mut Context<Self>) {
+        if self.agent_catalog.refresh() {
+            self.agents_changed(None, None, false, cx);
+        }
+    }
+
+    fn agents_changed(
+        &mut self,
+        previous_id: Option<&str>,
+        saved_id: Option<&str>,
+        select_first: bool,
+        cx: &mut Context<Self>,
+    ) {
+        if select_first || (previous_id.is_some() && self.selected_agent.as_deref() == previous_id)
+        {
+            self.selected_agent = saved_id.map(str::to_owned);
+        }
+        if self.selected_definition().is_none() {
+            self.selected_agent = None;
+        }
+        self.composer_region.update(cx, |_, cx| cx.notify());
+        self.header_region.update(cx, |_, cx| cx.notify());
+        self.control_pane.update(cx, |_, cx| cx.notify());
+        cx.notify();
+        cx.refresh_windows();
+    }
+
+    fn watch_agents(&mut self, cx: &mut Context<Self>) {
+        use notify::Watcher;
+        if self.demo_mode {
+            return;
+        }
+        let Ok(root) = config::directory() else {
+            return;
+        };
+        let (sender, receiver) = async_channel::unbounded();
+        let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+            let _ = sender.try_send(event);
+        })
+        .and_then(|mut watcher| {
+            watcher.watch(&root, notify::RecursiveMode::Recursive)?;
+            Ok(watcher)
+        });
+        match watcher {
+            Ok(watcher) => self.agent_watcher = Some(watcher),
+            Err(error) => {
+                self.agent_catalog.errors.push(format!(
+                    "{}: cannot watch agent definitions: {error}",
+                    root.display()
+                ));
+                return;
+            }
+        }
+        cx.spawn(async move |this, cx| {
+            while let Ok(event) = receiver.recv().await {
+                let relevant = match &event {
+                    Ok(event) => {
+                        !matches!(event.kind, notify::EventKind::Access(_))
+                            && event
+                                .paths
+                                .iter()
+                                .any(|path| path.starts_with(root.join("agents")))
+                    }
+                    Err(_) => true,
+                };
+                if !relevant {
+                    continue;
+                }
+                if this
+                    .update(cx, |app, cx| {
+                        app.refresh_agents(cx);
+                        if let Err(error) = event {
+                            app.agent_catalog
+                                .errors
+                                .push(format!("{}: agent watcher: {error}", root.display()));
+                            cx.notify();
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
     fn has_open_project(&self) -> bool {
         self.open_projects
@@ -671,7 +773,6 @@ impl Adeline {
             .rounded(px(3.))
             .text_size(config::text_pixels(13.))
             .text_color(rgb(theme::sidebar_foreground()))
-            .hover(|s| s.bg(rgb(theme::secondary())))
     }
     fn header(&self, cx: &Context<Self>) -> Div {
         let mut tabs = row()
@@ -813,7 +914,11 @@ impl Adeline {
                     self.button("machines", "", Action::Machines, cx)
                         .flex_shrink_0()
                         .child(icon("devices"))
-                        .child(MACHINES[self.machine].name)
+                        .child(if self.demo_mode {
+                            MACHINES[self.machine].name
+                        } else {
+                            "Local machine"
+                        })
                         .child(icon("chevron").size(px(12.))),
                 )
             })
@@ -1143,52 +1248,67 @@ impl Render for Adeline {
     }
 }
 fn main() {
-    Application::new().with_assets(Assets).run(|cx: &mut App| {
-        fonts::init(cx);
-        config::init();
-        theme::init();
-        input::init(cx);
-        config::bind_keys(cx);
-        cx.on_action(|_: &Quit, cx| cx.quit());
-        let bounds = Bounds::centered(None, size(px(1440.), px(940.)), cx);
-        let main_window = cx
-            .open_window(
-                WindowOptions {
-                    window_bounds: Some(WindowBounds::Windowed(bounds)),
-                    window_min_size: Some(size(px(800.), px(600.))),
-                    titlebar: Some(TitlebarOptions {
-                        title: Some("ade-project".into()),
-                        appears_transparent: cfg!(target_os = "windows"),
+    let demo_mode = std::env::args().any(|arg| arg == "--demo");
+    Application::new()
+        .with_assets(Assets)
+        .run(move |cx: &mut App| {
+            fonts::init(cx);
+            config::init();
+            theme::init();
+            input::init(cx);
+            config::bind_keys(cx);
+            cx.on_action(|_: &Quit, cx| {
+                if let Some(owner) = cx
+                    .windows()
+                    .into_iter()
+                    .find_map(|w| w.downcast::<Adeline>())
+                {
+                    settings::request_close(owner, cx);
+                }
+            });
+            let bounds = Bounds::centered(None, size(px(1440.), px(940.)), cx);
+            let main_window = cx
+                .open_window(
+                    WindowOptions {
+                        window_bounds: Some(WindowBounds::Windowed(bounds)),
+                        window_min_size: Some(size(px(800.), px(600.))),
+                        titlebar: Some(TitlebarOptions {
+                            title: Some("Adeline".into()),
+                            appears_transparent: cfg!(target_os = "windows"),
+                            ..Default::default()
+                        }),
                         ..Default::default()
-                    }),
-                    ..Default::default()
-                },
-                |window, cx| {
-                    let view = cx.new(Adeline::new);
-                    #[cfg(target_os = "windows")]
-                    view.update(cx, |app, cx| {
-                        app.subscriptions
-                            .push(cx.observe_window_bounds(window, |_, _, cx| cx.notify()));
-                        app.subscriptions
-                            .push(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
-                    });
-                    window.focus(&view.read(cx).focus);
-                    view
-                },
-            )
-            .expect("open Adeline window");
-        // Observe actual window removal so native close controls and keyboard
-        // shortcuts both dismiss settings belonging to this workspace.
-        cx.on_window_closed(move |cx| {
-            if !cx
-                .windows()
-                .iter()
-                .any(|window| window.window_id() == main_window.window_id())
-            {
-                settings::close_for(main_window, cx);
-            }
-        })
-        .detach();
-        cx.activate(true);
-    });
+                    },
+                    move |window, cx| {
+                        let view = cx.new(|cx| Adeline::new(demo_mode, cx));
+                        let owner = window.window_handle().downcast::<Adeline>().unwrap();
+                        window.on_window_should_close(cx, move |window, cx| {
+                            settings::can_close_for(owner, window, cx)
+                        });
+                        #[cfg(target_os = "windows")]
+                        view.update(cx, |app, cx| {
+                            app.subscriptions
+                                .push(cx.observe_window_bounds(window, |_, _, cx| cx.notify()));
+                            app.subscriptions
+                                .push(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
+                        });
+                        window.focus(&view.read(cx).focus);
+                        view
+                    },
+                )
+                .expect("open Adeline window");
+            // Observe actual window removal so native close controls and keyboard
+            // shortcuts both dismiss settings belonging to this workspace.
+            cx.on_window_closed(move |cx| {
+                if !cx
+                    .windows()
+                    .iter()
+                    .any(|window| window.window_id() == main_window.window_id())
+                {
+                    settings::close_for(main_window, cx);
+                }
+            })
+            .detach();
+            cx.activate(true);
+        });
 }

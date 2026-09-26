@@ -374,11 +374,14 @@ impl Adeline {
         }
     }
     pub(super) fn composer_view(&self, cx: &Context<Self>) -> Div {
-        let model = if self.agent == 0 {
-            ["Opus 5", "Sonnet", "Haiku", "Opus 5"][self.model.min(3)]
-        } else {
-            ["Astra", "Sol", "Terra", "Luna"][self.model.min(3)]
-        };
+        let selected = self.selected_definition();
+        let codex = self.demo_mode
+            && self.selected_agent.as_deref()
+                == self
+                    .agent_catalog
+                    .entries
+                    .get(1)
+                    .map(|entry| entry.id.as_str());
         col()
             .w_full()
             .flex_shrink_0()
@@ -408,31 +411,34 @@ impl Adeline {
                         self.button("agent-picker", "", Action::AgentMenu, cx)
                             .h(px(42.))
                             .px_2()
-                            .child(if self.agent == 1 {
+                            .child(if codex {
                                 icon("codex").size(px(18.)).into_any_element()
-                            } else {
+                            } else if self.demo_mode && selected.is_some() {
                                 icon("claude").size(px(22.)).into_any_element()
+                            } else {
+                                icon("sparkle").size(px(18.)).into_any_element()
                             })
                             .child(
                                 col()
                                     .child(
                                         text(
-                                            self.agents[self.agent].clone(),
+                                            selected
+                                                .map_or("Select an agent", |agent| {
+                                                    agent.name.as_str()
+                                                })
+                                                .to_owned(),
                                             12.,
                                             theme::sidebar_foreground(),
                                         )
                                         .font_weight(FontWeight::SEMIBOLD),
                                     )
-                                    .child(text(
-                                        format!(
-                                            "{} {}",
-                                            model,
-                                            ["Low", "Medium", "High", "Extra high", "Max", "Ultra"]
-                                                [self.effort]
-                                        ),
-                                        11.,
-                                        theme::sidebar_foreground(),
-                                    )),
+                                    .when_some(selected, |d, agent| {
+                                        d.child(text(
+                                            format!("{} {}", agent.model, agent.effort),
+                                            11.,
+                                            theme::sidebar_foreground(),
+                                        ))
+                                    }),
                             )
                             .child(icon("chevron")),
                     )

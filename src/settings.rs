@@ -1,7 +1,7 @@
 use super::*;
 
-const GROUPS: [&str; 3] = ["General", "Modes", "Licenses"];
-const SUBGROUPS: [&[&str]; 3] = [
+const GROUPS: [&str; 4] = ["General", "Modes", "Licenses", "Agents"];
+const SUBGROUPS: [&[&str]; 4] = [
     &["Features", "Appearance", "Keymap"],
     &[
         "Chats",
@@ -18,6 +18,7 @@ const SUBGROUPS: [&[&str]; 3] = [
         "GPUI",
         "Chivo & Chivo Mono",
     ],
+    &[],
 ];
 const THEME: [(&str, &str); 5] = [
     ("Theme", "Claude Plus lightos colors appearance dropdown"),
@@ -152,11 +153,125 @@ impl Adeline {
 pub(super) fn open(owner: WindowHandle<Adeline>, cx: &mut Context<Adeline>) {
     open_at(owner, None, cx);
 }
+pub(super) fn open_agent(owner: WindowHandle<Adeline>, cx: &mut Context<Adeline>) {
+    let entity = cx.entity();
+    cx.defer(move |cx| {
+        let bounds = Bounds::centered(None, size(px(760.), px(760.)), cx);
+        if let Err(error) = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_min_size: Some(size(px(620.), px(500.))),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Add an Agent · Adeline".into()),
+                    appears_transparent: cfg!(target_os = "windows"),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            |window, cx| cx.new(|cx| AgentWindow::new(owner, &entity, window, cx)),
+        ) {
+            eprintln!("Could not open agent editor: {error}");
+        }
+    });
+}
+
+pub(super) fn can_close_for(owner: WindowHandle<Adeline>, _: &mut Window, cx: &mut App) -> bool {
+    for handle in cx.windows() {
+        if let Some(settings) = handle.downcast::<SettingsWindow>()
+            && settings.read(cx).is_ok_and(|view| {
+                view.owner.window_id() == owner.window_id()
+                    && view.agent_form.as_ref().is_some_and(|form| form.dirty(cx))
+            })
+        {
+            let _ = settings.update(cx, |view, window, cx| {
+                view.leave(AfterAgent::CloseOwner, window, cx);
+            });
+            return false;
+        }
+        if let Some(creation) = handle.downcast::<AgentWindow>()
+            && creation.read(cx).is_ok_and(|view| {
+                view.owner.window_id() == owner.window_id() && view.form.dirty(cx)
+            })
+        {
+            let _ = creation.update(cx, |view, window, cx| view.confirm_close(true, window, cx));
+            return false;
+        }
+    }
+    true
+}
+
+pub(super) fn request_close(owner: WindowHandle<Adeline>, cx: &mut App) {
+    cx.defer(move |cx| {
+        let _ = owner.update(cx, |_, window, cx| {
+            if can_close_for(owner, window, cx) {
+                window.remove_window();
+            }
+        });
+    });
+}
+
+fn persist_form(
+    owner: WindowHandle<Adeline>,
+    form: &agent_form::AgentForm,
+    overwrite: bool,
+    cx: &mut App,
+) -> Result<String, String> {
+    let definition = form.values(cx);
+    let original = form.id.clone();
+    let expected = original.as_ref().map(|_| form.original.clone());
+    owner
+        .update(cx, move |app, _, cx| {
+            let select_first = original.is_none() && app.agent_catalog.entries.is_empty();
+            let saved = app.agent_catalog.save(
+                original.as_deref(),
+                definition,
+                expected.as_ref(),
+                overwrite,
+            )?;
+            app.agents_changed(original.as_deref(), Some(&saved), select_first, cx);
+            Ok(saved)
+        })
+        .map_err(|error| error.to_string())?
+}
+
+#[derive(Clone)]
+enum AfterAgent {
+    CloseSettings,
+    CloseOwner,
+    Group(usize),
+    Child(usize, usize),
+    Agent(String),
+    Delete(String),
+    Search(String),
+}
+
+fn agent_diagnostics(owner: WindowHandle<Adeline>, cx: &App) -> Vec<String> {
+    owner
+        .read(cx)
+        .map_or_else(|_| Vec::new(), |app| app.agent_catalog.errors.clone())
+}
+
+fn diagnostics(errors: Vec<String>) -> Div {
+    let mut section = col().gap_2();
+    for error in errors {
+        section = section
+            .child(text(error, 12., theme::destructive()).line_height(config::text_pixels(19.)));
+    }
+    section
+}
+
 pub(super) fn close_for(owner: WindowHandle<Adeline>, cx: &mut App) {
     for handle in cx.windows() {
         if let Some(settings) = handle.downcast::<SettingsWindow>() {
             let _ = settings.update(cx, |settings, window, _| {
                 if settings.owner.window_id() == owner.window_id() {
+                    window.remove_window();
+                }
+            });
+        }
+        if let Some(creation) = handle.downcast::<AgentWindow>() {
+            let _ = creation.update(cx, |creation, window, _| {
+                if creation.owner.window_id() == owner.window_id() {
                     window.remove_window();
                 }
             });
@@ -177,7 +292,7 @@ fn open_at(owner: WindowHandle<Adeline>, mode: Option<Section>, cx: &mut Context
         {
             let _ = existing.update(cx, |settings, window, cx| {
                 if let Some(mode) = mode {
-                    settings.select_mode(mode, cx);
+                    settings.leave(AfterAgent::Child(1, mode as usize), window, cx);
                 }
                 window.activate_window();
             });
@@ -226,10 +341,224 @@ fn font_label(which: usize) -> &'static str {
         "Code font"
     }
 }
+struct AgentWindow {
+    owner: WindowHandle<Adeline>,
+    form: agent_form::AgentForm,
+    scroll: scrollbar::PanelScroll,
+    focus: FocusHandle,
+    pending: bool,
+    _subscriptions: Vec<Subscription>,
+}
+
+impl AgentWindow {
+    fn new(
+        owner: WindowHandle<Adeline>,
+        entity: &Entity<Adeline>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let form = agent_form::AgentForm::new(
+            None,
+            agents::AgentDefinition {
+                harness: "OMP".into(),
+                driver: "ACP".into(),
+                effort: "Medium".into(),
+                ..Default::default()
+            },
+            cx,
+        );
+        let focus = cx.focus_handle();
+        window.focus(&form.inputs[0].read(cx).focus_handle(cx));
+        let mut subscriptions = vec![cx.observe(entity, |_, _, cx| cx.notify())];
+        for input in &form.inputs {
+            subscriptions.push(
+                cx.subscribe(input, |this, _, _: &input::ContentChanged, cx| {
+                    this.form.status = None;
+                    cx.notify();
+                }),
+            );
+        }
+        let view = cx.entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            view.update(cx, |view, cx| view.confirm_close(false, window, cx))
+        });
+        Self {
+            owner,
+            form,
+            scroll: Default::default(),
+            focus,
+            pending: false,
+            _subscriptions: subscriptions,
+        }
+    }
+
+    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        match persist_form(self.owner, &self.form, false, cx) {
+            Ok(_) => {
+                let definition = self.form.values(cx);
+                self.form.reload(definition, cx);
+                window.remove_window();
+                true
+            }
+            Err(error) => {
+                self.form.status = Some(error);
+                cx.notify();
+                false
+            }
+        }
+    }
+
+    fn confirm_close(
+        &mut self,
+        close_owner: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.form.dirty(cx) {
+            if close_owner {
+                window.remove_window();
+            }
+            return true;
+        }
+        if self.pending {
+            return false;
+        }
+        self.pending = true;
+        let response = window.prompt(
+            PromptLevel::Warning,
+            "Save changes to this agent?",
+            Some("Unsaved agent details will be lost if you discard them."),
+            &[
+                PromptButton::ok("Save"),
+                PromptButton::new("Discard"),
+                PromptButton::cancel("Cancel"),
+            ],
+            cx,
+        );
+        cx.spawn_in(window, async move |view, cx| {
+            let choice = response.await.unwrap_or(2);
+            let _ = view.update_in(cx, |view, window, cx| {
+                view.pending = false;
+                match choice {
+                    0 => {
+                        if view.save(window, cx) && close_owner {
+                            request_close(view.owner, cx);
+                        }
+                    }
+                    1 => {
+                        let owner = view.owner;
+                        window.remove_window();
+                        if close_owner {
+                            request_close(owner, cx);
+                        }
+                    }
+                    _ => {}
+                }
+            });
+        })
+        .detach();
+        false
+    }
+}
+
+impl Render for AgentWindow {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let mut content = col()
+            .w_full()
+            .gap_5()
+            .p_8()
+            .child(text("Add an Agent", 22., theme::foreground()))
+            .child(text(
+                "Configure an agent for this workspace. Saving does not start the command.",
+                12.,
+                theme::muted_foreground(),
+            ))
+            .child(self.form.fields(cx));
+        if let Some(status) = &self.form.status {
+            content = content.child(text(status.clone(), 12., theme::destructive()));
+        }
+        content = content.child(diagnostics(agent_diagnostics(self.owner, cx)));
+        let shell = col()
+            .size_full()
+            .font_family(config::font())
+            .bg(rgb(theme::background()))
+            .text_color(rgb(theme::foreground()));
+        #[cfg(target_os = "windows")]
+        let shell = shell.child(titlebar::render("Add an Agent · Adeline".into(), window));
+        shell.child(
+            col()
+                .flex_1()
+                .min_h_0()
+                .track_focus(&self.focus)
+                .on_action(cx.listener(|view, _: &Dismiss, window, cx| {
+                    if view.confirm_close(false, window, cx) {
+                        window.remove_window();
+                    }
+                }))
+                .on_action(cx.listener(|_, _: &NextFocus, window, _| window.focus_next()))
+                .on_action(cx.listener(|_, _: &PreviousFocus, window, _| window.focus_prev()))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .child(self.scroll.wrap("agent-creation", content)),
+                )
+                .child(
+                    row()
+                        .justify_end()
+                        .gap_3()
+                        .px_8()
+                        .py_4()
+                        .border_t_1()
+                        .border_color(rgb(theme::border()))
+                        .child(
+                            row()
+                                .id("agent-create-cancel")
+                                .focusable()
+                                .tab_stop(true)
+                                .cursor_pointer()
+                                .px_5()
+                                .py_2()
+                                .rounded(px(5.))
+                                .bg(rgb(theme::secondary()))
+                                .focus(|s| s.border_1().border_color(rgb(theme::ring())))
+                                .child(text("Cancel", 13., theme::secondary_foreground()))
+                                .on_click(cx.listener(|view, _, window, cx| {
+                                    if view.confirm_close(false, window, cx) {
+                                        window.remove_window();
+                                    }
+                                })),
+                        )
+                        .child(
+                            row()
+                                .id("agent-create-save")
+                                .focusable()
+                                .tab_stop(true)
+                                .cursor_pointer()
+                                .px_5()
+                                .py_2()
+                                .rounded(px(5.))
+                                .bg(rgb(theme::primary()))
+                                .focus(|s| s.border_1().border_color(rgb(theme::ring())))
+                                .child(text("Save", 13., theme::primary_foreground()))
+                                .on_click(cx.listener(|view, _, window, cx| {
+                                    view.save(window, cx);
+                                })),
+                        ),
+                ),
+        )
+    }
+}
 
 struct SettingsWindow {
     owner: WindowHandle<Adeline>,
     query: Entity<TextInput>,
+    agent_page: Option<String>,
+    agent_form: Option<agent_form::AgentForm>,
+    agent_subscriptions: Vec<Subscription>,
+    last_query: String,
+    agent_status: Option<String>,
+    pending: bool,
     font_query: Entity<TextInput>,
     font_size_inputs: [Entity<TextInput>; 2],
     font_size_errors: [Option<String>; 2],
@@ -245,13 +574,310 @@ struct SettingsWindow {
     group: usize,
     subgroup: Option<usize>,
     search_page: Option<(usize, Option<usize>)>,
-    expanded: [bool; 3],
+    expanded: [bool; 4],
     nav_scroll: scrollbar::PanelScroll,
     scroll: scrollbar::PanelScroll,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 impl SettingsWindow {
+    fn show_agent(&mut self, id: String, cx: &mut Context<Self>) {
+        let definition = self.owner.read(cx).ok().and_then(|app| {
+            app.agent_catalog
+                .entries
+                .iter()
+                .find(|entry| entry.id == id)
+                .map(|entry| entry.definition.clone())
+        });
+        self.agent_page = Some(id.clone());
+        self.group = 3;
+        self.subgroup = None;
+        self.agent_status = None;
+        self.search_page = Some((3, None));
+        self.expanded[3] = true;
+        self.scroll.handle.set_offset(point(px(0.), px(0.)));
+        self.agent_subscriptions.clear();
+        self.agent_form =
+            definition.map(|definition| agent_form::AgentForm::new(Some(id), definition, cx));
+        if let Some(form) = &self.agent_form {
+            for input in &form.inputs {
+                self.agent_subscriptions.push(cx.subscribe(
+                    input,
+                    |this, _, _: &input::ContentChanged, cx| {
+                        if let Some(form) = this.agent_form.as_mut() {
+                            form.status = None;
+                        }
+                        cx.notify();
+                    },
+                ));
+            }
+        }
+        cx.notify();
+    }
+
+    fn sync_agent(&mut self, cx: &mut Context<Self>) {
+        let Some(form) = self.agent_form.as_mut() else {
+            cx.notify();
+            return;
+        };
+        let current = self.owner.read(cx).ok().and_then(|app| {
+            app.agent_catalog
+                .entries
+                .iter()
+                .find(|entry| Some(&entry.id) == form.id.as_ref())
+                .map(|entry| entry.definition.clone())
+        });
+        if current.as_ref() == Some(&form.original) {
+            form.external_changed = false;
+        } else if form.dirty(cx) {
+            form.external_changed = true;
+        } else if let Some(definition) = current {
+            form.reload(definition, cx);
+        } else {
+            self.agent_form = None;
+            self.agent_subscriptions.clear();
+            self.agent_page = None;
+        }
+        cx.notify();
+    }
+
+    fn after_agent(&mut self, after: AfterAgent, window: &mut Window, cx: &mut Context<Self>) {
+        match after {
+            AfterAgent::CloseSettings => window.remove_window(),
+            AfterAgent::CloseOwner => {
+                self.agent_form = None;
+                self.agent_subscriptions.clear();
+                request_close(self.owner, cx);
+            }
+            AfterAgent::Group(group) => {
+                self.group = group;
+                self.agent_page = None;
+                self.agent_form = None;
+                self.agent_subscriptions.clear();
+                self.subgroup = None;
+                self.search_page = Some((group, None));
+                self.expanded[group] = !self.expanded[group];
+            }
+            AfterAgent::Child(group, child) => {
+                self.group = group;
+                self.subgroup = Some(child);
+                self.agent_page = None;
+                self.agent_form = None;
+                self.agent_subscriptions.clear();
+                self.search_page = Some((group, Some(child)));
+            }
+            AfterAgent::Agent(id) => self.show_agent(id, cx),
+            AfterAgent::Delete(id) => self.confirm_delete_after_leaving(id, window, cx),
+            AfterAgent::Search(query) => {
+                self.last_query.clone_from(&query);
+                self.agent_page = None;
+                self.agent_form = None;
+                self.agent_subscriptions.clear();
+                self.search_page = None;
+                self.query.update(cx, |input, cx| input.set(query, cx));
+                self.nav_scroll.handle.set_offset(point(px(0.), px(0.)));
+            }
+        }
+        self.scroll.handle.set_offset(point(px(0.), px(0.)));
+        cx.notify();
+    }
+
+    fn save_agent(
+        &mut self,
+        after: Option<AfterAgent>,
+        overwrite: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(form) = self.agent_form.as_ref() else {
+            return;
+        };
+        let current = self.owner.read(cx).ok().and_then(|app| {
+            app.agent_catalog
+                .entries
+                .iter()
+                .find(|entry| Some(&entry.id) == form.id.as_ref())
+                .map(|entry| entry.definition.clone())
+        });
+        if !overwrite && (form.external_changed || current.as_ref() != Some(&form.original)) {
+            if self.pending {
+                return;
+            }
+            self.pending = true;
+            let response = window.prompt(
+                PromptLevel::Warning,
+                "This agent changed outside Adeline.",
+                Some("Reload the external definition and lose your unsaved edits, or overwrite it with your edits."),
+                &[PromptButton::ok("Reload"), PromptButton::new("Overwrite"), PromptButton::cancel("Cancel")], cx,
+            );
+            cx.spawn_in(window, async move |view, cx| {
+                let choice = response.await.unwrap_or(2);
+                let _ = view.update_in(cx, |view, window, cx| {
+                    view.pending = false;
+                    match choice {
+                        0 => {
+                            let _ = view.owner.update(cx, |app, _, cx| app.refresh_agents(cx));
+                            if let Some(form) = view.agent_form.as_mut() {
+                                let definition = view.owner.read(cx).ok().and_then(|app| {
+                                    app.agent_catalog
+                                        .entries
+                                        .iter()
+                                        .find(|entry| Some(&entry.id) == form.id.as_ref())
+                                        .map(|entry| entry.definition.clone())
+                                });
+                                if let Some(definition) = definition {
+                                    form.reload(definition, cx);
+                                } else {
+                                    view.agent_form = None;
+                                    view.agent_page = None;
+                                    view.agent_subscriptions.clear();
+                                }
+                            }
+                            if let Some(after) = after {
+                                view.after_agent(after, window, cx);
+                            }
+                        }
+                        1 => view.save_agent(after, true, window, cx),
+                        _ => {}
+                    }
+                });
+            })
+            .detach();
+            return;
+        }
+        match persist_form(self.owner, form, overwrite, cx) {
+            Ok(saved) => {
+                if let Some(form) = &mut self.agent_form {
+                    let definition = form.values(cx);
+                    form.id = Some(saved.clone());
+                    form.reload(definition, cx);
+                }
+                let after = after.map(|next| match next {
+                    AfterAgent::Delete(_) => AfterAgent::Delete(saved.clone()),
+                    other => other,
+                });
+                self.agent_page = Some(saved);
+                if let Some(after) = after {
+                    self.after_agent(after, window, cx);
+                }
+                cx.notify();
+            }
+            Err(error) => {
+                let conflict = error.contains("changed outside this form");
+                if conflict {
+                    let _ = self.owner.update(cx, |app, _, cx| app.refresh_agents(cx));
+                }
+                if let Some(form) = &mut self.agent_form {
+                    form.external_changed = conflict;
+                    form.status = Some(error);
+                }
+                cx.notify();
+            }
+        }
+    }
+
+    fn leave(&mut self, after: AfterAgent, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending {
+            return;
+        }
+        if !self.agent_form.as_ref().is_some_and(|form| form.dirty(cx)) {
+            self.after_agent(after, window, cx);
+            return;
+        }
+        self.pending = true;
+        let response = window.prompt(
+            PromptLevel::Warning,
+            "Save changes to this agent?",
+            Some("Your edits will be lost if you discard them."),
+            &[
+                PromptButton::ok("Save"),
+                PromptButton::new("Discard"),
+                PromptButton::cancel("Cancel"),
+            ],
+            cx,
+        );
+        cx.spawn_in(window, async move |view, cx| {
+            let choice = response.await.unwrap_or(2);
+            let _ = view.update_in(cx, |view, window, cx| {
+                view.pending = false;
+                match choice {
+                    0 => view.save_agent(Some(after), false, window, cx),
+                    1 => {
+                        if let Some(form) = view.agent_form.as_mut() {
+                            form.reload(form.original.clone(), cx);
+                        }
+                        view.after_agent(after, window, cx);
+                    }
+                    _ => {}
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn confirm_delete(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending {
+            return;
+        }
+        if self.agent_form.as_ref().is_some_and(|form| form.dirty(cx)) {
+            self.leave(AfterAgent::Delete(id), window, cx);
+        } else {
+            self.confirm_delete_after_leaving(id, window, cx);
+        }
+    }
+
+    fn confirm_delete_after_leaving(
+        &mut self,
+        id: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.pending {
+            return;
+        }
+        self.pending = true;
+        let name = self
+            .agent_form
+            .as_ref()
+            .map_or_else(|| id.clone(), |form| form.original.name.clone());
+        let response = window.prompt(
+            PromptLevel::Warning,
+            &format!("Delete {name}?"),
+            Some("The agent's folder and saved definition will be removed."),
+            &[PromptButton::ok("Delete"), PromptButton::cancel("Cancel")],
+            cx,
+        );
+        cx.spawn_in(window, async move |view, cx| {
+            let choice = response.await.unwrap_or(1);
+            let _ = view.update_in(cx, |view, _, cx| {
+                view.pending = false;
+                if choice != 0 {
+                    return;
+                }
+                let result = view
+                    .owner
+                    .update(cx, |app, _, cx| {
+                        app.agent_catalog.delete(&id)?;
+                        app.agents_changed(Some(&id), None, false, cx);
+                        Ok::<_, String>(())
+                    })
+                    .map_err(|error| error.to_string())
+                    .and_then(|result| result);
+                match result {
+                    Ok(()) => {
+                        view.agent_page = None;
+                        view.agent_form = None;
+                        view.agent_subscriptions.clear();
+                        view.agent_status = None;
+                    }
+                    Err(error) => view.agent_status = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
     fn save_font_size(&mut self, which: usize, size: u16, cx: &mut Context<Self>) {
         if !(config::MIN_FONT_SIZE..=config::MAX_FONT_SIZE).contains(&size) {
             self.font_size_errors[which] = Some("Enter a whole number from 10 to 24.".into());
@@ -705,22 +1331,50 @@ impl SettingsWindow {
             ));
         }
         subscriptions.extend([
-            cx.subscribe(&query, |this, _, _: &input::ContentChanged, cx| {
-                this.search_page = None;
-                this.nav_scroll.handle.set_offset(point(px(0.), px(0.)));
-                this.scroll.handle.set_offset(point(px(0.), px(0.)));
-                cx.notify();
-            }),
+            cx.subscribe_in(
+                &query,
+                window,
+                |this, input, _: &input::ContentChanged, window, cx| {
+                    let requested = input.read(cx).content.to_string();
+                    if requested == this.last_query {
+                        return;
+                    }
+                    if this.agent_form.as_ref().is_some_and(|form| form.dirty(cx)) {
+                        input.update(cx, |input, cx| input.set(this.last_query.clone(), cx));
+                        this.leave(AfterAgent::Search(requested), window, cx);
+                        return;
+                    }
+                    this.last_query = requested;
+                    this.search_page = None;
+                    this.nav_scroll.handle.set_offset(point(px(0.), px(0.)));
+                    this.agent_page = None;
+                    this.agent_form = None;
+                    this.agent_subscriptions.clear();
+                    this.scroll.handle.set_offset(point(px(0.), px(0.)));
+                    cx.notify();
+                },
+            ),
             cx.subscribe(&font_query, |this, _, _: &input::ContentChanged, cx| {
                 this.font_list_scroll
                     .handle
                     .set_offset(point(px(0.), px(0.)));
                 cx.notify();
             }),
-            cx.observe(entity, |_, _, cx| cx.notify()),
+            cx.observe(entity, |this, _, cx| this.sync_agent(cx)),
             cx.observe_window_bounds(window, |_, _, cx| cx.notify()),
             cx.observe_window_activation(window, |_, _, cx| cx.notify()),
         ]);
+        let view = cx.entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            view.update(cx, |view, cx| {
+                if view.agent_form.as_ref().is_some_and(|form| form.dirty(cx)) {
+                    view.leave(AfterAgent::CloseSettings, window, cx);
+                    false
+                } else {
+                    true
+                }
+            })
+        });
         Self {
             owner,
             query,
@@ -739,7 +1393,13 @@ impl SettingsWindow {
             group: 0,
             subgroup: Some(0),
             search_page: None,
-            expanded: [true, false, false],
+            expanded: [true, false, false, true],
+            agent_page: None,
+            agent_form: None,
+            agent_subscriptions: Vec::new(),
+            agent_status: None,
+            last_query: String::new(),
+            pending: false,
             nav_scroll: Default::default(),
             scroll: Default::default(),
             focus,
@@ -885,7 +1545,35 @@ impl Render for SettingsWindow {
                 .enumerate()
                 .filter(|(j, _)| self.subgroup_matches(i, *j, &query, cx))
                 .collect();
-            if matching.is_empty() {
+            let matching_agents: Vec<_> = if i == 3 {
+                self.owner.read(cx).ok().map_or_else(Vec::new, |app| {
+                    app.agent_catalog
+                        .entries
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, entry)| {
+                            matches_query(
+                                &query,
+                                &[
+                                    "Agents",
+                                    &entry.definition.name,
+                                    &entry.definition.model,
+                                    &entry.definition.command,
+                                ],
+                            )
+                        })
+                        .map(|(j, entry)| (j, entry.id.clone(), entry.definition.name.clone()))
+                        .collect()
+                })
+            } else {
+                Vec::new()
+            };
+            if matching.is_empty()
+                && (i != 3
+                    || (searching
+                        && matching_agents.is_empty()
+                        && !matches_query(&query, &["Agents"])))
+            {
                 continue;
             }
             navigation = navigation.child(
@@ -913,13 +1601,8 @@ impl Render for SettingsWindow {
                         },
                     ))
                     .child(text(name, 13., theme::foreground()))
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.expanded[i] = !this.expanded[i];
-                        this.group = i;
-                        this.subgroup = None;
-                        this.search_page = Some((i, None));
-                        this.scroll.handle.set_offset(point(px(0.), px(0.)));
-                        cx.notify();
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.leave(AfterAgent::Group(i), window, cx);
                     })),
             );
             if self.expanded[i] || searching {
@@ -947,14 +1630,35 @@ impl Render for SettingsWindow {
                                 |d| d.bg(rgb(theme::sidebar())),
                             )
                             .child(text(*child, 12., theme::muted_foreground()))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.group = i;
-                                this.subgroup = Some(j);
-                                this.search_page = Some((i, Some(j)));
-                                this.scroll.handle.set_offset(point(px(0.), px(0.)));
-                                cx.notify();
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.leave(AfterAgent::Child(i, j), window, cx);
                             })),
                     );
+                }
+                if i == 3 {
+                    for (j, id, name) in matching_agents {
+                        let selected =
+                            self.agent_page.as_deref() == Some(id.as_str()) && self.group == 3;
+                        children = children.child(
+                            row()
+                                .id(("settings-agent", j))
+                                .focusable()
+                                .tab_stop(true)
+                                .cursor_pointer()
+                                .h(px(30.))
+                                .px_2()
+                                .rounded(px(4.))
+                                .hover(|s| s.bg(rgb(theme::sidebar())))
+                                .focus(|s| s.border_1().border_color(rgb(theme::sidebar_ring())))
+                                .when(selected, |d| d.bg(rgb(theme::sidebar())))
+                                .child(text(name, 12., theme::muted_foreground()))
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    if this.agent_page.as_deref() != Some(id.as_str()) {
+                                        this.leave(AfterAgent::Agent(id.clone()), window, cx);
+                                    }
+                                })),
+                        );
+                    }
                 }
                 navigation = navigation.child(children);
             }
@@ -978,10 +1682,16 @@ impl Render for SettingsWindow {
             );
         let mut content = col().p_8().gap_3().child(text(
             if searching {
-                "Search results"
+                "Search results".to_string()
+            } else if self.group == 3 && self.agent_form.is_some() {
+                self.agent_form.as_ref().unwrap().inputs[0]
+                    .read(cx)
+                    .content
+                    .to_string()
             } else {
                 self.subgroup
                     .map_or(GROUPS[self.group], |i| SUBGROUPS[self.group][i])
+                    .to_string()
             },
             22.,
             theme::foreground(),
@@ -1147,6 +1857,88 @@ impl Render for SettingsWindow {
                 );
             }
         }
+        if self.group == 3 || searching {
+            let matching_agent = self.owner.read(cx).is_ok_and(|app| {
+                app.agent_catalog.entries.iter().any(|entry| {
+                    matches_query(
+                        &query,
+                        &[
+                            "Agents",
+                            &entry.definition.name,
+                            &entry.definition.model,
+                            &entry.definition.command,
+                        ],
+                    )
+                })
+            });
+            if !searching || matching_agent || matches_query(&query, &["Agents"]) {
+                found = true;
+                if let Some(form) = &self.agent_form {
+                    if self.group == 3 && (!searching || self.search_page.is_some()) {
+                        content = content.child(form.fields(cx));
+                        if form.external_changed {
+                            content = content.child(text(
+                                "This agent changed outside Adeline. Your edits are kept. Save to choose Reload or Overwrite.",
+                                12., theme::destructive()
+                            ));
+                        }
+                        if let Some(error) = &form.status {
+                            content = content.child(text(error.clone(), 12., theme::destructive()));
+                        }
+                        content = content.child(
+                            row()
+                                .w_full()
+                                .justify_between()
+                                .mt_5()
+                                .child(
+                                    row()
+                                        .id("settings-delete-agent")
+                                        .focusable()
+                                        .tab_stop(true)
+                                        .cursor_pointer()
+                                        .px_4()
+                                        .py_2()
+                                        .rounded(px(5.))
+                                        .bg(rgb(theme::secondary()))
+                                        .focus(|s| s.border_1().border_color(rgb(theme::ring())))
+                                        .child(text("Delete agent", 13., theme::destructive()))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            if let Some(id) = this.agent_page.clone() {
+                                                this.confirm_delete(id, window, cx);
+                                            }
+                                        })),
+                                )
+                                .child(
+                                    row()
+                                        .id("settings-save-agent")
+                                        .focusable()
+                                        .tab_stop(true)
+                                        .cursor_pointer()
+                                        .px_5()
+                                        .py_2()
+                                        .rounded(px(5.))
+                                        .bg(rgb(theme::primary()))
+                                        .focus(|s| s.border_1().border_color(rgb(theme::ring())))
+                                        .child(text("Save", 13., theme::primary_foreground()))
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.save_agent(None, false, window, cx);
+                                        })),
+                                ),
+                        );
+                    }
+                } else {
+                    content = content.child(text(
+                        "Select an agent in the sidebar to edit its settings.",
+                        13.,
+                        theme::muted_foreground(),
+                    ));
+                }
+                if let Some(error) = &self.agent_status {
+                    content = content.child(text(error.clone(), 12., theme::destructive()));
+                }
+                content = content.child(diagnostics(agent_diagnostics(self.owner, cx)));
+            }
+        }
         if !found {
             content = content.child(
                 text(
@@ -1192,7 +1984,7 @@ impl Render for SettingsWindow {
                     this.theme_dropdown = false;
                     cx.notify();
                 } else {
-                    window.remove_window();
+                    this.leave(AfterAgent::CloseSettings, window, cx);
                 }
             }))
             .on_action(cx.listener(|_, _: &NextFocus, window, _| window.focus_next()))
