@@ -153,6 +153,8 @@ pub struct Chats {
     pub show_completed_chats: bool,
     pub show_left_panel: bool,
     pub show_agent_activity: bool,
+    pub hide_tool_calls: bool,
+    pub retry_limit: usize,
 }
 impl Default for Chats {
     fn default() -> Self {
@@ -160,6 +162,8 @@ impl Default for Chats {
             show_completed_chats: true,
             show_left_panel: true,
             show_agent_activity: false,
+            hide_tool_calls: false,
+            retry_limit: 5,
         }
     }
 }
@@ -552,6 +556,10 @@ mod tests {
         assert_eq!(s.general.appearance.theme, "custom.yml");
         assert!(!s.modes.services.wrap_output_lines);
         assert!(s.modes.chats.show_completed_chats);
+        assert_eq!(s.modes.chats.retry_limit, 5);
+        assert!(!s.modes.chats.hide_tool_calls);
+        s.modes.chats.retry_limit = 0;
+        s.modes.chats.hide_tool_calls = true;
         s.general.features.close_picker_after_selection = true;
         assert_eq!(
             serde_yaml_ng::from_str::<Settings>(&serde_yaml_ng::to_string(&s).unwrap()).unwrap(),

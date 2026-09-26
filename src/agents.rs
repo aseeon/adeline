@@ -8,6 +8,13 @@ use std::{
 };
 
 pub const EFFORTS: [&str; 5] = ["Low", "Medium", "High", "Extra High", "Max"];
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PermissionMode {
+    #[default]
+    Ask,
+    AllowEverything,
+}
+
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,6 +24,10 @@ pub struct AgentDefinition {
     pub harness: String,
     pub driver: String,
     pub command: String,
+    #[serde(default)]
+    pub arguments: Vec<String>,
+    #[serde(default)]
+    pub permission_mode: PermissionMode,
     pub model: String,
     pub effort: String,
     #[serde(default)]
@@ -24,7 +35,7 @@ pub struct AgentDefinition {
 }
 
 impl AgentDefinition {
-    fn validate(&self) -> Result<String, String> {
+    pub(crate) fn validate(&self) -> Result<String, String> {
         for (field, value) in [
             ("Name", &self.name),
             ("Harness", &self.harness),
@@ -37,6 +48,16 @@ impl AgentDefinition {
                 return Err(format!("{field} is required."));
             }
         }
+        if self.command != self.command.trim()
+            || (self.command.chars().any(char::is_whitespace)
+                && !Path::new(&self.command).is_file()
+                && !looks_like_executable_path(&self.command))
+        {
+            return Err(
+                "Command must be one executable name or path; enter each argument separately."
+                    .into(),
+            );
+        }
         if self.harness != "OMP" || self.driver != "ACP" {
             return Err("Only the OMP harness with the ACP driver is supported.".into());
         }
@@ -47,8 +68,17 @@ impl AgentDefinition {
     }
 }
 
+fn looks_like_executable_path(command: &str) -> bool {
+    (command.contains('/') || command.contains('\\') || command.contains(':'))
+        && command.rsplit_once('.').is_some_and(|(_, extension)| {
+            ["exe", "cmd", "bat", "sh"]
+                .iter()
+                .any(|candidate| extension.eq_ignore_ascii_case(candidate))
+        })
+}
+
 /// A folder ID is made only from letters, digits and single separators.
-fn normalize_name(name: &str) -> Result<String, String> {
+pub(crate) fn normalize_name(name: &str) -> Result<String, String> {
     let mut id = String::new();
     for c in name.trim().chars().flat_map(char::to_lowercase) {
         if c.is_alphanumeric() {
@@ -129,7 +159,9 @@ impl AgentCatalog {
                         name: name.into(),
                         harness: "OMP".into(),
                         driver: "ACP".into(),
-                        command: "omp.exe acp".into(),
+                        command: "omp.exe".into(),
+                        arguments: vec!["acp".into()],
+                        permission_mode: PermissionMode::Ask,
                         model: model.into(),
                         effort: "High".into(),
                         system_instructions: String::new(),
@@ -319,9 +351,46 @@ fn load(folder: &Path) -> Result<AgentDefinition, String> {
         ));
     }
     let text = fs::read_to_string(&path).map_err(|e| file_error(&path, e))?;
-    let definition: AgentDefinition =
+    let yaml: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&text).map_err(|e| file_error(&path, e))?;
+    let has_arguments = yaml
+        .as_mapping()
+        .is_some_and(|fields| fields.contains_key("arguments"));
+    let mut definition: AgentDefinition =
+        serde_yaml_ng::from_value(yaml).map_err(|e| file_error(&path, e))?;
+    let migrated = !has_arguments && definition.command.chars().any(char::is_whitespace);
+    if migrated {
+        if Path::new(&definition.command).is_file() {
+            // A real executable path may contain spaces; leave it intact.
+        } else {
+            let parts: Vec<_> = definition.command.split_ascii_whitespace().collect();
+            let executable = parts.first().copied().unwrap_or_default();
+            if parts.len() < 2
+                || ((executable.contains('/')
+                    || executable.contains('\\')
+                    || executable.contains(':'))
+                    && !Path::new(executable).is_file()
+                    && !looks_like_executable_path(executable))
+                || parts.iter().any(|part| {
+                    part.chars()
+                        .any(|c| c.is_whitespace() || "\"'`|&;<>^%$".contains(c))
+                })
+                || parts.iter().any(|part| part.ends_with('\\'))
+            {
+                return Err(file_error(
+                    &path,
+                    "Ambiguous legacy command. Edit agent.yml: set command to the executable and arguments to a list of literal strings.",
+                ));
+            }
+            let command = parts[0].to_owned();
+            definition.arguments = parts[1..].iter().map(|part| (*part).to_owned()).collect();
+            definition.command = command;
+        }
+    }
     definition.validate().map_err(|e| file_error(&path, e))?;
+    if migrated && !definition.arguments.is_empty() {
+        replace(&path, &definition)?;
+    }
     Ok(definition)
 }
 
@@ -480,11 +549,113 @@ mod tests {
             name: name.into(),
             harness: "OMP".into(),
             driver: "ACP".into(),
-            command: "omp.exe acp".into(),
+            command: "omp.exe".into(),
+            arguments: vec!["acp".into()],
+            permission_mode: PermissionMode::Ask,
             model: "openai-codex/gpt-6-luna".into(),
             effort: "Max".into(),
             system_instructions: "Answer plainly.".into(),
         }
+    }
+
+    #[test]
+    fn migrates_unambiguous_legacy_commands_and_preserves_literal_arguments() {
+        let root = TestRoot::new();
+        let mut catalog = root.catalog(false);
+        let path = root.file("josh");
+        fs::create_dir(path.parent().unwrap()).unwrap();
+        fs::write(
+            &path,
+            "name: Josh\nharness: OMP\ndriver: ACP\ncommand: omp.exe acp\nmodel: openai-codex/gpt-6-luna\neffort: Max\n",
+        )
+        .unwrap();
+        assert!(catalog.refresh());
+        let loaded = catalog.entries[0].definition.clone();
+        assert_eq!(loaded.command, "omp.exe");
+        assert_eq!(loaded.arguments, ["acp"]);
+        assert_eq!(loaded.permission_mode, PermissionMode::Ask);
+        let migrated = fs::read_to_string(&path).unwrap();
+        assert_eq!(
+            serde_yaml_ng::from_str::<AgentDefinition>(&migrated).unwrap(),
+            loaded
+        );
+        assert_eq!(root.catalog(false).entries[0].definition, loaded);
+
+        let mut updated = loaded.clone();
+        updated.arguments = vec![
+            "acp".into(),
+            "--arg1".into(),
+            "value with spaces".into(),
+            String::new(),
+        ];
+        updated.permission_mode = PermissionMode::AllowEverything;
+        catalog
+            .save(Some("josh"), updated.clone(), Some(&loaded), false)
+            .unwrap();
+        assert_eq!(root.catalog(false).entries[0].definition, updated);
+    }
+
+    #[test]
+    fn rejects_ambiguous_legacy_without_changing_disk_and_respects_explicit_empty_arguments() {
+        let root = TestRoot::new();
+        let mut catalog = root.catalog(false);
+        let path = root.file("josh");
+        fs::create_dir(path.parent().unwrap()).unwrap();
+        let original = "name: Josh\nharness: OMP\ndriver: ACP\ncommand: '\"C:/Program Files/omp.exe\" acp'\nmodel: openai-codex/gpt-6-luna\neffort: Max\n";
+        fs::write(&path, original).unwrap();
+        assert!(catalog.refresh());
+        assert!(catalog.errors[0].contains("Ambiguous legacy command"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), original);
+        let explicit = "name: Josh\nharness: OMP\ndriver: ACP\ncommand: omp.exe acp\narguments: []\nmodel: openai-codex/gpt-6-luna\neffort: Max\n";
+        fs::write(&path, explicit).unwrap();
+        catalog.refresh();
+        assert!(catalog.errors[0].contains("Command must be one executable"));
+        assert_eq!(fs::read_to_string(&path).unwrap(), explicit);
+        let omitted = "name: Josh\nharness: OMP\ndriver: ACP\ncommand: omp.exe\nmodel: openai-codex/gpt-6-luna\neffort: Max\n";
+        fs::write(&path, omitted).unwrap();
+        assert!(catalog.refresh());
+        assert!(catalog.entries[0].definition.arguments.is_empty());
+        assert_eq!(fs::read_to_string(&path).unwrap(), omitted);
+    }
+
+    #[test]
+    fn existing_executable_path_with_spaces_is_not_split_during_legacy_load() {
+        let root = TestRoot::new();
+        let executable = root.0.join("Program Files").join("omp.exe");
+        fs::create_dir(executable.parent().unwrap()).unwrap();
+        fs::write(&executable, "").unwrap();
+        let mut definition = agent("Josh");
+        definition.command = executable.to_string_lossy().into_owned();
+        definition.arguments.clear();
+        let mut document = serde_yaml_ng::to_value(&definition).unwrap();
+        assert!(
+            document
+                .as_mapping_mut()
+                .unwrap()
+                .remove("arguments")
+                .is_some()
+        );
+        let source = serde_yaml_ng::to_string(&document).unwrap();
+        let path = root.file("josh");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, &source).unwrap();
+        let catalog = root.catalog(false);
+        assert_eq!(catalog.entries[0].definition, definition);
+        assert_eq!(fs::read_to_string(path).unwrap(), source);
+    }
+    #[test]
+    fn accepts_explicit_command_path_with_spaces_before_installation() {
+        let root = TestRoot::new();
+        let mut catalog = root.catalog(false);
+        let mut definition = agent("Future");
+        definition.command = root
+            .0
+            .join("Program Files")
+            .join("omp.exe")
+            .to_string_lossy()
+            .into_owned();
+        catalog.save(None, definition.clone(), None, false).unwrap();
+        assert_eq!(root.catalog(false).entries[0].definition, definition);
     }
 
     #[test]
@@ -514,7 +685,7 @@ mod tests {
         assert!(catalog.refresh());
         assert_eq!(catalog.entries.len(), 2);
         let mut edited = josh;
-        edited.command = "omp --verbose acp".into();
+        edited.arguments = vec!["acp".into(), "--verbose".into()];
         edited.name = "Renamed externally".into();
         fs::write(
             root.file("josh"),
@@ -594,8 +765,9 @@ mod tests {
         }
         let mut good = agent("Good");
         good.system_instructions.clear();
+        good.arguments.clear();
         catalog.save(None, good.clone(), None, false).unwrap();
-        fs::write(root.file("good"), "name: Good\nharness: OMP\ndriver: ACP\ncommand: omp.exe acp\nmodel: openai-codex/gpt-6-luna\neffort: Max\n").unwrap();
+        fs::write(root.file("good"), "name: Good\nharness: OMP\ndriver: ACP\ncommand: omp.exe\narguments: []\nmodel: openai-codex/gpt-6-luna\neffort: Max\n").unwrap();
         fs::create_dir(root.0.join("agents/bad")).unwrap();
         let mut bad = agent("Bad");
         bad.effort = "Ultra".into();
@@ -624,7 +796,7 @@ mod tests {
         let mut mine = original.clone();
         mine.model = "openai-codex/my-model".into();
         let mut theirs = original.clone();
-        theirs.command = "external acp".into();
+        theirs.arguments = vec!["acp".into(), "--external".into()];
         fs::write(
             root.file("josh"),
             serde_yaml_ng::to_string(&theirs).unwrap(),
@@ -701,7 +873,7 @@ mod tests {
             renamed
         );
         let mut changed = renamed;
-        changed.command = "external change".into();
+        changed.arguments = vec!["acp".into(), "--external".into()];
         fs::write(
             root.file("josh-smith"),
             serde_yaml_ng::to_string(&changed).unwrap(),

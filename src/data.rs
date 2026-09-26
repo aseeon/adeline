@@ -1,6 +1,6 @@
 use crate::prepared::PreparedDocument;
 use serde::Deserialize;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -19,6 +19,7 @@ pub struct Config {
     pub id: String,
     pub name: String,
     pub provider: String,
+    pub directory: PathBuf,
 }
 #[derive(Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -185,7 +186,7 @@ impl Thread {
         ]
     }
     pub fn matches_status(&self, filter: usize, completed: bool) -> bool {
-        (completed || self.status != "completed")
+        (completed || !matches!(self.status.as_str(), "completed" | "archived"))
             && match filter {
                 1 => self.status == "blocked",
                 2 => self.status == "working",
@@ -326,6 +327,16 @@ pub fn image_asset(path: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn archived_and_completed_conversations_stay_in_saved_history() {
+        let mut thread = Thread::default();
+        for status in ["completed", "archived"] {
+            thread.status = status.into();
+            assert!(!thread.matches("", 0, false));
+            assert!(thread.matches("", 0, true));
+        }
+    }
+
     #[test]
     fn appended_messages_keep_search_semantics_and_unread_counts() {
         let mut thread = Thread {

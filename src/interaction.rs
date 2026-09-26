@@ -1,7 +1,7 @@
 use super::*;
 impl Adeline {
     pub(super) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.demo_mode && matches!(action, Action::Send | Action::SendGroup) {
+        if !self.demo_mode && matches!(action, Action::SendGroup) {
             return;
         }
         if !self.open_projects.iter().any(|&open| open)
@@ -23,6 +23,8 @@ impl Adeline {
                     | Action::KeyboardShortcuts
                     | Action::QuitApp
                     | Action::Close
+                    | Action::ForceStopAll
+                    | Action::HideToolCalls
             )
         {
             return;
@@ -141,33 +143,27 @@ impl Adeline {
                 self.menu = None;
                 self.modal = Some("add-project");
                 self.name_input.update(cx, |v, cx| v.set("", cx));
+                self.project_error = None;
+                self.project_directory_input
+                    .update(cx, |v, cx| v.set("", cx));
                 window.focus(&self.name_input.focus_handle(cx));
             }
             Action::SaveProject => {
-                let name = self.name_input.read(cx).content.trim().to_owned();
-                if name.is_empty() {
-                    return;
-                }
-                let i = self.projects.len();
-                let project = Workspace {
-                    config: Config {
-                        id: format!("local-project-{i}"),
-                        name,
-                        provider: "claude".into(),
-                    },
-                    ..Default::default()
-                };
-                self.collaboration.push(if self.demo_mode {
-                    collaboration_modes::ProjectCollaboration::seed(&project)
-                } else {
-                    collaboration_modes::ProjectCollaboration::default()
-                });
-                self.projects.push(project);
-                self.open_projects.push(false);
-                self.project_tints.push(0);
-                self.modal = None;
-                self.act(Action::Project(i), window, cx);
+                self.create_project(window, cx);
                 return;
+            }
+            Action::DeleteProject => self.begin_project_delete(cx),
+            Action::ConfirmDeleteProject => self.confirm_project_delete(cx),
+            Action::ForceDeleteProject => self.force_project_delete(cx),
+            Action::HideToolCalls => {
+                if let Err(error) = config::update(|s| {
+                    s.modes.chats.hide_tool_calls = !s.modes.chats.hide_tool_calls;
+                }) {
+                    self.toast = Some(error);
+                }
+                self.transcript
+                    .update(cx, |view, cx| view.sync(self, false, cx));
+                cx.refresh_windows();
             }
             Action::CloseProject(i) => {
                 let next = close_project_tab(&mut self.open_projects, self.project, i);
@@ -230,6 +226,9 @@ impl Adeline {
                 self.expanded_event = None;
                 let t = &mut self.projects[self.project].threads[i];
                 t.mark_read();
+                if !self.demo_mode {
+                    self.mark_conversation_read(cx);
+                }
             }
             Action::NewChat => {
                 self.section = Section::Chats;
@@ -237,6 +236,9 @@ impl Adeline {
                 self.filter = 0;
                 self.query.update(cx, |v, cx| v.set("", cx));
                 self.composer.update(cx, |v, cx| v.set("", cx));
+                if !self.demo_mode && self.agent_catalog.entries.len() == 1 {
+                    self.selected_agent = Some(self.agent_catalog.entries[0].id.clone());
+                }
                 window.focus(&self.composer.focus_handle(cx));
             }
             Action::Filter(i) => {
@@ -256,7 +258,9 @@ impl Adeline {
                 }
             }
             Action::Complete => {
-                if let Some(i) = self.selected {
+                if !self.demo_mode {
+                    self.complete_conversation(false, cx);
+                } else if let Some(i) = self.selected {
                     let t = &mut self.projects[self.project].threads[i];
                     t.status = if t.status == "completed" {
                         "idle"
@@ -307,6 +311,15 @@ impl Adeline {
                 self.menu = None;
                 let name = self.workspace().config.name.clone();
                 self.name_input.update(cx, |v, cx| v.set(name, cx));
+                let directory = self
+                    .workspace()
+                    .config
+                    .directory
+                    .to_string_lossy()
+                    .into_owned();
+                self.project_directory_input
+                    .update(cx, |v, cx| v.set(directory, cx));
+                self.project_error = None;
                 self.selected_tint = self.project_tints[self.project];
             }
             Action::Close => {
@@ -322,15 +335,16 @@ impl Adeline {
                 window.focus(&self.focus);
             }
             Action::SaveSettings => {
-                let n = self.name_input.read(cx).content.trim().to_string();
-                if !n.is_empty() {
-                    self.projects[self.project].config.name = n;
-                }
-                self.modal = None;
-                self.project_tints[self.project] = self.selected_tint;
-                window.set_window_title(&format!("{} — Adeline", self.workspace().config.name));
+                self.save_project_settings(window, cx);
             }
             Action::AgentMenu => {
+                if !self.demo_mode && self.selected.is_some() {
+                    self.notify_toast(
+                        "This conversation's agent and execution settings are fixed.",
+                        cx,
+                    );
+                    return;
+                }
                 self.menu = if self.menu == Some("agent") {
                     None
                 } else {
@@ -361,7 +375,13 @@ impl Adeline {
                 self.speed = i;
                 self.menu = None;
             }
-            Action::Permission(i) => self.permission = i,
+            Action::Permission(i) => {
+                if self.demo_mode {
+                    self.permission = i;
+                } else {
+                    self.set_conversation_permission(i, cx);
+                }
+            }
             Action::ToggleMode(_) | Action::ToggleMachineSelector => {
                 if let Err(error) = config::update(|s| {
                     if let Action::ToggleMode(section) = action {
@@ -396,6 +416,21 @@ impl Adeline {
                 }
             }
             Action::Send => self.send(cx),
+            Action::Stop => self.stop_conversation(cx),
+            Action::ForceStop => self.force_conversation(cx),
+            Action::ForceStopAll => self.force_all(cx),
+            Action::RetryPrompt => self.retry_prompt(cx),
+            Action::RetryStorage => self.retry_storage(cx),
+            Action::ReplaceSession => self.replace_session(cx),
+            Action::PermissionResponse(option) => self.answer_permission(option, cx),
+            Action::ToggleTool(id) => {
+                if !self.runtime.expanded_tools.remove(&id) {
+                    self.runtime.expanded_tools.insert(id);
+                }
+                self.transcript
+                    .update(cx, |view, cx| view.sync(self, false, cx));
+            }
+            Action::ArchiveChat => self.complete_conversation(true, cx),
             Action::DocsHome => {
                 self.document = None;
                 self.archived = false;
@@ -714,7 +749,16 @@ impl Adeline {
                 }
             }
         }
-        if !matches!(changed, Action::Project(_)) {
+        if !self.demo_mode
+            && matches!(
+                changed,
+                Action::Chat(_) | Action::Complete | Action::Send | Action::ArchiveChat
+            )
+        {
+            if let Some(project) = self.projects.get_mut(self.project) {
+                project.rebuild_counts();
+            }
+        } else if !matches!(changed, Action::Project(_)) {
             if self.workspace().threads.len() > previous_count {
                 let flags = self.workspace().threads[0].flags();
                 self.projects[self.project].update_counts([0; 4], flags);
@@ -758,6 +802,7 @@ impl Adeline {
     }
     fn send(&mut self, cx: &mut Context<Self>) {
         if !self.demo_mode {
+            self.send_real(cx);
             return;
         }
         let prompt = self.composer.read(cx).content.trim().to_owned();

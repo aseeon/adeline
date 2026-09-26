@@ -4,7 +4,7 @@ impl Adeline {
         let t = &self.workspace().threads[i];
         let status = match t.status.as_str() {
             "working" => "Processing",
-            "completed" => "Idle",
+            "completed" => "Completed",
             "blocked" => "Attention",
             "archived" => "Archived",
             _ => "Active",
@@ -49,7 +49,11 @@ impl Adeline {
                             .gap(px(8.))
                             .child(
                                 div()
-                                    .child(provider(&t.provider))
+                                    .child(if self.demo_mode {
+                                        provider(&t.provider).to_owned()
+                                    } else {
+                                        t.provider.clone()
+                                    })
                                     .text_size(config::text_pixels(12.))
                                     .min_w_0()
                                     .truncate(),
@@ -231,11 +235,15 @@ impl Adeline {
             } else {
                 theme::background()
             }));
-        for paragraph in m.text.split("\n\n") {
-            bubble = bubble.child(
-                text(paragraph.to_owned(), 14., theme::foreground())
-                    .line_height(config::text_pixels(26.)),
-            );
+        if user || self.demo_mode {
+            for paragraph in m.text.split("\n\n") {
+                bubble = bubble.child(
+                    text(paragraph.to_owned(), 14., theme::foreground())
+                        .line_height(config::text_pixels(26.)),
+                );
+            }
+        } else {
+            bubble = bubble.child(formatted_response(&m.text));
         }
         for path in &m.images {
             let asset = image_asset(path);
@@ -268,7 +276,13 @@ impl Adeline {
                     .gap_2()
                     .child(avatar)
                     .child(text(
-                        if user { "You" } else { provider(&t.provider) },
+                        if user {
+                            "You".to_owned()
+                        } else if self.demo_mode {
+                            provider(&t.provider).to_owned()
+                        } else {
+                            t.provider.clone()
+                        },
                         13.,
                         theme::foreground(),
                     ))
@@ -374,7 +388,9 @@ impl Adeline {
         }
     }
     pub(super) fn composer_view(&self, cx: &Context<Self>) -> Div {
+        let bound = self.bound_definition();
         let selected = self.selected_definition();
+        let processing = self.conversation_processing();
         let codex = self.demo_mode
             && self.selected_agent.as_deref()
                 == self
@@ -422,58 +438,185 @@ impl Adeline {
                                 col()
                                     .child(
                                         text(
-                                            selected
-                                                .map_or("Select an agent", |agent| {
-                                                    agent.name.as_str()
+                                            bound
+                                                .as_ref()
+                                                .map(|agent| agent.name.as_str())
+                                                .or_else(|| {
+                                                    selected.map(|agent| agent.name.as_str())
                                                 })
+                                                .unwrap_or("Select an agent")
                                                 .to_owned(),
                                             12.,
                                             theme::sidebar_foreground(),
                                         )
                                         .font_weight(FontWeight::SEMIBOLD),
                                     )
-                                    .when_some(selected, |d, agent| {
-                                        d.child(text(
-                                            format!("{} {}", agent.model, agent.effort),
-                                            11.,
-                                            theme::sidebar_foreground(),
-                                        ))
-                                    }),
+                                    .child(text(
+                                        bound
+                                            .as_ref()
+                                            .map(|agent| {
+                                                format!("{} {}", agent.model, agent.effort)
+                                            })
+                                            .or_else(|| {
+                                                selected.map(|agent| {
+                                                    format!("{} {}", agent.model, agent.effort)
+                                                })
+                                            })
+                                            .unwrap_or_default(),
+                                        11.,
+                                        theme::sidebar_foreground(),
+                                    )),
                             )
                             .child(icon("chevron")),
                     )
                     .child(div().flex_1())
                     .child({
-                        let empty = self.composer.read(cx).content.is_empty();
-                        self.button("send", "", Action::Send, cx)
-                            .w(px(34.))
-                            .px_0()
-                            .justify_center()
-                            .bg(rgb(if empty {
-                                theme::sidebar()
+                        let empty = !processing && self.composer.read(cx).content.trim().is_empty();
+                        self.button(
+                            "send",
+                            "",
+                            if processing {
+                                Action::Stop
+                            } else {
+                                Action::Send
+                            },
+                            cx,
+                        )
+                        .w(px(34.))
+                        .px_0()
+                        .justify_center()
+                        .bg(rgb(if empty {
+                            theme::sidebar()
+                        } else {
+                            theme::primary()
+                        }))
+                        .hover(|s| {
+                            s.bg(rgb(if empty {
+                                theme::secondary()
                             } else {
                                 theme::primary()
                             }))
-                            .hover(|s| {
-                                s.bg(rgb(if empty {
-                                    theme::secondary()
-                                } else {
-                                    theme::primary()
-                                }))
-                            })
-                            .focus(|s| {
-                                s.bg(rgb(if empty {
-                                    theme::sidebar_accent()
-                                } else {
-                                    theme::primary()
-                                }))
-                            })
-                            .child(icon("send").text_color(rgb(if empty {
-                                theme::muted_foreground()
+                        })
+                        .focus(|s| {
+                            s.bg(rgb(if empty {
+                                theme::sidebar_accent()
                             } else {
-                                theme::primary_foreground()
-                            })))
+                                theme::primary()
+                            }))
+                        })
+                        .child(if processing {
+                            div()
+                                .size(px(12.))
+                                .bg(rgb(theme::primary_foreground()))
+                                .into_any_element()
+                        } else {
+                            icon("send")
+                                .text_color(rgb(if empty {
+                                    theme::muted_foreground()
+                                } else {
+                                    theme::primary_foreground()
+                                }))
+                                .into_any_element()
+                        })
                     }),
             )
+    }
+}
+
+fn formatted_response(source: &str) -> Div {
+    let mut content = col().gap_2();
+    let mut fenced = false;
+    for line in source.lines() {
+        if line.starts_with("```") {
+            fenced = !fenced;
+            continue;
+        }
+        if fenced {
+            content = content.child(
+                text(line.to_owned(), 13., theme::foreground())
+                    .font_family(config::code_font())
+                    .bg(rgb(theme::muted()))
+                    .px_3()
+                    .py_1(),
+            );
+            continue;
+        }
+        let heading = line.chars().take_while(|&c| c == '#').count();
+        let display = if heading > 0 {
+            line[heading..].trim()
+        } else {
+            line
+        };
+        let (display, highlights) = inline_response(display);
+        content = content.child(
+            div()
+                .text_size(config::text_pixels(if heading > 0 { 18. } else { 14. }))
+                .text_color(rgb(theme::foreground()))
+                .child(StyledText::new(display).with_highlights(highlights))
+                .line_height(config::text_pixels(26.))
+                .when(heading > 0, |d| d.font_weight(FontWeight::SEMIBOLD))
+                .when(line.starts_with("- ") || line.starts_with("* "), |d| {
+                    d.pl_3()
+                }),
+        );
+    }
+    content
+}
+
+fn inline_response(source: &str) -> (String, Vec<(std::ops::Range<usize>, HighlightStyle)>) {
+    let mut text = String::with_capacity(source.len());
+    let mut highlights = Vec::new();
+    let mut rest = source;
+    while !rest.is_empty() {
+        let marker = if rest.starts_with("**") {
+            "**"
+        } else if rest.starts_with('`') {
+            "`"
+        } else if rest.starts_with('*') {
+            "*"
+        } else {
+            ""
+        };
+        if !marker.is_empty()
+            && let Some(end) = rest[marker.len()..].find(marker).filter(|&end| end > 0)
+        {
+            let start = text.len();
+            text.push_str(&rest[marker.len()..marker.len() + end]);
+            let style = match marker {
+                "**" => HighlightStyle {
+                    font_weight: Some(FontWeight::BOLD),
+                    ..Default::default()
+                },
+                "*" => HighlightStyle {
+                    font_style: Some(FontStyle::Italic),
+                    ..Default::default()
+                },
+                _ => HighlightStyle {
+                    background_color: Some(rgb(theme::muted()).into()),
+                    ..Default::default()
+                },
+            };
+            highlights.push((start..text.len(), style));
+            rest = &rest[end + marker.len() * 2..];
+        } else {
+            let character = rest.chars().next().expect("nonempty text");
+            text.push(character);
+            rest = &rest[character.len_utf8()..];
+        }
+    }
+    (text, highlights)
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::inline_response;
+
+    #[test]
+    fn streaming_markers_and_unicode_preserve_visible_content() {
+        assert_eq!(inline_response("A **part").0, "A **part");
+        let (text, styles) = inline_response("A **café** and `x*y`.");
+        assert_eq!(text, "A café and x*y.");
+        assert_eq!(&text[styles[0].0.clone()], "café");
+        assert_eq!(&text[styles[1].0.clone()], "x*y");
     }
 }

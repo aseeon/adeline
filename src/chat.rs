@@ -102,7 +102,7 @@ impl ChatList {
             let record = prepared::SearchRecord {
                 id: old.id.clone(),
                 text: thread.search_text.clone(),
-                completed: thread.status == "completed",
+                completed: !thread.matches_status(0, false),
                 blocked: thread.status == "blocked",
                 working: thread.status == "working",
                 unread: thread.unread(),
@@ -310,7 +310,8 @@ impl Transcript {
         let key = thread.map(|t| (app.project, t.id.clone()));
         let messages = thread.map_or(0, |t| t.messages.len());
         let footer = thread.is_some_and(|t| {
-            t.status == "blocked"
+            !app.demo_mode
+                || t.status == "blocked"
                 || app
                     .workspace()
                     .decisions
@@ -323,12 +324,13 @@ impl Transcript {
         if changed_thread {
             self.state.reset(0);
         }
-        // Existing messages are immutable. Only the appended tail and decision
-        // footer can change within the same chat.
+        // Streaming can change the final message without appending another row.
         let start = if changed_thread {
             0
-        } else {
+        } else if app.demo_mode {
             self.messages.min(messages)
+        } else {
+            self.messages.saturating_sub(1).min(messages)
         };
         if start != count || start != self.state.item_count() {
             self.state.splice_focusable(
@@ -382,7 +384,11 @@ impl Render for Transcript {
                             .w_full()
                             .track_focus(&footer_focus)
                             .px(relative(0.075))
-                            .child(app.decision_row(selected, cx))
+                            .child(if app.demo_mode {
+                                app.decision_row(selected, cx)
+                            } else {
+                                app.runtime_footer(selected, cx)
+                            })
                             .into_any_element()
                     }
                 })
@@ -511,7 +517,10 @@ impl Adeline {
             self.transcript
                 .update(cx, |view, cx| view.sync(self, end, cx));
         }
-        if matches!(action, Project(_) | Chat(_) | Agent(_) | Machine(_)) {
+        if matches!(
+            action,
+            Project(_) | Chat(_) | NewChat | Send | Complete | Agent(_) | Machine(_)
+        ) {
             self.composer_region.update(cx, |_, cx| cx.notify());
         }
         if matches!(

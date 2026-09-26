@@ -79,12 +79,20 @@ impl Adeline {
     pub(super) fn mode_options(&self, section: Section) -> Vec<SettingOption> {
         let mut options = match section {
             Section::Groupchats | Section::Issues | Section::Whiteboard => vec![],
-            Section::Chats => vec![(
-                "Show idle chats",
-                "Include completed conversations in the chat list.",
-                self.show_completed,
-                Action::ShowCompleted,
-            )],
+            Section::Chats => vec![
+                (
+                    "Show idle chats",
+                    "Include completed conversations in the chat list.",
+                    self.show_completed,
+                    Action::ShowCompleted,
+                ),
+                (
+                    "Hide tool calls",
+                    "Hide tool calls and results in chats. Permission requests stay visible.",
+                    config::current().modes.chats.hide_tool_calls,
+                    Action::HideToolCalls,
+                ),
+            ],
             Section::Docs => vec![
                 (
                     "Show raw Markdown",
@@ -175,7 +183,7 @@ pub(super) fn open_agent(owner: WindowHandle<Adeline>, cx: &mut Context<Adeline>
     });
 }
 
-pub(super) fn can_close_for(owner: WindowHandle<Adeline>, _: &mut Window, cx: &mut App) -> bool {
+pub(super) fn can_close_for(owner: WindowHandle<Adeline>, cx: &mut App) -> bool {
     for handle in cx.windows() {
         if let Some(settings) = handle.downcast::<SettingsWindow>()
             && settings.read(cx).is_ok_and(|view| {
@@ -197,16 +205,16 @@ pub(super) fn can_close_for(owner: WindowHandle<Adeline>, _: &mut Window, cx: &m
             return false;
         }
     }
-    true
+    owner
+        .update(cx, |app, _, cx| app.request_runtime_exit(cx))
+        .unwrap_or(false)
 }
 
 pub(super) fn request_close(owner: WindowHandle<Adeline>, cx: &mut App) {
     cx.defer(move |cx| {
-        let _ = owner.update(cx, |_, window, cx| {
-            if can_close_for(owner, window, cx) {
-                window.remove_window();
-            }
-        });
+        if can_close_for(owner, cx) {
+            let _ = owner.update(cx, |_, window, _| window.remove_window());
+        }
     });
 }
 
@@ -370,7 +378,9 @@ impl AgentWindow {
         let focus = cx.focus_handle();
         window.focus(&form.inputs[0].read(cx).focus_handle(cx));
         let mut subscriptions = vec![cx.observe(entity, |_, _, cx| cx.notify())];
-        for input in &form.inputs {
+        let mut inputs = form.inputs.to_vec();
+        inputs.extend(form.argument_inputs());
+        for input in &inputs {
             subscriptions.push(
                 cx.subscribe(input, |this, _, _: &input::ContentChanged, cx| {
                     this.form.status = None;
@@ -561,6 +571,8 @@ struct SettingsWindow {
     pending: bool,
     font_query: Entity<TextInput>,
     font_size_inputs: [Entity<TextInput>; 2],
+    retry_limit_input: Entity<TextInput>,
+    retry_limit_error: Option<String>,
     font_size_errors: [Option<String>; 2],
     font_dropdown: Option<usize>,
     font_trigger_bounds: [std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>; 2],
@@ -600,7 +612,9 @@ impl SettingsWindow {
         self.agent_form =
             definition.map(|definition| agent_form::AgentForm::new(Some(id), definition, cx));
         if let Some(form) = &self.agent_form {
-            for input in &form.inputs {
+            let mut inputs = form.inputs.to_vec();
+            inputs.extend(form.argument_inputs());
+            for input in &inputs {
                 self.agent_subscriptions.push(cx.subscribe(
                     input,
                     |this, _, _: &input::ContentChanged, cx| {
@@ -1314,6 +1328,11 @@ impl SettingsWindow {
                 input
             })
         });
+        let retry_limit_input = cx.new(|cx| {
+            let mut input = TextInput::new("5", cx);
+            input.set(config::current().modes.chats.retry_limit.to_string(), cx);
+            input
+        });
         window.focus(&focus);
         let mut subscriptions = Vec::new();
         for (which, size_input) in font_size_inputs.iter().enumerate() {
@@ -1330,6 +1349,21 @@ impl SettingsWindow {
                 },
             ));
         }
+        subscriptions.push(cx.subscribe(
+            &retry_limit_input,
+            |this, input, _: &input::ContentChanged, cx| {
+                let value = input.read(cx).content.trim().parse::<usize>();
+                this.retry_limit_error = match value {
+                    Ok(limit) => {
+                        config::update(|settings| settings.modes.chats.retry_limit = limit).err()
+                    }
+                    Err(_) => {
+                        Some("Enter a non-negative whole number. Zero disables retries.".into())
+                    }
+                };
+                cx.notify();
+            },
+        ));
         subscriptions.extend([
             cx.subscribe_in(
                 &query,
@@ -1380,6 +1414,8 @@ impl SettingsWindow {
             query,
             font_query,
             font_size_inputs,
+            retry_limit_input,
+            retry_limit_error: None,
             font_size_errors: [None, None],
             font_dropdown: None,
             font_trigger_bounds: Default::default(),
@@ -1412,11 +1448,23 @@ impl SettingsWindow {
         }
         match group {
             0 => general_matches(child, query),
-            1 => self.owner.read(cx).is_ok_and(|app| {
-                app.mode_options(MODES[child].0)
-                    .iter()
-                    .any(|o| matches_query(query, &["Modes", MODES[child].1, o.0, o.1]))
-            }),
+            1 => {
+                (child == Section::Chats as usize
+                    && matches_query(
+                        query,
+                        &[
+                            "Modes",
+                            "Chats",
+                            "Automatic retry limit",
+                            "Additional attempts after a temporary failure. Zero disables automatic retries.",
+                        ],
+                    ))
+                    || self.owner.read(cx).is_ok_and(|app| {
+                        app.mode_options(MODES[child].0)
+                            .iter()
+                            .any(|o| matches_query(query, &["Modes", MODES[child].1, o.0, o.1]))
+                    })
+            }
             _ => false,
         }
     }
@@ -1473,6 +1521,33 @@ impl SettingsWindow {
                         cx.notify();
                     })),
             )
+    }
+    fn retry_limit_row(&self) -> Div {
+        col()
+            .w_full()
+            .py_5()
+            .gap_2()
+            .border_b_1()
+            .border_color(rgb(theme::border()))
+            .child(text("Automatic retry limit", 14., theme::foreground()))
+            .child(text(
+                "Additional attempts after a temporary failure. Zero disables automatic retries.",
+                12.,
+                theme::muted_foreground(),
+            ))
+            .child(
+                div()
+                    .w(px(90.))
+                    .p_2()
+                    .bg(rgb(theme::input()))
+                    .border_1()
+                    .border_color(rgb(theme::border()))
+                    .rounded(px(3.))
+                    .child(self.retry_limit_input.clone()),
+            )
+            .when_some(self.retry_limit_error.clone(), |d, error| {
+                d.child(text(error, 12., theme::destructive()))
+            })
     }
 }
 fn general_matches(child: usize, query: &str) -> bool {
@@ -1807,6 +1882,20 @@ impl Render for SettingsWindow {
                             content =
                                 content.child(self.setting_row(10 + index * 10 + i, option, cx));
                         }
+                    }
+                    if section == Section::Chats
+                        && matches_query(
+                            &query,
+                            &[
+                                "Modes",
+                                "Chats",
+                                "Automatic retry limit",
+                                "Additional attempts after a temporary failure. Zero disables automatic retries.",
+                            ],
+                        )
+                    {
+                        found = true;
+                        content = content.child(self.retry_limit_row());
                     }
                 }
             }

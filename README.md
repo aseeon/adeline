@@ -8,7 +8,7 @@ Agentic Development Environment offering many different modes of operations.
 
 ## Agents
 
-Normal startup loads saved agents and starts without sample projects, conversations, documents, workflows, services, or collaboration content. **Agents → Add an Agent** opens a separate creation window. Edit, rename, or delete saved agents under **Settings → Agents**.
+Normal startup loads saved agents, projects, and conversation history without starting an agent. **Agents → Add an Agent** opens a separate creation window. Edit, rename, or delete saved agents under **Settings → Agents**.
 
 Each agent has one definition at `~/.config/adeline/agents/<normalized-name>/agent.yml`, including on Windows. For example, Josh is stored as:
 
@@ -16,19 +16,38 @@ Each agent has one definition at `~/.config/adeline/agents/<normalized-name>/age
 name: Josh
 harness: OMP
 driver: ACP
-command: omp.exe acp
+command: omp.exe
+arguments:
+  - acp
 model: openai-codex/gpt-6-luna
 effort: Max
+permission_mode: Ask
 system_instructions: You are a helpful coding assistant.
 ```
 
-OMP with ACP is supported. All fields except system instructions are required. Effort is one of Low, Medium, High, Extra High, or Max. Names become lowercase folder names with punctuation and spaces collapsed into hyphens; invalid names and existing destinations are rejected.
+OMP with ACP is supported. Command names one executable; Arguments is an ordered list of literal values, including spaces. The forms let you add, remove, and reorder arguments. Omitted arguments means an empty list; Adeline never inserts `acp`. Existing unambiguous combined commands such as `omp.exe acp` migrate automatically. Ambiguous commands report their definition path for correction.
 
-Both agent selectors use these definitions. The composer displays the selected agent's saved model and effort; edit those values in Settings. Creating the first agent selects it. Later creations preserve the selection. Removing or invalidating the selected definition clears it without selecting a replacement.
+Name, harness, driver, command, provider/model, and effort are required. Effort is Low, Medium, High, Extra High, or Max, and the harness must offer the saved model and effort. System instructions are optional. Permission mode defaults to `Ask`; `AllowEverything` approves requests automatically. Names become lowercase folder names with punctuation and spaces collapsed into hyphens; invalid names and existing destinations are rejected.
+
+New Chat opens a draft. First Send creates the conversation and starts its agent. One available agent is selected automatically; with several, choose one. Each conversation keeps its initial agent, command, arguments, model, effort, instructions, and working directory. Editing a definition affects new conversations. Adeline appends `You are an agent named <name>` and then any custom instructions to OMP's default system guidance.
 
 Filesystem changes are watched automatically. Invalid definitions report their filename and error while valid agents remain available. Unsaved forms offer Save, Discard, and Cancel when leaving or closing. If an external edit conflicts with a dirty Settings form, Save offers Reload, Overwrite, or Cancel.
 
-Agent commands and system instructions are stored only. Normal-mode Send does nothing; this version never starts a harness or contacts a provider.
+### Projects and conversations
+
+Create a project with a name and an existing absolute working directory. Its `~/.config/adeline/projects/<normalized-name>/project.yml` contains only `name` and `directory`. Project settings can rename the project and its configuration folder. Changing the working directory requires every conversation to be completed or archived; existing conversations keep their saved directory.
+
+Each conversation has a generated folder under the project's `conversations/`, containing `conversation.yml` and timestamped `transcript.jsonl`. The log retains raw ACP traffic, visible messages, tool activity, permission decisions, errors, and lifecycle events. Saved history is readable without a running harness. External project and conversation edits load at startup.
+
+Responses stream with formatted text and expandable tool results. Settings → Modes → Chats controls tool visibility and the automatic retry limit (five additional attempts by default; zero disables retries). Thinking is shown instead of reasoning text. Stop cancels the current turn and retries while preserving partial output and normally keeping the process available for another turn. Switching chats or closing a project tab leaves its agents running.
+
+Each conversation has its own mutable Ask / Allow everything permission mode. Ask shows only the choices and remembered-grant scope offered by the harness, including one-time denial, never permanent denial. Grants are not broadened or re-created by replaying the transcript.
+
+Complete and Archive preserve history and gracefully close that conversation's process. Sending again restores the saved session when supported. Application exit and confirmed project deletion also stop agents gracefully. If shutdown stalls, Force Stop is an explicit choice. Deleting a project removes its saved Adeline data, never its working directory.
+
+Temporary failures retry within the configured limit. Recovery after partial work restores the session and asks for continuation rather than replaying the original request. If restoration fails, starting a replacement session with saved messages requires your choice. Missing configuration, authentication, and denied permissions do not automatically retry. For authentication errors, run `omp login` outside Adeline, then use Retry. Transcript write failures cancel processing and block new prompts until Retry storage succeeds.
+
+OMP 18.3.2 was exercised with real responses, appended name/custom guidance, model and effort selection, follow-up context, process restart and session restoration, cancellation with partial text, and graceful shutdown.
 
 ### Demo mode
 
@@ -36,7 +55,7 @@ Agent commands and system instructions are stored only. Normal-mode Send does no
 cargo run --release --locked -- --demo
 ```
 
-Or launch `Adeline.exe --demo`. Demo mode restores the bundled workspace and simulated chat replies. It excludes real agents. Agents created, edited, or deleted in demo mode affect only that run and never modify the user's agent definitions.
+Or launch `Adeline.exe --demo`. Demo mode restores the bundled workspace and simulated chat replies. It excludes real agents, saved projects, and conversation execution. Demo changes affect only that run and never modify the user's definitions or conversation history.
 
 
 ## Platform setup
@@ -118,6 +137,10 @@ Theme selection accepts YAML filenames within the themes folder. Path separators
 | `src/settings.rs` | Settings window, search, shared mode controls, embedded license notices |
 | `src/agents.rs` | Agent definitions, YAML persistence, validation, discovery, demo catalog |
 | `src/agent_form.rs` | Shared creation and editing fields |
+| `src/acp.rs` | ACP workers, protocol negotiation, permissions, cancellation and recovery |
+| `src/storage.rs` | Durable projects, conversation snapshots and transcript replay |
+| `src/runtime_ui.rs` | Runtime events, conversation actions and persistence integration |
+| `src/project_ui.rs` | Project settings, validation and confirmed deletion |
 | `src/views.rs` | Workspace views, popups, dialogs |
 | `src/chat.rs` | Chat entities, cache invalidation, virtual list state |
 | `src/chat_render.rs` | Chat rows, message rows and composer presentation |
@@ -125,8 +148,8 @@ Theme selection accepts YAML filenames within the themes folder. Path separators
 | `src/document_render.rs` | Prepared document rendering and background parse coordination |
 | `src/prepared.rs` | Reusable document blocks, search snapshots and request generations |
 | `src/ui_metrics.rs` | Optional native render counters and large test fixtures |
-| `src/interaction.rs` | Local interactions and mocked actions |
-| `src/data.rs` | Demo data model, scene state, filtering |
+| `src/interaction.rs` | UI action routing and isolated demo actions |
+| `src/data.rs` | Workspace projections, demo data and filtering |
 | `src/input.rs` | GPUI text input, selection, clipboard, IME |
 | `assets/` | Bundled workspace data, artwork, and SVGs |
 | `build.rs` | Embed assets for portable executable builds |

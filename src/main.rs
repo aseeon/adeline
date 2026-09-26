@@ -1,4 +1,5 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+mod acp;
 mod agent_form;
 mod agents;
 mod chat;
@@ -18,8 +19,11 @@ mod input;
 mod interaction;
 mod panes;
 mod prepared;
+mod project_ui;
+mod runtime_ui;
 mod scrollbar;
 mod settings;
+mod storage;
 mod themed_icon;
 #[cfg(target_os = "windows")]
 mod titlebar;
@@ -175,6 +179,10 @@ enum Action {
     CloseProject(usize),
     AddProject,
     SaveProject,
+    DeleteProject,
+    ConfirmDeleteProject,
+    ForceDeleteProject,
+    HideToolCalls,
     AddAgent,
     Section(Section),
     Chat(usize),
@@ -209,6 +217,15 @@ enum Action {
     ToggleMode(Section),
     ToggleMachineSelector,
     Send,
+    Stop,
+    ForceStop,
+    ForceStopAll,
+    RetryPrompt,
+    RetryStorage,
+    ReplaceSession,
+    PermissionResponse(String),
+    ToggleTool(String),
+    ArchiveChat,
     DocsHome,
     Document(usize),
     Raw,
@@ -282,6 +299,11 @@ struct Adeline {
     agent_catalog: agents::AgentCatalog,
     selected_agent: Option<String>,
     agent_watcher: Option<notify::RecommendedWatcher>,
+    project_store: std::sync::Arc<std::sync::Mutex<storage::ProjectStore>>,
+    runtime: runtime_ui::Runtime,
+    project_directory_input: Entity<TextInput>,
+    project_error: Option<String>,
+    delete_project: Option<usize>,
     services: Vec<Service>,
     project: usize,
     machine: usize,
@@ -358,7 +380,16 @@ struct Adeline {
 }
 impl Adeline {
     fn new(demo_mode: bool, cx: &mut Context<Self>) -> Self {
-        let (projects, services) = if demo_mode { load() } else { (vec![], vec![]) };
+        let store = if demo_mode {
+            storage::ProjectStore::empty()
+        } else {
+            storage::ProjectStore::new()
+        };
+        let (projects, services) = if demo_mode {
+            load()
+        } else {
+            (store.to_workspaces(), vec![])
+        };
         #[cfg(feature = "ui-profiling")]
         let (projects, services) = if demo_mode {
             ui_metrics::stress_content(projects, services)
@@ -435,6 +466,11 @@ impl Adeline {
             agent_catalog: agents::AgentCatalog::new(demo_mode),
             selected_agent: None,
             agent_watcher: None,
+            project_store: std::sync::Arc::new(std::sync::Mutex::new(store)),
+            runtime: runtime_ui::Runtime::default(),
+            project_directory_input: cx.new(|cx| TextInput::new("Existing working directory", cx)),
+            project_error: None,
+            delete_project: None,
             projects,
             services,
             project: 0,
@@ -495,7 +531,7 @@ impl Adeline {
             log_region,
         };
         app.load_settings();
-        if demo_mode {
+        if demo_mode || app.agent_catalog.entries.len() == 1 {
             app.selected_agent = app
                 .agent_catalog
                 .entries
@@ -503,6 +539,7 @@ impl Adeline {
                 .map(|entry| entry.id.clone());
         }
         app.watch_agents(cx);
+        app.watch_runtime(cx);
         for project in 0..app.projects.len() {
             app.project = project;
             for index in 0..app.projects[project].docs.len() {
@@ -646,6 +683,7 @@ impl Adeline {
                 | Action::Filter(_)
                 | Action::Group(_)
                 | Action::Send
+                | Action::Stop
         );
         let chrome_button = matches!(
             action,
@@ -1282,8 +1320,9 @@ fn main() {
                     move |window, cx| {
                         let view = cx.new(|cx| Adeline::new(demo_mode, cx));
                         let owner = window.window_handle().downcast::<Adeline>().unwrap();
-                        window.on_window_should_close(cx, move |window, cx| {
-                            settings::can_close_for(owner, window, cx)
+                        window.on_window_should_close(cx, move |_, cx| {
+                            settings::request_close(owner, cx);
+                            false
                         });
                         #[cfg(target_os = "windows")]
                         view.update(cx, |app, cx| {

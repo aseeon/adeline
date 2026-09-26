@@ -27,10 +27,20 @@ impl Adeline {
                                 .truncate(),
                         )
                         .when_some(self.selected, |d, i| {
-                            let status = match threads[i].status.as_str() {
-                                "blocked" => "Attention",
-                                "working" => "Active",
-                                _ => "Idle",
+                            let status = if self.demo_mode {
+                                match threads[i].status.as_str() {
+                                    "blocked" => "Attention",
+                                    "working" => "Active",
+                                    _ => "Idle",
+                                }
+                            } else {
+                                match threads[i].status.as_str() {
+                                    "blocked" => "Attention",
+                                    "working" => "Processing",
+                                    "completed" => "Completed",
+                                    "archived" => "Archived",
+                                    _ => "Active",
+                                }
                             };
                             d.child(
                                 badge(status, theme::card(), theme::card_foreground())
@@ -1061,6 +1071,12 @@ impl Adeline {
                 agents =
                     agents.child(text("No agents defined", 11., theme::muted_foreground()).px_2());
             }
+            agents = agents.child(self.menu_button(
+                "create-composer-agent",
+                "Add an agent",
+                Action::AddAgent,
+                cx,
+            ));
             columns = columns.child(agents);
             for (g, (name, options, selected)) in [
                 ("Speed", vec!["Standard", "Fast"], self.speed),
@@ -1077,6 +1093,7 @@ impl Adeline {
             ]
             .into_iter()
             .enumerate()
+            .filter(|_| self.demo_mode)
             {
                 let mut column = col()
                     .flex_1()
@@ -1651,7 +1668,24 @@ impl Adeline {
                     } else {
                         24.
                     }))
-                    .child(self.menu_button("menu-complete", "Mark as idle", Action::Complete, cx))
+                    .child(self.menu_button(
+                        "menu-complete",
+                        if self.demo_mode {
+                            "Mark as idle"
+                        } else {
+                            "Complete conversation"
+                        },
+                        Action::Complete,
+                        cx,
+                    ))
+                    .when(!self.demo_mode, |menu| {
+                        menu.child(self.menu_button(
+                            "menu-archive",
+                            "Archive conversation",
+                            Action::ArchiveChat,
+                            cx,
+                        ))
+                    })
                     .child(self.menu_button(
                         "menu-activity",
                         "Show agent activity",
@@ -1688,6 +1722,14 @@ impl Adeline {
         popup.into_any_element()
     }
     pub(super) fn modal_view(&self, cx: &Context<Self>) -> AnyElement {
+        if !self.demo_mode
+            && matches!(
+                self.modal,
+                Some("settings" | "delete-project" | "delete-project-shutdown" | "shutdown")
+            )
+        {
+            return self.project_modal(cx);
+        }
         let mut dialog = col()
             .w(px(600.))
             .p_8()
@@ -1807,6 +1849,28 @@ impl Adeline {
                             .child(self.edit_input.clone()),
                     )
                 })
+                .when(self.modal == Some("add-project") && !self.demo_mode, |d| {
+                    d.child(text("Working directory", 13., theme::muted_foreground()))
+                        .child(
+                            div()
+                                .w_full()
+                                .p_3()
+                                .rounded_lg()
+                                .bg(rgb(theme::secondary()))
+                                .child(self.project_directory_input.clone()),
+                        )
+                        .child(text(
+                            "Choose an existing folder where this project's agents will run.",
+                            12.,
+                            theme::muted_foreground(),
+                        ))
+                })
+                .when_some(
+                    self.project_error
+                        .clone()
+                        .filter(|_| self.modal == Some("add-project")),
+                    |d, error| d.child(text(error, 12., theme::destructive())),
+                )
                 .child(
                     row()
                         .justify_end()
