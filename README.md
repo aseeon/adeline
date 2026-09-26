@@ -74,7 +74,7 @@ cargo install --locked cargo-shear typos-cli cargo-nextest
 
 The tests verify the bundled projects and live-demo state, search/status/completed filters, linked demo content, and notification totals as conversations change.
 
-`.github/workflows/ci.yml` follows the layout of Zed's `run_tests` workflow. First comes a style job (rustfmt, TODO check, typos). Then clippy and nextest run on Windows, macOS, and Linux, alongside a dependency job (cargo-shear, lockfile, dependency review). Release builds run last, and a `tests_pass` job gives branch protection a single check to require. CI copies `.cargo/ci-config.toml` so that compiler warnings fail the build. The workflow is commented out for now, so it does not run. macOS and Linux have not been run locally on this Windows host; the workflow must run on those hosts to confirm their builds.
+`.github/workflows/ci.yml` runs on pushes to `main`, pull requests, and manual dispatches. It follows the layout of Zed's `run_tests` workflow. First comes a style job (rustfmt, TODO check, typos). Then clippy and nextest run on Windows, macOS, and Linux, alongside a dependency job (cargo-shear, lockfile, dependency review). Release builds run last and upload an executable for each platform, and a `tests_pass` job gives branch protection a single check to require. CI copies `.cargo/ci-config.toml` so that compiler warnings fail the build.
 
 ## Source map
 
