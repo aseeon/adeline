@@ -473,6 +473,8 @@ impl AgentWindow {
 
 impl Render for AgentWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(not(target_os = "windows"))]
+        let _ = window;
         let mut content = col()
             .w_full()
             .gap_5()

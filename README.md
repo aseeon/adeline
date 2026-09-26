@@ -100,6 +100,8 @@ Both fonts come from Google Fonts ([Chivo](https://github.com/google/fonts/tree/
 
 The checks follow [Zed's setup](https://github.com/zed-industries/zed). `rust-toolchain.toml` pins the Rust version, so rustup installs the right toolchain the first time you run `cargo`.
 
+CI runs Clippy, tests, and release builds on Windows, macOS, and Linux. Keep platform-specific render code warning-free on all three; the agent creation window's custom title bar is Windows-only.
+
 ```sh
 cargo fmt --all -- --check
 ./scripts/clippy
