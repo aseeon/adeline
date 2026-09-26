@@ -1,3 +1,5 @@
+![Adeline](assets/adeline-banner.png)
+
 # Adeline
 
 Agentic Development Environment offering many different modes of operations.
