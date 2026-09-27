@@ -4,7 +4,7 @@
 
 # Adeline
 
-Agentic Development Environment offering many different modes of operations.
+A native workspace for projects and agent conversations, built with GPUI Kit.
 
 ## Agents
 
@@ -21,17 +21,20 @@ arguments:
   - acp
 model: openai-codex/gpt-6-luna
 effort: Max
+effort_parameter_name: thinking
 permission_mode: Ask
 system_instructions: You are a helpful coding assistant.
 ```
 
-OMP with ACP is supported. Command names one executable; Arguments is an ordered list of literal values, including spaces. The forms let you add, remove, and reorder arguments. Omitted arguments means an empty list; Adeline never inserts `acp`. Existing unambiguous combined commands such as `omp.exe acp` migrate automatically. Ambiguous commands report their definition path for correction.
+Any harness that speaks ACP over stdio can be configured. Command names one executable; Arguments is an ordered list of literal values, including spaces. The forms let you add, remove, and reorder arguments. Omitted arguments means an empty list; Adeline never inserts `acp`. Existing unambiguous combined commands such as `omp.exe acp` migrate automatically. Ambiguous commands report their definition path for correction.
 
 Name, harness, driver, command, provider/model, and effort are required. Effort is Low, Medium, High, Extra High, or Max, and the harness must offer the saved model and effort. System instructions are optional. Permission mode defaults to `Ask`; `AllowEverything` approves requests automatically. Names become lowercase folder names with punctuation and spaces collapsed into hyphens; invalid names and existing destinations are rejected.
 
-New Chat opens a draft. First Send creates the conversation and starts its agent. One available agent is selected automatically; with several, choose one. Each conversation keeps its initial agent, command, arguments, model, effort, instructions, and working directory. Editing a definition affects new conversations. Adeline appends `You are an agent named <name>` and then any custom instructions to OMP's default system guidance.
+New Chat opens a draft. First Send creates the conversation and starts its agent. One available agent is selected automatically; with several, choose one. Each conversation keeps its initial agent, harness, command, arguments, model, effort, instructions, and working directory. Editing a definition affects new conversations. For OMP, Adeline appends `You are an agent named <name>` and then any custom instructions to OMP's default system guidance. Other ACP harnesses receive only their configured command and arguments; ACP has no standard way to pass system instructions. Model and effort must be offered by the harness.
 
 Filesystem changes are watched automatically. Invalid definitions report their filename and error while valid agents remain available. Unsaved forms offer Save, Discard, and Cancel when leaving or closing. If an external edit conflicts with a dirty Settings form, Save offers Reload, Overwrite, or Cancel.
+
+The Effort parameter name dropdown offers `thinking` (OMP), `effort` (Claude), and `reasoning_effort` (Codex). It defaults to `thinking` for new agents and older saved definitions or conversations. Each new conversation saves this choice with its execution settings; changing the agent affects only new conversations.
 
 ### Projects and conversations
 
@@ -45,7 +48,7 @@ Each conversation has its own mutable Ask / Allow everything permission mode. As
 
 Complete and Archive preserve history and gracefully close that conversation's process. Sending again restores the saved session when supported. Application exit and confirmed project deletion also stop agents gracefully. If shutdown stalls, Force Stop is an explicit choice. Deleting a project removes its saved Adeline data, never its working directory.
 
-Temporary failures retry within the configured limit. Recovery after partial work restores the session and asks for continuation rather than replaying the original request. If restoration fails, starting a replacement session with saved messages requires your choice. Missing configuration, authentication, and denied permissions do not automatically retry. For authentication errors, run `omp login` outside Adeline, then use Retry. Transcript write failures cancel processing and block new prompts until Retry storage succeeds.
+Temporary failures retry within the configured limit. Recovery after partial work restores the session and asks for continuation rather than replaying the original request. If restoration fails, starting a replacement session with saved messages requires your choice. Missing configuration, authentication, and denied permissions do not automatically retry. For authentication errors, authenticate using the harness outside Adeline, then use Retry. Transcript write failures cancel processing and block new prompts until Retry storage succeeds.
 
 OMP 18.3.2 was exercised with real responses, appended name/custom guidance, model and effort selection, follow-up context, process restart and session restoration, cancellation with partial text, and graceful shutdown.
 
@@ -55,12 +58,16 @@ OMP 18.3.2 was exercised with real responses, appended name/custom guidance, mod
 cargo run --release --locked -- --demo
 ```
 
-Or launch `Adeline.exe --demo`. Demo mode restores the bundled workspace and simulated chat replies. It excludes real agents, saved projects, and conversation execution. Demo changes affect only that run and never modify the user's definitions or conversation history.
+Or launch `Adeline.exe --demo`. Demo mode restores the bundled workspace and simulated chat replies. It excludes real agents, saved projects, and conversation execution. Demo project, agent, and chat changes never modify the user's definitions or conversation history. Appearance and feature preferences still use `settings.yml`.
+
+Docs, Workflows, Services, Groupchats, Issues, and Whiteboard are empty destinations in both normal and demo mode. Their feature switches remain under Settings → General → Features. Existing content and preferences for those modes are left intact and ignored; unrelated settings changes preserve their stored values. New settings files contain their feature switches but no obsolete content or panel preferences.
+
+The workspace keeps its projects bar, modes bar, resizable conversation/transcript/activity regions, and bottom controls. Chat settings also offers keyboard-operated panel width adjustments and reset. Searchable Kit command dialogs provide project, agent, machine, and conversation commands. Escape closes the current command dialog and restores the previous keyboard focus.
 
 
 ## Platform setup
 
-Adeline pins `gpui-pre =0.3.6` under the `gpui` import name and uses the matching `gpui-pre-platform =0.3.6` facade on Windows, macOS, and Linux. The facade enables `font-kit`, X11, and Wayland explicitly. Application code has no platform-specific filesystem paths or shell integrations. Windows uses the custom title bar, while macOS and Linux retain their native decorations.
+Adeline pins `gpui-kit =0.6.6` as its UI dependency. Kit selects the matching `gpui-pre 0.3.6` core and platform backends, including macOS `font-kit` and Linux X11 and Wayland. Windows uses Kit's title bar with Adeline's scaled icon; macOS and Linux retain native decorations.
 
 ### Windows
 
@@ -92,7 +99,7 @@ The app icon uses the close-up portrait in `assets/adeline.close.up.svg`; the fu
 
 Settings → General → Appearance has separate searchable dropdowns for Interface font and Code font. Both list installed font families. Chivo is the default interface font; Chivo Mono is the default code font. Both are embedded in the executable. If a saved font is missing, its setting falls back to the corresponding bundled default while retaining the saved preference. Existing explicit font choices are preserved; legacy `System` preferences use the bundled default.
 
-Interface font size and Code font size each accept whole numbers from 10 to 24 px, with minus and plus buttons for one-pixel adjustments. Both default to 14 px and save immediately. Code typography controls raw document text and service logs independently of interface text. Font changes remeasure virtual rows to keep wrapping and scrolling correct.
+Interface font size and Code font size each accept whole numbers from 10 to 24 px, with Smaller and Larger buttons for one-pixel adjustments. Both default to 14 px and save immediately. Code typography applies to Markdown code and tool output independently of interface text. Interface size scales controls and spacing as well as text; font changes remeasure virtual rows.
 
 Both fonts come from Google Fonts ([Chivo](https://github.com/google/fonts/tree/main/ofl/chivo), [Chivo Mono](https://github.com/google/fonts/tree/main/ofl/chivomono)), under the SIL Open Font License 1.1. Their copyrights and licenses are included in `assets/fonts/` and displayed in Settings → Licenses.
 
@@ -100,7 +107,7 @@ Both fonts come from Google Fonts ([Chivo](https://github.com/google/fonts/tree/
 
 The checks follow [Zed's setup](https://github.com/zed-industries/zed). `rust-toolchain.toml` pins the Rust version, so rustup installs the right toolchain the first time you run `cargo`.
 
-CI runs Clippy, tests, and release builds on Windows, macOS, and Linux. Keep platform-specific render code warning-free on all three; the agent creation window's custom title bar is Windows-only.
+CI runs Clippy, tests, and release builds on Windows, macOS, and Linux. Keep platform-specific render code warning-free on all three; Kit title bars are used only on Windows.
 
 ```sh
 cargo fmt --all -- --check
@@ -112,7 +119,7 @@ cargo build --release --locked
 
 On Windows, use `scripts\clippy.ps1`. Running `cargo test --locked` works too if nextest isn't installed.
 
-The [migration verification record](docs/gpui-migration-guide.md#9-implementation-and-verification) lists the Windows runtime checks, compiled GPUI Kit 0.6.6 / gpui-whiteboard 0.5.1 embedding check, and remaining platform verification limits. Neither library is a production dependency yet.
+The [framework migration record](docs/gpui-migration-guide.md#9-implementation-and-verification) describes the earlier GPUI migration and its platform verification limits. GPUI Kit is now the production UI dependency; gpui-whiteboard is not included.
 
 `scripts/clippy` is the type checker and linter, the Rust counterpart of basedpyright. The lint levels are in `[lints]` in `Cargo.toml`: the default clippy groups plus `pedantic`, and Zed's denies (debug and unfinished-work macros, redundant clones, disallowed methods). To silence a lint, use `#[expect(lint, reason = "...")]` rather than `#[allow]`. `expect` fails once the lint stops firing, like basedpyright's unnecessary-ignore check. `clippy.toml` bans calls that block the UI thread. Warnings are errors in both the script and CI.
 
@@ -127,7 +134,9 @@ To install them:
 cargo install --locked cargo-shear typos-cli cargo-nextest
 ```
 
-The tests verify the bundled projects and live-demo state, search/status/completed filters, linked demo content, and notification totals as conversations change.
+The tests cover saved project/agent/conversation behavior, Chats demo data, search and status filters, theme safeguards, and preservation or omission of ignored legacy mode preferences.
+
+On Windows, `scripts/check-ui-layout.ps1 -ProcessId <PID>` checks a running Chats window with a project open and no dialog. Composer controls must fit the conversation panel; visible panels and bottom controls must fit the window. Repeat at the minimum window size with both side panels visible and interface size 24, and at normal dimensions.
 
 `.github/workflows/ci.yml` runs on pushes to `main`, pull requests, and manual dispatches. It follows the layout of Zed's `run_tests` workflow. First comes a style job (rustfmt, TODO check, typos). Then clippy and nextest run on Windows, macOS, and Linux, alongside a dependency job (cargo-shear, lockfile, dependency review). Release builds run last and upload an executable for each platform, and a `tests_pass` job gives branch protection a single check to require. CI copies `.cargo/ci-config.toml` so that compiler warnings fail the build.
 
@@ -137,23 +146,22 @@ Theme selection accepts YAML filenames within the themes folder. Path separators
 
 | File | Responsibility |
 | --- | --- |
-| `src/main.rs` | App shell, design values, shared controls, startup |
-| `src/settings.rs` | Settings window, search, shared mode controls, embedded license notices |
+| `src/main.rs` | Kit initialization, window overlay layers, shared shell and controls |
+| `src/settings.rs` | Settings and agent windows, search, appearance, feature switches, license notices |
 | `src/agents.rs` | Agent definitions, YAML persistence, validation, discovery, demo catalog |
 | `src/agent_form.rs` | Shared creation and editing fields |
 | `src/acp.rs` | ACP workers, protocol negotiation, permissions, cancellation and recovery |
 | `src/storage.rs` | Durable projects, conversation snapshots and transcript replay |
 | `src/runtime_ui.rs` | Runtime events, conversation actions and persistence integration |
 | `src/project_ui.rs` | Project settings, validation and confirmed deletion |
-| `src/views.rs` | Workspace views, popups, dialogs |
-| `src/chat.rs` | Chat entities, cache invalidation, virtual list state |
-| `src/chat_render.rs` | Chat rows, message rows and composer presentation |
-| `src/content_views.rs` | Independent file/service regions and virtual document/log views |
-| `src/document_render.rs` | Prepared document rendering and background parse coordination |
-| `src/prepared.rs` | Reusable document blocks, search snapshots and request generations |
+| `src/views.rs` | Chat header/activity, searchable command dialogs, project dialog hosting |
+| `src/chat.rs` | Chat entities, cache invalidation, measured virtual list state |
+| `src/chat_render.rs` | Kit chat cards, messages, Markdown and multiline composer |
+| `src/prepared.rs` | Shared sequences, search snapshots and request generations |
 | `src/ui_metrics.rs` | Optional native render counters and large test fixtures |
 | `src/interaction.rs` | UI action routing and isolated demo actions |
 | `src/data.rs` | Workspace projections, demo data and filtering |
-| `src/input.rs` | GPUI text input, selection, clipboard, IME |
 | `assets/` | Bundled workspace data, artwork, and SVGs |
 | `build.rs` | Embed assets for portable executable builds |
+
+Kit `MessageScroller` in 0.6.6 does not expose focusable-row registration. Chats retains GPUI's variable-height `ListState` so a focused permission decision stays mounted during scrolling. Kit's uniform-height `List` and premeasured `VirtualList` do not cover these rows either. The row controls, Markdown, composer, and scrollbars use Kit.

@@ -1,5 +1,5 @@
 //! Human-editable application preferences. Missing files are seeded, never replaced.
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     cell::RefCell,
     path::{Path, PathBuf},
@@ -119,29 +119,53 @@ impl Default for Keymap {
     }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
+#[non_exhaustive]
 #[serde(default, deny_unknown_fields)]
 pub struct Modes {
     pub chats: Chats,
-    pub docs: Docs,
-    pub workflows: Workflows,
-    pub services: Services,
-    pub groupchats: CollaborationPanels,
-    pub issues: CollaborationPanels,
-    pub whiteboard: CollaborationPanels,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "legacy_value"
+    )]
+    docs: Option<serde_yaml_ng::Value>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "legacy_value"
+    )]
+    workflows: Option<serde_yaml_ng::Value>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "legacy_value"
+    )]
+    services: Option<serde_yaml_ng::Value>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "legacy_value"
+    )]
+    groupchats: Option<serde_yaml_ng::Value>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "legacy_value"
+    )]
+    issues: Option<serde_yaml_ng::Value>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "legacy_value"
+    )]
+    whiteboard: Option<serde_yaml_ng::Value>,
 }
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
-pub struct CollaborationPanels {
-    pub show_left_panel: bool,
-    pub show_right_panel: bool,
-}
-impl Default for CollaborationPanels {
-    fn default() -> Self {
-        Self {
-            show_left_panel: true,
-            show_right_panel: true,
-        }
-    }
+
+// Option's ordinary deserializer treats an explicit YAML null as absent.
+fn legacy_value<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Option<serde_yaml_ng::Value>, D::Error> {
+    serde_yaml_ng::Value::deserialize(deserializer).map(Some)
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[expect(
@@ -167,44 +191,6 @@ impl Default for Chats {
         }
     }
 }
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
-pub struct Docs {
-    pub show_raw_markdown: bool,
-    pub show_archived_documents: bool,
-    pub show_left_panel: bool,
-    pub show_document_details: bool,
-}
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[expect(
-    clippy::struct_field_names,
-    reason = "field names are the settings YAML keys"
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct Workflows {
-    pub only_scheduled_workflows: bool,
-    pub show_left_panel: bool,
-    pub show_workflow_details: bool,
-}
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
-pub struct Services {
-    pub wrap_output_lines: bool,
-    pub follow_latest_output: bool,
-    pub show_left_panel: bool,
-    pub show_service_details: bool,
-}
-impl Default for Services {
-    fn default() -> Self {
-        Self {
-            wrap_output_lines: true,
-            follow_latest_output: true,
-            show_left_panel: true,
-            show_service_details: false,
-        }
-    }
-}
-
 #[derive(Default)]
 struct State {
     settings: Settings,
@@ -246,8 +232,8 @@ pub fn code_font_size() -> u16 {
     })
 }
 
-pub fn code_text_pixels(base: f32) -> gpui::Pixels {
-    gpui::px(base * f32::from(code_font_size()) / 14.)
+pub fn code_text_pixels(base: f32) -> gpui_kit::Pixels {
+    gpui_kit::px(base * f32::from(code_font_size()) / 14.)
 }
 
 /// Virtual rows must be measured again when either font family or size changes.
@@ -281,11 +267,12 @@ pub fn font_size() -> u16 {
     })
 }
 
-pub fn text_pixels(base: f32) -> gpui::Pixels {
-    gpui::px(base * f32::from(font_size()) / 14.)
+pub fn text_pixels(base: f32) -> gpui_kit::Pixels {
+    gpui_kit::px(base * f32::from(font_size()) / 14.)
 }
-pub fn bind_keys(cx: &mut gpui::App) {
+pub fn bind_keys(cx: &mut gpui_kit::App) {
     use super::*;
+    use gpui_kit::base::actions::Cancel;
     let keys = current().general.keymap;
     let mut bindings = Vec::new();
     macro_rules! bind {
@@ -297,7 +284,7 @@ pub fn bind_keys(cx: &mut gpui::App) {
                     None,
                     false,
                     None,
-                    &gpui::DummyKeyboardMapper,
+                    &gpui_kit::DummyKeyboardMapper,
                 ) {
                     Ok(binding) => bindings.push(binding),
                     Err(error) => ACTIVE.with(|s| {
@@ -311,7 +298,7 @@ pub fn bind_keys(cx: &mut gpui::App) {
     bind!(keys.new_chat, NewThread);
     bind!(keys.focus_search, Search);
     bind!(keys.send_message, SendMessage);
-    bind!(keys.close_dialog_or_popup, Dismiss);
+    bind!(keys.close_dialog_or_popup, Cancel);
     bind!(keys.next_control, NextFocus);
     bind!(keys.previous_control, PreviousFocus);
     bindings.push(KeyBinding::new("cmd-q", Quit, None));
@@ -359,11 +346,13 @@ pub fn init() {
     });
 }
 pub fn update(change: impl FnOnce(&mut Settings)) -> Result<(), String> {
-    let path = directory()?.join("settings.yml");
+    update_at(&directory()?.join("settings.yml"), change)
+}
+fn update_at(path: &Path, change: impl FnOnce(&mut Settings)) -> Result<(), String> {
     // Re-read to preserve hand edits and refuse to overwrite malformed files.
-    let mut settings = read(&path)?;
+    let mut settings = read(path)?;
     change(&mut settings);
-    write_yaml(&path, &settings)?;
+    write_yaml(path, &settings)?;
     ACTIVE.with(|s| {
         *s.borrow_mut() = State {
             settings,
@@ -376,78 +365,53 @@ impl super::Adeline {
     pub(super) fn load_settings(&mut self) {
         let s = current();
         self.show_completed = s.modes.chats.show_completed_chats;
-        self.raw = s.modes.docs.show_raw_markdown;
-        self.archived = s.modes.docs.show_archived_documents;
-        self.collection = if s.modes.workflows.only_scheduled_workflows {
-            "Scheduled"
-        } else {
-            "All"
-        }
-        .into();
-        self.wrap = s.modes.services.wrap_output_lines;
-        self.follow = s.modes.services.follow_latest_output;
         self.left_panel_open = [
             s.modes.chats.show_left_panel,
-            s.modes.docs.show_left_panel,
-            s.modes.workflows.show_left_panel,
-            s.modes.services.show_left_panel,
-            s.modes.groupchats.show_left_panel,
-            s.modes.issues.show_left_panel,
-            s.modes.whiteboard.show_left_panel,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
         ];
         self.side_panel_open = [
             s.modes.chats.show_agent_activity,
-            s.modes.docs.show_document_details,
-            s.modes.workflows.show_workflow_details,
-            s.modes.services.show_service_details,
-            s.modes.groupchats.show_right_panel,
-            s.modes.issues.show_right_panel,
-            s.modes.whiteboard.show_right_panel,
+            false,
+            false,
+            false,
+            false,
+            false,
+            false,
         ];
     }
     pub(super) fn save_settings(&self, action: &super::Action) -> Result<(), String> {
-        use super::Action;
+        use super::{Action, Section};
+        if !(matches!(
+            action,
+            Action::ShowCompleted
+                | Action::LeftPanel(Section::Chats)
+                | Action::RightPanel(Section::Chats)
+        ) || (self.section == Section::Chats
+            && matches!(action, Action::ToggleLeftPanel | Action::ToggleSidePanel)))
+        {
+            return Ok(());
+        }
         update(|s| match action {
             Action::ShowCompleted => s.modes.chats.show_completed_chats = self.show_completed,
-            Action::Raw => s.modes.docs.show_raw_markdown = self.raw,
-            Action::Archive => s.modes.docs.show_archived_documents = self.archived,
-            Action::Collection(_) => {
-                s.modes.workflows.only_scheduled_workflows = self.collection == "Scheduled";
+            Action::LeftPanel(Section::Chats) => {
+                s.modes.chats.show_left_panel = self.left_panel_open[Section::Chats as usize];
             }
-            Action::Wrap => s.modes.services.wrap_output_lines = self.wrap,
-            Action::Follow => s.modes.services.follow_latest_output = self.follow,
-            Action::LeftPanel(section) | Action::RightPanel(section) => {
-                self.save_panel(s, *section, matches!(action, Action::LeftPanel(_)));
+            Action::RightPanel(Section::Chats) => {
+                s.modes.chats.show_agent_activity = self.side_panel_open[Section::Chats as usize];
             }
-            Action::ToggleLeftPanel | Action::ToggleSidePanel => {
-                self.save_panel(s, self.section, matches!(action, Action::ToggleLeftPanel));
+            Action::ToggleLeftPanel if self.section == Section::Chats => {
+                s.modes.chats.show_left_panel = self.left_panel_open[Section::Chats as usize];
+            }
+            Action::ToggleSidePanel if self.section == Section::Chats => {
+                s.modes.chats.show_agent_activity = self.side_panel_open[Section::Chats as usize];
             }
             _ => (),
         })
-    }
-    fn save_panel(&self, s: &mut Settings, section: super::Section, left: bool) {
-        use super::Section;
-        let target = match (section, left) {
-            (Section::Groupchats, true) => &mut s.modes.groupchats.show_left_panel,
-            (Section::Groupchats, false) => &mut s.modes.groupchats.show_right_panel,
-            (Section::Issues, true) => &mut s.modes.issues.show_left_panel,
-            (Section::Issues, false) => &mut s.modes.issues.show_right_panel,
-            (Section::Whiteboard, true) => &mut s.modes.whiteboard.show_left_panel,
-            (Section::Whiteboard, false) => &mut s.modes.whiteboard.show_right_panel,
-            (Section::Chats, true) => &mut s.modes.chats.show_left_panel,
-            (Section::Docs, true) => &mut s.modes.docs.show_left_panel,
-            (Section::Workflows, true) => &mut s.modes.workflows.show_left_panel,
-            (Section::Services, true) => &mut s.modes.services.show_left_panel,
-            (Section::Chats, false) => &mut s.modes.chats.show_agent_activity,
-            (Section::Docs, false) => &mut s.modes.docs.show_document_details,
-            (Section::Workflows, false) => &mut s.modes.workflows.show_workflow_details,
-            (Section::Services, false) => &mut s.modes.services.show_service_details,
-        };
-        *target = if left {
-            self.left_panel_open[section as usize]
-        } else {
-            self.side_panel_open[section as usize]
-        };
     }
 }
 
@@ -479,7 +443,7 @@ mod tests {
             ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.code_font_size = requested);
             assert_eq!(font_size(), 18);
             assert_eq!(code_font_size(), expected);
-            assert_eq!(code_text_pixels(14.), gpui::px(f32::from(expected)));
+            assert_eq!(code_text_pixels(14.), gpui_kit::px(f32::from(expected)));
         }
         let settings = current();
         assert_eq!(
@@ -502,8 +466,8 @@ mod tests {
         for (requested, expected) in [(0, 10), (14, 14), (18, 18), (65535, 24)] {
             ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.font_size = requested);
             assert_eq!(font_size(), expected);
-            assert_eq!(text_pixels(14.), gpui::px(f32::from(expected)));
-            assert_eq!(text_pixels(21.), gpui::px(f32::from(expected) * 1.5));
+            assert_eq!(text_pixels(14.), gpui_kit::px(f32::from(expected)));
+            assert_eq!(text_pixels(21.), gpui_kit::px(f32::from(expected) * 1.5));
         }
         ACTIVE.with(|s| s.borrow_mut().settings = original);
     }
@@ -551,26 +515,81 @@ mod tests {
         }
     }
     #[test]
-    fn yaml_defaults_and_custom_settings_round_trip() {
-        let mut s: Settings = serde_yaml_ng::from_str("general:\n  appearance:\n    theme: custom.yml\nmodes:\n  services:\n    wrap_output_lines: false\n").unwrap();
-        assert_eq!(s.general.appearance.theme, "custom.yml");
-        assert!(!s.modes.services.wrap_output_lines);
-        assert!(s.modes.chats.show_completed_chats);
-        assert_eq!(s.modes.chats.retry_limit, 5);
-        assert!(!s.modes.chats.hide_tool_calls);
-        s.modes.chats.retry_limit = 0;
-        s.modes.chats.hide_tool_calls = true;
-        s.general.features.close_picker_after_selection = true;
-        assert_eq!(
-            serde_yaml_ng::from_str::<Settings>(&serde_yaml_ng::to_string(&s).unwrap()).unwrap(),
-            s
-        );
-        assert!(
-            serde_yaml_ng::from_str::<Settings>(
-                "modes:\n  chats:\n    show_completed_chats: wrong"
-            )
-            .is_err()
-        );
+    fn new_settings_never_seed_excluded_mode_preferences() {
+        let path = std::env::temp_dir().join(format!(
+            "adeline-new-settings-{}-{:?}.yml",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        seed_yaml(&path, &Settings::default()).unwrap();
+        update_at(&path, |s| s.general.features.docs = true).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        let modes: serde_yaml_ng::Value = serde_yaml_ng::from_str(&saved).unwrap();
+        for mode in [
+            "docs",
+            "workflows",
+            "services",
+            "groupchats",
+            "issues",
+            "whiteboard",
+        ] {
+            assert!(
+                modes["modes"].as_mapping().unwrap().get(mode).is_none(),
+                "{mode}"
+            );
+        }
+        assert!(read(&path).unwrap().general.features.docs);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn legacy_values_survive_unrelated_updates_without_validation_or_recreation() {
+        let path = std::env::temp_dir().join(format!(
+            "adeline-legacy-settings-{}-{:?}.yml",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let original = "general:\n  features:\n    services: true\n    issues: true\nmodes:\n  docs: null\n  workflows: 42\n  services: [true, {obsolete: false}]\n  groupchats: {show_left_panel: definitely-not-a-boolean, custom: [one, two]}\n  issues: false\n  whiteboard: this was a scalar\n";
+        std::fs::write(&path, original).unwrap();
+        let before: serde_yaml_ng::Value = serde_yaml_ng::from_str(original).unwrap();
+        update_at(&path, |s| s.general.appearance.font_size = 18).unwrap();
+        let saved = std::fs::read_to_string(&path).unwrap();
+        let after: serde_yaml_ng::Value = serde_yaml_ng::from_str(&saved).unwrap();
+        for mode in [
+            "docs",
+            "workflows",
+            "services",
+            "groupchats",
+            "issues",
+            "whiteboard",
+        ] {
+            assert!(
+                after["modes"].as_mapping().unwrap().contains_key(mode),
+                "{mode}"
+            );
+            assert_eq!(before["modes"][mode], after["modes"][mode], "{mode}");
+        }
+        let settings = read(&path).unwrap();
+        assert_eq!(settings.general.appearance.font_size, 18);
+        assert!(settings.general.features.services);
+        assert!(settings.general.features.issues);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn malformed_active_settings_are_not_overwritten_while_legacy_is_ignored() {
+        let path = std::env::temp_dir().join(format!(
+            "adeline-invalid-settings-{}-{:?}.yml",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        for invalid in [
+            "modes:\n  chats:\n    retry_limit: invalid\n  docs: {old: choice}\n",
+            "modes:\n  docs: [malformed\n",
+        ] {
+            std::fs::write(&path, invalid).unwrap();
+            assert!(update_at(&path, |s| s.general.features.docs = true).is_err());
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), invalid);
+        }
+        std::fs::remove_file(path).unwrap();
     }
     #[test]
     fn seeding_preserves_existing_file() {

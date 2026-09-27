@@ -9,7 +9,7 @@ thread_local! {
     static FAMILIES: RefCell<Vec<String>> = RefCell::new(vec![DEFAULT.into(), CODE_DEFAULT.into()]);
 }
 
-pub fn init(cx: &gpui::App) {
+pub fn init(cx: &gpui_kit::App) {
     // Register before any window shapes text. The font travels inside the binary.
     cx.text_system()
         .add_fonts(vec![
@@ -20,7 +20,7 @@ pub fn init(cx: &gpui::App) {
     refresh(cx);
 }
 
-pub fn refresh(cx: &gpui::App) {
+pub fn refresh(cx: &gpui_kit::App) {
     let families = catalogue(cx.text_system().all_font_names());
     FAMILIES.with(|active| *active.borrow_mut() = families);
 }

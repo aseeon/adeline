@@ -17,15 +17,24 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct ExecutionConfig {
     pub name: String,
+    #[serde(default = "default_harness")]
+    pub harness: String,
     pub command: String,
     #[serde(default)]
     pub arguments: Vec<String>,
     pub model: String,
     pub effort: String,
+    #[serde(default)]
+    pub effort_parameter_name: agents::EffortParameterName,
     pub system_instructions: String,
     pub directory: PathBuf,
+}
+
+fn default_harness() -> String {
+    "OMP".into()
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -578,10 +587,12 @@ impl ProjectStore {
             created_at: now_millis().to_string(),
             execution: ExecutionConfig {
                 name: agent.name.clone(),
+                harness: agent.harness.clone(),
                 command: agent.command.clone(),
                 arguments: agent.arguments.clone(),
                 model: agent.model.clone(),
                 effort: agent.effort.clone(),
+                effort_parameter_name: agent.effort_parameter_name,
                 system_instructions: agent.system_instructions.clone(),
                 directory: project.directory.clone(),
             },

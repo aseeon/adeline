@@ -1,6 +1,10 @@
-//! Application themes. All rendering reads the UI-thread palette; changing it refreshes
-//! every GPUI window, including cached child views. YAML preferences are saved separately
-//! from workspace data.
+//! Application themes. Existing 32-color YAML files project onto Kit's global
+//! theme for every window. Preferences stay separate from workspace data.
+use gpui_kit::{
+    App,
+    component::{Colorize as _, Theme as KitTheme, ThemeMode},
+    px, rgb,
+};
 use serde::{Deserialize, Serialize};
 use std::{cell::RefCell, collections::BTreeMap, path::Path};
 
@@ -133,6 +137,23 @@ pub struct ThemeChoice {
     pub name: String,
     pub brightness: Brightness,
 }
+impl gpui_kit::component::searchable_list::SearchableListItem for ThemeChoice {
+    type Value = String;
+
+    fn title(&self) -> gpui_kit::SharedString {
+        format!(
+            "{} ({}) · {}",
+            self.name,
+            self.brightness.label(),
+            self.file
+        )
+        .into()
+    }
+
+    fn value(&self) -> &String {
+        &self.file
+    }
+}
 struct State {
     theme: ThemeFile,
     colors: BTreeMap<&'static str, u32>,
@@ -158,9 +179,6 @@ impl State {
     }
 }
 thread_local! { static ACTIVE: RefCell<State> = RefCell::new(State::default()); }
-pub fn active_theme() -> ThemeFile {
-    ACTIVE.with(|s| s.borrow().theme.clone())
-}
 
 pub fn load_error() -> Option<String> {
     ACTIVE
@@ -168,14 +186,16 @@ pub fn load_error() -> Option<String> {
         .or_else(crate::config::error)
 }
 
-pub fn is_dark() -> bool {
-    ACTIVE.with(|s| s.borrow().theme.brightness.is_dark())
-}
 pub fn parse_hex(value: &str) -> Option<u32> {
     let value = value.trim().strip_prefix('#').unwrap_or(value.trim());
     (value.len() == 6 && value.bytes().all(|b| b.is_ascii_hexdigit()))
         .then(|| u32::from_str_radix(value, 16).ok())
         .flatten()
+}
+/// Kit has one global focus ring; sidebar navigation uses the YAML sidebar ring
+/// on its focused border to preserve the separate palette role.
+pub fn sidebar_focus() -> gpui_kit::Hsla {
+    rgb(sidebar_ring()).into()
 }
 fn read(path: &Path) -> Result<ThemeFile, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -249,7 +269,7 @@ pub fn init() {
         *s.borrow_mut() = result.unwrap_or_else(State::fallback);
     });
 }
-pub fn select(file: &str, cx: &mut gpui::App) -> Result<(), String> {
+pub fn select(file: &str, cx: &mut App) -> Result<(), String> {
     let theme = read(&theme_path(file)?)?;
     let colors = theme.validate()?;
     crate::config::update(|s| s.general.appearance.theme = file.into())?;
@@ -260,39 +280,123 @@ pub fn select(file: &str, cx: &mut gpui::App) -> Result<(), String> {
             load_error: None,
         }
     });
-    cx.refresh_windows();
+    apply(cx);
     Ok(())
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "blending two 0..=255 channels stays in 0.0..=255.0"
-)]
-pub fn blend(color: u32, base: u32, amount: f32) -> u32 {
-    [16, 8, 0].into_iter().fold(0, |result, shift| {
-        let a = ((color >> shift) & 255) as f32;
-        let b = ((base >> shift) & 255) as f32;
-        result | (((a * amount + b * (1. - amount)).round() as u32) << shift)
-    })
+/// Projects the 32-color YAML palette and persisted typography into Kit's
+/// global semantic and component colors, including popups and child windows.
+/// Call after Kit initialization and whenever appearance preferences change.
+pub fn apply(cx: &mut App) {
+    ACTIVE.with(|state| {
+        let state = state.borrow();
+        let c = |role| rgb(state.colors[role]).into();
+        let theme = KitTheme::global_mut(cx);
+        theme.mode = if state.theme.brightness.is_dark() {
+            ThemeMode::Dark
+        } else {
+            ThemeMode::Light
+        };
+        theme.background = c("background");
+        theme.foreground = c("foreground");
+        theme.group_box = c("card");
+        theme.title_bar = c("sidebar");
+        theme.title_bar_border = c("sidebar_border");
+        theme.status_bar = c("sidebar");
+        theme.status_bar_border = c("sidebar_border");
+        theme.window_border = c("border");
+        theme.overlay = c("foreground").alpha(0.55);
+        theme.group_box_foreground = c("card_foreground");
+        theme.popover = c("popover");
+        theme.popover_foreground = c("popover_foreground");
+        theme.primary = c("primary");
+        theme.primary_foreground = c("primary_foreground");
+        theme.primary_hover = theme.primary.mix_oklab(theme.foreground, 0.12);
+        theme.primary_active = theme.primary.mix_oklab(theme.foreground, 0.22);
+        theme.secondary = c("secondary");
+        theme.secondary_foreground = c("secondary_foreground");
+        theme.secondary_hover = c("sidebar_accent");
+        theme.secondary_active = c("sidebar_accent");
+        theme.muted = c("muted");
+        theme.muted_foreground = c("muted_foreground");
+        theme.accent = c("accent");
+        theme.accent_foreground = c("accent_foreground");
+        theme.danger = c("destructive");
+        theme.danger_foreground = c("destructive_foreground");
+        theme.danger_hover = theme.danger.mix_oklab(theme.foreground, 0.12);
+        theme.danger_active = theme.danger.mix_oklab(theme.foreground, 0.22);
+        theme.border = c("border");
+        theme.input = c("input");
+        theme.ring = c("ring");
+        theme.caret = c("foreground");
+        theme.selection = c("sidebar_accent");
+        theme.chart_1 = c("chart_1");
+        theme.chart_2 = c("chart_2");
+        theme.chart_3 = c("chart_3");
+        theme.chart_4 = c("chart_4");
+        theme.chart_5 = c("chart_5");
+        theme.success = c("chart_3");
+        theme.warning = c("chart_2");
+        theme.info = c("chart_4");
+        theme.success_foreground = c("background");
+        theme.warning_foreground = c("foreground");
+        theme.info_foreground = c("background");
+        theme.sidebar = c("sidebar");
+        theme.sidebar_foreground = c("sidebar_foreground");
+        theme.sidebar_primary = c("sidebar_primary");
+        theme.sidebar_primary_foreground = c("sidebar_primary_foreground");
+        theme.sidebar_accent = c("sidebar_accent");
+        theme.sidebar_accent_foreground = c("sidebar_accent_foreground");
+        theme.sidebar_border = c("sidebar_border");
+        theme.scrollbar = c("sidebar");
+        theme.scrollbar_thumb = c("sidebar_border");
+        theme.scrollbar_thumb_hover = c("sidebar_primary");
+        theme.colors.list = c("card");
+        theme.list_hover = c("sidebar_accent");
+        theme.list_active = c("sidebar_accent");
+        theme.list_head = c("muted");
+        theme.table = c("card");
+        theme.table_head = c("muted");
+        theme.table_head_foreground = c("foreground");
+        theme.table_hover = c("sidebar_accent");
+        theme.table_active = c("sidebar_accent");
+        theme.table_row_border = c("border");
+        theme.tab_bar = c("sidebar");
+        theme.tab = c("secondary");
+        theme.tab_active = c("sidebar_accent");
+        theme.tab_active_foreground = c("sidebar_accent_foreground");
+        theme.tab_foreground = c("secondary_foreground");
+        theme.switch = c("muted");
+        theme.switch_thumb = c("primary_foreground");
+        theme.drag_border = c("ring");
+        theme.button = c("secondary");
+        theme.button_foreground = c("secondary_foreground");
+        theme.button_hover = c("sidebar_accent");
+        theme.button_active = c("sidebar_accent");
+        theme.button_primary = c("primary");
+        theme.button_primary_foreground = c("primary_foreground");
+        theme.button_primary_hover = theme.primary_hover;
+        theme.button_primary_active = theme.primary_active;
+        theme.button_secondary = c("secondary");
+        theme.button_secondary_foreground = c("secondary_foreground");
+        theme.button_secondary_hover = c("sidebar_accent");
+        theme.button_secondary_active = c("sidebar_accent");
+        theme.button_danger = c("destructive");
+        theme.button_danger_foreground = c("destructive_foreground");
+        theme.button_danger_hover = theme.danger_hover;
+        theme.button_danger_active = theme.danger_active;
+        theme.font_family = crate::config::font().into();
+        theme.font_size = px(f32::from(crate::config::font_size()));
+        theme.mono_font_family = crate::config::code_font().into();
+        theme.mono_font_size = px(f32::from(crate::config::code_font_size()));
+        theme.tokens = (&theme.colors).into();
+    });
+    KitTheme::sync_base(cx);
+    cx.refresh_windows();
 }
-pub fn display_tint(color: u32) -> u32 {
-    blend(color, card(), if is_dark() { 0.15 } else { 0.25 })
-}
+
 pub fn project_colors() -> [u32; 5] {
     [chart_1(), chart_2(), chart_3(), chart_4(), chart_5()]
-}
-pub fn shadow_base() -> u32 {
-    if is_dark() { sidebar() } else { foreground() }
-}
-pub fn shadow(blur: f32) -> gpui::BoxShadow {
-    gpui::BoxShadow {
-        color: gpui::rgba((shadow_base() << 8) | 0x30).into(),
-        offset: gpui::point(gpui::px(0.), gpui::px(blur / 3.)),
-        blur_radius: gpui::px(blur),
-        spread_radius: gpui::px(0.),
-        inset: false,
-    }
 }
 #[cfg(test)]
 mod tests {

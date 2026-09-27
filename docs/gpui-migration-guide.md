@@ -329,10 +329,9 @@ Use the existing `ui-profiling` build and actual native interactions:
 cargo run --release --locked --features ui-profiling -- --demo
 ```
 
-`src/ui_metrics.rs` writes counters to `artifacts/ui-profile.csv`; optional stress row-count files are `artifacts/ui-stress-rows.txt` and `artifacts/ui-stress-content-rows.txt`, capped at 10,000 rows. Capture before/after CSV snapshots within the same running process, after initial rendering settles:
+`src/ui_metrics.rs` writes Chats counters to `artifacts/ui-profile.csv`; the optional stress row-count file is `artifacts/ui-stress-rows.txt`, capped at 10,000 rows. The later Kit rebuild removed the document/log counters and their stress fixture. Capture before/after CSV snapshots within the same running process, after initial rendering settles:
 
 - Type in the composer and run `scripts/check-ui-isolation.ps1 -Before <before.csv> -After <after.csv>`. It requires composer activity without header/sidebar/transcript/row renders.
-- Trigger an unrelated shell update while document/log content stays unchanged and run `scripts/check-content-isolation.ps1 -Before <before.csv> -After <after.csv> -Region document` or `log`.
 - Resize and change fonts with large variable-height content, then inspect row wrapping and scroll anchoring. The isolation counters do not prove correct geometry.
 - Remove temporary stress controls after the check. Use the GPUI profiler to diagnose latency if adopted; do not replace these behavioral checks with a render-count benchmark alone.
 
@@ -340,7 +339,7 @@ Completion means the [confirmed scope's acceptance criteria](scope-gpui-pre-0.3.
 
 ## 9. Implementation and verification
 
-Implemented on 2026-09-27, with exact core/platform pins and a regenerated application lockfile. The application retains its existing storage formats, runtime ownership, rendering regions, and scrolling policy.
+Implemented on 2026-09-27, with exact core/platform pins and a regenerated application lockfile. This section records the earlier framework migration, before the [GPUI Kit UI rebuild](scope-gpui-kit.md). The later rebuild made Kit 0.6.6 a production dependency and removed the six excluded modes' working views; the historical results below are not verification of the rebuilt UI.
 
 Compilation found four additional changes beyond section 3: `ShapedLine::paint` now needs alignment and optional alignment width; SVG text refinements are no longer optional; popup anchors use `Anchor`; and `on_window_closed` supplies the closed window ID. Startup focus uses an entity update to avoid borrowing the application immutably and mutably at once. The new platform-paste hook and the existing Paste action share the existing newline normalization.
 
@@ -348,7 +347,7 @@ Compilation found four additional changes beyond section 3: `ShapedLine::paint` 
 
 - `cargo fmt --all -- --check`, `scripts/clippy.ps1` (including installed dependency/spelling checks), `bash scripts/check-todos`, and `cargo nextest run --locked --all-features` passed. All 68 tests passed.
 - `cargo build --release --locked` succeeded on Windows, including the new Windows platform/shader build. The rebuilt executable was launched for the checks below.
-- A separate temporary host compiled with exact GPUI Kit 0.6.6 and gpui-whiteboard 0.5.1 dependencies. It constructed a `WhiteboardView` through Adeline's `gpui::App` context, assigned it to `gpui_kit::Entity<WhiteboardView>`, rendered it alongside a Kit `Button`, and wrapped the host in Kit's `Root` using the same window/context. Production dependencies remain limited to the framework.
+- A separate temporary host compiled with exact GPUI Kit 0.6.6 and gpui-whiteboard 0.5.1 dependencies. It constructed a `WhiteboardView` through Adeline's `gpui::App` context, assigned it to `gpui_kit::Entity<WhiteboardView>`, rendered it alongside a Kit `Button`, and wrapped the host in Kit's `Root` using the same window/context. Neither library was a production dependency at that stage.
 - Application and probe dependency trees each resolved one GPUI core, `gpui-pre 0.3.6`, with no old `gpui` package. Target-filtered Cargo metadata retained macOS `font-kit` and both Linux display backends with `gpui_wgpu`.
 
 ### Observed Windows workflows
@@ -365,7 +364,7 @@ Native pointer/keyboard automation exercised the release app against an isolated
 - Malformed settings produced a visible save error and remained byte-identical. An exclusive lock on the isolated transcript produced a visible storage error and Retry storage. Releasing the lock and retrying saved history and exposed the existing interrupted-turn Retry path; that action resumed streamed output.
 - Native caption double-click maximize/restore, minimize, dragging, and close worked. Closing the main window also closed its settings window and shut down the real chat process. A later shutdown after storage recovery stalled, displayed Force Stop, and closed after that explicit action.
 - Hash comparison found every copied pre-migration project, agent, and transcript byte-identical after these checks. Only settings changed, through the exercised preference controls.
-- The `ui-profiling` release build passed `check-ui-isolation.ps1` while typing in the composer and `check-content-isolation.ps1` for document/log views while filtering their sidebars with stable focus. Opening the application menu changed focus and rebuilt the document once; both old and new `Window::focus` call `refresh`, which bypasses caches. No cache policy was changed to suppress that refresh.
+- The earlier `ui-profiling` release build passed `check-ui-isolation.ps1` while typing in the composer and the former `check-content-isolation.ps1` for document/log views while filtering their sidebars with stable focus. The latter script and its views were removed by the Kit rebuild. Opening the application menu changed focus and rebuilt the document once; both old and new `Window::focus` call `refresh`, which bypasses caches.
 
 One later launch found two test files under the repository's `target` directory renamed with `[conflicted]` suffixes; Adeline reported the missing conversation snapshot. The user confirmed that pCloud, which synchronizes this directory with cloud storage, renamed those files. A final launch using a fresh saved-data copy under the OS temporary directory opened the old history correctly and closed normally. Keep persistence-failure fixtures outside synchronized directories.
 

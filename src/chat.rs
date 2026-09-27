@@ -2,13 +2,17 @@
 //! data/action coordinator; list state and input invalidation live in these views.
 use super::*;
 use crate::Action;
+use gpui_kit::component::{
+    ActiveTheme as _,
+    input::{InputEvent, TextareaState},
+    scroll::Scrollbar,
+};
 use std::sync::Arc;
 
 pub(super) struct ChatList {
     owner: WeakEntity<Adeline>,
     state: ListState,
     typography: config::Typography,
-    scrollbar: scrollbar::Scrollbar,
     visible: Arc<[usize]>,
     keys: Vec<Arc<str>>,
     records: prepared::SearchCatalog,
@@ -29,7 +33,6 @@ impl ChatList {
         let state = ListState::new(0, ListAlignment::Top, px(180.));
         Self {
             owner,
-            scrollbar: scrollbar::Scrollbar::list(state.clone()),
             state,
             typography: config::typography(),
             visible: Arc::from([]),
@@ -229,7 +232,7 @@ impl ChatList {
 }
 
 impl Render for ChatList {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let typography = config::typography();
         if self.typography != typography {
             self.typography = typography;
@@ -241,24 +244,57 @@ impl Render for ChatList {
         ui_metrics::record(ui_metrics::Region::Sidebar);
         let owner = self.owner.clone();
         let visible = self.visible.clone();
+        let navigation = visible.clone();
+        let navigation_owner = owner.clone();
+        let navigation_state = self.state.clone();
+        let selected = self.selected;
+        let list_focus = window
+            .use_keyed_state("chat-list-keyboard", cx, |_, cx| {
+                cx.focus_handle().tab_stop(true)
+            })
+            .read(cx)
+            .clone();
         let rows = if visible.is_empty() {
-            text(
-                if self.searching {
+            div()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child(if self.searching {
                     "Searching…"
                 } else {
                     "No chats found"
-                },
-                13.,
-                theme::muted_foreground(),
-            )
-            .p_5()
-            .flex_1()
-            .into_any_element()
+                })
+                .p_5()
+                .flex_1()
+                .into_any_element()
         } else {
             div()
+                .id("chat-list-viewport")
                 .relative()
                 .flex_1()
                 .min_h_0()
+                .track_focus(&list_focus)
+                .on_key_down(move |event, window, cx| {
+                    if event.keystroke.modifiers.modified() {
+                        return;
+                    }
+                    let current = selected.and_then(|ix| navigation.binary_search(&ix).ok());
+                    let target = match event.keystroke.key.as_str() {
+                        "up" => current.unwrap_or(0).saturating_sub(1),
+                        "down" => current.map_or(0, |ix| (ix + 1).min(navigation.len() - 1)),
+                        "home" => 0,
+                        "end" => navigation.len() - 1,
+                        _ => return,
+                    };
+                    navigation_state.scroll_to_reveal_item(target);
+                    list_focus.focus(window, cx);
+                    window.refresh();
+                    if selected != Some(navigation[target]) {
+                        let _ = navigation_owner.update(cx, |app, cx| {
+                            app.act(Action::Chat(navigation[target]), window, cx);
+                        });
+                    }
+                    cx.stop_propagation();
+                })
                 .child(
                     list(self.state.clone(), move |row, _, cx| {
                         ui_metrics::record(ui_metrics::Region::ChatRow);
@@ -268,7 +304,7 @@ impl Render for ChatList {
                     })
                     .size_full(),
                 )
-                .child(self.scrollbar.element())
+                .child(Scrollbar::vertical(&self.state))
                 .into_any_element()
         };
         self.owner
@@ -283,7 +319,6 @@ pub(super) struct Transcript {
     owner: WeakEntity<Adeline>,
     state: ListState,
     typography: config::Typography,
-    scrollbar: scrollbar::Scrollbar,
     thread: Option<(usize, String)>,
     selected: Option<usize>,
     messages: usize,
@@ -295,7 +330,6 @@ impl Transcript {
         let state = ListState::new(0, ListAlignment::Top, px(250.));
         Self {
             owner,
-            scrollbar: scrollbar::Scrollbar::list(state.clone()),
             state,
             typography: config::typography(),
             thread: None,
@@ -383,7 +417,7 @@ impl Render for Transcript {
                         col()
                             .w_full()
                             .track_focus(&footer_focus)
-                            .px(relative(0.075))
+                            .px_5()
                             .child(if app.demo_mode {
                                 app.decision_row(selected, cx)
                             } else {
@@ -395,13 +429,13 @@ impl Render for Transcript {
                 .unwrap_or_else(|_| div().into_any_element())
         })
         .size_full()
-        .py_6();
+        .py_2();
         div()
             .relative()
             .size_full()
             .min_h_0()
             .child(rows)
-            .child(self.scrollbar.element())
+            .child(Scrollbar::vertical(&self.state))
             .into_any_element()
     }
 }
@@ -420,10 +454,14 @@ pub(super) struct Composer {
 impl Composer {
     pub fn new(
         owner: WeakEntity<Adeline>,
-        input: &Entity<TextInput>,
+        input: &Entity<TextareaState>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let subscription = cx.subscribe(input, |_, _, _: &input::ContentChanged, cx| cx.notify());
+        let subscription = cx.subscribe(input, |_, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                cx.notify();
+            }
+        });
         Self {
             owner,
             _content_subscription: subscription,
@@ -445,7 +483,7 @@ impl Render for Header {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         ui_metrics::record(ui_metrics::Region::Header);
         self.0
-            .update(cx, |app, cx| app.header(cx).size_full().into_any_element())
+            .update(cx, |app, cx| app.header(cx).w_full().into_any_element())
             .unwrap_or_else(|_| div().into_any_element())
     }
 }
@@ -454,7 +492,7 @@ impl Adeline {
     pub(super) fn search_sidebar(&self, cx: &mut Context<Self>) {
         let query = self.query(cx);
         self.chat_list.update(cx, |list, cx| {
-            // Programmatic input resets can emit the same ContentChanged event.
+            // Programmatic input resets can emit the same InputEvent::Change.
             if list.query != query
                 || list.filter != self.filter
                 || list.completed != self.show_completed
@@ -473,14 +511,7 @@ impl Adeline {
         use crate::Action::*;
         if matches!(
             action,
-            Section(_)
-                | Project(_)
-                | NewChat
-                | RunWorkflow
-                | ShowCompleted
-                | ToggleLeftPanel
-                | Document(_)
-                | NewDoc
+            Section(_) | Project(_) | NewChat | ShowCompleted | ToggleLeftPanel
         ) {
             self.control_pane.update(cx, |_, cx| cx.notify());
         }
@@ -495,7 +526,7 @@ impl Adeline {
                     list.search(query, self.filter, self.show_completed, false, cx);
                 });
             }
-            Chat(_) | Complete | Send | RunWorkflow | Decision(_) => {
+            Chat(_) | Complete | Send | Decision(_) => {
                 self.chat_list
                     .update(cx, |list, cx| list.update_thread(self, cx));
             }
@@ -503,17 +534,9 @@ impl Adeline {
         }
         if matches!(
             action,
-            Project(_)
-                | Chat(_)
-                | NewChat
-                | Complete
-                | Send
-                | RunWorkflow
-                | Decision(_)
-                | SaveWorkflow
-                | SaveCollection
+            Project(_) | Chat(_) | NewChat | Complete | Send | Decision(_)
         ) {
-            let end = matches!(action, Send | RunWorkflow);
+            let end = matches!(action, Send);
             self.transcript
                 .update(cx, |view, cx| view.sync(self, end, cx));
         }
@@ -532,10 +555,8 @@ impl Adeline {
                 | NewChat
                 | Complete
                 | Send
-                | RunWorkflow
                 | Decision(_)
                 | SaveSettings
-                | SaveWorkflow
         ) {
             self.header_region.update(cx, |_, cx| cx.notify());
         }
@@ -545,7 +566,7 @@ impl Adeline {
 #[cfg(test)]
 mod tests {
     use super::invalidate_range;
-    use gpui::{ListAlignment, ListOffset, ListState, px};
+    use gpui_kit::{ListAlignment, ListOffset, ListState, px};
 
     #[test]
     fn remeasuring_variable_rows_preserves_the_scroll_anchor() {

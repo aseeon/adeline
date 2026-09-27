@@ -307,7 +307,10 @@ impl Worker {
                                 format!("{error} Agent exited: {status}. {diagnostics}")
                             };
                             let kind = classify_error(&error, None);
-                            if missing_initialize && kind == FailureKind::Temporary {
+                            if missing_initialize
+                                && kind == FailureKind::Temporary
+                                && self.config.harness == "OMP"
+                            {
                                 self.fail(
                                     format!(
                                         "{error} The configured OMP Arguments must include `acp`."
@@ -514,12 +517,14 @@ impl Worker {
             self.fail("Agent command must name one executable; edit the agent definition for new conversations.".into(), FailureKind::Configuration);
             return;
         }
-        if self.config.arguments.iter().any(|arg| {
-            arg == "--system-prompt"
-                || arg.starts_with("--system-prompt=")
-                || arg == "--system-prompt-template"
-                || arg.starts_with("--system-prompt-template=")
-        }) {
+        if self.config.harness == "OMP"
+            && self.config.arguments.iter().any(|arg| {
+                arg == "--system-prompt"
+                    || arg.starts_with("--system-prompt=")
+                    || arg == "--system-prompt-template"
+                    || arg.starts_with("--system-prompt-template=")
+            })
+        {
             self.fail("Agent arguments replace OMP's default prompt. Remove system-prompt override to keep OMP defaults.".into(), FailureKind::Configuration);
             return;
         }
@@ -527,12 +532,14 @@ impl Worker {
         process
             .args(&self.config.arguments)
             .current_dir(&self.config.directory);
-        // A trailing newline forces OMP's literal-text route, not its single-line file lookup.
-        let instructions = format!(
-            "--append-system-prompt=You are an agent named {}\n{}\n",
-            self.config.name, self.config.system_instructions
-        );
-        process.arg(instructions);
+        if self.config.harness == "OMP" {
+            // A trailing newline forces OMP's literal-text route, not its single-line file lookup.
+            let instructions = format!(
+                "--append-system-prompt=You are an agent named {}\n{}\n",
+                self.config.name, self.config.system_instructions
+            );
+            process.arg(instructions);
+        }
         process
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -860,7 +867,11 @@ impl Worker {
                         return;
                     }
                 };
-                self.configure("thinking", effort, Request::Effort);
+                self.configure(
+                    self.config.effort_parameter_name.as_str(),
+                    effort,
+                    Request::Effort,
+                );
             }
             Request::Effort => {
                 self.configured = true;
@@ -904,7 +915,7 @@ impl Worker {
             .iter()
             .find(|option| option.get("id").and_then(Value::as_str) == Some(id))
         else {
-            self.fail(format!("Agent does not expose required {id} configuration; saved settings cannot be honored. If no provider is authenticated, run `omp login` outside Adeline, then Retry."), FailureKind::Configuration);
+            self.fail(format!("Agent does not expose required {id} configuration; saved settings cannot be honored. Authenticate with the configured harness or choose one that offers this option."), FailureKind::Configuration);
             return;
         };
         let supported = option
@@ -1288,12 +1299,15 @@ impl Worker {
         self.lost_at = Some(Instant::now());
         self.shutdown_deadline
             .get_or_insert_with(|| Instant::now() + Duration::from_secs(5));
-        if invalid_initialize {
+        if invalid_initialize && self.config.harness == "OMP" {
             self.timeout_reported = true;
             self.fail(
                 format!("{message} The configured OMP Arguments must include `acp`."),
                 FailureKind::Configuration,
             );
+        } else if invalid_initialize {
+            self.timeout_reported = true;
+            self.fail(message, FailureKind::Configuration);
         } else if self.child.is_none() && !self.closing {
             self.fail(message, FailureKind::Temporary);
         }
@@ -1447,10 +1461,12 @@ mod tests {
                 id: "conversation-1".into(),
                 config: ExecutionConfig {
                     name: "Josh".into(),
+                    harness: "OMP".into(),
                     command: "omp.exe".into(),
                     arguments: vec!["acp".into()],
                     model: "openai-codex/gpt-6-sol".into(),
                     effort: "High".into(),
+                    effort_parameter_name: crate::agents::EffortParameterName::default(),
                     system_instructions: String::new(),
                     directory: std::env::current_dir().expect("cwd"),
                 },
@@ -1493,6 +1509,85 @@ mod tests {
             },
             received,
         )
+    }
+
+    #[test]
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "The protocol test runs on a test thread, not the UI thread."
+    )]
+    fn model_configuration_sends_the_saved_effort_parameter() {
+        for parameter in crate::agents::EffortParameterName::ALL {
+            let (sent, received) = mpsc::channel();
+            let (mut worker, _) = worker(Arc::new(move |_, direction, message| {
+                if direction == "outgoing" {
+                    sent.send(message.clone()).unwrap();
+                }
+                Ok(())
+            }));
+            #[cfg(windows)]
+            let mut process = {
+                use std::os::windows::process::CommandExt as _;
+                let mut process = ProcessCommand::new("powershell.exe");
+                process.args([
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-Command",
+                    "$null = [Console]::ReadLine()",
+                ]);
+                process.creation_flags(0x0800_0000);
+                process
+            };
+            #[cfg(not(windows))]
+            let mut process = {
+                let mut process = ProcessCommand::new("sh");
+                process.args(["-c", "read -r line"]);
+                process
+            };
+            let mut child = process.stdin(Stdio::piped()).spawn().unwrap();
+            worker.stdin = child.stdin.take();
+            worker.config.effort_parameter_name = parameter;
+            worker.pending.insert(1, Request::Model);
+            worker.incoming(&json!({"id":1,"result":{"configOptions":[
+                {"id":parameter.as_str(),"options":[{"value":"high"}]}
+            ]}}));
+            worker.stdin = None;
+            assert!(child.wait().unwrap().success());
+            let message = received.try_recv().expect("effort request sent");
+            assert_eq!(message["method"], "session/set_config_option");
+            assert_eq!(
+                message["params"],
+                json!({
+                    "sessionId":"session-1", "configId":parameter.as_str(), "value":"high"
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn non_omp_start_passes_only_configured_arguments() {
+        let (mut worker, _) = worker(Arc::new(|_, _, _| Ok(())));
+        worker.config.harness = "Other".into();
+        #[cfg(windows)]
+        {
+            worker.config.command = "cmd.exe".into();
+            worker.config.arguments = vec!["/C".into(), "echo".into(), "1".into()];
+        }
+        #[cfg(not(windows))]
+        {
+            worker.config.command = "sh".into();
+            worker.config.arguments = vec![
+                "-c".into(),
+                "printf '%s\\n' \"$*\"".into(),
+                "sh".into(),
+                "1".into(),
+            ];
+        }
+        worker.start();
+        assert!(matches!(
+            worker.receiver.recv_timeout(Duration::from_secs(5)),
+            Ok(Input::Wire { message, .. }) if message == json!(1)
+        ));
     }
 
     fn turn(retries: u32) -> Turn {

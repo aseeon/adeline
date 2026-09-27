@@ -1,8 +1,8 @@
 //! GPUI SVGs require a local color. Resolve inherited text color at paint
 //! time so parent hover/selection styles work without freezing a palette value.
-use gpui::{
+use gpui_kit::{
     App, Bounds, Element, ElementId, GlobalElementId, Hsla, InspectorElementId, Interactivity,
-    LayoutId, Pixels, StyleRefinement, Svg, Transformation, Window, prelude::*, svg,
+    LayoutId, Pixels, StyleRefinement, Svg, Window, prelude::*, svg,
 };
 
 pub(crate) struct ThemedIcon(Svg);
@@ -10,11 +10,6 @@ pub(crate) struct ThemedIcon(Svg);
 impl ThemedIcon {
     pub(crate) fn new(name: &str) -> Self {
         Self(svg().path(format!("{name}.svg")))
-    }
-
-    pub(crate) fn with_transformation(mut self, value: Transformation) -> Self {
-        self.0 = self.0.with_transformation(value);
-        self
     }
 
     fn resolve_color(&mut self, inherited: Hsla) -> Option<Hsla> {
@@ -96,7 +91,7 @@ impl Element for ThemedIcon {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::rgb;
+    use gpui_kit::rgb;
 
     #[test]
     fn inherited_icon_color_tracks_states_and_preserves_overrides() {

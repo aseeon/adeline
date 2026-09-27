@@ -8,6 +8,27 @@ use std::{
 };
 
 pub const EFFORTS: [&str; 5] = ["Low", "Medium", "High", "Extra High", "Max"];
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EffortParameterName {
+    #[default]
+    Thinking,
+    Effort,
+    ReasoningEffort,
+}
+
+impl EffortParameterName {
+    pub const ALL: [Self; 3] = [Self::Thinking, Self::Effort, Self::ReasoningEffort];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Thinking => "thinking",
+            Self::Effort => "effort",
+            Self::ReasoningEffort => "reasoning_effort",
+        }
+    }
+}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PermissionMode {
     #[default]
@@ -19,6 +40,7 @@ static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+#[non_exhaustive]
 pub struct AgentDefinition {
     pub name: String,
     pub harness: String,
@@ -30,6 +52,8 @@ pub struct AgentDefinition {
     pub permission_mode: PermissionMode,
     pub model: String,
     pub effort: String,
+    #[serde(default)]
+    pub effort_parameter_name: EffortParameterName,
     #[serde(default)]
     pub system_instructions: String,
 }
@@ -58,8 +82,8 @@ impl AgentDefinition {
                     .into(),
             );
         }
-        if self.harness != "OMP" || self.driver != "ACP" {
-            return Err("Only the OMP harness with the ACP driver is supported.".into());
+        if self.driver != "ACP" {
+            return Err("Only the ACP driver is supported.".into());
         }
         if !EFFORTS.contains(&self.effort.as_str()) {
             return Err(format!("Effort must be one of: {}.", EFFORTS.join(", ")));
@@ -164,6 +188,7 @@ impl AgentCatalog {
                         permission_mode: PermissionMode::Ask,
                         model: model.into(),
                         effort: "High".into(),
+                        effort_parameter_name: EffortParameterName::default(),
                         system_instructions: String::new(),
                     },
                 });
@@ -554,8 +579,38 @@ mod tests {
             permission_mode: PermissionMode::Ask,
             model: "openai-codex/gpt-6-luna".into(),
             effort: "Max".into(),
+            effort_parameter_name: EffortParameterName::default(),
             system_instructions: "Answer plainly.".into(),
         }
+    }
+
+    #[test]
+    fn effort_parameter_names_persist_and_legacy_agents_default_to_thinking() {
+        let root = TestRoot::new();
+        let mut catalog = root.catalog(false);
+        for parameter in EffortParameterName::ALL {
+            let mut definition = agent(parameter.as_str());
+            definition.effort_parameter_name = parameter;
+            let id = catalog.save(None, definition.clone(), None, false).unwrap();
+            let yaml = fs::read_to_string(root.file(&id)).unwrap();
+            assert!(yaml.contains(&format!("effort_parameter_name: {}", parameter.as_str())));
+            assert_eq!(
+                serde_yaml_ng::from_str::<AgentDefinition>(&yaml).unwrap(),
+                definition
+            );
+        }
+        let mut legacy = serde_yaml_ng::to_value(agent("Legacy")).unwrap();
+        legacy
+            .as_mapping_mut()
+            .unwrap()
+            .remove("effort_parameter_name");
+        let restored: AgentDefinition = serde_yaml_ng::from_value(legacy.clone()).unwrap();
+        assert_eq!(
+            restored.effort_parameter_name,
+            EffortParameterName::Thinking
+        );
+        legacy["effort_parameter_name"] = "unknown".into();
+        assert!(serde_yaml_ng::from_value::<AgentDefinition>(legacy).is_err());
     }
 
     #[test]
@@ -659,6 +714,18 @@ mod tests {
     }
 
     #[test]
+    fn saves_non_omp_acp_agent() {
+        let root = TestRoot::new();
+        let mut catalog = root.catalog(false);
+        let mut definition = agent("Other harness");
+        definition.harness = "Other".into();
+        definition.command = "other-agent.exe".into();
+        definition.arguments = vec!["--stdio".into()];
+        catalog.save(None, definition.clone(), None, false).unwrap();
+        assert_eq!(root.catalog(false).entries[0].definition, definition);
+    }
+
+    #[test]
     fn persists_complete_definitions_and_refreshes_external_changes() {
         let root = TestRoot::new();
         let mut catalog = root.catalog(false);
@@ -744,7 +811,7 @@ mod tests {
             ("name", ""),
             ("command", "  "),
             ("model", ""),
-            ("harness", "Unknown"),
+            ("harness", ""),
             ("driver", "Unknown"),
             ("effort", "Ultra"),
         ] {

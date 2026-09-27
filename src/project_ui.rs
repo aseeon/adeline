@@ -3,11 +3,11 @@ use std::path::Path;
 
 impl Adeline {
     pub(super) fn create_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let name = self.name_input.read(cx).content.trim().to_owned();
+        let name = self.name_input.read(cx).value().trim().to_owned();
         let directory = self
             .project_directory_input
             .read(cx)
-            .content
+            .value()
             .trim()
             .to_owned();
         let project = if self.demo_mode {
@@ -41,11 +41,6 @@ impl Adeline {
         match project {
             Ok(project) => {
                 let index = self.projects.len();
-                self.collaboration.push(if self.demo_mode {
-                    collaboration_modes::ProjectCollaboration::seed(&project)
-                } else {
-                    collaboration_modes::ProjectCollaboration::default()
-                });
                 self.projects.push(project);
                 self.open_projects.push(false);
                 self.project_tints.push(0);
@@ -64,11 +59,11 @@ impl Adeline {
         if !self.has_open_project() {
             return;
         }
-        let name = self.name_input.read(cx).content.trim().to_owned();
+        let name = self.name_input.read(cx).value().trim().to_owned();
         let directory = self
             .project_directory_input
             .read(cx)
-            .content
+            .value()
             .trim()
             .to_owned();
         let old_id = self.projects[self.project].config.id.clone();
@@ -76,7 +71,7 @@ impl Adeline {
             if name.is_empty() {
                 Err("Enter a project name.".into())
             } else {
-                Ok(old_id.clone())
+                Ok(old_id)
             }
         } else {
             self.project_store
@@ -94,17 +89,11 @@ impl Adeline {
                 if !self.demo_mode {
                     config.directory = directory.into();
                 }
-                for service in &mut self.services {
-                    if service.project_id == old_id {
-                        service.project_id.clone_from(&id);
-                    }
-                }
                 self.project_tints[self.project] = self.selected_tint;
                 self.project_error = None;
                 self.modal = None;
                 window.set_window_title(&format!("{} — Adeline", config.name));
                 self.sync_regions(&Action::Project(self.project), cx);
-                self.sync_content_regions(&Action::Project(self.project), cx);
                 cx.notify();
             }
             Err(error) => {
@@ -190,23 +179,7 @@ impl Adeline {
         let previous_project = self.project;
         self.projects.remove(index);
         self.open_projects.remove(index);
-        self.collaboration.remove(index);
         self.project_tints.remove(index);
-        self.services.retain(|service| service.project_id != id);
-        self.archived_docs = self
-            .archived_docs
-            .drain()
-            .filter_map(|(project, document)| {
-                (project != index).then_some((
-                    if project > index {
-                        project - 1
-                    } else {
-                        project
-                    },
-                    document,
-                ))
-            })
-            .collect();
         self.project = if previous_project > index {
             previous_project - 1
         } else {
@@ -225,187 +198,92 @@ impl Adeline {
                 .unwrap_or(0);
         }
         self.selected = None;
-        self.document = None;
-        self.workflow = None;
-        self.service = None;
         self.delete_project = None;
         self.project_error = None;
         self.modal = None;
         self.section = Section::Chats;
-        self.composer.update(cx, |input, cx| input.set("", cx));
-        self.query.update(cx, |input, cx| input.set("", cx));
-        let title = if self.open_projects.iter().any(|open| *open) {
-            format!("{} — Adeline", self.projects[self.project].config.name)
-        } else {
-            "Adeline".to_owned()
-        };
+        let handle = self.main_window;
+        let owner = cx.weak_entity();
         cx.defer(move |cx| {
-            if let Some(owner) = cx
-                .windows()
-                .into_iter()
-                .find_map(|window| window.downcast::<Adeline>())
-            {
-                let _ = owner.update(cx, |_, window, _| window.set_window_title(&title));
-            }
+            let _ = cx.update_window(handle.into(), |_, window, cx| {
+                let _ = owner.update(cx, |app, cx| {
+                    app.composer
+                        .update(cx, |state, cx| state.set_value("", window, cx));
+                    app.query
+                        .update(cx, |state, cx| state.set_value("", window, cx));
+                    window.set_window_title(if app.has_open_project() {
+                        &app.workspace().config.name
+                    } else {
+                        "Adeline"
+                    });
+                });
+            });
         });
         self.sync_regions(&Action::Project(self.project), cx);
-        self.sync_content_regions(&Action::Project(self.project), cx);
         cx.notify();
     }
 }
 
 impl Adeline {
     pub(super) fn project_modal(&self, cx: &Context<Self>) -> AnyElement {
-        let mut dialog = col()
-            .w(px(600.))
-            .p_8()
-            .gap_5()
-            .rounded(px(22.))
-            .bg(rgb(theme::card()))
-            .shadow(vec![theme::shadow(24.)]);
+        use gpui_kit::component::form::{Field, Form};
+        let mut content = col().gap_4();
         match self.modal {
-            Some("settings") => {
+            Some("add-project" | "settings") => {
+                let creating = self.modal == Some("add-project");
                 let unfinished = self
                     .workspace()
                     .threads
                     .iter()
                     .any(|thread| !matches!(thread.status.as_str(), "completed" | "archived"));
-                dialog = dialog
-                    .child(
-                        row()
-                            .justify_between()
-                            .child(text("Project settings", 26., theme::foreground()))
-                            .child(self.ib("close-project-settings", "close", Action::Close, cx)),
-                    )
-                    .child(text("Project name", 13., theme::foreground()))
-                    .child(
-                        div()
-                            .w_full()
-                            .p_3()
-                            .rounded_lg()
-                            .bg(rgb(theme::secondary()))
-                            .child(self.name_input.clone()),
-                    )
-                    .child(text(
-                        format!("Configuration folder: {}", self.workspace().config.id),
-                        12.,
-                        theme::muted_foreground(),
-                    ))
-                    .child(text("Working directory", 13., theme::foreground()))
-                    .child(
-                        div()
-                            .w_full()
-                            .p_3()
-                            .rounded_lg()
-                            .bg(rgb(theme::secondary()))
-                            .child(self.project_directory_input.clone()),
-                    )
-                    .child(text(
-                        "This existing directory is where new agent conversations run.",
-                        12.,
-                        theme::muted_foreground(),
-                    ))
-                    .when(unfinished, |d| d.child(text(
-                        "Complete or archive all active conversations before changing the working directory. Existing conversations keep their saved directory.",
-                        12.,
-                        theme::muted_foreground(),
-                    )))
-                    .when_some(self.project_error.clone(), |d, error| {
-                        d.child(text(error, 12., theme::destructive()))
-                    })
-                    .child(
-                        row()
-                            .justify_between()
-                            .child(
-                                self.button("delete-project", "Delete project", Action::DeleteProject, cx)
-                                    .text_color(rgb(theme::destructive())),
-                            )
-                            .child(
-                                row()
-                                    .gap_3()
-                                    .child(self.button("cancel-project-settings", "Cancel", Action::Close, cx))
-                                    .child(self.button("save-project-settings", "Save", Action::SaveSettings, cx)
-                                        .bg(rgb(theme::secondary()))),
-                            ),
-                    );
+                content = content.child(div().text_lg().child(if creating { "New project" } else { "Project settings" }))
+                    .child(Form::new()
+                        .child(Field::new().label("Name").child(Input::new(&self.name_input).aria_label("Project name")))
+                        .when(!self.demo_mode, |form| form.child(Field::new().label("Working directory")
+                            .child(Input::new(&self.project_directory_input).aria_label("Working directory")))))
+                    .when(!self.demo_mode, |column| column.child(div().text_sm().text_color(cx.theme().muted_foreground).child(
+                        "Choose an existing absolute directory. Adeline keeps the working directory when a project is deleted.")))
+                    .when(!creating && unfinished, |column| column.child(
+                        "Complete or archive active conversations before changing the directory. Existing conversations keep their saved directory."))
+                    .when(!creating && self.demo_mode, |column| column.child(col().gap_2().child("Project color")
+                        .child(row().gap_2().flex_wrap().children(theme::project_colors().into_iter().enumerate().map(|(ix, color)| {
+                            self.button(("project-color", ix), format!("Color {}", ix + 1), Action::Tint(ix), cx)
+                                .selected(self.selected_tint == ix)
+                                .child(div().size_2().rounded_full().bg(rgb(color)))
+                        })))))
+                    .when_some(self.project_error.clone(), |column, error| column.child(div().text_color(cx.theme().danger).child(error)))
+                    .child(row().gap_2()
+                        .when(!creating && !self.demo_mode, |row| row.child(self.button("delete-project", "Delete project…", Action::DeleteProject, cx).danger()))
+                        .child(div().flex_1())
+                        .child(self.button("cancel-project", "Cancel", Action::Close, cx))
+                        .child(self.button("save-project", if creating { "Create" } else { "Save" }, if creating { Action::SaveProject } else { Action::SaveSettings }, cx).primary()));
             }
             Some("delete-project" | "delete-project-shutdown") => {
                 let stopping = self.modal == Some("delete-project-shutdown");
                 let stopped = self
                     .delete_project
-                    .and_then(|index| self.projects.get(index))
+                    .and_then(|ix| self.projects.get(ix))
                     .is_some_and(|project| self.project_agents_stopped(&project.config.id));
                 let name = self
                     .delete_project
-                    .and_then(|index| self.projects.get(index))
+                    .and_then(|ix| self.projects.get(ix))
                     .map_or("project", |project| project.config.name.as_str());
-                dialog = dialog
-                    .child(text(
-                        if stopping && !stopped { format!("Stopping agents for {name}") }
-                        else if stopping { format!("Could not delete {name}") }
-                        else { format!("Delete {name}?") },
-                        24.,
-                        theme::foreground(),
-                    ))
-                    .child(text(
-                        if stopping && !stopped {
-                            "Waiting for running agents to stop. Saved conversations and the project are kept until they stop. If shutdown is stuck, choose Force Stop."
-                        } else if stopping {
-                            "The project and working directory remain. Fix the error and try again."
-                        } else {
-                            "Running agents will stop, and this project's saved conversations will be deleted. The working directory and its files will be kept."
-                        },
-                        14.,
-                        theme::muted_foreground(),
-                    ))
-                    .when_some(self.project_error.clone(), |d, error| {
-                        d.child(text(error, 12., theme::destructive()))
-                    })
-                    .child(
-                        row()
-                            .justify_end()
-                            .gap_3()
-                            .child(self.button("cancel-delete-project", "Cancel deletion", Action::Close, cx))
-                            .when(stopping && self.project_error.is_some(), |d| d.child(
-                                self.button("retry-delete-project", "Try again", Action::ConfirmDeleteProject, cx)
-                                    .bg(rgb(theme::secondary()))
-                            ))
-                            .when(stopping && !stopped, |d| d.child(
-                                self.button("force-delete-project", "Force Stop", Action::ForceDeleteProject, cx)
-                                    .text_color(rgb(theme::destructive()))
-                            ))
-                            .when(!stopping, |d| d.child(
-                                self.button("confirm-delete-project", "Delete project", Action::ConfirmDeleteProject, cx)
-                                    .text_color(rgb(theme::destructive()))
-                            )),
-                    );
+                content = content.child(div().text_lg().child(if stopping && !stopped { format!("Stopping agents for {name}") } else { format!("Delete \"{name}\"?") }))
+                    .child(if stopping && !stopped { "Waiting for agents to stop. Saved conversations remain until they stop. Force stop is available if shutdown stalls." } else { "This deletes the project's saved conversations. The working directory and its files will be kept." })
+                    .when_some(self.project_error.clone(), |column, error| column.child(div().text_color(cx.theme().danger).child(error)))
+                    .child(row().justify_end().gap_2()
+                        .child(self.button("cancel-delete", "Cancel deletion", Action::Close, cx))
+                        .when(stopping && self.project_error.is_some(), |row| row.child(self.button("retry-delete", "Try again", Action::ConfirmDeleteProject, cx)))
+                        .when(stopping && !stopped, |row| row.child(self.button("force-delete", "Force stop", Action::ForceDeleteProject, cx).danger()))
+                        .when(!stopping, |row| row.child(self.button("confirm-delete", "Delete", Action::ConfirmDeleteProject, cx).danger())));
             }
             Some("shutdown") => {
-                dialog = dialog
-                    .child(text("Stopping agents", 24., theme::foreground()))
-                    .child(text(
-                        "Adeline is waiting for running agents to stop. The window stays open until they stop. If shutdown is stuck, choose Force Stop.",
-                        14.,
-                        theme::muted_foreground(),
-                    ))
-                    .child(
-                        row().justify_end().child(
-                            self.button("force-stop-all", "Force Stop", Action::ForceStopAll, cx)
-                                .text_color(rgb(theme::destructive())),
-                        ),
-                    );
+                content = content.child(div().text_lg().child("Stopping agents"))
+                    .child("Adeline is waiting for running agents to stop. If shutdown stalls, choose Force stop.")
+                    .child(self.button("force-stop-all", "Force stop", Action::ForceStopAll, cx).danger());
             }
             _ => {}
         }
-        div()
-            .absolute()
-            .inset_0()
-            .bg(rgba((theme::shadow_base() << 8) | 0x80))
-            .occlude()
-            .flex()
-            .items_center()
-            .justify_center()
-            .child(dialog)
-            .into_any_element()
+        content.into_any_element()
     }
 }

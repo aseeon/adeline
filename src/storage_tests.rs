@@ -41,6 +41,69 @@ fn agent() -> AgentDefinition {
 }
 
 #[test]
+fn conversations_snapshot_effort_parameter_and_restore_legacy_defaults() {
+    let test = TestRoot::new();
+    let work = test.working("work");
+    let mut store = test.store();
+    let project = store.save_project(None, "Project", &work).unwrap();
+    for parameter in agents::EffortParameterName::ALL {
+        let mut definition = agent();
+        definition.effort_parameter_name = parameter;
+        let id = store
+            .create_conversation(&project, &definition, "Hello")
+            .unwrap();
+        let restored = test.store();
+        let execution = &restored.conversation(&id).unwrap().settings.execution;
+        assert_eq!(execution.effort_parameter_name, parameter);
+        let mut legacy = serde_yaml_ng::to_value(execution).unwrap();
+        legacy
+            .as_mapping_mut()
+            .unwrap()
+            .remove("effort_parameter_name");
+        let restored: ExecutionConfig = serde_yaml_ng::from_value(legacy).unwrap();
+        assert_eq!(
+            restored.effort_parameter_name,
+            agents::EffortParameterName::Thinking
+        );
+    }
+}
+
+#[test]
+fn non_omp_conversation_restores_its_harness_and_legacy_snapshots_use_omp() {
+    let test = TestRoot::new();
+    let work = test.working("work");
+    let mut store = test.store();
+    let project = store.save_project(None, "Project", &work).unwrap();
+    let mut definition = agent();
+    definition.harness = "Other".into();
+    definition.command = "other-agent.exe".into();
+    let id = store
+        .create_conversation(&project, &definition, "Hello")
+        .unwrap();
+    assert_eq!(
+        store.conversation(&id).unwrap().settings.execution.harness,
+        "Other"
+    );
+    drop(store);
+    assert_eq!(
+        test.store()
+            .conversation(&id)
+            .unwrap()
+            .settings
+            .execution
+            .harness,
+        "Other"
+    );
+
+    let mut snapshot =
+        serde_yaml_ng::to_value(&test.store().conversation(&id).unwrap().settings.execution)
+            .unwrap();
+    snapshot.as_mapping_mut().unwrap().remove("harness");
+    let restored: ExecutionConfig = serde_yaml_ng::from_value(snapshot).unwrap();
+    assert_eq!(restored.harness, "OMP");
+}
+
+#[test]
 fn project_rename_preserves_history_and_directory_snapshot() {
     let test = TestRoot::new();
     let work = test.working("work");

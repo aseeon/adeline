@@ -1,4 +1,4 @@
-//! Content preparation is independent of rendering and safe on a worker thread.
+//! Chat search preparation is independent of rendering and safe on a worker thread.
 use std::sync::Arc;
 
 /// Keep the common prefix/suffix of ordered rows, including their measurements.
@@ -14,146 +14,6 @@ pub fn changed_range<T: PartialEq>(
         .take_while(|(a, b)| a == b)
         .count();
     (prefix..old.len() - suffix, prefix..new.len() - suffix)
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum BlockKind {
-    Text { display: Arc<str>, heading: u8 },
-    Image(&'static str),
-    Check { checked: bool, label: Arc<str> },
-    Table(Arc<[Arc<str>]>),
-    Separator,
-}
-
-#[derive(Clone, Debug)]
-pub struct Block {
-    pub line: usize,
-    pub raw: Arc<str>,
-    pub kind: BlockKind,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct PreparedDocument {
-    pub blocks: SharedSequence<Block>,
-    pub rich_rows: Arc<Vec<usize>>,
-    pub preview: Vec<Block>,
-    pub words: usize,
-}
-
-impl PreparedDocument {
-    pub fn parse(source: &str) -> Self {
-        let mut result = Self {
-            words: source.split_whitespace().count(),
-            ..Self::default()
-        };
-        let mut preview_lines = 0;
-        for (line, raw) in source.lines().enumerate().filter(|(_, s)| !s.is_empty()) {
-            let kind = if raw.starts_with("![") {
-                BlockKind::Image(crate::data::image_asset(raw))
-            } else if raw.starts_with("- [ ]") || raw.starts_with("- [x]") {
-                BlockKind::Check {
-                    checked: raw.starts_with("- [x]"),
-                    label: raw[5..].trim().into(),
-                }
-            } else if raw.starts_with('|') {
-                if raw.contains("---") {
-                    BlockKind::Separator
-                } else {
-                    BlockKind::Table(
-                        raw.trim_matches('|')
-                            .split('|')
-                            .map(|c| Arc::from(c.trim()))
-                            .collect(),
-                    )
-                }
-            } else {
-                BlockKind::Text {
-                    display: raw
-                        .trim_start_matches('#')
-                        .trim()
-                        .replace("**", "")
-                        .replace('`', "")
-                        .into(),
-                    heading: if raw.starts_with("###") {
-                        3
-                    } else {
-                        u8::from(raw.starts_with('#'))
-                    },
-                }
-            };
-            let block = Block {
-                line,
-                raw: raw.into(),
-                kind,
-            };
-            if !matches!(block.kind, BlockKind::Separator) {
-                Arc::make_mut(&mut result.rich_rows).push(result.blocks.len());
-            }
-            if !raw.starts_with("![") && preview_lines < 14 {
-                preview_lines += 1;
-                let mut preview = block.clone();
-                if !matches!(preview.kind, BlockKind::Table(_) | BlockKind::Separator) {
-                    preview.kind = BlockKind::Text {
-                        display: raw.trim_start_matches('#').trim().replace("**", "").into(),
-                        heading: u8::from(raw.starts_with('#')),
-                    };
-                }
-                result.preview.push(preview);
-            }
-            result.blocks.push(block);
-        }
-        result
-    }
-
-    /// Single-line edits retain row identity and all unrelated parsed blocks.
-    /// Structural edits use the full parser on a worker instead.
-    pub fn replace_line(&self, line: usize, raw: &str) -> Option<(Self, usize)> {
-        if raw.is_empty() || raw.contains(['\n', '\r']) {
-            return None;
-        }
-        let mut low = 0;
-        let mut high = self.blocks.len();
-        while low < high {
-            let mid = usize::midpoint(low, high);
-            if self.blocks[mid].line < line {
-                low = mid + 1;
-            } else {
-                high = mid;
-            }
-        }
-        let old = self.blocks.get(low).filter(|b| b.line == line)?;
-        let mut block = Self::parse(raw).blocks.get(0)?.clone();
-        if matches!(old.kind, BlockKind::Separator) != matches!(block.kind, BlockKind::Separator) {
-            return None;
-        }
-        block.line = line;
-        let mut result = self.clone();
-        result.words =
-            result.words - old.raw.split_whitespace().count() + raw.split_whitespace().count();
-        result.blocks.replace(low, block);
-        result.preview = result
-            .blocks
-            .iter()
-            .filter(|b| !b.raw.starts_with("!["))
-            .take(14)
-            .map(|b| {
-                let mut preview = b.clone();
-                if !matches!(preview.kind, BlockKind::Table(_) | BlockKind::Separator) {
-                    preview.kind = BlockKind::Text {
-                        display: b
-                            .raw
-                            .trim_start_matches('#')
-                            .trim()
-                            .replace("**", "")
-                            .into(),
-                        heading: u8::from(b.raw.starts_with('#')),
-                    };
-                }
-                preview
-            })
-            .collect();
-        Some((result, low))
-    }
 }
 
 /// Each request owns a ticket. Cancelled or superseded results cannot publish.
@@ -212,9 +72,6 @@ impl<T> Default for SharedSequence<T> {
 impl<T: Clone> SharedSequence<T> {
     pub fn len(&self) -> usize {
         self.len
-    }
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
     }
     pub fn get(&self, index: usize) -> Option<&T> {
         self.chunks.get(index / 64).and_then(|c| c.get(index % 64))
@@ -431,29 +288,6 @@ mod tests {
         ] {
             assert_eq!(changed_range(&old, &new), expected);
         }
-    }
-    #[test]
-    fn prepared_blocks_preserve_source_lines_and_preview_rules() {
-        let source =
-            "# Title\n\n- [ ] Task\n| One | Two |\n| --- | --- |\n![art](x)\n**Body** `code`";
-        let parsed = PreparedDocument::parse(source);
-        assert_eq!(
-            parsed.blocks.iter().map(|b| b.line).collect::<Vec<_>>(),
-            [0, 2, 3, 4, 5, 6]
-        );
-        assert_eq!(parsed.rich_rows.as_slice(), [0, 1, 2, 4, 5]);
-        assert_eq!(parsed.words, source.split_whitespace().count());
-        assert_eq!(parsed.preview.len(), 5);
-        assert!(
-            matches!(&parsed.blocks[1].kind, BlockKind::Check { checked: false, label } if label.as_ref() == "Task")
-        );
-        let edited = PreparedDocument::parse(&source.replace("[ ]", "[x]"));
-        assert!(matches!(
-            edited.blocks[1].kind,
-            BlockKind::Check { checked: true, .. }
-        ));
-        let empty = PreparedDocument::parse("- [ ]\n- [x]");
-        assert_eq!(empty.blocks.len(), 2);
     }
     #[test]
     fn only_latest_request_can_publish() {

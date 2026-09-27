@@ -46,7 +46,7 @@ impl Adeline {
         // cannot be mistaken for turns from its replacement.
         if let Ok(store) = self.project_store.lock() {
             if !store.errors.is_empty() {
-                self.toast = Some(store.errors.join("\n"));
+                self.notify_toast(&store.errors.join("\n"), cx);
             }
             for conversation in store.projects.iter().flat_map(|p| &p.conversations) {
                 let thread = conversation.to_thread();
@@ -346,11 +346,11 @@ impl Adeline {
         true
     }
 
-    pub(super) fn send_real(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn send_real(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.has_open_project() || self.runtime.exiting {
             return;
         }
-        let prompt = self.composer.read(cx).content.trim().to_owned();
+        let prompt = self.composer.read(cx).value().trim().to_owned();
         if prompt.is_empty() {
             return;
         }
@@ -362,7 +362,7 @@ impl Adeline {
             }
             let Some(agent) = self.selected_definition().cloned() else {
                 self.notify_toast("Create or select an agent before sending.", cx);
-                self.menu = Some("agent");
+                self.open_commands("agent", window, cx);
                 return;
             };
             let project_id = self.workspace().config.id.clone();
@@ -435,7 +435,8 @@ impl Adeline {
         if let Some((p, t)) = self.locate_conversation(&id) {
             self.projects[p].threads[t].push_message(message);
         }
-        self.composer.update(cx, |v, cx| v.set("", cx));
+        self.composer
+            .update(cx, |state, cx| state.set_value("", window, cx));
         if saved {
             self.start_prompt(&id, prompt, false, cx);
         }
@@ -735,15 +736,9 @@ impl Adeline {
                         .values()
                         .all(|r| r.driver.is_none())
                 {
-                    cx.defer(|cx| {
-                        if let Some(owner) = cx
-                            .windows()
-                            .into_iter()
-                            .find_map(|w| w.downcast::<Adeline>())
-                        {
-                            settings::request_close(owner, cx);
-                        }
-                    });
+                    let handle = self.main_window;
+                    let owner = cx.weak_entity();
+                    cx.defer(move |cx| settings::request_close(handle, owner, cx));
                 }
             }
             acp::EventKind::StorageError(error) => {
@@ -1247,7 +1242,7 @@ impl Adeline {
                         .gap_2()
                         .child(
                             self.button(
-                                ("tool", i),
+                                SharedString::from(format!("tool-{}-{i}", thread.id)),
                                 activity.title.clone(),
                                 Action::ToggleTool(key),
                                 cx,
@@ -1261,7 +1256,8 @@ impl Adeline {
                         .when(expanded, |d| {
                             d.child(
                                 text(activity.detail.clone(), 12., theme::foreground())
-                                    .font_family(config::code_font()),
+                                    .font_family(config::code_font())
+                                    .text_size(config::code_text_pixels(14.)),
                             )
                         }),
                 );

@@ -1,6 +1,5 @@
-use crate::prepared::PreparedDocument;
 use serde::Deserialize;
-use std::{path::PathBuf, sync::Arc};
+use std::path::PathBuf;
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -9,8 +8,6 @@ pub struct Workspace {
     pub counts: [usize; 4],
     pub config: Config,
     pub threads: Vec<Thread>,
-    pub docs: Vec<Document>,
-    pub recipes: Vec<Recipe>,
     pub decisions: Vec<Decision>,
 }
 #[derive(Clone, Default, Deserialize)]
@@ -53,32 +50,7 @@ pub struct Activity {
     pub detail: String,
     pub running: bool,
 }
-#[derive(Clone, Default, Deserialize)]
-#[serde(default)]
-pub struct Document {
-    #[serde(skip)]
-    pub prepared_edit: Option<(u64, usize)>,
-    #[serde(skip)]
-    pub search_title: Arc<str>,
-    #[serde(skip)]
-    pub prepared: Arc<PreparedDocument>,
-    #[serde(skip)]
-    pub revision: u64,
-    #[serde(skip)]
-    pub prepared_revision: u64,
-    pub title: String,
-    pub content: Arc<String>,
-    pub filename: String,
-}
-#[derive(Clone, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Recipe {
-    pub id: String,
-    pub name: String,
-    pub collection: String,
-    pub instructions: String,
-    pub schedule_label: String,
-}
+
 #[derive(Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Decision {
@@ -88,20 +60,6 @@ pub struct Decision {
     pub thread_id: String,
     pub selected: Option<usize>,
     pub resolved: bool,
-}
-#[derive(Clone, Default, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct Service {
-    #[serde(skip)]
-    pub search_name: Arc<str>,
-    #[serde(skip)]
-    pub lines: Arc<[Arc<str>]>,
-    #[serde(skip)]
-    pub max_line_chars: usize,
-    pub project_id: String,
-    pub thread_id: String,
-    pub name: String,
-    pub output: String,
 }
 #[derive(Deserialize)]
 struct Project {
@@ -116,7 +74,6 @@ struct Working {
 #[derive(Deserialize)]
 struct Scene {
     working: Vec<Working>,
-    services: Vec<Service>,
 }
 #[derive(Deserialize)]
 struct Fixture {
@@ -125,7 +82,7 @@ struct Fixture {
     scene: Scene,
 }
 
-pub fn load() -> (Vec<Workspace>, Vec<Service>) {
+pub fn load() -> Vec<Workspace> {
     let data: Fixture =
         serde_json::from_str(include_str!("../assets/workspace.json")).expect("valid bundled demo");
     let mut projects = vec![data.workspace];
@@ -139,21 +96,9 @@ pub fn load() -> (Vec<Workspace>, Vec<Service>) {
             }
             thread.prepare_search();
         }
-        for doc in &mut project.docs {
-            doc.search_title = doc.title.to_lowercase().into();
-            if doc.content.len() < 32 * 1024 {
-                doc.prepare();
-            } else {
-                doc.revision = 1;
-            }
-        }
         project.rebuild_counts();
     }
-    let mut services = data.scene.services;
-    for service in &mut services {
-        service.prepare();
-    }
-    (projects, services)
+    projects
 }
 
 impl Thread {
@@ -219,76 +164,6 @@ impl Thread {
             && (query.is_empty() || self.search_text.contains(&query.to_lowercase()))
     }
 }
-
-impl Service {
-    pub fn prepare(&mut self) {
-        self.search_name = self.name.to_lowercase().into();
-        self.lines = self.output.lines().map(Arc::from).collect();
-        self.max_line_chars = self
-            .lines
-            .iter()
-            .map(|s| s.chars().count())
-            .max()
-            .unwrap_or(0);
-    }
-}
-
-impl Document {
-    pub fn replace_line(&mut self, line: usize, replacement: &str) -> bool {
-        let mut start = 0;
-        let mut range = None;
-        for (index, raw) in self.content.split_inclusive('\n').enumerate() {
-            if index == line {
-                let text = raw.strip_suffix('\n').unwrap_or(raw);
-                let text = if raw.ends_with('\n') {
-                    text.strip_suffix('\r').unwrap_or(text)
-                } else {
-                    text
-                };
-                range = Some(start..start + text.len());
-                break;
-            }
-            start += raw.len();
-        }
-        let Some(range) = range else {
-            return false;
-        };
-        if &self.content[range.clone()] == replacement {
-            return true;
-        }
-        let prepared = if self.revision == self.prepared_revision {
-            self.prepared.replace_line(line, replacement)
-        } else {
-            None
-        };
-        Arc::make_mut(&mut self.content).replace_range(range, replacement);
-        let base = self.revision;
-        self.revision += 1;
-        self.prepared_edit = None;
-        if let Some((parsed, block)) = prepared {
-            self.prepared = Arc::new(parsed);
-            self.prepared_revision = self.revision;
-            self.prepared_edit = Some((base, block));
-        }
-        true
-    }
-    pub fn publish_prepared(&mut self, revision: u64, parsed: Arc<PreparedDocument>) -> bool {
-        if self.revision != revision {
-            return false;
-        }
-        self.prepared = parsed;
-        self.prepared_edit = None;
-        self.prepared_revision = revision;
-        true
-    }
-    pub fn prepare(&mut self) {
-        self.search_title = self.title.to_lowercase().into();
-        self.prepared = Arc::new(PreparedDocument::parse(&self.content));
-        self.prepared_edit = None;
-        self.prepared_revision = self.revision;
-    }
-}
-
 impl Workspace {
     pub fn attention_count(&self) -> usize {
         self.threads
@@ -391,44 +266,8 @@ mod tests {
         assert!(thread.messages.iter().all(|m| m.read));
     }
     #[test]
-    fn targeted_document_edits_match_full_parse_and_preserve_snapshots() {
-        let mut doc = Document {
-            content: Arc::new("# Heading\r\n\r\n- [ ] Task\r\nBody Żółć\r\n| A | B |\r\n".into()),
-            ..Default::default()
-        };
-        doc.prepare();
-        for (line, replacement) in [
-            (2, "- [x] Task"),
-            (3, "Longer **body**"),
-            (4, "| One | Two |"),
-            (3, "![art](x)"),
-        ] {
-            let previous = doc.prepared.clone();
-            let before = doc.revision;
-            assert!(doc.replace_line(line, replacement));
-            assert_eq!(doc.prepared_revision, doc.revision);
-            assert_eq!(doc.prepared_edit.unwrap().0, before);
-            let expected = PreparedDocument::parse(&doc.content);
-            assert_eq!(doc.prepared.words, expected.words);
-            assert_eq!(doc.prepared.rich_rows, expected.rich_rows);
-            for (a, b) in doc.prepared.blocks.iter().zip(expected.blocks.iter()) {
-                assert_eq!((a.line, &a.raw, &a.kind), (b.line, &b.raw, &b.kind));
-            }
-            for (a, b) in doc.prepared.preview.iter().zip(&expected.preview) {
-                assert_eq!((&a.raw, &a.kind), (&b.raw, &b.kind));
-            }
-            assert_eq!(previous.blocks[0].raw.as_ref(), "# Heading");
-            assert!(doc.content.ends_with("\r\n"));
-        }
-        assert!(doc.replace_line(3, "Paragraph\n\nNew paragraph"));
-        assert_ne!(doc.prepared_revision, doc.revision);
-        doc.prepare();
-        assert_eq!(doc.prepared_revision, doc.revision);
-        assert!(!doc.replace_line(900, "invalid"));
-    }
-    #[test]
     fn cached_badges_follow_one_thread_mutation() {
-        let (mut projects, _) = load();
+        let mut projects = load();
         let workspace = &mut projects[0];
         for index in 0..workspace.threads.len() {
             let before = workspace.threads[index].flags();
@@ -439,22 +278,6 @@ mod tests {
             expected.rebuild_counts();
             assert_eq!(workspace.counts, expected.counts);
         }
-    }
-    #[test]
-    fn stale_document_parse_cannot_replace_newer_content() {
-        let mut doc = Document {
-            content: Arc::new("New text".into()),
-            revision: 2,
-            ..Default::default()
-        };
-        let old = Arc::new(PreparedDocument::parse("Old text"));
-        assert!(!doc.publish_prepared(1, old));
-        assert_ne!(doc.prepared_revision, doc.revision);
-        assert!(doc.publish_prepared(2, Arc::new(PreparedDocument::parse(&doc.content))));
-        assert_eq!(doc.prepared.blocks[0].raw.as_ref(), "New text");
-        doc.content = Arc::new("Third revision".into());
-        doc.revision += 1;
-        assert!(!doc.publish_prepared(2, Arc::new(PreparedDocument::parse("Late result"))));
     }
     #[test]
     fn prepared_search_matches_original_full_text_semantics_and_edits() {
@@ -507,62 +330,37 @@ mod tests {
         assert!(!thread.matches("anything", 1, true));
     }
     #[test]
-    fn fixture_preserves_all_projects_and_scene_states() {
-        let (p, logs) = load();
-        assert_eq!(p.len(), 3);
-        assert_eq!(
-            p.iter().map(|p| p.threads.len()).collect::<Vec<_>>(),
-            vec![20, 20, 20]
-        );
-        assert_eq!(
-            p[0].threads
+    fn fixture_keeps_chat_activity_and_decisions_with_their_projects() {
+        let projects = load();
+        for (id, working) in [
+            ("demo-adeline", "adeline-search"),
+            ("demo-skills", "skills-eval"),
+            ("demo-relay", "relay-retry"),
+        ] {
+            let project = projects
                 .iter()
-                .filter(|t| t.status == "working")
-                .count(),
-            1
-        );
-        assert_eq!(logs.len(), 3);
-        assert!(
-            p.iter()
-                .all(|p| !p.docs.is_empty() && !p.recipes.is_empty())
-        );
-        assert_eq!(
-            p.iter().map(|p| p.config.name.as_str()).collect::<Vec<_>>(),
-            vec!["ade-project", "just-skills", "relay-server"]
-        );
-        for project in &p {
-            assert_eq!(project.docs.len(), 3);
-            assert_eq!(project.recipes.len(), 3);
-            assert_eq!(project.counts[..3], [20, 1, 1]);
-            let ids: std::collections::HashSet<_> =
-                project.threads.iter().map(|thread| &thread.id).collect();
-            assert_eq!(ids.len(), project.threads.len());
-            assert!(
-                project
-                    .threads
-                    .iter()
-                    .all(|thread| !thread.messages.is_empty())
-            );
+                .find(|project| project.config.id == id)
+                .unwrap();
+            let thread = project
+                .threads
+                .iter()
+                .find(|thread| thread.id == working)
+                .unwrap();
+            assert_eq!(thread.status, "working");
+            assert!(!thread.activity.is_empty());
             for decision in &project.decisions {
-                assert!(project.threads.iter().any(|thread|
-                    thread.id == decision.thread_id && thread.status == "blocked"));
-            }
-            let services: Vec<_> = logs
-                .iter()
-                .filter(|service| service.project_id == project.config.id)
-                .collect();
-            assert_eq!(services.len(), 1);
-            assert!(
-                project
+                let thread = project
                     .threads
                     .iter()
-                    .any(|thread| thread.id == services[0].thread_id && thread.status == "working")
-            );
+                    .find(|thread| thread.id == decision.thread_id)
+                    .unwrap();
+                assert_eq!(thread.status, "blocked");
+            }
         }
     }
     #[test]
     fn search_and_status_filters_compose() {
-        let (p, _) = load();
+        let p = load();
         let t = p[0]
             .threads
             .iter()

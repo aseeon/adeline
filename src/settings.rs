@@ -1,17 +1,22 @@
 use super::*;
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, FocusableExt as _, IndexPath, Root, Selectable as _,
+    Sizable as _, WindowExt as _,
+    button::{Button, ButtonVariants},
+    form::{Field, Form},
+    input::{Input, InputEvent, InputState},
+    scroll::ScrollableElement as _,
+    searchable_list::SearchableVec,
+    select::{Select, SelectEvent, SelectState},
+    switch::Switch,
+};
+use gpui_kit::{AppContext as _, base::actions::Cancel};
+use std::{cell::Cell, rc::Rc};
 
 const GROUPS: [&str; 4] = ["General", "Modes", "Licenses", "Agents"];
 const SUBGROUPS: [&[&str]; 4] = [
     &["Features", "Appearance", "Keymap"],
-    &[
-        "Chats",
-        "Docs",
-        "Workflows",
-        "Services",
-        "Groupchats",
-        "Issues",
-        "Whiteboard",
-    ],
+    &["Chats"],
     &[
         "Phosphor Icons",
         "Lobe Icons · Mono",
@@ -20,44 +25,6 @@ const SUBGROUPS: [&[&str]; 4] = [
     ],
     &[],
 ];
-const THEME: [(&str, &str); 5] = [
-    ("Theme", "Claude Plus lightos colors appearance dropdown"),
-    ("Interface font size", "text size smaller larger pixels"),
-    ("Code font", "installed system fonts Chivo Mono dropdown"),
-    ("Code font size", "code text size smaller larger pixels"),
-    (
-        "Interface font",
-        "installed system fonts Chivo Mono dropdown",
-    ),
-];
-const KEYMAP: [(&str, &str); 7] = [
-    ("Open settings", "Ctrl/Cmd+,"),
-    ("New chat", "Ctrl/Cmd+N"),
-    ("Focus search", "Ctrl/Cmd+F"),
-    ("Send message", "Ctrl/Cmd+Enter"),
-    ("Close dialog or popup", "Escape"),
-    ("Move between controls", "Tab / Shift+Tab"),
-    ("Activate focused control", "Enter / Space"),
-];
-fn keymap_rows() -> Vec<(&'static str, String)> {
-    let keys = config::current().general.keymap;
-    vec![
-        ("Open settings", keys.open_settings.join(" / ")),
-        ("New chat", keys.new_chat.join(" / ")),
-        ("Focus search", keys.focus_search.join(" / ")),
-        ("Send message", keys.send_message.join(" / ")),
-        (
-            "Close dialog or popup",
-            keys.close_dialog_or_popup.join(" / "),
-        ),
-        ("Next control", keys.next_control.join(" / ")),
-        ("Previous control", keys.previous_control.join(" / ")),
-        (
-            "Activate focused control (built in)",
-            "Enter / Space".into(),
-        ),
-    ]
-}
 const MODES: [(Section, &str); 7] = [
     (Section::Chats, "Chats"),
     (Section::Docs, "Docs"),
@@ -67,241 +34,136 @@ const MODES: [(Section, &str); 7] = [
     (Section::Issues, "Issues"),
     (Section::Whiteboard, "Whiteboard"),
 ];
-type SettingOption = (&'static str, &'static str, bool, Action);
-const MACHINE_SELECTOR: [&str; 4] = [
-    "General",
-    "Features",
-    "Machine selector",
-    "Show the machine selector in the top bar.",
+const KEYMAP: [&str; 8] = [
+    "Open settings",
+    "New chat",
+    "Focus search",
+    "Send message",
+    "Close dialog or popup",
+    "Next control",
+    "Previous control",
+    "Activate focused control (built in)",
 ];
+type SettingOption = (&'static str, &'static str, bool, Action);
 
 impl Adeline {
     pub(super) fn mode_options(&self, section: Section) -> Vec<SettingOption> {
-        let mut options = match section {
-            Section::Groupchats | Section::Issues | Section::Whiteboard => vec![],
-            Section::Chats => vec![
-                (
-                    "Show idle chats",
-                    "Include completed conversations in the chat list.",
-                    self.show_completed,
-                    Action::ShowCompleted,
-                ),
-                (
-                    "Hide tool calls",
-                    "Hide tool calls and results in chats. Permission requests stay visible.",
-                    config::current().modes.chats.hide_tool_calls,
-                    Action::HideToolCalls,
-                ),
-            ],
-            Section::Docs => vec![
-                (
-                    "Show raw Markdown",
-                    "View the source of the selected document.",
-                    self.raw,
-                    Action::Raw,
-                ),
-                (
-                    "Show archived documents",
-                    "Include archived documents in the file list.",
-                    self.archived,
-                    Action::Archive,
-                ),
-            ],
-            Section::Workflows => vec![(
-                "Only scheduled workflows",
-                "Limit the workflow list to scheduled workflows.",
-                self.collection == "Scheduled",
-                Action::Collection(
-                    if self.collection == "Scheduled" {
-                        "All"
-                    } else {
-                        "Scheduled"
-                    }
-                    .into(),
-                ),
-            )],
-            Section::Services => vec![
-                (
-                    "Wrap output lines",
-                    "Keep long output lines within the panel width.",
-                    self.wrap,
-                    Action::Wrap,
-                ),
-                (
-                    "Follow latest output",
-                    "Keep the latest service output in view.",
-                    self.follow,
-                    Action::Follow,
-                ),
-            ],
-        };
-        options.push((
-            "Show left panel",
-            "Display this mode's navigation panel.",
-            self.left_panel_open[section as usize],
-            Action::LeftPanel(section),
-        ));
-        options.push((
-            match section {
-                Section::Chats => "Show agent activity",
-                Section::Groupchats | Section::Whiteboard => "Show members",
-                Section::Issues => "Show ticket details",
-                Section::Docs => "Show document details",
-                Section::Workflows => "Show workflow details",
-                Section::Services => "Show service details",
-            },
-            "Display this mode's right panel.",
-            self.side_panel_open[section as usize],
-            Action::RightPanel(section),
-        ));
-        options
+        if section != Section::Chats {
+            return Vec::new();
+        }
+        vec![
+            (
+                "Show idle chats",
+                "Include completed conversations in the chat list.",
+                self.show_completed,
+                Action::ShowCompleted,
+            ),
+            (
+                "Hide tool calls",
+                "Hide tool calls and results in chats. Permission requests stay visible.",
+                config::current().modes.chats.hide_tool_calls,
+                Action::HideToolCalls,
+            ),
+            (
+                "Show left panel",
+                "Display chat navigation.",
+                self.left_panel_open[Section::Chats as usize],
+                Action::LeftPanel(Section::Chats),
+            ),
+            (
+                "Show agent activity",
+                "Display chat agent activity.",
+                self.side_panel_open[Section::Chats as usize],
+                Action::RightPanel(Section::Chats),
+            ),
+        ]
     }
-}
-
-pub(super) fn open(owner: WindowHandle<Adeline>, cx: &mut Context<Adeline>) {
-    open_at(owner, None, cx);
-}
-pub(super) fn open_agent(owner: WindowHandle<Adeline>, cx: &mut Context<Adeline>) {
-    let entity = cx.entity();
-    cx.defer(move |cx| {
-        let bounds = Bounds::centered(None, size(px(760.), px(760.)), cx);
-        if let Err(error) = cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                window_min_size: Some(size(px(620.), px(500.))),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Add an Agent · Adeline".into()),
-                    appears_transparent: cfg!(target_os = "windows"),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            },
-            |window, cx| cx.new(|cx| AgentWindow::new(owner, &entity, window, cx)),
-        ) {
-            eprintln!("Could not open agent editor: {error}");
-        }
-    });
-}
-
-pub(super) fn can_close_for(owner: WindowHandle<Adeline>, cx: &mut App) -> bool {
-    for handle in cx.windows() {
-        if let Some(settings) = handle.downcast::<SettingsWindow>()
-            && settings.read(cx).is_ok_and(|view| {
-                view.owner.window_id() == owner.window_id()
-                    && view.agent_form.as_ref().is_some_and(|form| form.dirty(cx))
-            })
-        {
-            let _ = settings.update(cx, |view, window, cx| {
-                view.leave(AfterAgent::CloseOwner, window, cx);
-            });
-            return false;
-        }
-        if let Some(creation) = handle.downcast::<AgentWindow>()
-            && creation.read(cx).is_ok_and(|view| {
-                view.owner.window_id() == owner.window_id() && view.form.dirty(cx)
-            })
-        {
-            let _ = creation.update(cx, |view, window, cx| view.confirm_close(true, window, cx));
-            return false;
-        }
-    }
-    owner
-        .update(cx, |app, _, cx| app.request_runtime_exit(cx))
-        .unwrap_or(false)
-}
-
-pub(super) fn request_close(owner: WindowHandle<Adeline>, cx: &mut App) {
-    cx.defer(move |cx| {
-        if can_close_for(owner, cx) {
-            let _ = owner.update(cx, |_, window, _| window.remove_window());
-        }
-    });
-}
-
-fn persist_form(
-    owner: WindowHandle<Adeline>,
-    form: &agent_form::AgentForm,
-    overwrite: bool,
-    cx: &mut App,
-) -> Result<String, String> {
-    let definition = form.values(cx);
-    let original = form.id.clone();
-    let expected = original.as_ref().map(|_| form.original.clone());
-    owner
-        .update(cx, move |app, _, cx| {
-            let select_first = original.is_none() && app.agent_catalog.entries.is_empty();
-            let saved = app.agent_catalog.save(
-                original.as_deref(),
-                definition,
-                expected.as_ref(),
-                overwrite,
-            )?;
-            app.agents_changed(original.as_deref(), Some(&saved), select_first, cx);
-            Ok(saved)
-        })
-        .map_err(|error| error.to_string())?
 }
 
 #[derive(Clone)]
-enum AfterAgent {
-    CloseSettings,
-    CloseOwner,
-    Group(usize),
-    Child(usize, usize),
-    Agent(String),
-    Delete(String),
-    Search(String),
+struct Owner {
+    window: WindowHandle<Root>,
+    entity: WeakEntity<Adeline>,
 }
-
-fn agent_diagnostics(owner: WindowHandle<Adeline>, cx: &App) -> Vec<String> {
-    owner
-        .read(cx)
-        .map_or_else(|_| Vec::new(), |app| app.agent_catalog.errors.clone())
-}
-
-fn diagnostics(errors: Vec<String>) -> Div {
-    let mut section = col().gap_2();
-    for error in errors {
-        section = section
-            .child(text(error, 12., theme::destructive()).line_height(config::text_pixels(19.)));
+impl Owner {
+    fn new(window: WindowHandle<Root>, entity: WeakEntity<Adeline>) -> Self {
+        Self { window, entity }
     }
-    section
-}
 
-pub(super) fn close_for(owner: WindowHandle<Adeline>, cx: &mut App) {
-    for handle in cx.windows() {
-        if let Some(settings) = handle.downcast::<SettingsWindow>() {
-            let _ = settings.update(cx, |settings, window, _| {
-                if settings.owner.window_id() == owner.window_id() {
-                    window.remove_window();
-                }
-            });
-        }
-        if let Some(creation) = handle.downcast::<AgentWindow>() {
-            let _ = creation.update(cx, |creation, window, _| {
-                if creation.owner.window_id() == owner.window_id() {
-                    window.remove_window();
-                }
-            });
-        }
+    fn act(&self, action: Action, window: &mut Window, cx: &mut App) {
+        // Preference-save feedback belongs in the window that initiated the change.
+        let _ = self
+            .entity
+            .update(cx, |app, cx| app.act(action, window, cx));
+    }
+
+    fn diagnostics(&self, cx: &App) -> Vec<String> {
+        self.entity
+            .read_with(cx, |app, _| app.agent_catalog.errors.clone())
+            .unwrap_or_default()
     }
 }
-pub(super) fn open_mode(owner: WindowHandle<Adeline>, mode: Section, cx: &mut Context<Adeline>) {
-    open_at(owner, Some(mode), cx);
+
+fn settings_windows(cx: &App) -> Vec<(WindowHandle<Root>, Entity<SettingsWindow>)> {
+    cx.windows()
+        .into_iter()
+        .filter_map(|handle| {
+            let root = handle.downcast::<Root>()?;
+            let view = root
+                .read(cx)
+                .ok()?
+                .view()
+                .clone()
+                .downcast::<SettingsWindow>()
+                .ok()?;
+            Some((root, view))
+        })
+        .collect()
 }
-fn open_at(owner: WindowHandle<Adeline>, mode: Option<Section>, cx: &mut Context<Adeline>) {
-    // Defer until the workspace is off the entity stack, as in Zed's settings window.
-    let entity = cx.entity();
+fn agent_windows(cx: &App) -> Vec<(WindowHandle<Root>, Entity<AgentWindow>)> {
+    cx.windows()
+        .into_iter()
+        .filter_map(|handle| {
+            let root = handle.downcast::<Root>()?;
+            let view = root
+                .read(cx)
+                .ok()?
+                .view()
+                .clone()
+                .downcast::<AgentWindow>()
+                .ok()?;
+            Some((root, view))
+        })
+        .collect()
+}
+
+pub(super) fn open(
+    owner: WindowHandle<Root>,
+    entity: WeakEntity<Adeline>,
+    cx: &mut Context<Adeline>,
+) {
+    open_at(Owner::new(owner, entity), None, cx);
+}
+pub(super) fn open_mode(
+    owner: WindowHandle<Root>,
+    entity: WeakEntity<Adeline>,
+    mode: Section,
+    cx: &mut Context<Adeline>,
+) {
+    open_at(Owner::new(owner, entity), Some(mode), cx);
+}
+fn open_at(owner: Owner, mode: Option<Section>, cx: &mut Context<Adeline>) {
     cx.defer(move |cx| {
-        if let Some(existing) = cx
-            .windows()
+        if let Some((root, settings)) = settings_windows(cx)
             .into_iter()
-            .find_map(|w| w.downcast::<SettingsWindow>())
+            .find(|(_, view)| view.read(cx).owner.window.window_id() == owner.window.window_id())
         {
-            let _ = existing.update(cx, |settings, window, cx| {
-                if let Some(mode) = mode {
-                    settings.leave(AfterAgent::Child(1, mode as usize), window, cx);
-                }
+            let _ = cx.update_window(root.into(), |_, window, cx| {
+                settings.update(cx, |settings, cx| {
+                    if let Some(mode) = mode {
+                        settings.leave(AfterAgent::OpenMode(mode), window, cx);
+                    }
+                });
                 window.activate_window();
             });
             return;
@@ -319,13 +181,8 @@ fn open_at(owner: WindowHandle<Adeline>, mode: Option<Section>, cx: &mut Context
                 ..Default::default()
             },
             |window, cx| {
-                cx.new(|cx| {
-                    let mut settings = SettingsWindow::new(owner, &entity, window, cx);
-                    if let Some(mode) = mode {
-                        settings.select_mode(mode, cx);
-                    }
-                    settings
-                })
+                let view = cx.new(|cx| SettingsWindow::new(owner, mode, window, cx));
+                cx.new(|cx| Root::new(view, window, cx))
             },
         );
         if let Err(error) = result {
@@ -333,38 +190,191 @@ fn open_at(owner: WindowHandle<Adeline>, mode: Option<Section>, cx: &mut Context
         }
     });
 }
+pub(super) fn open_agent(
+    owner: WindowHandle<Root>,
+    entity: WeakEntity<Adeline>,
+    cx: &mut Context<Adeline>,
+) {
+    let owner = Owner::new(owner, entity);
+    cx.defer(move |cx| {
+        let bounds = Bounds::centered(None, size(px(760.), px(760.)), cx);
+        let result = cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                window_min_size: Some(size(px(620.), px(500.))),
+                titlebar: Some(TitlebarOptions {
+                    title: Some("Add an agent · Adeline".into()),
+                    appears_transparent: cfg!(target_os = "windows"),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            },
+            |window, cx| {
+                let view = cx.new(|cx| AgentWindow::new(owner, window, cx));
+                cx.new(|cx| Root::new(view, window, cx))
+            },
+        );
+        if let Err(error) = result {
+            eprintln!("Could not open agent editor: {error}");
+        }
+    });
+}
 
-fn selected_font_size(which: usize) -> u16 {
-    if which == 0 {
-        config::font_size()
-    } else {
-        config::code_font_size()
+pub(super) fn can_close_for(
+    owner: WindowHandle<Root>,
+    entity: &WeakEntity<Adeline>,
+    cx: &mut App,
+) -> bool {
+    for (root, settings) in settings_windows(cx) {
+        if settings.read(cx).owner.window.window_id() == owner.window_id()
+            && settings
+                .read(cx)
+                .agent_form
+                .as_ref()
+                .is_some_and(|form| form.dirty(cx))
+        {
+            let _ = cx.update_window(root.into(), |_, window, cx| {
+                settings.update(cx, |view, cx| {
+                    view.leave(AfterAgent::CloseOwner, window, cx);
+                });
+            });
+            return false;
+        }
+    }
+    for (root, creation) in agent_windows(cx) {
+        if creation.read(cx).owner.window.window_id() == owner.window_id()
+            && creation.read(cx).form.dirty(cx)
+        {
+            let _ = cx.update_window(root.into(), |_, window, cx| {
+                creation.update(cx, |view, cx| view.confirm_close(true, window, cx))
+            });
+            return false;
+        }
+    }
+    cx.update_window(owner.into(), |_, window, cx| {
+        entity
+            .update(cx, |app, cx| {
+                let opening_shutdown = app.modal != Some("shutdown");
+                let ready = app.request_runtime_exit(cx);
+                if !ready && opening_shutdown {
+                    app.open_modal(window, cx);
+                }
+                ready
+            })
+            .unwrap_or(false)
+    })
+    .unwrap_or(false)
+}
+pub(super) fn request_close(owner: WindowHandle<Root>, entity: WeakEntity<Adeline>, cx: &mut App) {
+    cx.defer(move |cx| {
+        if can_close_for(owner, &entity, cx) {
+            let _ = owner.update(cx, |_, window, _| window.remove_window());
+        }
+    });
+}
+pub(super) fn close_for(owner: WindowHandle<Root>, cx: &mut App) {
+    for (root, view) in settings_windows(cx) {
+        if view.read(cx).owner.window.window_id() == owner.window_id() {
+            let _ = root.update(cx, |_, window, _| window.remove_window());
+        }
+    }
+    for (root, view) in agent_windows(cx) {
+        if view.read(cx).owner.window.window_id() == owner.window_id() {
+            let _ = root.update(cx, |_, window, _| window.remove_window());
+        }
     }
 }
 
-fn font_label(which: usize) -> &'static str {
-    if which == 0 {
-        "Interface font"
-    } else {
-        "Code font"
-    }
+fn persist_form(
+    owner: &Owner,
+    form: &agent_form::AgentForm,
+    overwrite: bool,
+    cx: &mut App,
+) -> Result<String, String> {
+    let definition = form.values(cx);
+    let original = form.id.clone();
+    let expected = original.as_ref().map(|_| form.original.clone());
+    owner
+        .entity
+        .update(cx, move |app, cx| {
+            let select_first = original.is_none() && app.agent_catalog.entries.is_empty();
+            let saved = app.agent_catalog.save(
+                original.as_deref(),
+                definition,
+                expected.as_ref(),
+                overwrite,
+            )?;
+            app.agents_changed(original.as_deref(), Some(&saved), select_first, cx);
+            Ok(saved)
+        })
+        .map_err(|error| error.to_string())?
 }
+
+/// Multi-choice Kit Dialog, with Escape mapped to the last (Cancel) action.
+fn choose(
+    window: &mut Window,
+    cx: &mut App,
+    title: String,
+    description: &'static str,
+    labels: &'static [&'static str],
+    selected: impl Fn(usize, &mut Window, &mut App) + 'static,
+) {
+    let selected: Rc<dyn Fn(usize, &mut Window, &mut App)> = Rc::new(selected);
+    let decided = Rc::new(Cell::new(false));
+    window.open_dialog(cx, move |dialog, _, _| {
+        let mut footer = div().flex().justify_end().gap_2();
+        for (index, &label) in labels.iter().enumerate() {
+            let selected = selected.clone();
+            let decided = decided.clone();
+            let button = Button::new(format!("choice-{index}"))
+                .label(label)
+                .on_click(move |_, window, cx| {
+                    decided.set(true);
+                    window.close_dialog(cx);
+                    selected(index, window, cx);
+                });
+            footer = footer.child(if label == "Delete" {
+                button.danger()
+            } else if index == 0 {
+                button.primary()
+            } else {
+                button
+            });
+        }
+        let on_ok = selected.clone();
+        let ok_decided = decided.clone();
+        let on_close = selected.clone();
+        let close_decided = decided.clone();
+        dialog
+            .title(title.clone())
+            .child(description)
+            .footer(footer)
+            .overlay_closable(false)
+            .close_button(false)
+            .on_ok(move |_, window, cx| {
+                if !ok_decided.replace(true) {
+                    window.close_dialog(cx);
+                    on_ok(0, window, cx);
+                }
+                false
+            })
+            .on_close(move |_, window, cx| {
+                if !close_decided.replace(true) {
+                    on_close(labels.len() - 1, window, cx);
+                }
+            })
+    });
+}
+
 struct AgentWindow {
-    owner: WindowHandle<Adeline>,
+    owner: Owner,
     form: agent_form::AgentForm,
-    scroll: scrollbar::PanelScroll,
     focus: FocusHandle,
     pending: bool,
     _subscriptions: Vec<Subscription>,
 }
-
 impl AgentWindow {
-    fn new(
-        owner: WindowHandle<Adeline>,
-        entity: &Entity<Adeline>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    fn new(owner: Owner, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let form = agent_form::AgentForm::new(
             None,
             agents::AgentDefinition {
@@ -373,21 +383,28 @@ impl AgentWindow {
                 effort: "Medium".into(),
                 ..Default::default()
             },
+            window,
             cx,
         );
-        let focus = cx.focus_handle();
+        let focus = cx.focus_handle().tab_stop(true);
         window.focus(&form.inputs[0].read(cx).focus_handle(cx), cx);
-        let mut subscriptions = vec![cx.observe(entity, |_, _, cx| cx.notify())];
-        let mut inputs = form.inputs.to_vec();
-        inputs.extend(form.argument_inputs());
-        for input in &inputs {
-            subscriptions.push(
-                cx.subscribe(input, |this, _, _: &input::ContentChanged, cx| {
+        let mut subscriptions = Vec::new();
+        for input in &form.inputs {
+            subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
                     this.form.status = None;
                     cx.notify();
-                }),
-            );
+                }
+            }));
         }
+        subscriptions.push(
+            cx.subscribe(&form.instructions, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.form.status = None;
+                    cx.notify();
+                }
+            }),
+        );
         let view = cx.entity();
         window.on_window_should_close(cx, move |window, cx| {
             view.update(cx, |view, cx| view.confirm_close(false, window, cx))
@@ -395,7 +412,6 @@ impl AgentWindow {
         Self {
             owner,
             form,
-            scroll: Default::default(),
             focus,
             pending: false,
             _subscriptions: subscriptions,
@@ -403,10 +419,8 @@ impl AgentWindow {
     }
 
     fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        match persist_form(self.owner, &self.form, false, cx) {
+        match persist_form(&self.owner, &self.form, false, cx) {
             Ok(_) => {
-                let definition = self.form.values(cx);
-                self.form.reload(definition, cx);
                 window.remove_window();
                 true
             }
@@ -417,7 +431,6 @@ impl AgentWindow {
             }
         }
     }
-
     fn confirm_close(
         &mut self,
         close_owner: bool,
@@ -434,221 +447,463 @@ impl AgentWindow {
             return false;
         }
         self.pending = true;
-        let response = window.prompt(
-            PromptLevel::Warning,
-            "Save changes to this agent?",
-            Some("Unsaved agent details will be lost if you discard them."),
-            &[
-                PromptButton::ok("Save"),
-                PromptButton::new("Discard"),
-                PromptButton::cancel("Cancel"),
-            ],
+        let weak = cx.entity().downgrade();
+        choose(
+            window,
             cx,
+            "Save changes to this agent?".into(),
+            "Unsaved agent details will be lost if you discard them.",
+            &["Save", "Discard", "Cancel"],
+            move |choice, window, cx| {
+                let _ = weak.update(cx, |view, cx| {
+                    view.pending = false;
+                    match choice {
+                        0 => {
+                            if view.save(window, cx) && close_owner {
+                                request_close(view.owner.window, view.owner.entity.clone(), cx);
+                            }
+                        }
+                        1 => {
+                            let owner = view.owner.clone();
+                            window.remove_window();
+                            if close_owner {
+                                request_close(owner.window, owner.entity, cx);
+                            }
+                        }
+                        _ => {}
+                    }
+                });
+            },
         );
-        cx.spawn_in(window, async move |view, cx| {
-            let choice = response.await.unwrap_or(2);
-            let _ = view.update_in(cx, |view, window, cx| {
-                view.pending = false;
-                match choice {
-                    0 => {
-                        if view.save(window, cx) && close_owner {
-                            request_close(view.owner, cx);
-                        }
-                    }
-                    1 => {
-                        let owner = view.owner;
-                        window.remove_window();
-                        if close_owner {
-                            request_close(owner, cx);
-                        }
-                    }
-                    _ => {}
-                }
-            });
-        })
-        .detach();
         false
     }
 }
-
 impl Render for AgentWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        #[cfg(not(target_os = "windows"))]
-        let _ = window;
-        let mut content = col()
+        let body = div()
             .w_full()
+            .flex()
+            .flex_col()
             .gap_5()
-            .p_8()
-            .child(text("Add an Agent", 22., theme::foreground()))
-            .child(text(
-                "Configure an agent for this workspace. Saving does not start the command.",
-                12.,
-                theme::muted_foreground(),
-            ))
-            .child(self.form.fields(cx));
-        if let Some(status) = &self.form.status {
-            content = content.child(text(status.clone(), 12., theme::destructive()));
-        }
-        content = content.child(diagnostics(agent_diagnostics(self.owner, cx)));
-        let shell = col()
+            .p_6()
+            .child(div().text_xl().child("Add an agent"))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        "Configure an agent for this workspace. Saving does not start the command.",
+                    ),
+            )
+            .child(self.form.fields())
+            .child(diagnostics(self.owner.diagnostics(cx), cx));
+        let shell = div()
             .size_full()
-            .font_family(config::font())
-            .bg(rgb(theme::background()))
-            .text_color(rgb(theme::foreground()));
+            .flex()
+            .flex_col()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground);
         #[cfg(target_os = "windows")]
-        let shell = shell.child(titlebar::render("Add an Agent · Adeline".into(), window));
-        shell.child(
-            col()
-                .flex_1()
-                .min_h_0()
-                .track_focus(&self.focus)
-                .on_action(cx.listener(|view, _: &Dismiss, window, cx| {
-                    if view.confirm_close(false, window, cx) {
-                        window.remove_window();
-                    }
-                }))
-                .on_action(cx.listener(|_, _: &NextFocus, window, cx| window.focus_next(cx)))
-                .on_action(cx.listener(|_, _: &PreviousFocus, window, cx| window.focus_prev(cx)))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .child(self.scroll.wrap("agent-creation", content)),
-                )
-                .child(
-                    row()
-                        .justify_end()
-                        .gap_3()
-                        .px_8()
-                        .py_4()
-                        .border_t_1()
-                        .border_color(rgb(theme::border()))
-                        .child(
-                            row()
-                                .id("agent-create-cancel")
-                                .focusable()
-                                .tab_stop(true)
-                                .cursor_pointer()
-                                .px_5()
-                                .py_2()
-                                .rounded(px(5.))
-                                .bg(rgb(theme::secondary()))
-                                .focus(|s| s.border_1().border_color(rgb(theme::ring())))
-                                .child(text("Cancel", 13., theme::secondary_foreground()))
-                                .on_click(cx.listener(|view, _, window, cx| {
-                                    if view.confirm_close(false, window, cx) {
-                                        window.remove_window();
-                                    }
-                                })),
-                        )
-                        .child(
-                            row()
-                                .id("agent-create-save")
-                                .focusable()
-                                .tab_stop(true)
-                                .cursor_pointer()
-                                .px_5()
-                                .py_2()
-                                .rounded(px(5.))
-                                .bg(rgb(theme::primary()))
-                                .focus(|s| s.border_1().border_color(rgb(theme::ring())))
-                                .child(text("Save", 13., theme::primary_foreground()))
-                                .on_click(cx.listener(|view, _, window, cx| {
-                                    view.save(window, cx);
-                                })),
-                        ),
-                ),
-        )
+        let shell = shell.child(titlebar::render("Add an agent · Adeline".into(), window));
+        shell
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scrollbar()
+                    .id("agent-form-scroll")
+                    .child(body),
+            )
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_end()
+                    .gap_2()
+                    .p_4()
+                    .border_t_1()
+                    .border_color(cx.theme().border)
+                    .when_some(self.form.status.clone(), |row, status| {
+                        row.child(error(status, cx).flex_1().min_w_0())
+                    })
+                    .child(Button::new("agent-create-cancel").label("Cancel").on_click(
+                        cx.listener(|view, _, window, cx| {
+                            if view.confirm_close(false, window, cx) {
+                                window.remove_window();
+                            }
+                        }),
+                    ))
+                    .child(
+                        Button::new("agent-create-save")
+                            .primary()
+                            .label("Save")
+                            .disabled(self.pending)
+                            .on_click(cx.listener(|view, _, window, cx| {
+                                view.save(window, cx);
+                            })),
+                    ),
+            )
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|view, _: &Cancel, window, cx| {
+                if view.confirm_close(false, window, cx) {
+                    window.remove_window();
+                }
+            }))
+            .children(window_layers(window, cx).into_iter().flatten())
     }
 }
 
+#[derive(Clone)]
+enum AfterAgent {
+    CloseSettings,
+    CloseOwner,
+    Group(usize),
+    Child(usize, usize),
+    OpenMode(Section),
+    Agent(String),
+    Delete(String),
+    Search(String),
+}
 struct SettingsWindow {
-    owner: WindowHandle<Adeline>,
-    query: Entity<TextInput>,
+    owner: Owner,
+    query: Entity<InputState>,
+    last_query: String,
     agent_page: Option<String>,
     agent_form: Option<agent_form::AgentForm>,
     agent_subscriptions: Vec<Subscription>,
-    last_query: String,
     agent_status: Option<String>,
     pending: bool,
-    font_query: Entity<TextInput>,
-    font_size_inputs: [Entity<TextInput>; 2],
-    retry_limit_input: Entity<TextInput>,
-    retry_limit_error: Option<String>,
+    font_sizes: [Entity<InputState>; 2],
     font_size_errors: [Option<String>; 2],
-    font_dropdown: Option<usize>,
-    font_trigger_bounds: [std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>; 2],
-    font_choices: Vec<String>,
-    font_list_scroll: scrollbar::PanelScroll,
+    retry_limit: Entity<InputState>,
+    retry_limit_error: Option<String>,
+    theme_picker: Entity<SelectState<SearchableVec<theme::ThemeChoice>>>,
+    font_pickers: [Entity<SelectState<SearchableVec<String>>>; 2],
     theme_status: Option<String>,
-    theme_dropdown: bool,
-    theme_trigger_bounds: std::rc::Rc<std::cell::Cell<Bounds<Pixels>>>,
-    theme_choices: Vec<theme::ThemeChoice>,
-    theme_list_scroll: scrollbar::PanelScroll,
     group: usize,
     subgroup: Option<usize>,
     search_page: Option<(usize, Option<usize>)>,
-    expanded: [bool; 4],
-    nav_scroll: scrollbar::PanelScroll,
-    scroll: scrollbar::PanelScroll,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
+fn text_input(
+    value: String,
+    placeholder: &'static str,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<InputState> {
+    cx.new(|cx| {
+        let mut input = InputState::new(window, cx).placeholder(placeholder);
+        input.set_value(value, window, cx);
+        input
+    })
+}
+fn selected_font_size(which: usize) -> u16 {
+    if which == 0 {
+        config::font_size()
+    } else {
+        config::code_font_size()
+    }
+}
+fn font_label(which: usize) -> &'static str {
+    if which == 0 {
+        "Interface font"
+    } else {
+        "Code font"
+    }
+}
+fn saved_font(which: usize) -> String {
+    let appearance = config::current().general.appearance;
+    if which == 0 {
+        appearance.interface_font
+    } else {
+        appearance.code_font
+    }
+}
+fn keymap_rows() -> Vec<String> {
+    let keys = config::current().general.keymap;
+    vec![
+        keys.open_settings.join(" / "),
+        keys.new_chat.join(" / "),
+        keys.focus_search.join(" / "),
+        keys.send_message.join(" / "),
+        keys.close_dialog_or_popup.join(" / "),
+        keys.next_control.join(" / "),
+        keys.previous_control.join(" / "),
+        "Enter / Space".into(),
+    ]
+}
+fn error(message: impl Into<String>, cx: &App) -> Div {
+    div()
+        .text_sm()
+        .text_color(cx.theme().danger)
+        .child(message.into())
+}
+fn diagnostics(errors: Vec<String>, cx: &App) -> Div {
+    let mut list = div().flex().flex_col().gap_2();
+    for message in errors {
+        list = list.child(error(message, cx));
+    }
+    list
+}
+
 impl SettingsWindow {
-    fn show_agent(&mut self, id: String, cx: &mut Context<Self>) {
-        let definition = self.owner.read(cx).ok().and_then(|app| {
-            app.agent_catalog
-                .entries
-                .iter()
-                .find(|entry| entry.id == id)
-                .map(|entry| entry.definition.clone())
+    fn new(
+        owner: Owner,
+        mode: Option<Section>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
+        let focus = cx.focus_handle().tab_stop(true);
+        fonts::refresh(cx);
+        let font_sizes = std::array::from_fn(|which| {
+            text_input(selected_font_size(which).to_string(), "14", window, cx)
         });
+        let retry_limit = text_input(
+            config::current().modes.chats.retry_limit.to_string(),
+            "5",
+            window,
+            cx,
+        );
+        let (theme_choices, errors) =
+            theme::discover().unwrap_or_else(|error| (Vec::new(), vec![error]));
+        let selected_theme = config::current().general.appearance.theme;
+        let selected_theme = theme_choices
+            .iter()
+            .position(|choice| choice.file == selected_theme)
+            .map(|index| IndexPath::default().row(index));
+        let theme_picker = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(theme_choices),
+                selected_theme,
+                window,
+                cx,
+            )
+            .searchable(true)
+        });
+        let font_pickers = std::array::from_fn(|which| {
+            let mut names = fonts::families();
+            let saved = saved_font(which);
+            if !names.iter().any(|name| name.eq_ignore_ascii_case(&saved)) && !saved.is_empty() {
+                names.insert(0, saved.clone());
+            }
+            let selected = names
+                .iter()
+                .position(|name| *name == saved)
+                .map(|index| IndexPath::default().row(index));
+            cx.new(|cx| {
+                SelectState::new(SearchableVec::new(names), selected, window, cx).searchable(true)
+            })
+        });
+        let mut subscriptions = Vec::new();
+        for (which, size_input) in font_sizes.iter().enumerate() {
+            subscriptions.push(cx.subscribe(
+                size_input,
+                move |this, input, event: &InputEvent, cx| {
+                    if !matches!(event, InputEvent::Change) {
+                        return;
+                    }
+                    let value = input.read(cx).value();
+                    if let Ok(size) = value.trim().parse::<u16>() {
+                        this.save_font_size(which, size, cx);
+                    } else {
+                        this.font_size_errors[which] =
+                            Some("Enter a whole number from 10 to 24.".into());
+                        cx.notify();
+                    }
+                },
+            ));
+        }
+        subscriptions.push(
+            cx.subscribe(&retry_limit, |this, input, event: &InputEvent, cx| {
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let value = input.read(cx).value().trim().parse::<usize>();
+                this.retry_limit_error = match value {
+                    Ok(limit) => {
+                        config::update(|settings| settings.modes.chats.retry_limit = limit).err()
+                    }
+                    Err(_) => {
+                        Some("Enter a non-negative whole number. Zero disables retries.".into())
+                    }
+                };
+                cx.notify();
+            }),
+        );
+        subscriptions.push(cx.subscribe_in(
+            &query,
+            window,
+            |this, input, event: &InputEvent, window, cx| {
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let requested = input.read(cx).value().to_string();
+                if requested == this.last_query {
+                    return;
+                }
+                if this.agent_form.as_ref().is_some_and(|form| form.dirty(cx)) {
+                    input.update(cx, |input, cx| {
+                        input.set_value(this.last_query.clone(), window, cx);
+                    });
+                    this.leave(AfterAgent::Search(requested), window, cx);
+                } else {
+                    this.after_agent(AfterAgent::Search(requested), window, cx);
+                }
+            },
+        ));
+        subscriptions.push(cx.subscribe_in(
+            &theme_picker,
+            window,
+            |this, _, event: &SelectEvent<SearchableVec<theme::ThemeChoice>>, window, cx| {
+                if let SelectEvent::Confirm(Some(file)) = event {
+                    this.theme_status = match theme::select(file, cx) {
+                        Ok(()) => None,
+                        Err(message) => {
+                            let saved = config::current().general.appearance.theme;
+                            this.theme_picker.update(cx, |picker, cx| {
+                                picker.set_selected_value(&saved, window, cx);
+                            });
+                            Some(message)
+                        }
+                    };
+                    cx.notify();
+                }
+            },
+        ));
+        for (which, picker) in font_pickers.iter().enumerate() {
+            subscriptions.push(cx.subscribe_in(
+                picker,
+                window,
+                move |this, _, event: &SelectEvent<SearchableVec<String>>, window, cx| {
+                    if let SelectEvent::Confirm(Some(name)) = event {
+                        this.choose_font(which, name, cx);
+                        if saved_font(which) != *name {
+                            this.font_pickers[which].update(cx, |picker, cx| {
+                                picker.set_selected_value(&saved_font(which), window, cx);
+                            });
+                        }
+                    }
+                },
+            ));
+        }
+        subscriptions.push(
+            cx.observe_window_activation(window, |this, window, cx| this.sync_agent(window, cx)),
+        );
+        let view = cx.entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            view.update(cx, |view, cx| {
+                if view.agent_form.as_ref().is_some_and(|form| form.dirty(cx)) {
+                    view.leave(AfterAgent::CloseSettings, window, cx);
+                    false
+                } else {
+                    true
+                }
+            })
+        });
+        window.focus(&query.read(cx).focus_handle(cx), cx);
+        let mut notices = errors;
+        if let Some(message) = theme::load_error() {
+            notices.insert(0, message);
+        }
+        let theme_status = (!notices.is_empty()).then(|| notices.join("\n"));
+        Self {
+            owner,
+            query,
+            last_query: String::new(),
+            agent_page: None,
+            agent_form: None,
+            agent_subscriptions: Vec::new(),
+            agent_status: None,
+            pending: false,
+            font_sizes,
+            font_size_errors: [None, None],
+            retry_limit,
+            retry_limit_error: None,
+            theme_picker,
+            font_pickers,
+            theme_status,
+            group: usize::from(mode == Some(Section::Chats)),
+            subgroup: Some(0),
+            search_page: None,
+            focus,
+            _subscriptions: subscriptions,
+        }
+    }
+
+    fn show_agent(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let definition = self
+            .owner
+            .entity
+            .read_with(cx, |app, _| {
+                app.agent_catalog
+                    .entries
+                    .iter()
+                    .find(|entry| entry.id == id)
+                    .map(|entry| entry.definition.clone())
+            })
+            .ok()
+            .flatten();
         self.agent_page = Some(id.clone());
         self.group = 3;
         self.subgroup = None;
         self.agent_status = None;
         self.search_page = Some((3, None));
-        self.expanded[3] = true;
-        self.scroll.handle.set_offset(point(px(0.), px(0.)));
         self.agent_subscriptions.clear();
-        self.agent_form =
-            definition.map(|definition| agent_form::AgentForm::new(Some(id), definition, cx));
+        self.agent_form = definition
+            .map(|definition| agent_form::AgentForm::new(Some(id), definition, window, cx));
         if let Some(form) = &self.agent_form {
-            let mut inputs = form.inputs.to_vec();
-            inputs.extend(form.argument_inputs());
-            for input in &inputs {
+            for input in &form.inputs {
                 self.agent_subscriptions.push(cx.subscribe(
                     input,
-                    |this, _, _: &input::ContentChanged, cx| {
+                    |this, _, event: &InputEvent, cx| {
+                        if matches!(event, InputEvent::Change) {
+                            if let Some(form) = this.agent_form.as_mut() {
+                                form.status = None;
+                            }
+                            cx.notify();
+                        }
+                    },
+                ));
+            }
+            self.agent_subscriptions.push(cx.subscribe(
+                &form.instructions,
+                |this, _, event: &InputEvent, cx| {
+                    if matches!(event, InputEvent::Change) {
                         if let Some(form) = this.agent_form.as_mut() {
                             form.status = None;
                         }
                         cx.notify();
-                    },
-                ));
-            }
+                    }
+                },
+            ));
         }
         cx.notify();
     }
 
-    fn sync_agent(&mut self, cx: &mut Context<Self>) {
+    fn sync_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(form) = self.agent_form.as_mut() else {
-            cx.notify();
             return;
         };
-        let current = self.owner.read(cx).ok().and_then(|app| {
-            app.agent_catalog
-                .entries
-                .iter()
-                .find(|entry| Some(&entry.id) == form.id.as_ref())
-                .map(|entry| entry.definition.clone())
-        });
+        let current = self
+            .owner
+            .entity
+            .read_with(cx, |app, _| {
+                app.agent_catalog
+                    .entries
+                    .iter()
+                    .find(|entry| Some(&entry.id) == form.id.as_ref())
+                    .map(|entry| entry.definition.clone())
+            })
+            .ok()
+            .flatten();
         if current.as_ref() == Some(&form.original) {
             form.external_changed = false;
         } else if form.dirty(cx) {
             form.external_changed = true;
         } else if let Some(definition) = current {
-            form.reload(definition, cx);
+            form.reload(definition, window, cx);
         } else {
             self.agent_form = None;
             self.agent_subscriptions.clear();
@@ -663,7 +918,7 @@ impl SettingsWindow {
             AfterAgent::CloseOwner => {
                 self.agent_form = None;
                 self.agent_subscriptions.clear();
-                request_close(self.owner, cx);
+                request_close(self.owner.window, self.owner.entity.clone(), cx);
             }
             AfterAgent::Group(group) => {
                 self.group = group;
@@ -672,7 +927,6 @@ impl SettingsWindow {
                 self.agent_subscriptions.clear();
                 self.subgroup = None;
                 self.search_page = Some((group, None));
-                self.expanded[group] = !self.expanded[group];
             }
             AfterAgent::Child(group, child) => {
                 self.group = group;
@@ -682,7 +936,17 @@ impl SettingsWindow {
                 self.agent_subscriptions.clear();
                 self.search_page = Some((group, Some(child)));
             }
-            AfterAgent::Agent(id) => self.show_agent(id, cx),
+            AfterAgent::OpenMode(mode) => {
+                self.last_query.clear();
+                self.query
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                self.after_agent(
+                    AfterAgent::Child(usize::from(mode == Section::Chats), 0),
+                    window,
+                    cx,
+                );
+            }
+            AfterAgent::Agent(id) => self.show_agent(id, window, cx),
             AfterAgent::Delete(id) => self.confirm_delete_after_leaving(id, window, cx),
             AfterAgent::Search(query) => {
                 self.last_query.clone_from(&query);
@@ -690,11 +954,10 @@ impl SettingsWindow {
                 self.agent_form = None;
                 self.agent_subscriptions.clear();
                 self.search_page = None;
-                self.query.update(cx, |input, cx| input.set(query, cx));
-                self.nav_scroll.handle.set_offset(point(px(0.), px(0.)));
+                self.query
+                    .update(cx, |input, cx| input.set_value(query, window, cx));
             }
         }
-        self.scroll.handle.set_offset(point(px(0.), px(0.)));
         cx.notify();
     }
 
@@ -708,65 +971,79 @@ impl SettingsWindow {
         let Some(form) = self.agent_form.as_ref() else {
             return;
         };
-        let current = self.owner.read(cx).ok().and_then(|app| {
-            app.agent_catalog
-                .entries
-                .iter()
-                .find(|entry| Some(&entry.id) == form.id.as_ref())
-                .map(|entry| entry.definition.clone())
-        });
+        let current = self
+            .owner
+            .entity
+            .read_with(cx, |app, _| {
+                app.agent_catalog
+                    .entries
+                    .iter()
+                    .find(|entry| Some(&entry.id) == form.id.as_ref())
+                    .map(|entry| entry.definition.clone())
+            })
+            .ok()
+            .flatten();
         if !overwrite && (form.external_changed || current.as_ref() != Some(&form.original)) {
             if self.pending {
                 return;
             }
             self.pending = true;
-            let response = window.prompt(
-                PromptLevel::Warning,
-                "This agent changed outside Adeline.",
-                Some("Reload the external definition and lose your unsaved edits, or overwrite it with your edits."),
-                &[PromptButton::ok("Reload"), PromptButton::new("Overwrite"), PromptButton::cancel("Cancel")], cx,
-            );
-            cx.spawn_in(window, async move |view, cx| {
-                let choice = response.await.unwrap_or(2);
-                let _ = view.update_in(cx, |view, window, cx| {
-                    view.pending = false;
-                    match choice {
-                        0 => {
-                            let _ = view.owner.update(cx, |app, _, cx| app.refresh_agents(cx));
-                            if let Some(form) = view.agent_form.as_mut() {
-                                let definition = view.owner.read(cx).ok().and_then(|app| {
-                                    app.agent_catalog
-                                        .entries
-                                        .iter()
-                                        .find(|entry| Some(&entry.id) == form.id.as_ref())
-                                        .map(|entry| entry.definition.clone())
-                                });
-                                if let Some(definition) = definition {
-                                    form.reload(definition, cx);
-                                } else {
-                                    view.agent_form = None;
-                                    view.agent_page = None;
-                                    view.agent_subscriptions.clear();
+            let view = cx.entity().downgrade();
+            choose(
+                window,
+                cx,
+                "This agent changed outside Adeline.".into(),
+                "Reload the external definition and lose your unsaved edits, or overwrite it with your edits.",
+                &["Reload", "Overwrite", "Cancel"],
+                move |choice, window, cx| {
+                    let after = after.clone();
+                    let _ = view.update(cx, |view, cx| {
+                        view.pending = false;
+                        match choice {
+                            0 => {
+                                let _ = view
+                                    .owner
+                                    .entity
+                                    .update(cx, |app, cx| app.refresh_agents(cx));
+                                if let Some(form) = view.agent_form.as_mut() {
+                                    let definition = view
+                                        .owner
+                                        .entity
+                                        .read_with(cx, |app, _| {
+                                            app.agent_catalog
+                                                .entries
+                                                .iter()
+                                                .find(|entry| Some(&entry.id) == form.id.as_ref())
+                                                .map(|entry| entry.definition.clone())
+                                        })
+                                        .ok()
+                                        .flatten();
+                                    if let Some(definition) = definition {
+                                        form.reload(definition, window, cx);
+                                    } else {
+                                        view.agent_form = None;
+                                        view.agent_page = None;
+                                        view.agent_subscriptions.clear();
+                                    }
+                                }
+                                if let Some(after) = after {
+                                    view.after_agent(after, window, cx);
                                 }
                             }
-                            if let Some(after) = after {
-                                view.after_agent(after, window, cx);
-                            }
+                            1 => view.save_agent(after, true, window, cx),
+                            _ => {}
                         }
-                        1 => view.save_agent(after, true, window, cx),
-                        _ => {}
-                    }
-                });
-            })
-            .detach();
+                    });
+                },
+            );
             return;
         }
-        match persist_form(self.owner, form, overwrite, cx) {
+        match persist_form(&self.owner, form, overwrite, cx) {
             Ok(saved) => {
                 if let Some(form) = &mut self.agent_form {
                     let definition = form.values(cx);
                     form.id = Some(saved.clone());
-                    form.reload(definition, cx);
+                    form.reload(definition, window, cx);
                 }
                 let after = after.map(|next| match next {
                     AfterAgent::Delete(_) => AfterAgent::Delete(saved.clone()),
@@ -778,14 +1055,17 @@ impl SettingsWindow {
                 }
                 cx.notify();
             }
-            Err(error) => {
-                let conflict = error.contains("changed outside this form");
+            Err(message) => {
+                let conflict = message.contains("changed outside this form");
                 if conflict {
-                    let _ = self.owner.update(cx, |app, _, cx| app.refresh_agents(cx));
+                    let _ = self
+                        .owner
+                        .entity
+                        .update(cx, |app, cx| app.refresh_agents(cx));
                 }
-                if let Some(form) = &mut self.agent_form {
+                if let Some(form) = self.agent_form.as_mut() {
                     form.external_changed = conflict;
-                    form.status = Some(error);
+                    form.status = Some(message);
                 }
                 cx.notify();
             }
@@ -801,34 +1081,25 @@ impl SettingsWindow {
             return;
         }
         self.pending = true;
-        let response = window.prompt(
-            PromptLevel::Warning,
-            "Save changes to this agent?",
-            Some("Your edits will be lost if you discard them."),
-            &[
-                PromptButton::ok("Save"),
-                PromptButton::new("Discard"),
-                PromptButton::cancel("Cancel"),
-            ],
+        let view = cx.entity().downgrade();
+        choose(
+            window,
             cx,
-        );
-        cx.spawn_in(window, async move |view, cx| {
-            let choice = response.await.unwrap_or(2);
-            let _ = view.update_in(cx, |view, window, cx| {
-                view.pending = false;
-                match choice {
-                    0 => view.save_agent(Some(after), false, window, cx),
-                    1 => {
-                        if let Some(form) = view.agent_form.as_mut() {
-                            form.reload(form.original.clone(), cx);
-                        }
-                        view.after_agent(after, window, cx);
+            "Save changes to this agent?".into(),
+            "Your edits will be lost if you discard them.",
+            &["Save", "Discard", "Cancel"],
+            move |choice, window, cx| {
+                let after = after.clone();
+                let _ = view.update(cx, |view, cx| {
+                    view.pending = false;
+                    match choice {
+                        0 => view.save_agent(Some(after), false, window, cx),
+                        1 => view.after_agent(after, window, cx),
+                        _ => {}
                     }
-                    _ => {}
-                }
-            });
-        })
-        .detach();
+                });
+            },
+        );
     }
 
     fn confirm_delete(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -841,7 +1112,6 @@ impl SettingsWindow {
             self.confirm_delete_after_leaving(id, window, cx);
         }
     }
-
     fn confirm_delete_after_leaving(
         &mut self,
         id: String,
@@ -856,42 +1126,42 @@ impl SettingsWindow {
             .agent_form
             .as_ref()
             .map_or_else(|| id.clone(), |form| form.original.name.clone());
-        let response = window.prompt(
-            PromptLevel::Warning,
-            &format!("Delete {name}?"),
-            Some("The agent's folder and saved definition will be removed."),
-            &[PromptButton::ok("Delete"), PromptButton::cancel("Cancel")],
+        let view = cx.entity().downgrade();
+        choose(
+            window,
             cx,
-        );
-        cx.spawn_in(window, async move |view, cx| {
-            let choice = response.await.unwrap_or(1);
-            let _ = view.update_in(cx, |view, _, cx| {
-                view.pending = false;
-                if choice != 0 {
-                    return;
-                }
-                let result = view
-                    .owner
-                    .update(cx, |app, _, cx| {
-                        app.agent_catalog.delete(&id)?;
-                        app.agents_changed(Some(&id), None, false, cx);
-                        Ok::<_, String>(())
-                    })
-                    .map_err(|error| error.to_string())
-                    .and_then(|result| result);
-                match result {
-                    Ok(()) => {
-                        view.agent_page = None;
-                        view.agent_form = None;
-                        view.agent_subscriptions.clear();
-                        view.agent_status = None;
+            format!("Delete {name}?"),
+            "The agent's folder and saved definition will be removed.",
+            &["Delete", "Cancel"],
+            move |choice, _, cx| {
+                let _ = view.update(cx, |view, cx| {
+                    view.pending = false;
+                    if choice != 0 {
+                        return;
                     }
-                    Err(error) => view.agent_status = Some(error),
-                }
-                cx.notify();
-            });
-        })
-        .detach();
+                    let result = view
+                        .owner
+                        .entity
+                        .update(cx, |app, cx| {
+                            app.agent_catalog.delete(&id)?;
+                            app.agents_changed(Some(&id), None, false, cx);
+                            Ok::<_, String>(())
+                        })
+                        .map_err(|error| error.to_string())
+                        .and_then(|result| result);
+                    match result {
+                        Ok(()) => {
+                            view.agent_page = None;
+                            view.agent_form = None;
+                            view.agent_subscriptions.clear();
+                            view.agent_status = None;
+                        }
+                        Err(message) => view.agent_status = Some(message),
+                    }
+                    cx.notify();
+                });
+            },
+        );
     }
 
     fn save_font_size(&mut self, which: usize, size: u16, cx: &mut Context<Self>) {
@@ -900,880 +1170,418 @@ impl SettingsWindow {
         } else if size == selected_font_size(which) {
             self.font_size_errors[which] = None;
         } else {
-            match config::update(|s| {
+            match config::update(|settings| {
                 if which == 0 {
-                    s.general.appearance.font_size = size;
+                    settings.general.appearance.font_size = size;
                 } else {
-                    s.general.appearance.code_font_size = size;
+                    settings.general.appearance.code_font_size = size;
                 }
             }) {
                 Ok(()) => {
                     self.font_size_errors[which] = None;
-                    cx.refresh_windows();
+                    theme::apply(cx);
                 }
-                Err(error) => self.font_size_errors[which] = Some(error),
+                Err(message) => self.font_size_errors[which] = Some(message),
             }
         }
         cx.notify();
     }
-
-    fn font_size_picker(&self, which: usize, cx: &Context<Self>) -> Div {
-        let button = |id, label, increase| {
-            row()
-                .id((id, which))
-                .focusable()
-                .tab_stop(true)
-                .cursor_pointer()
-                .justify_center()
-                .w(px(36.))
-                .py_2()
-                .rounded(px(3.))
-                .bg(rgb(theme::secondary()))
-                .border_1()
-                .border_color(rgb(theme::border()))
-                .focus(|s| s.border_color(rgb(theme::ring())))
-                .child(text(label, 16., theme::secondary_foreground()))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    let size = if increase {
-                        selected_font_size(which) + 1
-                    } else {
-                        selected_font_size(which) - 1
-                    }
-                    .clamp(config::MIN_FONT_SIZE, config::MAX_FONT_SIZE);
-                    this.save_font_size(which, size, cx);
-                    let saved = selected_font_size(which);
-                    this.font_size_inputs[which]
-                        .update(cx, |input, cx| input.set(saved.to_string(), cx));
-                }))
-        };
-        col()
-            .gap_2()
-            .child(text(
-                if which == 0 {
-                    "Interface font size"
-                } else {
-                    "Code font size"
-                },
-                13.,
-                theme::foreground(),
-            ))
-            .child(
-                row()
-                    .gap_2()
-                    .child(button("decrease-font-size", "−", false))
-                    .child(
-                        div()
-                            .w(px(64.))
-                            .px_2()
-                            .py_2()
-                            .bg(rgb(theme::input()))
-                            .border_1()
-                            .border_color(rgb(theme::border()))
-                            .rounded(px(3.))
-                            .child(self.font_size_inputs[which].clone()),
-                    )
-                    .child(button("increase-font-size", "+", true))
-                    .child(text("px", 12., theme::muted_foreground())),
-            )
-            .when_some(self.font_size_errors[which].clone(), |d, error| {
-                d.child(text(error, 12., theme::destructive()))
-            })
-    }
-
-    fn choose_font(
-        &mut self,
-        which: usize,
-        family: &str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match config::update(|s| {
+    fn choose_font(&mut self, which: usize, family: &str, cx: &mut Context<Self>) {
+        match config::update(|settings| {
             if which == 0 {
-                s.general.appearance.interface_font = family.into();
+                settings.general.appearance.interface_font = family.into();
             } else {
-                s.general.appearance.code_font = family.into();
+                settings.general.appearance.code_font = family.into();
             }
         }) {
             Ok(()) => {
-                self.font_dropdown = None;
-                self.theme_status = Some(format!("{} saved.", font_label(which)));
-                window.focus(&self.focus, cx);
-                cx.refresh_windows();
+                self.theme_status = None;
+                theme::apply(cx);
             }
-            Err(error) => self.theme_status = Some(error),
+            Err(message) => self.theme_status = Some(message),
+        }
+        cx.notify();
+    }
+    fn refresh_themes(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match theme::discover() {
+            Ok((choices, errors)) => {
+                let saved = config::current().general.appearance.theme;
+                self.theme_picker.update(cx, |picker, cx| {
+                    picker.set_items(SearchableVec::new(choices), window, cx);
+                    picker.set_selected_value(&saved, window, cx);
+                });
+                self.theme_status = (!errors.is_empty())
+                    .then(|| errors.join("\n"))
+                    .or_else(theme::load_error);
+            }
+            Err(message) => self.theme_status = Some(message),
         }
         cx.notify();
     }
 
-    fn font_picker(&self, which: usize, cx: &Context<Self>) -> Div {
-        let selected = if which == 0 {
-            config::font()
-        } else {
-            config::code_font()
-        };
-        let bounds = self.font_trigger_bounds[which].clone();
-        let label = if matches!(selected.as_str(), fonts::DEFAULT | fonts::CODE_DEFAULT) {
-            format!("{selected} (built in)")
-        } else {
-            selected.clone()
-        };
-        let mut picker = col().relative().w_full().child(
-            row()
-                .id(("font-dropdown", which))
-                .relative()
-                .focusable()
-                .tab_stop(true)
-                .cursor_pointer()
-                .px_3()
-                .py_2()
-                .gap_3()
-                .rounded(px(3.))
-                .border_1()
-                .border_color(rgb(theme::border()))
-                .bg(rgb(theme::secondary()))
-                .focus(|s| s.border_color(rgb(theme::ring())))
-                .child(text(label, 13., theme::secondary_foreground()).flex_1())
-                .child(icon("chevron"))
-                .child(
-                    canvas(move |area, _, _| bounds.set(area), |_, (), _, _| {})
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full(),
-                )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.theme_dropdown = false;
-                    this.font_dropdown = if this.font_dropdown == Some(which) {
-                        None
-                    } else {
-                        Some(which)
-                    };
-                    if this.font_dropdown.is_some() {
-                        fonts::refresh(cx);
-                        this.font_choices = fonts::families();
-                        this.font_query.update(cx, |input, cx| input.set("", cx));
-                        this.font_list_scroll
-                            .handle
-                            .set_offset(point(px(0.), px(0.)));
-                        window.focus(&this.font_query.read(cx).focus_handle(cx), cx);
-                    }
-                    cx.notify();
-                })),
-        );
-        if self.font_dropdown == Some(which) {
-            let query = self.font_query.read(cx).content.to_lowercase();
-            let mut options = col();
-            let mut count = 0;
-            for (i, family) in self.font_choices.iter().enumerate() {
-                if !family.to_lowercase().contains(query.trim()) {
-                    continue;
-                }
-                count += 1;
-                let family = family.clone();
-                let label = if matches!(family.as_str(), fonts::DEFAULT | fonts::CODE_DEFAULT) {
-                    format!("{family} (built in)")
-                } else {
-                    family.clone()
-                };
-                options = options.child(
-                    row()
-                        .id(("interface-font-option", i))
-                        .focusable()
-                        .tab_stop(true)
-                        .cursor_pointer()
-                        .px_3()
-                        .py_2()
-                        .rounded(px(3.))
-                        .when(family == selected, |d| d.bg(rgb(theme::secondary())))
-                        .hover(|s| s.bg(rgb(theme::secondary())))
-                        .focus(|s| s.border_1().border_color(rgb(theme::ring())))
-                        .child(text(label, 13., theme::foreground()))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.choose_font(which, &family, window, cx);
-                        })),
-                );
-            }
-            if count == 0 {
-                options =
-                    options.child(text("No matching fonts.", 13., theme::muted_foreground()).p_3());
-            }
-            picker = picker.child(
-                deferred(
-                    anchored()
-                        .position(self.font_trigger_bounds[which].get().bottom_left())
-                        .snap_to_window()
-                        .child(
-                            menu_surface()
-                                .id("interface-font-popup")
-                                .w(self.font_trigger_bounds[which].get().size.width)
-                                .on_mouse_down_out(cx.listener(
-                                    move |this, event: &MouseDownEvent, _, cx| {
-                                        if !this.font_trigger_bounds[which]
-                                            .get()
-                                            .contains(&event.position)
-                                        {
-                                            this.font_dropdown = None;
-                                            cx.notify();
-                                        }
-                                    },
-                                ))
-                                .child(
-                                    col()
-                                        .gap_2()
-                                        .child(
-                                            div()
-                                                .p_2()
-                                                .bg(rgb(theme::input()))
-                                                .child(self.font_query.clone()),
-                                        )
-                                        .child(
-                                            div()
-                                                .h(px((count.max(1) as f32 * 38.).min(230.)))
-                                                .child(
-                                                    self.font_list_scroll
-                                                        .wrap("interface-font-options", options),
-                                                ),
-                                        ),
-                                ),
-                        ),
-                )
-                .with_priority(2),
-            );
-        }
-        col()
-            .gap_2()
-            .child(text(font_label(which), 13., theme::foreground()))
-            .child(picker)
-            .child(text(
-                format!(
-                    "{} is built in and is used if your selected font is unavailable.",
-                    if which == 0 {
-                        fonts::DEFAULT
-                    } else {
-                        fonts::CODE_DEFAULT
-                    }
-                ),
-                12.,
-                theme::muted_foreground(),
-            ))
-    }
-
-    fn appearance_settings(&self, cx: &Context<Self>) -> Div {
-        let trigger_bounds = self.theme_trigger_bounds.clone();
-        let mut modes = col().relative().child(
-            row()
-                .id("theme-dropdown")
-                .relative()
-                .focusable()
-                .tab_stop(true)
-                .cursor_pointer()
-                .px_4()
-                .py_2()
-                .gap_3()
-                .rounded(px(8.))
-                .border_1()
-                .border_color(rgb(theme::border()))
-                .bg(rgb(theme::secondary()))
-                .focus(|s| s.border_color(rgb(theme::ring())))
-                .child(text(
-                    theme::active_theme().name,
-                    13.,
-                    theme::secondary_foreground(),
-                ))
-                .child(icon("chevron"))
-                .child(
-                    canvas(
-                        move |bounds, _, _| trigger_bounds.set(bounds),
-                        |_, (), _, _| {},
-                    )
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .size_full(),
-                )
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.font_dropdown = None;
-                    this.theme_dropdown = !this.theme_dropdown;
-                    if this.theme_dropdown {
-                        match theme::discover() {
-                            Ok((choices, errors)) => {
-                                this.theme_choices = choices;
-                                this.theme_status = (!errors.is_empty()).then(|| errors.join("\n"));
-                            }
-                            Err(error) => this.theme_status = Some(error),
-                        }
-                    }
-                    cx.notify();
-                })),
-        );
-        if self.theme_dropdown {
-            let mut choices = col().gap_1();
-            for (i, choice) in self.theme_choices.iter().enumerate() {
-                let file = choice.file.clone();
-                choices = choices.child(
-                    row()
-                        .id(("theme-choice", i))
-                        .focusable()
-                        .tab_stop(true)
-                        .cursor_pointer()
-                        .px_4()
-                        .py_2()
-                        .rounded(px(3.))
-                        .bg(rgb(theme::sidebar()))
-                        .hover(|s| s.bg(rgb(theme::secondary())))
-                        .focus(|s| s.border_1().border_color(rgb(theme::ring())))
-                        .child(text(choice.name.clone(), 13., theme::sidebar_foreground()))
-                        .child(
-                            div()
-                                .ml_3()
-                                .px_2()
-                                .py(px(2.))
-                                .rounded_full()
-                                .border_1()
-                                .border_color(rgb(theme::border()))
-                                .bg(rgb(theme::muted()))
-                                .child(text(
-                                    choice.brightness.label(),
-                                    11.,
-                                    theme::muted_foreground(),
-                                )),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            match theme::select(&file, cx) {
-                                Ok(()) => {
-                                    this.theme_dropdown = false;
-                                    this.theme_status = Some("Theme selected and saved.".into());
-                                }
-                                Err(error) => this.theme_status = Some(error),
-                            }
-                            cx.notify();
-                        })),
-                );
-            }
-            if self.theme_choices.is_empty() {
-                choices = choices.child(text(
-                    "No valid themes found in ~/.config/adeline/themes.",
-                    13.,
-                    theme::muted_foreground(),
-                ));
-            }
-            modes = modes.child(
-                deferred(
-                    menu_surface()
-                        .id("theme-popup")
-                        .absolute()
-                        .top_full()
-                        .mt_1()
-                        .left_0()
-                        .w_full()
-                        .h(px(
-                            (self.theme_choices.len().max(1) as f32 * 42. + 10.).min(230.)
-                        ))
-                        .on_mouse_down_out(cx.listener(|this, event: &MouseDownEvent, _, cx| {
-                            if !this.theme_trigger_bounds.get().contains(&event.position) {
-                                this.theme_dropdown = false;
-                                cx.notify();
-                            }
-                        }))
-                        .child(self.theme_list_scroll.wrap("theme-options", choices)),
-                )
-                .with_priority(1),
-            );
-        }
-        col()
-            .w_full()
-            .gap_3()
-            .mt_4()
-            .child(text("Appearance", 18., theme::foreground()))
-            .child(
-                col()
-                    .gap_2()
-                    .child(text("Theme", 13., theme::foreground()))
-                    .child(modes),
-            )
-            .when_some(self.theme_status.clone(), |d, status| {
-                d.child(text(status, 12., theme::foreground()))
-            })
-            .child(text(
-                "Themes are loaded from ~/.config/adeline/themes.",
-                12.,
-                theme::muted_foreground(),
-            ))
-            .child(self.font_picker(0, cx))
-            .child(self.font_size_picker(0, cx))
-            .child(self.font_picker(1, cx))
-            .child(self.font_size_picker(1, cx))
-    }
-    fn select_mode(&mut self, mode: Section, cx: &mut Context<Self>) {
-        self.group = 1;
-        self.subgroup = Some(mode as usize);
-        self.expanded[1] = true;
-        self.query.update(cx, |query, cx| query.set("", cx));
-        self.scroll.handle.set_offset(point(px(0.), px(0.)));
-        cx.notify();
-    }
-
-    fn new(
-        owner: WindowHandle<Adeline>,
-        entity: &Entity<Adeline>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let query = cx.new(|cx| TextInput::search("Search settings...", cx));
-        let focus = cx.focus_handle();
+    fn refresh_fonts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         fonts::refresh(cx);
-        let font_query = cx.new(|cx| TextInput::search("Search fonts...", cx));
-        let font_size_inputs = std::array::from_fn(|which| {
-            cx.new(|cx| {
-                let mut input = TextInput::new("14", cx);
-                input.set(selected_font_size(which).to_string(), cx);
-                input
-            })
-        });
-        let retry_limit_input = cx.new(|cx| {
-            let mut input = TextInput::new("5", cx);
-            input.set(config::current().modes.chats.retry_limit.to_string(), cx);
-            input
-        });
-        window.focus(&focus, cx);
-        let mut subscriptions = Vec::new();
-        for (which, size_input) in font_size_inputs.iter().enumerate() {
-            subscriptions.push(cx.subscribe(
-                size_input,
-                move |this, input, _: &input::ContentChanged, cx| {
-                    if let Ok(size) = input.read(cx).content.trim().parse::<u16>() {
-                        this.save_font_size(which, size, cx);
-                    } else {
-                        this.font_size_errors[which] =
-                            Some("Enter a whole number from 10 to 24.".into());
-                        cx.notify();
-                    }
-                },
-            ));
-        }
-        subscriptions.push(cx.subscribe(
-            &retry_limit_input,
-            |this, input, _: &input::ContentChanged, cx| {
-                let value = input.read(cx).content.trim().parse::<usize>();
-                this.retry_limit_error = match value {
-                    Ok(limit) => {
-                        config::update(|settings| settings.modes.chats.retry_limit = limit).err()
-                    }
-                    Err(_) => {
-                        Some("Enter a non-negative whole number. Zero disables retries.".into())
-                    }
-                };
-                cx.notify();
-            },
-        ));
-        subscriptions.extend([
-            cx.subscribe_in(
-                &query,
-                window,
-                |this, input, _: &input::ContentChanged, window, cx| {
-                    let requested = input.read(cx).content.to_string();
-                    if requested == this.last_query {
-                        return;
-                    }
-                    if this.agent_form.as_ref().is_some_and(|form| form.dirty(cx)) {
-                        input.update(cx, |input, cx| input.set(this.last_query.clone(), cx));
-                        this.leave(AfterAgent::Search(requested), window, cx);
-                        return;
-                    }
-                    this.last_query = requested;
-                    this.search_page = None;
-                    this.nav_scroll.handle.set_offset(point(px(0.), px(0.)));
-                    this.agent_page = None;
-                    this.agent_form = None;
-                    this.agent_subscriptions.clear();
-                    this.scroll.handle.set_offset(point(px(0.), px(0.)));
-                    cx.notify();
-                },
-            ),
-            cx.subscribe(&font_query, |this, _, _: &input::ContentChanged, cx| {
-                this.font_list_scroll
-                    .handle
-                    .set_offset(point(px(0.), px(0.)));
-                cx.notify();
-            }),
-            cx.observe(entity, |this, _, cx| this.sync_agent(cx)),
-            cx.observe_window_bounds(window, |_, _, cx| cx.notify()),
-            cx.observe_window_activation(window, |_, _, cx| cx.notify()),
-        ]);
-        let view = cx.entity();
-        window.on_window_should_close(cx, move |window, cx| {
-            view.update(cx, |view, cx| {
-                if view.agent_form.as_ref().is_some_and(|form| form.dirty(cx)) {
-                    view.leave(AfterAgent::CloseSettings, window, cx);
-                    false
-                } else {
-                    true
-                }
-            })
-        });
-        Self {
-            owner,
-            query,
-            font_query,
-            font_size_inputs,
-            retry_limit_input,
-            retry_limit_error: None,
-            font_size_errors: [None, None],
-            font_dropdown: None,
-            font_trigger_bounds: Default::default(),
-            font_choices: fonts::families(),
-            font_list_scroll: Default::default(),
-            theme_status: theme::load_error(),
-            theme_dropdown: false,
-            theme_trigger_bounds: Default::default(),
-            theme_choices: Vec::new(),
-            theme_list_scroll: Default::default(),
-            group: 0,
-            subgroup: Some(0),
-            search_page: None,
-            expanded: [true, false, false, true],
-            agent_page: None,
-            agent_form: None,
-            agent_subscriptions: Vec::new(),
-            agent_status: None,
-            last_query: String::new(),
-            pending: false,
-            nav_scroll: Default::default(),
-            scroll: Default::default(),
-            focus,
-            _subscriptions: subscriptions,
-        }
-    }
-    fn subgroup_matches(&self, group: usize, child: usize, query: &str, cx: &App) -> bool {
-        if query.trim().is_empty() {
-            return true;
-        }
-        match group {
-            0 => general_matches(child, query),
-            1 => {
-                (child == Section::Chats as usize
-                    && matches_query(
-                        query,
-                        &[
-                            "Modes",
-                            "Chats",
-                            "Automatic retry limit",
-                            "Additional attempts after a temporary failure. Zero disables automatic retries.",
-                        ],
-                    ))
-                    || self.owner.read(cx).is_ok_and(|app| {
-                        app.mode_options(MODES[child].0)
-                            .iter()
-                            .any(|o| matches_query(query, &["Modes", MODES[child].1, o.0, o.1]))
-                    })
+        for (which, picker) in self.font_pickers.iter().enumerate() {
+            let mut names = fonts::families();
+            let saved = saved_font(which);
+            if !names.iter().any(|name| name.eq_ignore_ascii_case(&saved)) && !saved.is_empty() {
+                names.insert(0, saved.clone());
             }
-            _ => false,
+            picker.update(cx, |picker, cx| {
+                picker.set_items(SearchableVec::new(names), window, cx);
+                picker.set_selected_value(&saved, window, cx);
+            });
         }
+        theme::apply(cx);
+        cx.notify();
     }
-    fn setting_row(&self, id: usize, option: SettingOption, cx: &Context<Self>) -> Stateful<Div> {
-        let (label, description, checked, action) = option;
-        row()
-            .id(("setting", id))
+
+    fn setting_row(
+        &self,
+        id: impl Into<ElementId>,
+        label: &'static str,
+        description: &'static str,
+        checked: bool,
+        action: Action,
+        cx: &Context<Self>,
+    ) -> Div {
+        let owner = self.owner.clone();
+        div()
             .w_full()
-            .py_5()
-            .gap_6()
+            .flex()
+            .items_center()
             .justify_between()
+            .gap_4()
+            .py_4()
             .border_b_1()
-            .border_color(rgb(theme::border()))
+            .border_color(cx.theme().border)
             .child(
-                col()
+                div()
                     .flex_1()
                     .min_w_0()
-                    .gap_2()
-                    .child(text(label, 14., theme::foreground()))
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(label)
                     .child(
-                        text(description, 12., theme::muted_foreground())
-                            .line_height(config::text_pixels(19.)),
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(description),
                     ),
             )
             .child(
-                div()
-                    .id(("toggle", id))
-                    .focusable()
-                    .tab_stop(true)
-                    .cursor_pointer()
-                    .w(px(34.))
-                    .h(px(20.))
-                    .rounded_full()
-                    .flex_shrink_0()
-                    .p(px(3.))
-                    .bg(rgb(if checked {
-                        theme::primary()
-                    } else {
-                        theme::border()
-                    }))
-                    .flex()
-                    .items_center()
-                    .when(checked, |d| d.justify_end())
-                    .child(
-                        div()
-                            .size(px(14.))
-                            .rounded_full()
-                            .bg(rgb(theme::primary_foreground())),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        let _ = this
-                            .owner
-                            .update(cx, |app, window, cx| app.act(action.clone(), window, cx));
-                        cx.notify();
-                    })),
+                Switch::new(id)
+                    .checked(checked)
+                    .accessibility_label(label)
+                    .on_change(move |_, window, cx| owner.act(action.clone(), window, cx)),
             )
     }
-    fn retry_limit_row(&self) -> Div {
-        col()
+    fn retry_limit_row(&self, cx: &Context<Self>) -> Div {
+        div().w_full().py_4().flex().flex_col().gap_2().border_b_1().border_color(cx.theme().border)
+            .child(Field::new().label("Automatic retry limit")
+                .description("Additional attempts after a temporary failure. Zero disables automatic retries.")
+                .child(div().w_24().child(Input::new(&self.retry_limit).aria_label("Automatic retry limit"))))
+            .when_some(self.retry_limit_error.clone(), |row, message| row.child(error(message, cx)))
+    }
+    fn appearance_settings(&self, cx: &Context<Self>) -> Div {
+        let mut page = div()
             .w_full()
-            .py_5()
-            .gap_2()
-            .border_b_1()
-            .border_color(rgb(theme::border()))
-            .child(text("Automatic retry limit", 14., theme::foreground()))
-            .child(text(
-                "Additional attempts after a temporary failure. Zero disables automatic retries.",
-                12.,
-                theme::muted_foreground(),
-            ))
+            .flex()
+            .flex_col()
+            .gap_5()
             .child(
-                div()
-                    .w(px(90.))
-                    .p_2()
-                    .bg(rgb(theme::input()))
-                    .border_1()
-                    .border_color(rgb(theme::border()))
-                    .rounded(px(3.))
-                    .child(self.retry_limit_input.clone()),
+                Form::new().child(
+                    Field::new()
+                        .label("Theme")
+                        .description("Themes are loaded from the Adeline themes folder.")
+                        .child(
+                            Select::new(&self.theme_picker)
+                                .accessibility_label("Theme")
+                                .search_placeholder("Search themes"),
+                        ),
+                ),
             )
-            .when_some(self.retry_limit_error.clone(), |d, error| {
-                d.child(text(error, 12., theme::destructive()))
-            })
-    }
-}
-fn general_matches(child: usize, query: &str) -> bool {
-    match child {
-        0 => {
-            matches_query(query, &MACHINE_SELECTOR)
-                || MODES.iter().any(|(_, name)| {
-                    matches_query(
-                        query,
-                        &[
-                            "General",
-                            "Features",
-                            name,
-                            "Enable mode in the main view",
-                            "Chats is always enabled and cannot be disabled",
-                        ],
-                    )
-                })
+            .child(
+                Button::new("refresh-themes")
+                    .small()
+                    .ghost()
+                    .label("Refresh themes")
+                    .on_click(cx.listener(|this, _, window, cx| this.refresh_themes(window, cx))),
+            );
+        if let Some(status) = &self.theme_status {
+            page = page.child(error(status.clone(), cx));
         }
-        1 => THEME
-            .iter()
-            .any(|(label, value)| matches_query(query, &["General", "Appearance", label, value])),
-        2 => KEYMAP
-            .iter()
-            .any(|(label, value)| matches_query(query, &["General", "Keymap", label, value])),
-        _ => false,
+        for which in 0..2 {
+            let fallback = if which == 0 {
+                fonts::DEFAULT
+            } else {
+                fonts::CODE_DEFAULT
+            };
+            let saved = saved_font(which);
+            let resolved = if which == 0 {
+                config::font()
+            } else {
+                config::code_font()
+            };
+            page = page.child(
+                Form::new().child(
+                    Field::new()
+                        .label(font_label(which))
+                        .description(format!(
+                            "{fallback} is used if the selected font is unavailable."
+                        ))
+                        .child(
+                            Select::new(&self.font_pickers[which])
+                                .accessibility_label(font_label(which))
+                                .search_placeholder("Search installed fonts"),
+                        ),
+                ),
+            );
+            if saved != resolved {
+                page = page.child(error(
+                    format!("{saved} is unavailable. Using {resolved}."),
+                    cx,
+                ));
+            }
+            let size_label = if which == 0 {
+                "Interface font size"
+            } else {
+                "Code font size"
+            };
+            page = page.child(
+                Form::new().child(
+                    Field::new()
+                        .label(size_label)
+                        .description(
+                            "A whole number from 10 to 24 pixels. Changes save immediately.",
+                        )
+                        .child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .gap_2()
+                                .child(
+                                    Button::new(format!("decrease-font-size-{which}"))
+                                        .label("Smaller")
+                                        .accessibility_label(format!("Decrease {size_label}"))
+                                        .disabled(
+                                            selected_font_size(which) <= config::MIN_FONT_SIZE,
+                                        )
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.step_font(which, -1, window, cx);
+                                        })),
+                                )
+                                .child(div().w_16().child(
+                                    Input::new(&self.font_sizes[which]).aria_label(size_label),
+                                ))
+                                .child(
+                                    Button::new(format!("increase-font-size-{which}"))
+                                        .label("Larger")
+                                        .accessibility_label(format!("Increase {size_label}"))
+                                        .disabled(
+                                            selected_font_size(which) >= config::MAX_FONT_SIZE,
+                                        )
+                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                            this.step_font(which, 1, window, cx);
+                                        })),
+                                ),
+                        ),
+                ),
+            );
+            if let Some(message) = &self.font_size_errors[which] {
+                page = page.child(error(message.clone(), cx));
+            }
+        }
+        page.child(
+            Button::new("refresh-fonts")
+                .small()
+                .ghost()
+                .label("Refresh installed fonts")
+                .on_click(cx.listener(|this, _, window, cx| this.refresh_fonts(window, cx))),
+        )
+    }
+    fn step_font(&mut self, which: usize, step: i16, window: &mut Window, cx: &mut Context<Self>) {
+        let next = selected_font_size(which)
+            .saturating_add_signed(step)
+            .clamp(config::MIN_FONT_SIZE, config::MAX_FONT_SIZE);
+        self.save_font_size(which, next, cx);
+        self.font_sizes[which].update(cx, |input, cx| {
+            input.set_value(selected_font_size(which).to_string(), window, cx);
+        });
     }
 }
-fn show_licenses(group: usize, searching: bool) -> bool {
-    group == 2 && !searching
-}
+
 fn matches_query(query: &str, parts: &[&str]) -> bool {
     query
         .split_whitespace()
         .all(|word| parts.iter().any(|part| part.to_lowercase().contains(word)))
 }
+fn general_matches(child: usize, query: &str) -> bool {
+    match child {
+        0 => {
+            matches_query(
+                query,
+                &[
+                    "General",
+                    "Features",
+                    "Machine selector",
+                    "Show the machine selector in the top bar.",
+                ],
+            ) || MODES.iter().any(|(_, name)| {
+                matches_query(
+                    query,
+                    &["General", "Features", name, "Enable mode in the main view"],
+                )
+            })
+        }
+        1 => [
+            "Theme",
+            "Interface font",
+            "Code font",
+            "Interface font size",
+            "Code font size",
+        ]
+        .iter()
+        .any(|label| matches_query(query, &["General", "Appearance", label])),
+        2 => KEYMAP
+            .iter()
+            .any(|label| matches_query(query, &["General", "Keymap", label])),
+        _ => false,
+    }
+}
+fn navigation_button(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    selected: bool,
+    cx: &App,
+) -> Button {
+    let label = label.into();
+    Button::new(id)
+        .ghost()
+        .accessibility_label(label.clone())
+        .child(div().w_full().truncate().text_left().child(label))
+        .selected(selected)
+        .focus_ring(false)
+        .border_1()
+        .border_color(cx.theme().transparent)
+        .focus_visible(|style| style.border_color(theme::sidebar_focus()))
+}
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        #[cfg(not(target_os = "windows"))]
-        let _ = window;
-        let query = self.query.read(cx).content.to_lowercase();
+        let query = self.query.read(cx).value().to_lowercase();
         let searching = !query.trim().is_empty();
-        let mut sidebar = col()
-            .w(px(238.))
-            .flex_shrink_0()
-            .h_full()
-            .p_3()
-            .gap_2()
-            .bg(rgb(theme::sidebar()))
-            .border_r_1()
-            .border_color(rgb(theme::border()))
-            .child(
-                row()
-                    .gap_2()
-                    .px_2()
-                    .h(px(34.))
-                    .mb_2()
-                    .rounded(px(5.))
-                    .bg(rgb(theme::input()))
-                    .border_1()
-                    .border_color(rgb(theme::border()))
-                    .child(icon("search"))
-                    .child(div().flex_1().min_w_0().child(self.query.clone())),
-            );
-        let mut navigation = col().gap_1();
-        for (i, name) in GROUPS.into_iter().enumerate() {
-            // License names and text are never part of settings search.
-            let matching: Vec<_> = SUBGROUPS[i]
+        let mut navigation = div().flex().flex_col().gap_1();
+        for (group, name) in GROUPS.into_iter().enumerate() {
+            if group == 2 && searching {
+                continue;
+            }
+            let matching: Vec<_> = SUBGROUPS[group]
                 .iter()
                 .enumerate()
-                .filter(|(j, _)| self.subgroup_matches(i, *j, &query, cx))
-                .collect();
-            let matching_agents: Vec<_> = if i == 3 {
-                self.owner.read(cx).ok().map_or_else(Vec::new, |app| {
-                    app.agent_catalog
-                        .entries
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, entry)| {
-                            matches_query(
-                                &query,
-                                &[
-                                    "Agents",
-                                    &entry.definition.name,
-                                    &entry.definition.model,
-                                    &entry.definition.command,
-                                ],
-                            )
-                        })
-                        .map(|(j, entry)| (j, entry.id.clone(), entry.definition.name.clone()))
-                        .collect()
+                .filter(|(child, title)| {
+                    if group == 0 {
+                        general_matches(*child, &query)
+                    } else {
+                        matches_query(&query, &[name, title])
+                    }
                 })
+                .collect();
+            let matching_agents: Vec<_> = if group == 3 {
+                self.owner
+                    .entity
+                    .read_with(cx, |app, _| {
+                        app.agent_catalog
+                            .entries
+                            .iter()
+                            .filter(|entry| {
+                                matches_query(
+                                    &query,
+                                    &[
+                                        "Agents",
+                                        &entry.definition.name,
+                                        &entry.definition.model,
+                                        &entry.definition.command,
+                                    ],
+                                )
+                            })
+                            .map(|entry| (entry.id.clone(), entry.definition.name.clone()))
+                            .collect()
+                    })
+                    .unwrap_or_default()
             } else {
                 Vec::new()
             };
-            if matching.is_empty()
-                && (i != 3
-                    || (searching
-                        && matching_agents.is_empty()
-                        && !matches_query(&query, &["Agents"])))
+            if searching
+                && matching.is_empty()
+                && matching_agents.is_empty()
+                && !(group == 3 && matches_query(&query, &["Agents"]))
             {
                 continue;
             }
             navigation = navigation.child(
-                row()
-                    .id(("group", i))
-                    .focusable()
-                    .tab_stop(true)
-                    .h(px(32.))
-                    .px_2()
-                    .gap_2()
-                    .rounded(px(5.))
-                    .cursor_pointer()
-                    .hover(|s| s.bg(rgb(theme::sidebar())))
-                    .focus(|s| s.border_1().border_color(rgb(theme::sidebar_ring())))
-                    .when(
-                        !searching && self.group == i && self.subgroup.is_none(),
-                        |d| d.bg(rgb(theme::sidebar())),
-                    )
-                    .child(icon("chevron").size(px(12.)).when(
-                        !self.expanded[i] && !searching,
-                        |d| {
-                            d.with_transformation(Transformation::rotate(radians(
-                                -std::f32::consts::FRAC_PI_2,
-                            )))
-                        },
-                    ))
-                    .child(text(name, 13., theme::foreground()))
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        this.leave(AfterAgent::Group(i), window, cx);
-                    })),
+                navigation_button(
+                    format!("settings-group-{group}"),
+                    name,
+                    !searching && self.group == group && self.subgroup.is_none(),
+                    cx,
+                )
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    this.leave(AfterAgent::Group(group), window, cx);
+                })),
             );
-            if self.expanded[i] || searching {
-                let mut children = col()
-                    .ml(px(13.))
-                    .pl_2()
-                    .border_l_1()
-                    .border_color(rgb(theme::border()));
-                for (j, child) in matching {
-                    children = children.child(
-                        row()
-                            .id(("subgroup", i * 10 + j))
-                            .focusable()
-                            .tab_stop(true)
-                            .h(px(30.))
-                            .px_2()
-                            .rounded(px(4.))
-                            .cursor_pointer()
-                            .hover(|s| s.bg(rgb(theme::sidebar())))
-                            .focus(|s| s.border_1().border_color(rgb(theme::sidebar_ring())))
-                            .when(
-                                self.group == i
-                                    && self.subgroup == Some(j)
-                                    && (!searching || self.search_page.is_some()),
-                                |d| d.bg(rgb(theme::sidebar())),
-                            )
-                            .child(text(*child, 12., theme::muted_foreground()))
+            for (child, title) in matching {
+                navigation = navigation.child(
+                    div().pl_4().child(
+                        navigation_button(
+                            format!("settings-{group}-{child}"),
+                            *title,
+                            self.group == group && self.subgroup == Some(child),
+                            cx,
+                        )
+                        .on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.leave(AfterAgent::Child(group, child), window, cx);
+                            },
+                        )),
+                    ),
+                );
+            }
+            for (id, title) in matching_agents {
+                let selected = self.agent_page.as_ref() == Some(&id);
+                navigation = navigation.child(
+                    div().pl_4().child(
+                        navigation_button(format!("settings-agent-{id}"), title, selected, cx)
                             .on_click(cx.listener(move |this, _, window, cx| {
-                                this.leave(AfterAgent::Child(i, j), window, cx);
+                                if this.agent_page.as_deref() != Some(&id) {
+                                    this.leave(AfterAgent::Agent(id.clone()), window, cx);
+                                }
                             })),
-                    );
-                }
-                if i == 3 {
-                    for (j, id, name) in matching_agents {
-                        let selected =
-                            self.agent_page.as_deref() == Some(id.as_str()) && self.group == 3;
-                        children = children.child(
-                            row()
-                                .id(("settings-agent", j))
-                                .focusable()
-                                .tab_stop(true)
-                                .cursor_pointer()
-                                .h(px(30.))
-                                .px_2()
-                                .rounded(px(4.))
-                                .hover(|s| s.bg(rgb(theme::sidebar())))
-                                .focus(|s| s.border_1().border_color(rgb(theme::sidebar_ring())))
-                                .when(selected, |d| d.bg(rgb(theme::sidebar())))
-                                .child(text(name, 12., theme::muted_foreground()))
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    if this.agent_page.as_deref() != Some(id.as_str()) {
-                                        this.leave(AfterAgent::Agent(id.clone()), window, cx);
-                                    }
-                                })),
-                        );
-                    }
-                }
-                navigation = navigation.child(children);
+                    ),
+                );
             }
         }
-        sidebar = sidebar
+        let sidebar = div()
+            .w_64()
+            .h_full()
+            .flex_shrink_0()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .p_3()
+            .bg(cx.theme().sidebar)
+            .border_r_1()
+            .border_color(cx.theme().sidebar_border)
+            .child(Input::new(&self.query).aria_label("Search settings"))
             .child(
                 div()
                     .flex_1()
                     .min_h_0()
-                    .child(self.nav_scroll.wrap("settings-navigation", navigation)),
-            )
-            .child(
-                text("Adeline preferences", 11., theme::muted_foreground())
-                    .w_full()
-                    .text_center()
-                    .pt_3()
-                    .flex_shrink_0()
-                    .border_t_1()
-                    .border_color(rgb(theme::border()))
-                    .whitespace_nowrap(),
+                    .overflow_y_scrollbar()
+                    .id("settings-navigation")
+                    .child(navigation),
             );
-        let mut content = col().p_8().gap_3().child(text(
-            if searching {
-                "Search results".to_string()
-            } else if self.group == 3 && self.agent_form.is_some() {
-                self.agent_form.as_ref().unwrap().inputs[0]
-                    .read(cx)
-                    .content
-                    .to_string()
-            } else {
-                self.subgroup
-                    .map_or(GROUPS[self.group], |i| SUBGROUPS[self.group][i])
-                    .to_string()
-            },
-            22.,
-            theme::foreground(),
-        ));
-        let show_page = |group, child| {
+        let show = |group, child| {
             if searching {
                 self.search_page
                     .is_none_or(|(g, c)| g == group && c.is_none_or(|c| c == child))
@@ -1781,128 +1589,138 @@ impl Render for SettingsWindow {
                 self.group == group && self.subgroup.is_none_or(|c| c == child)
             }
         };
+        let heading = if searching {
+            "Search results".to_string()
+        } else if self.group == 3 && self.agent_form.is_some() {
+            self.agent_form.as_ref().unwrap().inputs[0]
+                .read(cx)
+                .value()
+                .to_string()
+        } else {
+            self.subgroup
+                .map_or(GROUPS[self.group], |child| SUBGROUPS[self.group][child])
+                .to_string()
+        };
+        let mut content = div()
+            .w_full()
+            .p_6()
+            .flex()
+            .flex_col()
+            .gap_4()
+            .child(div().text_xl().child(heading));
         let mut found = false;
-        if let Ok(app) = self.owner.read(cx) {
-            if show_page(0, 0) && general_matches(0, &query) {
+        if let Some(owner) = self.owner.entity.upgrade() {
+            let app = owner.read(cx);
+            if show(0, 0) && general_matches(0, &query) {
                 found = true;
                 if searching || self.subgroup.is_none() {
-                    content = content.child(text("Features", 16., theme::foreground()).mt_4());
+                    content = content.child(div().text_lg().child("Features"));
                 }
-                content = content.child(text(
-                        "Choose which features are available in the main view. Chats is always enabled and cannot be disabled.",
-                        12., theme::muted_foreground(),
-                    ));
+                content = content.child(div().text_sm().text_color(cx.theme().muted_foreground)
+                    .child("Choose which features are available in the main view. Chats is always enabled."));
                 let features = config::current().general.features;
-                if matches_query(&query, &MACHINE_SELECTOR) {
+                if matches_query(
+                    &query,
+                    &["General", "Features", "Machine selector", "top bar"],
+                ) {
                     content = content.child(self.setting_row(
-                        0,
-                        (
-                            MACHINE_SELECTOR[2],
-                            MACHINE_SELECTOR[3],
-                            features.machine_selector,
-                            Action::ToggleMachineSelector,
-                        ),
+                        "machine-selector",
+                        "Machine selector",
+                        "Show the machine selector in the top bar.",
+                        features.machine_selector,
+                        Action::ToggleMachineSelector,
                         cx,
                     ));
                 }
-                for (index, (section, name)) in MODES.into_iter().enumerate().skip(1) {
+                for (section, name) in MODES.into_iter().skip(1) {
                     if matches_query(
                         &query,
                         &["General", "Features", name, "Enable mode in the main view"],
                     ) {
                         content = content.child(self.setting_row(
-                            index,
-                            (
-                                name,
-                                "Enable this mode in the main view.",
-                                features.enabled(section),
-                                Action::ToggleMode(section),
-                            ),
+                            format!("feature-{name}"),
+                            name,
+                            "Enable this mode in the main view.",
+                            features.enabled(section),
+                            Action::ToggleMode(section),
                             cx,
                         ));
                     }
                 }
             }
-            if show_page(0, 1) && general_matches(1, &query) {
+            if show(0, 1) && general_matches(1, &query) {
                 found = true;
                 content = content.child(self.appearance_settings(cx));
             }
-            let keymap = keymap_rows();
-            for (index, name, rows) in [(2, "Keymap", keymap.as_slice())] {
-                if !show_page(0, index) {
-                    continue;
-                }
-                let rows: Vec<_> = rows
-                    .iter()
-                    .filter(|(label, value)| {
-                        matches_query(&query, &["General", name, label, value])
-                    })
-                    .collect();
-                if rows.is_empty() {
-                    continue;
-                }
+            if show(0, 2) && general_matches(2, &query) {
                 found = true;
                 if searching || self.subgroup.is_none() {
-                    content = content.child(text(name, 16., theme::foreground()).mt_4());
+                    content = content.child(div().text_lg().child("Keymap"));
                 }
-                content = content.child(text(
-                    "Edit shortcuts in settings.yml, then restart Adeline. Enter and Space activation is built into controls.",
-                    12.,
-                    theme::muted_foreground(),
-                ));
-                for (label, value) in rows {
+                content = content.child(div().text_sm().text_color(cx.theme().muted_foreground)
+                    .child("Edit shortcuts in settings.yml, then restart Adeline. Enter and Space activate focused controls."));
+                for (label, value) in KEYMAP.into_iter().zip(keymap_rows()) {
+                    if !matches_query(&query, &["General", "Keymap", label, &value]) {
+                        continue;
+                    }
                     content = content.child(
-                        row()
-                            .py_5()
-                            .gap_6()
+                        div()
+                            .flex()
                             .justify_between()
+                            .gap_4()
+                            .py_3()
                             .border_b_1()
-                            .border_color(rgb(theme::border()))
-                            .child(text(*label, 14., theme::foreground()))
-                            .child(text(value.clone(), 12., theme::muted_foreground())),
+                            .border_color(cx.theme().border)
+                            .child(label)
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(value),
+                            ),
                     );
                 }
             }
-            if self.group == 1 || searching {
-                for (index, (section, name)) in MODES.into_iter().enumerate() {
-                    if !show_page(1, index) {
-                        continue;
+            if show(1, 0) {
+                let options: Vec<_> = app
+                    .mode_options(Section::Chats)
+                    .into_iter()
+                    .enumerate()
+                    .filter(|(_, option)| {
+                        matches_query(&query, &["Modes", "Chats", option.0, option.1])
+                    })
+                    .collect();
+                let retry_matches = matches_query(
+                    &query,
+                    &[
+                        "Modes",
+                        "Chats",
+                        "Automatic retry limit",
+                        "Additional attempts after a temporary failure",
+                    ],
+                );
+                if !options.is_empty() || retry_matches {
+                    found = true;
+                    if searching || self.subgroup.is_none() {
+                        content = content.child(div().text_lg().child("Chats"));
                     }
-                    let options: Vec<_> = app
-                        .mode_options(section)
-                        .into_iter()
-                        .enumerate()
-                        .filter(|(_, o)| matches_query(&query, &["Modes", name, o.0, o.1]))
-                        .collect();
-                    if !options.is_empty() {
-                        found = true;
-                        if searching || self.subgroup.is_none() {
-                            content =
-                                content.child(text(name, 16., theme::foreground()).mt_5().pb_2());
-                        }
-                        for (i, option) in options {
-                            content =
-                                content.child(self.setting_row(10 + index * 10 + i, option, cx));
-                        }
+                    for (index, (label, description, checked, action)) in options {
+                        content = content.child(self.setting_row(
+                            format!("chats-setting-{index}"),
+                            label,
+                            description,
+                            checked,
+                            action,
+                            cx,
+                        ));
                     }
-                    if section == Section::Chats
-                        && matches_query(
-                            &query,
-                            &[
-                                "Modes",
-                                "Chats",
-                                "Automatic retry limit",
-                                "Additional attempts after a temporary failure. Zero disables automatic retries.",
-                            ],
-                        )
-                    {
-                        found = true;
-                        content = content.child(self.retry_limit_row());
+                    if retry_matches {
+                        content = content.child(self.retry_limit_row(cx));
                     }
                 }
             }
         }
-        if show_licenses(self.group, searching) {
+        if self.group == 2 && !searching {
             for (index, (name, description, license)) in [
                 (
                     "Phosphor Icons",
@@ -1916,7 +1734,7 @@ impl Render for SettingsWindow {
                 ),
                 (
                     "GPUI",
-                    "Native interface toolkit and adapted text input · Apache-2.0 · Zed Industries",
+                    "Native interface toolkit · Apache-2.0 · Zed Industries",
                     include_str!("../assets/GPUI-LICENSE.txt"),
                 ),
                 (
@@ -1928,71 +1746,67 @@ impl Render for SettingsWindow {
             .into_iter()
             .enumerate()
             {
-                if self.subgroup.is_some_and(|i| i != index) {
+                if self.subgroup.is_some_and(|child| child != index) {
                     continue;
                 }
                 found = true;
                 content = content.child(
-                    col()
-                        .mt_5()
-                        .gap_3()
-                        .child(text(name, 17., theme::foreground()))
-                        .child(text(description, 12., theme::muted_foreground()))
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .child(div().text_lg().child(name))
                         .child(
-                            text(license, 12., theme::foreground())
-                                .line_height(config::text_pixels(20.))
-                                .p_4()
-                                .bg(rgb(theme::muted()))
-                                .rounded(px(3.)),
-                        ),
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(description),
+                        )
+                        .child(div().p_4().bg(cx.theme().muted).child(license)),
                 );
             }
         }
         if self.group == 3 || searching {
-            let matching_agent = self.owner.read(cx).is_ok_and(|app| {
-                app.agent_catalog.entries.iter().any(|entry| {
-                    matches_query(
-                        &query,
-                        &[
-                            "Agents",
-                            &entry.definition.name,
-                            &entry.definition.model,
-                            &entry.definition.command,
-                        ],
-                    )
+            let matching_agent = self
+                .owner
+                .entity
+                .read_with(cx, |app, _| {
+                    app.agent_catalog.entries.iter().any(|entry| {
+                        matches_query(
+                            &query,
+                            &[
+                                "Agents",
+                                &entry.definition.name,
+                                &entry.definition.model,
+                                &entry.definition.command,
+                            ],
+                        )
+                    })
                 })
-            });
+                .unwrap_or(false);
             if !searching || matching_agent || matches_query(&query, &["Agents"]) {
                 found = true;
                 if let Some(form) = &self.agent_form {
                     if self.group == 3 && (!searching || self.search_page.is_some()) {
-                        content = content.child(form.fields(cx));
+                        content = content.child(form.fields());
                         if form.external_changed {
-                            content = content.child(text(
-                                "This agent changed outside Adeline. Your edits are kept. Save to choose Reload or Overwrite.",
-                                12., theme::destructive()
-                            ));
+                            content = content.child(error("This agent changed outside Adeline. Your edits are kept. Save to choose Reload or Overwrite.", cx));
                         }
-                        if let Some(error) = &form.status {
-                            content = content.child(text(error.clone(), 12., theme::destructive()));
+                        if let Some(message) = &form.status {
+                            content = content.child(error(message.clone(), cx));
                         }
                         content = content.child(
-                            row()
+                            div()
                                 .w_full()
+                                .flex()
                                 .justify_between()
-                                .mt_5()
+                                .gap_2()
+                                .mt_4()
                                 .child(
-                                    row()
-                                        .id("settings-delete-agent")
-                                        .focusable()
-                                        .tab_stop(true)
-                                        .cursor_pointer()
-                                        .px_4()
-                                        .py_2()
-                                        .rounded(px(5.))
-                                        .bg(rgb(theme::secondary()))
-                                        .focus(|s| s.border_1().border_color(rgb(theme::ring())))
-                                        .child(text("Delete agent", 13., theme::destructive()))
+                                    Button::new("settings-delete-agent")
+                                        .danger()
+                                        .label("Delete agent…")
+                                        .disabled(self.pending)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             if let Some(id) = this.agent_page.clone() {
                                                 this.confirm_delete(id, window, cx);
@@ -2000,17 +1814,10 @@ impl Render for SettingsWindow {
                                         })),
                                 )
                                 .child(
-                                    row()
-                                        .id("settings-save-agent")
-                                        .focusable()
-                                        .tab_stop(true)
-                                        .cursor_pointer()
-                                        .px_5()
-                                        .py_2()
-                                        .rounded(px(5.))
-                                        .bg(rgb(theme::primary()))
-                                        .focus(|s| s.border_1().border_color(rgb(theme::ring())))
-                                        .child(text("Save", 13., theme::primary_foreground()))
+                                    Button::new("settings-save-agent")
+                                        .primary()
+                                        .label("Save")
+                                        .disabled(self.pending)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.save_agent(None, false, window, cx);
                                         })),
@@ -2018,110 +1825,65 @@ impl Render for SettingsWindow {
                         );
                     }
                 } else {
-                    content = content.child(text(
-                        "Select an agent in the sidebar to edit its settings.",
-                        13.,
-                        theme::muted_foreground(),
-                    ));
+                    content = content.child(
+                        div()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("Select an agent in the sidebar to edit its settings."),
+                    );
                 }
-                if let Some(error) = &self.agent_status {
-                    content = content.child(text(error.clone(), 12., theme::destructive()));
+                if let Some(message) = &self.agent_status {
+                    content = content.child(error(message.clone(), cx));
                 }
-                content = content.child(diagnostics(agent_diagnostics(self.owner, cx)));
+                content = content.child(diagnostics(self.owner.diagnostics(cx), cx));
             }
         }
         if !found {
             content = content.child(
-                text(
-                    "No settings found. Try another search.",
-                    13.,
-                    theme::muted_foreground(),
-                )
-                .mt_4(),
+                div()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("No settings found. Try another search."),
             );
         }
         if !searching
             && (self.group == 1 || (self.group == 0 && self.subgroup.is_none_or(|i| i == 0)))
         {
             content = content.child(
-                text(
-                    "Changes apply immediately and are saved to settings.yml.",
-                    12.,
-                    theme::muted_foreground(),
-                )
-                .mt_5(),
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Changes apply immediately and are saved to settings.yml."),
             );
         }
-        let shell = col()
+        let shell = div()
             .size_full()
-            .font_family(config::font())
-            .bg(rgb(theme::background()))
-            .text_color(rgb(theme::foreground()));
+            .flex()
+            .flex_col()
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground);
         #[cfg(target_os = "windows")]
         let shell = shell.child(titlebar::render("Settings · Adeline".into(), window));
-        // GPUI's focus handler prevents the default mouse-down behavior. Keep
-        // it below the native caption so Windows can handle dragging and buttons.
-        let content = row()
-            .flex_1()
-            .min_h_0()
-            .items_start()
-            .track_focus(&self.focus)
-            .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
-                if this.font_dropdown.is_some() {
-                    this.font_dropdown = None;
-                    window.focus(&this.focus, cx);
-                    cx.notify();
-                } else if this.theme_dropdown {
-                    this.theme_dropdown = false;
-                    cx.notify();
-                } else {
-                    this.leave(AfterAgent::CloseSettings, window, cx);
-                }
-            }))
-            .on_action(cx.listener(|_, _: &NextFocus, window, cx| window.focus_next(cx)))
-            .on_action(cx.listener(|_, _: &PreviousFocus, window, cx| window.focus_prev(cx)))
-            .child(sidebar)
+        shell
             .child(
                 div()
                     .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .child(self.scroll.wrap("settings-content", content)),
-            );
-        shell.child(content)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{general_matches, matches_query, show_licenses};
-    #[test]
-    fn navigation_matches_setting_descriptions_and_omits_unrelated_subgroups() {
-        assert!(general_matches(0, "whiteboard"));
-        assert!(general_matches(0, "machine selector"));
-        assert!(general_matches(0, "top bar"));
-        assert!(!general_matches(1, "model"));
-        assert!(!general_matches(2, "model"));
-        assert!(general_matches(2, "focus search"));
-        assert!(!general_matches(0, "phosphor"));
-    }
-    #[test]
-    fn licenses_are_excluded_even_when_search_starts_on_licenses() {
-        for group in 0..3 {
-            assert!(!show_licenses(group, true));
-        }
-        assert!(show_licenses(2, false));
-    }
-    #[test]
-    fn search_matches_words_across_group_label_and_description() {
-        assert!(matches_query(
-            "docs raw",
-            &["Modes", "Docs", "Show raw Markdown"]
-        ));
-        assert!(!matches_query(
-            "docs wrap",
-            &["Modes", "Services", "Wrap output lines"]
-        ));
-        assert!(matches_query("  ", &["General"]));
+                    .min_h_0()
+                    .flex()
+                    .items_stretch()
+                    .track_focus(&self.focus)
+                    .on_action(cx.listener(|this, _: &Cancel, window, cx| {
+                        this.leave(AfterAgent::CloseSettings, window, cx);
+                    }))
+                    .child(sidebar)
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .h_full()
+                            .overflow_y_scrollbar()
+                            .id("settings-content")
+                            .child(content),
+                    ),
+            )
+            .children(window_layers(window, cx).into_iter().flatten())
     }
 }
