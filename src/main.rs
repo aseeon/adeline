@@ -11,6 +11,7 @@ mod interaction;
 mod panes;
 mod prepared;
 mod project_ui;
+mod recency;
 mod runtime_ui;
 mod settings;
 mod storage;
@@ -125,6 +126,9 @@ enum Action {
     Chat(usize),
     NewChat,
     Filter(usize),
+    /// Show one agent's chats, or every agent's with `None`.
+    AgentFilter(Option<std::sync::Arc<str>>),
+    ClearChatFilters,
     ShowCompleted,
     ToggleSidePanel,
     ToggleLeftPanel,
@@ -217,6 +221,7 @@ struct Adeline {
     section: Section,
     selected: Option<usize>,
     filter: usize,
+    agent_filter: Option<std::sync::Arc<str>>,
     show_completed: bool,
     side_panel_open: [bool; 7],
     right_panel_width: f32,
@@ -272,8 +277,13 @@ impl Adeline {
         });
         let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Project name"));
         let subscriptions = vec![cx.subscribe(&query, |app, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
-                app.search_sidebar(cx);
+            match event {
+                InputEvent::Change => app.search_sidebar(cx),
+                // The search icon lights up while the field is focused.
+                InputEvent::Focus | InputEvent::Blur => {
+                    app.chat_list.update(cx, |_, cx| cx.notify());
+                }
+                InputEvent::PressEnter { .. } => {}
             }
         })];
         let owner = cx.weak_entity();
@@ -308,6 +318,7 @@ impl Adeline {
             section: Section::Chats,
             selected: None,
             filter: 0,
+            agent_filter: None,
             show_completed: true,
             side_panel_open: [false, false, false, false, true, true, true],
             expanded_event: None,
@@ -471,13 +482,6 @@ impl Adeline {
             .label(label)
             .small()
             .on_click(cx.listener(move |app, _, window, cx| app.act(action.clone(), window, cx)))
-    }
-    fn search_box(&self, _: &Context<Self>) -> Div {
-        div().w_full().child(
-            Input::new(&self.query)
-                .aria_label("Search chats")
-                .cleanable(true),
-        )
     }
     fn icon_button(
         &self,

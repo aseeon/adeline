@@ -155,9 +155,10 @@ Theme selection accepts YAML filenames within the themes folder. Path separators
 | `src/runtime_ui.rs` | Runtime events, conversation actions and persistence integration |
 | `src/project_ui.rs` | Project settings, validation and confirmed deletion |
 | `src/views.rs` | Chat header/activity, searchable command dialogs, project dialog hosting |
-| `src/chat.rs` | Chat entities, cache invalidation, measured virtual list state |
-| `src/chat_render.rs` | Kit chat cards, messages, Markdown and multiline composer |
-| `src/prepared.rs` | Shared sequences, search snapshots and request generations |
+| `src/chat.rs` | Chat entities, cache invalidation, virtual chat list with stacked section labels |
+| `src/chat_render.rs` | Chat rows, section labels, search and filter controls, messages, Markdown and multiline composer |
+| `src/prepared.rs` | Shared sequences, search snapshots, chat sections and filter counts, request generations |
+| `src/recency.rs` | Chat timestamps, time sections and short time labels |
 | `src/ui_metrics.rs` | Optional native render counters and large test fixtures |
 | `src/interaction.rs` | UI action routing and isolated demo actions |
 | `src/data.rs` | Workspace projections, demo data and filtering |

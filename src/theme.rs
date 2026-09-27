@@ -362,6 +362,8 @@ pub fn apply(cx: &mut App) {
         theme.table_active = c("sidebar_accent");
         theme.table_row_border = c("border");
         theme.tab_bar = c("sidebar");
+        // The track behind segmented tabs; the selected tab sits on the background.
+        theme.tab_bar_segmented = c("sidebar_accent");
         theme.tab = c("secondary");
         theme.tab_active = c("sidebar_accent");
         theme.tab_active_foreground = c("sidebar_accent_foreground");

@@ -81,7 +81,7 @@ impl Render for ControlPane {
     }
 }
 impl Adeline {
-    pub(super) fn mode_sidebar_header(&self, cx: &Context<Self>) -> Div {
+    pub(super) fn mode_sidebar_header(&self, search: impl IntoElement, cx: &Context<Self>) -> Div {
         col()
             .p_3()
             .gap_3()
@@ -97,7 +97,7 @@ impl Adeline {
                         cx,
                     )),
             )
-            .child(self.search_box(cx))
+            .child(search)
     }
     pub(super) fn left_panel_is_open(&self) -> bool {
         self.section == Section::Chats && self.left_panel_open[0]

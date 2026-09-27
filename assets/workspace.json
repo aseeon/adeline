@@ -1151,6 +1151,23 @@
           }
         ],
         "threadId": "relay-retry"
+      },
+      {
+        "activity": [
+          {
+            "running": false,
+            "detail": "Found 214 sessions in the old workspace folder.",
+            "kind": "files",
+            "title": "Old sessions located"
+          },
+          {
+            "running": true,
+            "detail": "Mapping titles, agents and message history.\nImported 88 of 214 sessions...",
+            "kind": "command",
+            "title": "Importing sessions"
+          }
+        ],
+        "threadId": "demo-adeline-running-2"
       }
     ]
   },
@@ -1164,6 +1181,16 @@
           "Restore layout only"
         ],
         "body": "Choose what the next session should recover alongside the selected project and panel layout.",
+        "resolved": false
+      },
+      {
+        "threadId": "demo-adeline-attention-2",
+        "title": "Choose the agent for new chats",
+        "options": [
+          "The last agent used",
+          "The project's default agent"
+        ],
+        "body": "New chats will start with this agent until you pick another one.",
         "resolved": false
       }
     ],
@@ -1194,309 +1221,89 @@
         "messages": [
           {
             "role": "user",
-            "text": "Please help with this task in ade-project: Align the project picker rows.",
+            "text": "Please help with this task in ade-project: Sketch the first sidebar layout.",
             "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
+            "createdAt": "2026-08-04T11:58:00Z"
           },
           {
             "role": "assistant",
-            "text": "Aligned project names, status marks, and counters on a shared baseline.",
+            "text": "The sidebar lists chats with their agent, status and last activity.",
             "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
+            "createdAt": "2026-08-04T12:00:00Z"
           }
         ],
         "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
-        "provider": "codex",
-        "status": "completed",
-        "title": "Align the project picker rows",
-        "id": "demo-adeline-history-1"
-      },
-      {
-        "messages": [
-          {
-            "role": "user",
-            "text": "Please help with this task in ade-project: Keep search text when changing filters.",
-            "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
-          },
-          {
-            "role": "assistant",
-            "text": "Kept the search query in place while switching between All and Attention.",
-            "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
-          }
-        ],
-        "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
+        "createdAt": "2026-08-04T11:56:00Z",
         "provider": "claude",
         "status": "completed",
-        "title": "Keep search text when changing filters",
-        "id": "demo-adeline-history-2"
+        "title": "Sketch the first sidebar layout",
+        "id": "demo-adeline-earlier-9"
       },
       {
         "messages": [
           {
             "role": "user",
-            "text": "Please help with this task in ade-project: Review the empty document state.",
+            "text": "Please help with this task in ade-project: Choose a font for code blocks.",
             "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
+            "createdAt": "2026-08-16T11:58:00Z"
           },
           {
             "role": "assistant",
-            "text": "Added a clear prompt to create or select a document when the list is empty.",
+            "text": "Code blocks follow the code font setting, independent of the interface font.",
             "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
+            "createdAt": "2026-08-16T12:00:00Z"
           }
         ],
         "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
+        "createdAt": "2026-08-16T11:56:00Z",
         "provider": "codex",
         "status": "completed",
-        "title": "Review the empty document state",
-        "id": "demo-adeline-history-3"
+        "title": "Choose a font for code blocks",
+        "id": "demo-adeline-earlier-8"
       },
       {
         "messages": [
           {
             "role": "user",
-            "text": "Please help with this task in ade-project: Improve keyboard navigation in the sidebar.",
+            "text": "Please help with this task in ade-project: Name chats from their first message.",
             "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
+            "createdAt": "2026-08-24T11:58:00Z"
           },
           {
             "role": "assistant",
-            "text": "Ordered the sidebar controls so Tab moves from search to filters and then the list.",
+            "text": "New chats take a short title from the first message until you rename them.",
             "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
+            "createdAt": "2026-08-24T12:00:00Z"
           }
         ],
         "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
+        "createdAt": "2026-08-24T11:56:00Z",
         "provider": "claude",
         "status": "completed",
-        "title": "Improve keyboard navigation in the sidebar",
-        "id": "demo-adeline-history-4"
+        "title": "Name chats from their first message",
+        "id": "demo-adeline-earlier-7"
       },
       {
         "messages": [
           {
             "role": "user",
-            "text": "Please help with this task in ade-project: Remember the width of the activity panel.",
+            "text": "Please help with this task in ade-project: Handle agents that disconnect mid-reply.",
             "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
+            "createdAt": "2026-08-30T11:58:00Z"
           },
           {
             "role": "assistant",
-            "text": "Saved the resized panel width and restored it when the panel opens again.",
+            "text": "A dropped agent now marks the reply as interrupted and offers to resume.",
             "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
+            "createdAt": "2026-08-30T12:00:00Z"
           }
         ],
         "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
+        "createdAt": "2026-08-30T11:56:00Z",
         "provider": "codex",
         "status": "completed",
-        "title": "Remember the width of the activity panel",
-        "id": "demo-adeline-history-5"
-      },
-      {
-        "messages": [
-          {
-            "role": "user",
-            "text": "Please help with this task in ade-project: Keep long project names readable.",
-            "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
-          },
-          {
-            "role": "assistant",
-            "text": "Truncated long names without hiding their project markers or counters.",
-            "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
-          }
-        ],
-        "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
-        "provider": "claude",
-        "status": "completed",
-        "title": "Keep long project names readable",
-        "id": "demo-adeline-history-6"
-      },
-      {
-        "messages": [
-          {
-            "role": "user",
-            "text": "Please help with this task in ade-project: Check the theme picker with dark palettes.",
-            "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
-          },
-          {
-            "role": "assistant",
-            "text": "Reviewed the picker labels and color swatches against the bundled dark palettes.",
-            "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
-          }
-        ],
-        "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
-        "provider": "codex",
-        "status": "completed",
-        "title": "Check the theme picker with dark palettes",
-        "id": "demo-adeline-history-7"
-      },
-      {
-        "messages": [
-          {
-            "role": "user",
-            "text": "Please help with this task in ade-project: Add a clear action to chat search.",
-            "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
-          },
-          {
-            "role": "assistant",
-            "text": "Added a clear-search action that returns focus to the search field.",
-            "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
-          }
-        ],
-        "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
-        "provider": "claude",
-        "status": "completed",
-        "title": "Add a clear action to chat search",
-        "id": "demo-adeline-history-8"
-      },
-      {
-        "messages": [
-          {
-            "role": "user",
-            "text": "Please help with this task in ade-project: Review document list spacing.",
-            "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
-          },
-          {
-            "role": "assistant",
-            "text": "Aligned document titles and metadata while allowing longer names to wrap.",
-            "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
-          }
-        ],
-        "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
-        "provider": "codex",
-        "status": "completed",
-        "title": "Review document list spacing",
-        "id": "demo-adeline-history-9"
-      },
-      {
-        "messages": [
-          {
-            "role": "user",
-            "text": "Please help with this task in ade-project: Keep the composer visible when resizing.",
-            "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
-          },
-          {
-            "role": "assistant",
-            "text": "Reserved space for the composer controls at narrow window widths.",
-            "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
-          }
-        ],
-        "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
-        "provider": "claude",
-        "status": "completed",
-        "title": "Keep the composer visible when resizing",
-        "id": "demo-adeline-history-10"
-      },
-      {
-        "messages": [
-          {
-            "role": "user",
-            "text": "Please help with this task in ade-project: Make workflow descriptions easier to scan.",
-            "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
-          },
-          {
-            "role": "assistant",
-            "text": "Shortened the descriptions and kept their opening lines visible in each card.",
-            "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
-          }
-        ],
-        "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
-        "provider": "codex",
-        "status": "completed",
-        "title": "Make workflow descriptions easier to scan",
-        "id": "demo-adeline-history-11"
-      },
-      {
-        "messages": [
-          {
-            "role": "user",
-            "text": "Please help with this task in ade-project: Check notification counter alignment.",
-            "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
-          },
-          {
-            "role": "assistant",
-            "text": "Aligned the counters above their icons without changing button widths.",
-            "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
-          }
-        ],
-        "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
-        "provider": "claude",
-        "status": "completed",
-        "title": "Check notification counter alignment",
-        "id": "demo-adeline-history-12"
-      },
-      {
-        "messages": [
-          {
-            "role": "user",
-            "text": "Please help with this task in ade-project: Review the service log empty state.",
-            "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
-          },
-          {
-            "role": "assistant",
-            "text": "Added a waiting message before the first service output arrives.",
-            "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
-          }
-        ],
-        "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
-        "provider": "codex",
-        "status": "completed",
-        "title": "Review the service log empty state",
-        "id": "demo-adeline-history-13"
-      },
-      {
-        "messages": [
-          {
-            "role": "user",
-            "text": "Please help with this task in ade-project: Preserve scroll position after selecting a chat.",
-            "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
-          },
-          {
-            "role": "assistant",
-            "text": "Kept the sidebar anchored while opening a conversation further down the list.",
-            "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
-          }
-        ],
-        "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
-        "provider": "claude",
-        "status": "completed",
-        "title": "Preserve scroll position after selecting a chat",
-        "id": "demo-adeline-history-14"
+        "title": "Handle agents that disconnect mid-reply",
+        "id": "demo-adeline-earlier-6"
       },
       {
         "messages": [
@@ -1504,17 +1311,17 @@
             "role": "user",
             "text": "Please help with this task in ade-project: Prepare the next desktop review.",
             "read": true,
-            "createdAt": "2026-09-24T10:00:00Z"
+            "createdAt": "2026-09-02T11:58:00Z"
           },
           {
             "role": "assistant",
             "text": "Collected the recent interface changes and a short list of interaction checks.",
             "read": true,
-            "createdAt": "2026-09-24T10:02:00Z"
+            "createdAt": "2026-09-02T12:00:00Z"
           }
         ],
         "activity": [],
-        "createdAt": "2026-09-24T10:00:00Z",
+        "createdAt": "2026-09-02T11:56:00Z",
         "provider": "codex",
         "status": "completed",
         "title": "Prepare the next desktop review",
@@ -1524,79 +1331,651 @@
         "messages": [
           {
             "role": "user",
-            "text": "When I switch from a chat to a document using the keyboard, I lose track of focus. Can you make the next action obvious?",
+            "text": "Please help with this task in ade-project: Reduce memory use of image previews.",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-04T11:58:00Z"
           },
           {
             "role": "assistant",
-            "text": "I traced focus through the project tabs, chat list, and document toolbar. Switching views now focuses the selected item, and every keyboard target has a visible outline.",
+            "text": "Image previews are decoded at their displayed size instead of full resolution.",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
-          },
-          {
-            "role": "user",
-            "text": "Does Escape return me to the chat I came from?",
-            "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
-          },
-          {
-            "role": "assistant",
-            "text": "Yes. Escape closes the document menu first, then returns focus to the chat list. I checked the sequence without using a mouse.",
-            "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-04T12:00:00Z"
           }
         ],
         "activity": [],
-        "createdAt": "2026-09-25T10:00:00Z",
+        "createdAt": "2026-09-04T11:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Reduce memory use of image previews",
+        "id": "demo-adeline-earlier-5"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Keep the selection when filtering chats.",
+            "read": true,
+            "createdAt": "2026-09-08T11:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "The selected chat stays selected when a filter hides and later shows it again.",
+            "read": true,
+            "createdAt": "2026-09-08T12:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-08T11:56:00Z",
         "provider": "codex",
         "status": "completed",
-        "title": "Keep keyboard focus visible when moving between chats and documents",
-        "id": "adeline-focus"
+        "title": "Keep the selection when filtering chats",
+        "id": "demo-adeline-earlier-4"
       },
       {
         "messages": [
           {
             "role": "user",
-            "text": "Search feels slow when a conversation includes a large build log. Keep typing responsive while matching the entire history.",
+            "text": "Please help with this task in ade-project: Preserve scroll position after selecting a chat.",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-11T11:58:00Z"
           },
           {
             "role": "assistant",
-            "text": "I found that each keystroke rebuilds a combined text buffer. I am moving that work to the message update path and checking that matches spanning two messages still work.",
+            "text": "Kept the sidebar anchored while opening a conversation further down the list.",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-11T12:00:00Z"
           }
         ],
         "activity": [],
-        "createdAt": "2026-09-25T10:00:00Z",
+        "createdAt": "2026-09-11T11:56:00Z",
         "provider": "claude",
-        "status": "working",
-        "title": "Search long conversations without pausing the interface",
-        "id": "adeline-search"
+        "status": "completed",
+        "title": "Preserve scroll position after selecting a chat",
+        "id": "demo-adeline-history-14"
       },
       {
         "messages": [
           {
             "role": "user",
-            "text": "Please restore my workspace after I close the app. I want to pick up where I stopped.",
+            "text": "Please help with this task in ade-project: Add export to Markdown.",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-12T11:58:00Z"
           },
           {
             "role": "assistant",
-            "text": "I can restore the selected project, open document, and panel sizes. Should unsent chat drafts also return? That choice affects what we save locally.",
+            "text": "Export writes the chat to a Markdown file with tool output in collapsed sections.",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-12T12:00:00Z"
           }
         ],
         "activity": [],
-        "createdAt": "2026-09-25T10:00:00Z",
+        "createdAt": "2026-09-12T11:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Add export to Markdown",
+        "id": "demo-adeline-earlier-3"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Make links in replies open in the browser.",
+            "read": true,
+            "createdAt": "2026-09-14T11:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Links in replies open in the default browser; local paths open in the file manager.",
+            "read": true,
+            "createdAt": "2026-09-14T12:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-14T11:56:00Z",
         "provider": "codex",
-        "status": "blocked",
-        "title": "Choose what Adeline should restore when a session reopens",
-        "id": "adeline-session"
+        "status": "completed",
+        "title": "Make links in replies open in the browser",
+        "id": "demo-adeline-earlier-2"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Review the service log empty state.",
+            "read": true,
+            "createdAt": "2026-09-16T11:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Added a waiting message before the first service output arrives.",
+            "read": true,
+            "createdAt": "2026-09-16T12:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-16T11:56:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Review the service log empty state",
+        "id": "demo-adeline-history-13"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Speed up opening very long chats.",
+            "read": true,
+            "createdAt": "2026-09-17T11:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Long chats now open at the latest messages and load older ones while you scroll.",
+            "read": true,
+            "createdAt": "2026-09-17T12:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-17T11:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Speed up opening very long chats",
+        "id": "demo-adeline-earlier-1"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Explain why a model is unavailable.",
+            "read": true,
+            "createdAt": "2026-09-19T08:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Unavailable models now say whether the key, plan or region blocks them.",
+            "read": true,
+            "createdAt": "2026-09-19T09:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-19T08:56:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Explain why a model is unavailable",
+        "id": "demo-adeline-week-6"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Check notification counter alignment.",
+            "read": true,
+            "createdAt": "2026-09-19T11:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Aligned the counters above their icons without changing button widths.",
+            "read": true,
+            "createdAt": "2026-09-19T12:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-19T11:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Check notification counter alignment",
+        "id": "demo-adeline-history-12"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Make workflow descriptions easier to scan.",
+            "read": true,
+            "createdAt": "2026-09-20T05:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Shortened the descriptions and kept their opening lines visible in each card.",
+            "read": true,
+            "createdAt": "2026-09-20T06:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-20T05:56:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Make workflow descriptions easier to scan",
+        "id": "demo-adeline-history-11"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Keep the composer visible when resizing.",
+            "read": true,
+            "createdAt": "2026-09-20T11:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Reserved space for the composer controls at narrow window widths.",
+            "read": true,
+            "createdAt": "2026-09-20T12:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-20T11:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Keep the composer visible when resizing",
+        "id": "demo-adeline-history-10"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Stop notifications for chats you're viewing.",
+            "read": true,
+            "createdAt": "2026-09-21T06:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Notifications are skipped for the chat that is open and focused.",
+            "read": true,
+            "createdAt": "2026-09-21T07:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-21T06:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Stop notifications for chats you're viewing",
+        "id": "demo-adeline-week-5"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Review document list spacing.",
+            "read": true,
+            "createdAt": "2026-09-21T09:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Aligned document titles and metadata while allowing longer names to wrap.",
+            "read": true,
+            "createdAt": "2026-09-21T10:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-21T09:56:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Review document list spacing",
+        "id": "demo-adeline-history-9"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Show which files a chat has changed.",
+            "read": true,
+            "createdAt": "2026-09-22T07:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "The activity panel lists changed files with their added and removed lines.",
+            "read": true,
+            "createdAt": "2026-09-22T08:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-22T07:56:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Show which files a chat has changed",
+        "id": "demo-adeline-week-4"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Add a clear action to chat search.",
+            "read": true,
+            "createdAt": "2026-09-22T11:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Added a clear-search action that returns focus to the search field.",
+            "read": true,
+            "createdAt": "2026-09-22T12:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-22T11:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Add a clear action to chat search",
+        "id": "demo-adeline-history-8"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Check the theme picker with dark palettes.",
+            "read": true,
+            "createdAt": "2026-09-23T06:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Reviewed the picker labels and color swatches against the bundled dark palettes.",
+            "read": true,
+            "createdAt": "2026-09-23T07:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-23T06:56:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Check the theme picker with dark palettes",
+        "id": "demo-adeline-history-7"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Retry failed uploads without losing the message.",
+            "read": true,
+            "createdAt": "2026-09-23T08:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "A failed upload keeps the message and shows a Retry action beside the file.",
+            "read": false,
+            "createdAt": "2026-09-23T09:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-23T08:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Retry failed uploads without losing the message",
+        "id": "demo-adeline-week-3"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Keep long project names readable.",
+            "read": true,
+            "createdAt": "2026-09-23T11:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Truncated long names without hiding their project markers or counters.",
+            "read": true,
+            "createdAt": "2026-09-23T12:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-23T11:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Keep long project names readable",
+        "id": "demo-adeline-history-6"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Keep code blocks readable in the light theme.",
+            "read": true,
+            "createdAt": "2026-09-24T05:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Code blocks now use the editor background and a darker comment color in light themes.",
+            "read": true,
+            "createdAt": "2026-09-24T06:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T05:56:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Keep code blocks readable in the light theme",
+        "id": "demo-adeline-week-2"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Remember the width of the activity panel.",
+            "read": true,
+            "createdAt": "2026-09-24T07:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Saved the resized panel width and restored it when the panel opens again.",
+            "read": true,
+            "createdAt": "2026-09-24T08:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T07:56:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Remember the width of the activity panel",
+        "id": "demo-adeline-history-5"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Add Ctrl+K to jump between chats.",
+            "read": true,
+            "createdAt": "2026-09-24T09:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Ctrl+K opens a chat switcher that searches titles as you type.",
+            "read": true,
+            "createdAt": "2026-09-24T10:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T09:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Add Ctrl+K to jump between chats",
+        "id": "demo-adeline-week-1"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Improve keyboard navigation in the sidebar.",
+            "read": true,
+            "createdAt": "2026-09-24T10:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Ordered the sidebar controls so Tab moves from search to filters and then the list.",
+            "read": true,
+            "createdAt": "2026-09-24T11:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-24T10:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Improve keyboard navigation in the sidebar",
+        "id": "demo-adeline-history-4"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Keep draft messages when switching chats.",
+            "read": true,
+            "createdAt": "2026-09-25T02:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Unsent text is kept per chat and restored when you return to it.",
+            "read": false,
+            "createdAt": "2026-09-25T03:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T02:56:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Keep draft messages when switching chats",
+        "id": "demo-adeline-today-3"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Warn before closing a window with a running chat.",
+            "read": true,
+            "createdAt": "2026-09-25T03:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Closing a window with a running chat now asks to stop it or keep it running.",
+            "read": true,
+            "createdAt": "2026-09-25T04:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T03:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Warn before closing a window with a running chat",
+        "id": "demo-adeline-today-2"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Review the empty document state.",
+            "read": true,
+            "createdAt": "2026-09-25T04:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Added a clear prompt to create or select a document when the list is empty.",
+            "read": true,
+            "createdAt": "2026-09-25T05:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T04:56:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Review the empty document state",
+        "id": "demo-adeline-history-3"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Collapse long tool output by default.",
+            "read": true,
+            "createdAt": "2026-09-25T05:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Tool output longer than 20 lines now starts collapsed with a line count.",
+            "read": false,
+            "createdAt": "2026-09-25T06:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T05:56:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Collapse long tool output by default",
+        "id": "demo-adeline-today-1"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Keep search text when changing filters.",
+            "read": true,
+            "createdAt": "2026-09-25T06:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Kept the search query in place while switching between All and Attention.",
+            "read": true,
+            "createdAt": "2026-09-25T07:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T06:56:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Keep search text when changing filters",
+        "id": "demo-adeline-history-2"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Align the project picker rows.",
+            "read": true,
+            "createdAt": "2026-09-25T07:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Aligned project names, status marks, and counters on a shared baseline.",
+            "read": true,
+            "createdAt": "2026-09-25T08:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T07:56:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Align the project picker rows",
+        "id": "demo-adeline-history-1"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "At a narrow window width the agent selector pushes the send button out of reach. Please simplify that row.",
+            "read": true,
+            "createdAt": "2026-09-25T08:54:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "The agent name now truncates before the controls shrink. The send button stays visible, and the composer grows vertically when the draft wraps.",
+            "read": true,
+            "createdAt": "2026-09-25T08:56:00Z"
+          },
+          {
+            "role": "user",
+            "text": "Keep the model name available somewhere.",
+            "read": true,
+            "createdAt": "2026-09-25T08:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "The full agent and model names remain in the selector menu. I checked short drafts, pasted paragraphs, and a long model name.",
+            "read": true,
+            "createdAt": "2026-09-25T09:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T08:52:00Z",
+        "provider": "codex",
+        "status": "completed",
+        "title": "Keep the composer usable in a narrow desktop window",
+        "id": "adeline-layout"
       },
       {
         "messages": [
@@ -1604,19 +1983,19 @@
             "role": "user",
             "text": "If I tick two checklist items quickly, the second change sometimes disappears from the preview. Please check how edits are applied.",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-25T09:54:00Z"
           },
           {
             "role": "assistant",
             "text": "An older parse result could replace a newer preview. Each edit now carries a revision, and the preview accepts results only for its current revision.",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-25T09:56:00Z"
           },
           {
             "role": "user",
             "text": "Can you cover edits that add a new paragraph too?",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-25T09:58:00Z"
           },
           {
             "role": "assistant",
@@ -1626,7 +2005,7 @@
           }
         ],
         "activity": [],
-        "createdAt": "2026-09-25T10:00:00Z",
+        "createdAt": "2026-09-25T09:52:00Z",
         "provider": "claude",
         "status": "completed",
         "title": "Make document edits safe when the preview is still updating",
@@ -1636,35 +2015,123 @@
         "messages": [
           {
             "role": "user",
-            "text": "At a narrow window width the agent selector pushes the send button out of reach. Please simplify that row.",
+            "text": "When I switch from a chat to a document using the keyboard, I lose track of focus. Can you make the next action obvious?",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-25T11:14:00Z"
           },
           {
             "role": "assistant",
-            "text": "The agent name now truncates before the controls shrink. The send button stays visible, and the composer grows vertically when the draft wraps.",
+            "text": "I traced focus through the project tabs, chat list, and document toolbar. Switching views now focuses the selected item, and every keyboard target has a visible outline.",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-25T11:16:00Z"
           },
           {
             "role": "user",
-            "text": "Keep the model name available somewhere.",
+            "text": "Does Escape return me to the chat I came from?",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-25T11:18:00Z"
           },
           {
             "role": "assistant",
-            "text": "The full agent and model names remain in the selector menu. I checked short drafts, pasted paragraphs, and a long model name.",
+            "text": "Yes. Escape closes the document menu first, then returns focus to the chat list. I checked the sequence without using a mouse.",
             "read": true,
-            "createdAt": "2026-09-25T10:00:00Z"
+            "createdAt": "2026-09-25T11:20:00Z"
           }
         ],
         "activity": [],
-        "createdAt": "2026-09-25T10:00:00Z",
+        "createdAt": "2026-09-25T11:12:00Z",
         "provider": "codex",
         "status": "completed",
-        "title": "Keep the composer usable in a narrow desktop window",
-        "id": "adeline-layout"
+        "title": "Keep keyboard focus visible when moving between chats and documents",
+        "id": "adeline-focus"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Pick a default agent for new chats.",
+            "read": true,
+            "createdAt": "2026-09-25T11:23:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Should new chats start with the last agent you used, or always with the project's default?",
+            "read": false,
+            "createdAt": "2026-09-25T11:25:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T11:21:00Z",
+        "provider": "codex",
+        "status": "blocked",
+        "title": "Pick a default agent for new chats",
+        "id": "demo-adeline-attention-2"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please restore my workspace after I close the app. I want to pick up where I stopped.",
+            "read": true,
+            "createdAt": "2026-09-25T11:46:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "I can restore the selected project, open document, and panel sizes. Should unsent chat drafts also return? That choice affects what we save locally.",
+            "read": true,
+            "createdAt": "2026-09-25T11:48:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T11:44:00Z",
+        "provider": "codex",
+        "status": "blocked",
+        "title": "Choose what Adeline should restore when a session reopens",
+        "id": "adeline-session"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Please help with this task in ade-project: Import sessions from the old workspace format.",
+            "read": true,
+            "createdAt": "2026-09-25T11:55:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "Reading the old session files and mapping their fields.",
+            "read": true,
+            "createdAt": "2026-09-25T11:57:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T11:53:00Z",
+        "provider": "claude",
+        "status": "completed",
+        "title": "Import sessions from the old workspace format",
+        "id": "demo-adeline-running-2"
+      },
+      {
+        "messages": [
+          {
+            "role": "user",
+            "text": "Search feels slow when a conversation includes a large build log. Keep typing responsive while matching the entire history.",
+            "read": true,
+            "createdAt": "2026-09-25T11:58:00Z"
+          },
+          {
+            "role": "assistant",
+            "text": "I found that each keystroke rebuilds a combined text buffer. I am moving that work to the message update path and checking that matches spanning two messages still work.",
+            "read": true,
+            "createdAt": "2026-09-25T12:00:00Z"
+          }
+        ],
+        "activity": [],
+        "createdAt": "2026-09-25T11:56:00Z",
+        "provider": "claude",
+        "status": "working",
+        "title": "Search long conversations without pausing the interface",
+        "id": "adeline-search"
       }
     ],
     "recipes": [

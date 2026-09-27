@@ -8,15 +8,17 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | Asset | Phosphor source |
 | --- | --- |
 | `archive.svg` | `archive.svg` |
-| `arrow.svg` | `arrow-right.svg` |
 | `arrow-counter-clockwise.svg` | `arrow-counter-clockwise.svg` |
+| `arrow.svg` | `arrow-right.svg` |
 | `at.svg` | `at.svg` |
 | `caret-right.svg` | `caret-right.svg` |
-| `chat.svg` | `chat-circle.svg` |
+| `chat-fill.svg` | `chat-circle-fill.svg` |
 | `chat-illustration.svg` | `chats-circle.svg` |
-| `check.svg` | `check.svg` |
+| `chat.svg` | `chat-circle.svg` |
 | `check-square.svg` | `check-square.svg` |
+| `check.svg` | `check.svg` |
 | `chevron.svg` | `caret-down.svg` |
+| `clock.svg` | `clock.svg` |
 | `close.svg` | `x.svg` |
 | `code.svg` | `code.svg` |
 | `codex.svg` | `code.svg` |
@@ -38,6 +40,7 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `play.svg` | `play.svg` |
 | `plus.svg` | `plus.svg` |
 | `quotes.svg` | `quotes.svg` |
+| `robot.svg` | `robot.svg` |
 | `search.svg` | `magnifying-glass.svg` |
 | `send.svg` | `arrow-up.svg` |
 | `service.svg` | `stack.svg` |

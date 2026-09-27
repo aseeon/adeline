@@ -37,6 +37,139 @@ pub struct SearchRecord {
     pub blocked: bool,
     pub working: bool,
     pub unread: bool,
+    /// The chat's agent, as stored on the thread.
+    pub agent: Arc<str>,
+    /// Last activity in seconds since the epoch; 0 when unknown.
+    pub activity: i64,
+}
+
+/// Sections of the chat list, in display order.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Group {
+    /// Chats that need input, then chats that are running.
+    Current,
+    Today,
+    LastWeek,
+    Earlier,
+}
+
+impl Group {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Current => "Current",
+            Self::Today => "Today",
+            Self::LastWeek => "Last 7 days",
+            Self::Earlier => "Earlier",
+        }
+    }
+}
+
+/// What the chat list shows. `filter` is 0 for all chats, 1 for chats that need
+/// input and 3 for unread chats.
+#[derive(Clone, Default, PartialEq)]
+pub struct Criteria {
+    pub query: String,
+    pub filter: usize,
+    pub completed: bool,
+    pub agent: Option<Arc<str>>,
+}
+
+#[derive(Clone, Default)]
+pub struct Outcome {
+    /// Non-empty sections with their record indexes, most recent first.
+    pub groups: Vec<(Group, Vec<usize>)>,
+    /// Chats each tab would show (all, needing input, unread) for this search and agent.
+    pub scopes: [usize; 3],
+    /// Chats each agent would show for this search and tab, ordered by agent.
+    pub agents: Vec<(Arc<str>, usize)>,
+}
+
+impl Outcome {
+    pub fn matches(&self) -> usize {
+        self.groups.iter().map(|(_, rows)| rows.len()).sum()
+    }
+}
+
+/// One pass over the catalog: the visible sections plus the counts the tabs and
+/// agent menu need, so the controls always describe what choosing them would show.
+pub fn search<'a>(
+    records: impl IntoIterator<Item = &'a SearchRecord>,
+    criteria: &Criteria,
+    now: i64,
+) -> Outcome {
+    let mut outcome = Outcome::default();
+    let mut needing_input = Vec::new();
+    let mut running = Vec::new();
+    let mut periods: [Vec<(i64, usize)>; 3] = Default::default();
+    for (index, record) in records.into_iter().enumerate() {
+        if (!criteria.completed && record.completed)
+            || !(criteria.query.is_empty() || record.text.contains(&criteria.query))
+        {
+            continue;
+        }
+        let agent_matches = criteria
+            .agent
+            .as_ref()
+            .is_none_or(|agent| *agent == record.agent);
+        if agent_matches {
+            outcome.scopes[0] += 1;
+            outcome.scopes[1] += usize::from(record.blocked);
+            outcome.scopes[2] += usize::from(record.unread);
+        }
+        if !record.matches_filter(criteria.filter, criteria.completed) {
+            continue;
+        }
+        match outcome
+            .agents
+            .binary_search_by(|(agent, _)| agent.as_ref().cmp(&record.agent))
+        {
+            Ok(slot) => outcome.agents[slot].1 += 1,
+            Err(slot) => outcome.agents.insert(slot, (record.agent.clone(), 1)),
+        }
+        if !agent_matches {
+            continue;
+        }
+        // A chat without a readable time was just created on this machine.
+        let activity = if record.activity == 0 {
+            now
+        } else {
+            record.activity
+        };
+        if record.blocked {
+            needing_input.push((activity, index));
+        } else if record.working {
+            running.push((activity, index));
+        } else {
+            let slot = match crate::recency::period(activity, now) {
+                crate::recency::Period::Today => 0,
+                crate::recency::Period::LastWeek => 1,
+                crate::recency::Period::Earlier => 2,
+            };
+            periods[slot].push((activity, index));
+        }
+    }
+    let newest_first = |rows: &mut Vec<(i64, usize)>| {
+        rows.sort_by_key(|&(activity, index)| (std::cmp::Reverse(activity), index));
+    };
+    newest_first(&mut needing_input);
+    newest_first(&mut running);
+    let indexes = |rows: Vec<(i64, usize)>| rows.into_iter().map(|(_, index)| index);
+    let mut groups = vec![(
+        Group::Current,
+        indexes(needing_input).chain(indexes(running)).collect(),
+    )];
+    for (group, mut rows) in [Group::Today, Group::LastWeek, Group::Earlier]
+        .into_iter()
+        .zip(periods)
+    {
+        newest_first(&mut rows);
+        groups.push((group, indexes(rows).collect()));
+    }
+    outcome.groups = groups
+        .into_iter()
+        .filter(|(_, rows): &(Group, Vec<usize>)| !rows.is_empty())
+        .collect();
+    outcome
 }
 
 impl SearchRecord {
@@ -48,9 +181,6 @@ impl SearchRecord {
                 3 => self.unread,
                 _ => true,
             }
-    }
-    pub fn matches(&self, query: &str, filter: usize, completed: bool) -> bool {
-        self.matches_filter(filter, completed) && (query.is_empty() || self.text.contains(query))
     }
 }
 
@@ -201,23 +331,39 @@ impl SearchText {
     }
 }
 
-pub fn search_records<'a>(
-    records: impl IntoIterator<Item = &'a SearchRecord>,
-    query: &str,
-    filter: usize,
-    completed: bool,
-) -> Vec<usize> {
-    records
-        .into_iter()
-        .enumerate()
-        .filter(|(_, r)| r.matches(query, filter, completed))
-        .map(|(i, _)| i)
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn record(id: &str, text: &str) -> SearchRecord {
+        SearchRecord {
+            id: id.into(),
+            text: text.into(),
+            completed: false,
+            blocked: false,
+            working: false,
+            unread: false,
+            agent: "codex".into(),
+            activity: 0,
+        }
+    }
+
+    fn visible(outcome: &Outcome) -> Vec<usize> {
+        outcome
+            .groups
+            .iter()
+            .flat_map(|(_, rows)| rows.iter().copied())
+            .collect()
+    }
+
+    fn criteria(query: &str, filter: usize, completed: bool) -> Criteria {
+        Criteria {
+            query: query.into(),
+            filter,
+            completed,
+            agent: None,
+        }
+    }
     #[test]
     fn chunk_search_matches_contiguous_text_across_unicode_boundaries() {
         let chunks = [
@@ -260,20 +406,17 @@ mod tests {
     fn catalog_updates_do_not_mutate_in_flight_search_snapshots() {
         let mut catalog: SearchCatalog = (0..200)
             .map(|i| SearchRecord {
-                id: i.to_string().into(),
-                text: "body".into(),
-                completed: false,
-                blocked: false,
-                working: false,
                 unread: true,
+                ..record(&i.to_string(), "body")
             })
             .collect();
         let snapshot = catalog.clone();
         let mut changed = catalog[100].clone();
         changed.unread = false;
         catalog.replace(100, changed);
-        assert_eq!(search_records(snapshot.iter(), "body", 3, true).len(), 200);
-        assert_eq!(search_records(catalog.iter(), "body", 3, true).len(), 199);
+        let unread = criteria("body", 3, true);
+        assert_eq!(search(snapshot.iter(), &unread, 0).matches(), 200);
+        assert_eq!(search(catalog.iter(), &unread, 0).matches(), 199);
         assert!(Arc::ptr_eq(&snapshot.chunks[0], &catalog.chunks[0]));
         assert!(!Arc::ptr_eq(&snapshot.chunks[1], &catalog.chunks[1]));
     }
@@ -301,39 +444,126 @@ mod tests {
     fn search_results_keep_status_filters_and_reject_out_of_order_completion() {
         let records = [
             SearchRecord {
-                id: "a".into(),
-                text: "first body".into(),
-                completed: false,
                 blocked: true,
-                working: false,
                 unread: true,
+                ..record("a", "first body")
             },
             SearchRecord {
-                id: "b".into(),
-                text: "second body".into(),
                 completed: true,
-                blocked: false,
-                working: false,
-                unread: false,
+                ..record("b", "second body")
             },
         ];
-        assert_eq!(search_records(&records, "body", 0, true), [0, 1]);
-        assert_eq!(search_records(&records, "body", 0, false), [0]);
-        assert_eq!(search_records(&records, "", 1, true), [0]);
-        assert_eq!(search_records(&records, "", 3, true), [0]);
+        let find = |query, filter, completed| {
+            visible(&search(&records, &criteria(query, filter, completed), 0))
+        };
+        assert_eq!(find("body", 0, true), [0, 1]);
+        assert_eq!(find("body", 0, false), [0]);
+        assert_eq!(find("", 1, true), [0]);
+        assert_eq!(find("", 3, true), [0]);
         let mut generation = Generation::default();
         let older = generation.next();
         let latest = generation.next();
-        let mut visible = vec![];
+        let mut shown = vec![];
         // Latest query completes first; an older worker finishes afterwards.
         for (ticket, result) in [
-            (latest, search_records(&records, "second", 0, true)),
-            (older, search_records(&records, "first", 0, true)),
+            (latest, find("second", 0, true)),
+            (older, find("first", 0, true)),
         ] {
             if generation.accepts(ticket) {
-                visible = result;
+                shown = result;
             }
         }
-        assert_eq!(visible, [1]);
+        assert_eq!(shown, [1]);
+    }
+
+    #[test]
+    fn sections_put_live_chats_first_then_newest_by_period() {
+        const NOW: i64 = 1_790_510_400;
+        let day = 86_400;
+        let records = [
+            SearchRecord {
+                activity: NOW - 20 * day,
+                ..record("old", "")
+            },
+            SearchRecord {
+                working: true,
+                activity: NOW - 60,
+                ..record("running", "")
+            },
+            SearchRecord {
+                activity: NOW - 3 * day,
+                ..record("week", "")
+            },
+            SearchRecord {
+                activity: NOW - 600,
+                ..record("today-older", "")
+            },
+            SearchRecord {
+                blocked: true,
+                activity: NOW - 9 * day,
+                ..record("waiting", "")
+            },
+            SearchRecord {
+                activity: NOW - 60,
+                ..record("today-newer", "")
+            },
+        ];
+        let outcome = search(&records, &criteria("", 0, true), NOW);
+        let sections: Vec<_> = outcome
+            .groups
+            .iter()
+            .map(|(group, rows)| {
+                (
+                    *group,
+                    rows.iter().map(|&i| &*records[i].id).collect::<Vec<_>>(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            sections,
+            [
+                (Group::Current, vec!["waiting", "running"]),
+                (Group::Today, vec!["today-newer", "today-older"]),
+                (Group::LastWeek, vec!["week"]),
+                (Group::Earlier, vec!["old"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn counts_describe_what_each_tab_and_agent_would_show() {
+        let records = [
+            SearchRecord {
+                blocked: true,
+                unread: true,
+                ..record("a", "fix build")
+            },
+            SearchRecord {
+                agent: "claude".into(),
+                unread: true,
+                ..record("b", "fix docs")
+            },
+            SearchRecord {
+                agent: "claude".into(),
+                ..record("c", "write notes")
+            },
+            SearchRecord {
+                completed: true,
+                ..record("d", "fix tests")
+            },
+        ];
+        let mut wanted = criteria("fix", 3, true);
+        let outcome = search(&records, &wanted, 0);
+        // Tabs ignore the tab itself; the agent menu ignores the agent itself.
+        assert_eq!(outcome.scopes, [3, 1, 2]);
+        assert_eq!(outcome.agents, [("claude".into(), 1), ("codex".into(), 1)]);
+        assert_eq!(visible(&outcome), [0, 1]);
+        wanted.agent = Some("claude".into());
+        let outcome = search(&records, &wanted, 0);
+        assert_eq!(outcome.scopes, [1, 0, 1]);
+        assert_eq!(outcome.agents.len(), 2);
+        assert_eq!(visible(&outcome), [1]);
+        wanted.completed = false;
+        assert_eq!(search(&records, &wanted, 0).scopes, [1, 0, 1]);
     }
 }

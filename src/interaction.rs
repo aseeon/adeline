@@ -116,6 +116,7 @@ impl Adeline {
                 if self.project != ix {
                     self.selected = None;
                     self.filter = 0;
+                    self.agent_filter = None;
                     self.query
                         .update(cx, |state, cx| state.set_value("", window, cx));
                 }
@@ -165,8 +166,12 @@ impl Adeline {
                 }
                 window.focus(&self.composer.focus_handle(cx), cx);
             }
-            Action::Filter(ix) => {
-                self.filter = ix;
+            // Tabs, agent and search combine, so changing one keeps the others.
+            Action::Filter(ix) => self.filter = ix,
+            Action::AgentFilter(agent) => self.agent_filter = agent,
+            Action::ClearChatFilters => {
+                self.filter = 0;
+                self.agent_filter = None;
                 self.query
                     .update(cx, |state, cx| state.set_value("", window, cx));
             }

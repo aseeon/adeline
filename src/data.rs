@@ -87,6 +87,7 @@ pub fn load() -> Vec<Workspace> {
         serde_json::from_str(include_str!("../assets/workspace.json")).expect("valid bundled demo");
     let mut projects = vec![data.workspace];
     projects.extend(data.projects.into_iter().map(|p| p.workspace));
+    shift_to(&mut projects, crate::recency::now());
     for project in &mut projects {
         project.threads.reverse();
         for thread in &mut project.threads {
@@ -99,6 +100,33 @@ pub fn load() -> Vec<Workspace> {
         project.rebuild_counts();
     }
     projects
+}
+
+/// Move every demo timestamp by the same amount so the newest one is `now`.
+/// The bundled chats keep their relative ages, and so their sections, whenever
+/// the demo runs.
+fn shift_to(projects: &mut [Workspace], now: i64) {
+    let newest = projects
+        .iter()
+        .flat_map(|project| &project.threads)
+        .map(Thread::last_activity)
+        .max()
+        .unwrap_or(0);
+    if newest == 0 {
+        return;
+    }
+    let offset = now - newest;
+    let move_stamp = |stamp: &mut String| {
+        if let Some(at) = crate::recency::parse(stamp) {
+            *stamp = crate::recency::iso(at + offset);
+        }
+    };
+    for thread in projects.iter_mut().flat_map(|project| &mut project.threads) {
+        move_stamp(&mut thread.created_at);
+        for message in &mut thread.messages {
+            move_stamp(&mut message.created_at);
+        }
+    }
 }
 
 impl Thread {
@@ -116,6 +144,16 @@ impl Thread {
     }
     pub fn unread(&self) -> bool {
         !self.unread_messages.is_empty()
+    }
+    /// When the chat last changed: its newest dated message, else its creation.
+    /// Seconds since the epoch; 0 when neither carries a readable time.
+    pub fn last_activity(&self) -> i64 {
+        self.messages
+            .iter()
+            .rev()
+            .find_map(|message| crate::recency::parse(&message.created_at))
+            .or_else(|| crate::recency::parse(&self.created_at))
+            .unwrap_or(0)
     }
     pub fn mark_read(&mut self) {
         for index in self.unread_messages.drain(..) {
@@ -265,6 +303,48 @@ mod tests {
         assert!(!thread.unread());
         assert!(thread.messages.iter().all(|m| m.read));
     }
+    #[test]
+    fn demo_chats_fill_every_section_whenever_the_demo_runs() {
+        use crate::prepared::{Criteria, Group, SearchRecord, search};
+        use std::sync::Arc;
+        // Noon UTC on two dates far apart; sections follow UTC days.
+        for now in [1_790_510_400, 4_102_488_000] {
+            let mut projects = load();
+            shift_to(&mut projects, now);
+            let newest = projects[0].threads.iter().map(Thread::last_activity).max();
+            assert_eq!(newest, Some(now));
+            let records: Vec<_> = projects[0]
+                .threads
+                .iter()
+                .map(|t| SearchRecord {
+                    id: Arc::from(t.id.as_str()),
+                    text: t.search_text.clone(),
+                    completed: t.status == "completed",
+                    blocked: t.status == "blocked",
+                    working: t.status == "working",
+                    unread: t.unread(),
+                    agent: Arc::from(t.provider.as_str()),
+                    activity: t.last_activity(),
+                })
+                .collect();
+            let criteria = Criteria {
+                completed: true,
+                ..Criteria::default()
+            };
+            let sections: Vec<_> = search(&records, &criteria, now)
+                .groups
+                .into_iter()
+                .map(|(group, rows)| (group, rows.len()))
+                .collect();
+            assert_eq!(sections.len(), 4, "{sections:?}");
+            assert_eq!(sections[0], (Group::Current, 4));
+            assert!(
+                sections[1..].iter().all(|&(_, rows)| rows >= 6),
+                "{sections:?}"
+            );
+        }
+    }
+
     #[test]
     fn cached_badges_follow_one_thread_mutation() {
         let mut projects = load();
