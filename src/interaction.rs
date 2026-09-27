@@ -61,13 +61,13 @@ impl Adeline {
         let previous_flags = changed_thread.map(|i| self.workspace().threads[i].flags());
         if self.menu == Some("app") && !matches!(action, Action::AppMenu | Action::Close) {
             self.menu = None;
-            window.focus(&self.focus);
+            window.focus(&self.focus, cx);
         }
         if self.menu == Some("mode-settings")
             && !matches!(action, Action::ModeSettings | Action::Close)
         {
             self.menu = None;
-            window.focus(&self.focus);
+            window.focus(&self.focus, cx);
         }
         match action {
             Action::Group(_)
@@ -105,9 +105,9 @@ impl Adeline {
                 };
                 if self.menu.is_some() {
                     self.machine_query.update(cx, |v, cx| v.set("", cx));
-                    window.focus(&self.machine_query.focus_handle(cx));
+                    window.focus(&self.machine_query.focus_handle(cx), cx);
                 } else {
-                    window.focus(&self.focus);
+                    window.focus(&self.focus, cx);
                 }
             }
             Action::Machine(i) => {
@@ -119,7 +119,7 @@ impl Adeline {
                 }
                 self.menu = None;
                 self.control_pane.update(cx, |_, cx| cx.notify());
-                window.focus(&self.focus);
+                window.focus(&self.focus, cx);
             }
             Action::AppMenu => {
                 self.menu = if self.menu == Some("app") {
@@ -127,7 +127,7 @@ impl Adeline {
                 } else {
                     Some("app")
                 };
-                window.focus(&self.focus);
+                window.focus(&self.focus, cx);
             }
             Action::About => self.modal = Some("about"),
             Action::KeyboardShortcuts => self.modal = Some("shortcuts"),
@@ -146,7 +146,7 @@ impl Adeline {
                 self.project_error = None;
                 self.project_directory_input
                     .update(cx, |v, cx| v.set("", cx));
-                window.focus(&self.name_input.focus_handle(cx));
+                window.focus(&self.name_input.focus_handle(cx), cx);
             }
             Action::SaveProject => {
                 self.create_project(window, cx);
@@ -186,7 +186,7 @@ impl Adeline {
                     self.sync_regions(&Action::Project(self.project), cx);
                     self.sync_content_regions(&Action::Project(self.project), cx);
                 }
-                window.focus(&self.focus);
+                window.focus(&self.focus, cx);
                 self.header_region.update(cx, |_, cx| cx.notify());
                 cx.notify();
                 return;
@@ -196,7 +196,7 @@ impl Adeline {
                 self.open_projects[i] = true;
                 if self.project == i && was_open {
                     self.menu = None;
-                    window.focus(&self.focus);
+                    window.focus(&self.focus, cx);
                     cx.notify();
                     return;
                 }
@@ -210,7 +210,7 @@ impl Adeline {
                 self.filter = 0;
                 self.query.update(cx, |v, cx| v.set("", cx));
                 window.set_window_title(&format!("{} — Adeline", self.workspace().config.name));
-                window.focus(&self.focus);
+                window.focus(&self.focus, cx);
             }
             Action::Section(s) => {
                 if !config::current().general.features.enabled(s) {
@@ -239,7 +239,7 @@ impl Adeline {
                 if !self.demo_mode && self.agent_catalog.entries.len() == 1 {
                     self.selected_agent = Some(self.agent_catalog.entries[0].id.clone());
                 }
-                window.focus(&self.composer.focus_handle(cx));
+                window.focus(&self.composer.focus_handle(cx), cx);
             }
             Action::Filter(i) => {
                 self.filter = i;
@@ -285,9 +285,9 @@ impl Adeline {
                 };
                 if self.menu.is_some() {
                     self.project_query.update(cx, |v, cx| v.set("", cx));
-                    window.focus(&self.project_query.focus_handle(cx));
+                    window.focus(&self.project_query.focus_handle(cx), cx);
                 } else {
-                    window.focus(&self.focus);
+                    window.focus(&self.focus, cx);
                 }
             }
             Action::ModeSettings => {
@@ -296,7 +296,7 @@ impl Adeline {
                 } else {
                     Some("mode-settings")
                 };
-                window.focus(&self.focus);
+                window.focus(&self.focus, cx);
             }
             Action::ConfigureModeSettings => {
                 self.menu = None;
@@ -325,14 +325,14 @@ impl Adeline {
             Action::Close => {
                 // Dismiss the popup without closing the content underneath it.
                 if self.menu.take().is_some() {
-                    window.focus(&self.focus);
+                    window.focus(&self.focus, cx);
                     cx.notify();
                     return;
                 }
                 self.modal = None;
                 self.workflow = None;
                 self.edit_line = None;
-                window.focus(&self.focus);
+                window.focus(&self.focus, cx);
             }
             Action::SaveSettings => {
                 self.save_project_settings(window, cx);
@@ -359,9 +359,9 @@ impl Adeline {
                 };
                 if self.menu.is_some() {
                     self.agent_query.update(cx, |v, cx| v.set("", cx));
-                    window.focus(&self.agent_query.focus_handle(cx));
+                    window.focus(&self.agent_query.focus_handle(cx), cx);
                 } else {
-                    window.focus(&self.focus);
+                    window.focus(&self.focus, cx);
                 }
             }
             Action::Agent(i) => {
@@ -400,7 +400,7 @@ impl Adeline {
                                         && app.menu == Some("machines")
                                     {
                                         app.menu = None;
-                                        window.focus(&app.focus);
+                                        window.focus(&app.focus, cx);
                                     }
                                     if !config::current().general.features.enabled(app.section) {
                                         app.modal = None;
@@ -485,7 +485,7 @@ impl Adeline {
                     self.edit_input.update(cx, |v, cx| v.set(line, cx));
                     self.edit_line = Some(i);
                     self.modal = Some("edit");
-                    window.focus(&self.edit_input.focus_handle(cx));
+                    window.focus(&self.edit_input.focus_handle(cx), cx);
                 }
             }
             Action::SaveLine => {
@@ -610,7 +610,7 @@ impl Adeline {
             Action::AddFile | Action::AddDirectory => {
                 let directory = matches!(action, Action::AddDirectory);
                 self.menu = None;
-                window.focus(&self.composer.focus_handle(cx));
+                window.focus(&self.composer.focus_handle(cx), cx);
                 let selection = cx.prompt_for_paths(PathPromptOptions {
                     files: !directory,
                     directories: directory,
@@ -653,13 +653,13 @@ impl Adeline {
                 self.modal = Some("workflow");
                 self.name_input.update(cx, |v, cx| v.set("", cx));
                 self.edit_input.update(cx, |v, cx| v.set("", cx));
-                window.focus(&self.name_input.focus_handle(cx));
+                window.focus(&self.name_input.focus_handle(cx), cx);
             }
             Action::EditWorkflow => {
                 if let Some(i) = self.workflow {
                     if self.editing_workflow {
                         self.editing_workflow = false;
-                        window.focus(&self.focus);
+                        window.focus(&self.focus, cx);
                         cx.notify();
                         return;
                     }
@@ -669,7 +669,7 @@ impl Adeline {
                         .update(cx, |v, cx| v.set(r.instructions, cx));
                     self.editing_workflow = true;
                     self.side_panel_open[Section::Workflows as usize] = true;
-                    window.focus(&self.name_input.focus_handle(cx));
+                    window.focus(&self.name_input.focus_handle(cx), cx);
                 }
             }
             Action::SaveWorkflow => {

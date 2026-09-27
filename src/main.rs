@@ -1166,7 +1166,7 @@ impl Render for Adeline {
                 } else {
                     &s.query
                 };
-                w.focus(&input.focus_handle(cx));
+                w.focus(&input.focus_handle(cx), cx);
             }))
             .on_action(cx.listener(|s, _: &SendMessage, w, cx| {
                 s.act(
@@ -1179,8 +1179,8 @@ impl Render for Adeline {
                     cx,
                 );
             }))
-            .on_action(cx.listener(|_, _: &NextFocus, w, _| w.focus_next()))
-            .on_action(cx.listener(|_, _: &PreviousFocus, w, _| w.focus_prev()))
+            .on_action(cx.listener(|_, _: &NextFocus, w, cx| w.focus_next(cx)))
+            .on_action(cx.listener(|_, _: &PreviousFocus, w, cx| w.focus_prev(cx)))
             .on_mouse_move(cx.listener(|s, e: &MouseMoveEvent, w, cx| {
                 if e.pressed_button != Some(MouseButton::Left) {
                     s.dragging = false;
@@ -1287,7 +1287,7 @@ impl Render for Adeline {
 }
 fn main() {
     let demo_mode = std::env::args().any(|arg| arg == "--demo");
-    Application::new()
+    gpui_platform::application()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
             fonts::init(cx);
@@ -1331,19 +1331,15 @@ fn main() {
                             app.subscriptions
                                 .push(cx.observe_window_activation(window, |_, _, cx| cx.notify()));
                         });
-                        window.focus(&view.read(cx).focus);
+                        view.update(cx, |app, cx| window.focus(&app.focus, cx));
                         view
                     },
                 )
                 .expect("open Adeline window");
             // Observe actual window removal so native close controls and keyboard
             // shortcuts both dismiss settings belonging to this workspace.
-            cx.on_window_closed(move |cx| {
-                if !cx
-                    .windows()
-                    .iter()
-                    .any(|window| window.window_id() == main_window.window_id())
-                {
+            cx.on_window_closed(move |cx, closed| {
+                if closed == main_window.window_id() {
                     settings::close_for(main_window, cx);
                 }
             })

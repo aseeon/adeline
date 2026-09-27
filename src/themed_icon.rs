@@ -1,4 +1,4 @@
-//! GPUI 0.2 SVGs require a local color. Resolve inherited text color at paint
+//! GPUI SVGs require a local color. Resolve inherited text color at paint
 //! time so parent hover/selection styles work without freezing a palette value.
 use gpui::{
     App, Bounds, Element, ElementId, GlobalElementId, Hsla, InspectorElementId, Interactivity,
@@ -18,12 +18,7 @@ impl ThemedIcon {
     }
 
     fn resolve_color(&mut self, inherited: Hsla) -> Option<Hsla> {
-        let color = &mut self
-            .0
-            .style()
-            .text
-            .get_or_insert_with(Default::default)
-            .color;
+        let color = &mut self.0.style().text.color;
         let explicit = *color;
         *color = Some(explicit.unwrap_or(inherited));
         explicit
@@ -94,11 +89,7 @@ impl Element for ThemedIcon {
             .paint(id, inspector, bounds, layout, prepaint, window, cx);
         // Cached elements must inherit afresh on the next frame, including
         // after pointer exit, selection changes, and theme changes.
-        self.0
-            .style()
-            .text
-            .get_or_insert_with(Default::default)
-            .color = explicit;
+        self.0.style().text.color = explicit;
     }
 }
 
@@ -113,20 +104,14 @@ mod tests {
         for color in [0xeeeeee, 0x123456, 0xffffff, 0xeeeeee] {
             let foreground: Hsla = rgb(color).into();
             let explicit = icon.resolve_color(foreground);
-            assert_eq!(
-                icon.style().text.get_or_insert_with(Default::default).color,
-                Some(foreground)
-            );
+            assert_eq!(icon.style().text.color, Some(foreground));
             assert_eq!(explicit, None);
-            icon.style().text.get_or_insert_with(Default::default).color = explicit;
+            icon.style().text.color = explicit;
         }
         let foreground: Hsla = rgb(0xe06030).into();
         let mut icon = ThemedIcon::new("project-circle").text_color(foreground);
         let explicit = icon.resolve_color(rgb(0xffffff).into());
         assert_eq!(explicit, Some(foreground));
-        assert_eq!(
-            icon.style().text.get_or_insert_with(Default::default).color,
-            Some(foreground)
-        );
+        assert_eq!(icon.style().text.color, Some(foreground));
     }
 }

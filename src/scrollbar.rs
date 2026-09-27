@@ -52,9 +52,9 @@ impl Scrollbar {
 
     fn metrics(&self) -> (f32, f32) {
         match &self.target {
-            Target::Panel(h) => (h.max_offset().height.into(), -f32::from(h.offset().y)),
+            Target::Panel(h) => (h.max_offset().y.into(), -f32::from(h.offset().y)),
             Target::List(h) => (
-                h.max_offset_for_scrollbar().height.into(),
+                h.max_offset_for_scrollbar().y.into(),
                 -f32::from(h.scroll_px_offset_for_scrollbar().y),
             ),
         }

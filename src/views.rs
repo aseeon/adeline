@@ -1028,7 +1028,7 @@ impl Adeline {
                 .copied()
                 .unwrap_or_default();
             return anchored()
-                .anchor(Corner::BottomLeft)
+                .anchor(Anchor::BottomLeft)
                 .position(trigger.origin - point(px(0.), px(6.)))
                 .snap_to_window()
                 .child(

@@ -4,7 +4,7 @@ use crate::prepared::{BlockKind, PreparedDocument};
 use std::sync::Arc;
 
 pub(super) struct Files(pub WeakEntity<Adeline>);
-// Keep the lightweight wrappers uncached: GPUI 0.2.2 forces nested cache
+// Keep the lightweight wrappers uncached: GPUI forces nested cache
 // refreshes while rebuilding a cached parent. Cache heavy sibling regions.
 pub(super) struct DocsHome(pub WeakEntity<Adeline>);
 impl Render for DocsHome {

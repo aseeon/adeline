@@ -291,6 +291,7 @@ pub fn shadow(blur: f32) -> gpui::BoxShadow {
         offset: gpui::point(gpui::px(0.), gpui::px(blur / 3.)),
         blur_radius: gpui::px(blur),
         spread_radius: gpui::px(0.),
+        inset: false,
     }
 }
 #[cfg(test)]

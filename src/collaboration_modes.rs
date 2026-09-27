@@ -210,7 +210,7 @@ impl Adeline {
                 });
                 state.group = state.groups.len() - 1;
                 self.query.update(cx, |v, cx| v.set("", cx));
-                window.focus(&self.group_input.focus_handle(cx));
+                window.focus(&self.group_input.focus_handle(cx), cx);
             }
             Action::Issue(i) => {
                 state.issue = i;
@@ -236,7 +236,7 @@ impl Adeline {
             Action::BoardTool(i) => {
                 state.tool = i;
                 if i == 2 {
-                    window.focus(&self.board_input.focus_handle(cx));
+                    window.focus(&self.board_input.focus_handle(cx), cx);
                 }
             }
             Action::BoardUndo if state.marks.len() > state.seed_marks => {

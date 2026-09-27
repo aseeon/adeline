@@ -376,7 +376,7 @@ impl AgentWindow {
             cx,
         );
         let focus = cx.focus_handle();
-        window.focus(&form.inputs[0].read(cx).focus_handle(cx));
+        window.focus(&form.inputs[0].read(cx).focus_handle(cx), cx);
         let mut subscriptions = vec![cx.observe(entity, |_, _, cx| cx.notify())];
         let mut inputs = form.inputs.to_vec();
         inputs.extend(form.argument_inputs());
@@ -507,8 +507,8 @@ impl Render for AgentWindow {
                         window.remove_window();
                     }
                 }))
-                .on_action(cx.listener(|_, _: &NextFocus, window, _| window.focus_next()))
-                .on_action(cx.listener(|_, _: &PreviousFocus, window, _| window.focus_prev()))
+                .on_action(cx.listener(|_, _: &NextFocus, window, cx| window.focus_next(cx)))
+                .on_action(cx.listener(|_, _: &PreviousFocus, window, cx| window.focus_prev(cx)))
                 .child(
                     div()
                         .flex_1()
@@ -997,7 +997,7 @@ impl SettingsWindow {
             Ok(()) => {
                 self.font_dropdown = None;
                 self.theme_status = Some(format!("{} saved.", font_label(which)));
-                window.focus(&self.focus);
+                window.focus(&self.focus, cx);
                 cx.refresh_windows();
             }
             Err(error) => self.theme_status = Some(error),
@@ -1055,7 +1055,7 @@ impl SettingsWindow {
                         this.font_list_scroll
                             .handle
                             .set_offset(point(px(0.), px(0.)));
-                        window.focus(&this.font_query.read(cx).focus_handle(cx));
+                        window.focus(&this.font_query.read(cx).focus_handle(cx), cx);
                     }
                     cx.notify();
                 })),
@@ -1335,7 +1335,7 @@ impl SettingsWindow {
             input.set(config::current().modes.chats.retry_limit.to_string(), cx);
             input
         });
-        window.focus(&focus);
+        window.focus(&focus, cx);
         let mut subscriptions = Vec::new();
         for (which, size_input) in font_size_inputs.iter().enumerate() {
             subscriptions.push(cx.subscribe(
@@ -2069,7 +2069,7 @@ impl Render for SettingsWindow {
             .on_action(cx.listener(|this, _: &Dismiss, window, cx| {
                 if this.font_dropdown.is_some() {
                     this.font_dropdown = None;
-                    window.focus(&this.focus);
+                    window.focus(&this.focus, cx);
                     cx.notify();
                 } else if this.theme_dropdown {
                     this.theme_dropdown = false;
@@ -2078,8 +2078,8 @@ impl Render for SettingsWindow {
                     this.leave(AfterAgent::CloseSettings, window, cx);
                 }
             }))
-            .on_action(cx.listener(|_, _: &NextFocus, window, _| window.focus_next()))
-            .on_action(cx.listener(|_, _: &PreviousFocus, window, _| window.focus_prev()))
+            .on_action(cx.listener(|_, _: &NextFocus, window, cx| window.focus_next(cx)))
+            .on_action(cx.listener(|_, _: &PreviousFocus, window, cx| window.focus_prev(cx)))
             .child(sidebar)
             .child(
                 div()

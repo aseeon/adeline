@@ -4,9 +4,9 @@ use gpui::{
     App, Application, Bounds, ClipboardItem, Context, CursorStyle, ElementId, ElementInputHandler,
     Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke,
     LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point,
-    ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle, Window, WindowBounds,
-    WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative,
-    rgb, rgba, size, white, yellow,
+    ShapedLine, SharedString, Style, TextAlign, TextRun, UTF16Selection, UnderlineStyle, Window,
+    WindowBounds, WindowOptions, actions, black, div, fill, hsla, opaque_grey, point, prelude::*,
+    px, relative, rgb, rgba, size, white, yellow,
 };
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -208,7 +208,7 @@ impl TextInput {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        window.focus(&self.focus_handle);
+        window.focus(&self.focus_handle, cx);
         self.is_selecting = true;
 
         if event.modifiers.shift {
@@ -238,8 +238,8 @@ impl TextInput {
     }
 
     fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-            self.replace_text_in_range(None, &text.replace('\n', " "), window, cx);
+        if let Some(item) = cx.read_from_clipboard() {
+            EntityInputHandler::paste(self, item, window, cx);
         }
     }
 
@@ -369,6 +369,12 @@ impl TextInput {
 }
 
 impl EntityInputHandler for TextInput {
+    fn paste(&mut self, item: ClipboardItem, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(text) = item.text() {
+            self.replace_text_in_range(None, &text.replace('\n', " "), window, cx);
+        }
+    }
+
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
@@ -670,8 +676,15 @@ impl Element for TextElement {
             window.paint_quad(selection);
         }
         let line = prepaint.line.take().unwrap();
-        line.paint(bounds.origin, window.line_height(), window, cx)
-            .unwrap();
+        line.paint(
+            bounds.origin,
+            window.line_height(),
+            TextAlign::Left,
+            None,
+            window,
+            cx,
+        )
+        .unwrap();
 
         if focus_handle.is_focused(window)
             && let Some(cursor) = prepaint.cursor.take()
@@ -756,7 +769,7 @@ impl Render for TextInput {
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.set("", cx);
                             this.is_selecting = false;
-                            window.focus(&this.focus_handle);
+                            window.focus(&this.focus_handle, cx);
                             cx.stop_propagation();
                         })),
                 )

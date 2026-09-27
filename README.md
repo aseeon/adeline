@@ -60,7 +60,7 @@ Or launch `Adeline.exe --demo`. Demo mode restores the bundled workspace and sim
 
 ## Platform setup
 
-The same source and pinned GPUI 0.2.2 dependency are used on Windows, macOS, and Linux. Application code has no platform-specific filesystem paths or shell integrations. Fonts, Windows console visibility, and window decoration differ by platform: Windows uses the custom title bar, while macOS and Linux retain their native decorations.
+Adeline pins `gpui-pre =0.3.6` under the `gpui` import name and uses the matching `gpui-pre-platform =0.3.6` facade on Windows, macOS, and Linux. The facade enables `font-kit`, X11, and Wayland explicitly. Application code has no platform-specific filesystem paths or shell integrations. Windows uses the custom title bar, while macOS and Linux retain their native decorations.
 
 ### Windows
 
@@ -84,7 +84,7 @@ Install Rust and the native build dependencies. On Ubuntu / Debian, `scripts/lin
 cargo run --release --locked
 ```
 
-GPUI's default features include X11 and Wayland. Run inside a graphical session with a working Vulkan driver. Consult [GPUI's documentation](https://docs.rs/gpui/0.2.2/gpui/) and [Zed's Linux build guide](https://github.com/zed-industries/zed/blob/main/docs/src/development/linux.md) for platform prerequisites.
+The platform facade enables both X11 and Wayland through GPUI's WGPU renderer. Run inside a graphical session with a working Vulkan driver. Consult [gpui-pre's documentation](https://docs.rs/gpui-pre/0.3.6/gpui/) and [Zed's Linux build guide](https://github.com/zed-industries/zed/blob/main/docs/src/development/linux.md) for platform prerequisites.
 
 The app icon uses the close-up portrait in `assets/adeline.close.up.svg`; the full portrait is kept in `assets/adeline.svg`. Each build renders the 24×24 title-bar icon at pixel sizes matching Windows display scaling (100%–500%) and embeds a multi-size Windows icon for the executable and taskbar. To update the app icon, replace the close-up SVG and rebuild with `scripts/package.ps1`.
 
@@ -111,6 +111,8 @@ cargo build --release --locked
 ```
 
 On Windows, use `scripts\clippy.ps1`. Running `cargo test --locked` works too if nextest isn't installed.
+
+The [migration verification record](docs/gpui-migration-guide.md#9-implementation-and-verification) lists the Windows runtime checks, compiled GPUI Kit 0.6.6 / gpui-whiteboard 0.5.1 embedding check, and remaining platform verification limits. Neither library is a production dependency yet.
 
 `scripts/clippy` is the type checker and linter, the Rust counterpart of basedpyright. The lint levels are in `[lints]` in `Cargo.toml`: the default clippy groups plus `pedantic`, and Zed's denies (debug and unfinished-work macros, redundant clones, disallowed methods). To silence a lint, use `#[expect(lint, reason = "...")]` rather than `#[allow]`. `expect` fails once the lint stops firing, like basedpyright's unnecessary-ignore check. `clippy.toml` bans calls that block the UI thread. Warnings are errors in both the script and CI.
 
