@@ -15,7 +15,7 @@ fn portrait_asset(scale_factor: f32) -> String {
     format!("adeline-titlebar-{size}.png")
 }
 pub(super) fn render(title: String, window: &Window) -> TitleBar {
-    TitleBar::new().child(
+    TitleBar::new().border_b_0().child(
         row()
             .min_w_0()
             .gap_2()

@@ -352,16 +352,18 @@ impl Adeline {
                             .flex_1()
                             .min_w(rems(4.))
                             .child(
-                                Button::new("chat-agent-picker")
-                                    .ghost()
-                                    .small()
-                                    .w_full()
-                                    .label(agent_name.clone())
-                                    .tooltip(agent_name)
-                                    .dropdown_caret(true)
-                                    .on_click(cx.listener(|app, _, window, cx| {
-                                        app.act(Action::AgentMenu, window, cx);
-                                    })),
+                                self.command_popover(
+                                    "agent",
+                                    Button::new("chat-agent-picker")
+                                        .ghost()
+                                        .small()
+                                        .w_full()
+                                        .label(agent_name.clone())
+                                        .tooltip(agent_name)
+                                        .dropdown_caret(true),
+                                    Anchor::BottomLeft,
+                                    cx,
+                                ),
                             )
                             .when_some(agent_details, |panel, details| {
                                 panel.child(

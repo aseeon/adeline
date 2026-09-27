@@ -22,44 +22,55 @@ impl Render for ControlPane {
                     .border_t_1()
                     .border_color(cx.theme().border)
                     .child(
-                        app.button("app-menu", "Adeline", Action::AppMenu, cx)
-                            .ghost(),
-                    )
-                    .child(
-                        app.button("settings", "Settings…", Action::AppSettings, cx)
-                            .ghost(),
+                        app.command_popover(
+                            "app",
+                            Button::new("app-menu")
+                                .icon(Icon::default().path("menu.svg"))
+                                .accessibility_label("Main menu")
+                                .tooltip("Main menu")
+                                .small()
+                                .ghost(),
+                            Anchor::BottomLeft,
+                            cx,
+                        ),
                     )
                     .when(
                         app.has_open_project() && app.section == Section::Chats,
                         |row| {
                             row.child(
-                                app.button(
-                                    "chat-settings",
-                                    "Chat settings",
-                                    Action::ModeSettings,
+                                app.command_popover(
+                                    "mode-settings",
+                                    Button::new("chat-settings")
+                                        .icon(Icon::default().path("settings.svg"))
+                                        .accessibility_label("Chat settings")
+                                        .tooltip("Chat settings")
+                                        .small()
+                                        .ghost(),
+                                    Anchor::BottomLeft,
                                     cx,
-                                )
-                                .ghost(),
+                                ),
                             )
                             .child(
-                                app.button(
+                                app.icon_button(
                                     "left-panel",
                                     "Conversations",
+                                    Icon::default().path("panel-left.svg"),
                                     Action::ToggleLeftPanel,
                                     cx,
                                 )
-                                .ghost()
                                 .selected(app.left_panel_open[0]),
                             )
                             .child(div().flex_1())
                             .child(
-                                app.button(
+                                app.icon_button(
                                     "right-panel",
                                     "Agent activity",
+                                    Icon::default()
+                                        .path("panel-left.svg")
+                                        .rotate(Radians(std::f32::consts::PI)),
                                     Action::ToggleSidePanel,
                                     cx,
                                 )
-                                .ghost()
                                 .selected(app.side_panel_open[0]),
                             )
                         },
@@ -78,7 +89,13 @@ impl Adeline {
                 row()
                     .gap_2()
                     .child(div().flex_1().text_lg().child("Chats"))
-                    .child(self.button("new-chat", "New chat", Action::NewChat, cx)),
+                    .child(self.icon_button(
+                        "new-chat",
+                        "New chat",
+                        Icon::default().path("plus.svg"),
+                        Action::NewChat,
+                        cx,
+                    )),
             )
             .child(self.search_box(cx))
     }

@@ -1,5 +1,6 @@
 use super::*;
 use gpui_kit::component::command::{Command, CommandItem, CommandState};
+use gpui_kit::component::switch::Switch;
 
 impl Adeline {
     pub(super) fn chats(&self, cx: &Context<Self>) -> AnyElement {
@@ -111,12 +112,7 @@ impl Adeline {
         panel
     }
 
-    pub(super) fn open_commands(
-        &mut self,
-        menu: &'static str,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
+    fn command_entries(&self, menu: &'static str) -> (&'static str, Vec<(String, Action)>) {
         let mut entries: Vec<(String, Action)> = Vec::new();
         let title = match menu {
             "projects" => {
@@ -159,7 +155,7 @@ impl Adeline {
             }
             "machines" => {
                 if !config::current().general.features.machine_selector {
-                    return;
+                    return ("Machines", entries);
                 }
                 entries.extend(
                     MACHINES
@@ -198,14 +194,11 @@ impl Adeline {
                 "Attach context"
             }
             "mode-settings" => {
-                entries.extend(self.mode_options(Section::Chats).into_iter().map(
-                    |(label, _, checked, action)| {
-                        (
-                            format!("{}: {}", label, if checked { "On" } else { "Off" }),
-                            action,
-                        )
-                    },
-                ));
+                entries.extend(
+                    self.mode_options(Section::Chats)
+                        .into_iter()
+                        .map(|(label, _, _, action)| (label.into(), action)),
+                );
                 entries.push(("Chat settings…".into(), Action::ConfigureModeSettings));
                 if self.left_panel_is_open() {
                     entries.extend([
@@ -232,6 +225,7 @@ impl Adeline {
                 entries.extend([
                     ("About Adeline…".into(), Action::About),
                     ("Settings…".into(), Action::AppSettings),
+                    ("Add an agent…".into(), Action::AddAgent),
                     ("Switch project…".into(), Action::Projects),
                 ]);
                 if self.has_open_project() {
@@ -260,6 +254,143 @@ impl Adeline {
                 "Adeline"
             }
         };
+        (title, entries)
+    }
+
+    pub(super) fn command_popover(
+        &self,
+        menu: &'static str,
+        trigger: Button,
+        anchor: Anchor,
+        cx: &Context<Self>,
+    ) -> component::popover::Popover {
+        let owner = cx.weak_entity();
+        let content_owner = owner.clone();
+        let (title, entries) = self.command_entries(menu);
+        let toggles = if menu == "mode-settings" {
+            self.mode_options(Section::Chats)
+        } else {
+            Vec::new()
+        };
+        let state = self.command_popup.clone();
+        let errors = if matches!(menu, "agent" | "agents") {
+            self.agent_catalog.errors.join("\n")
+        } else {
+            String::new()
+        };
+        component::popover::Popover::new(menu)
+            .anchor(anchor)
+            .trigger(trigger)
+            .open(self.menu == Some(menu))
+            .when_some(state.as_ref(), |popover, state| {
+                popover.track_focus(&state.focus_handle(cx))
+            })
+            .on_open_change(move |open, window, cx| {
+                let _ = owner.update(cx, |app, cx| {
+                    if *open {
+                        let action = match menu {
+                            "agents" => Action::Agents,
+                            "agent" => Action::AgentMenu,
+                            "projects" => Action::Projects,
+                            "mode-settings" => Action::ModeSettings,
+                            _ => Action::AppMenu,
+                        };
+                        app.act(action, window, cx);
+                    } else if app.menu == Some(menu) {
+                        app.menu = None;
+                        app.header_region.update(cx, |_, cx| cx.notify());
+                        app.control_pane.update(cx, |_, cx| cx.notify());
+                        app.composer_region.update(cx, |_, cx| cx.notify());
+                        cx.notify();
+                    }
+                });
+            })
+            .content(move |_, _, cx| {
+                let owner = content_owner.clone();
+                let entries = entries.clone();
+                let popover = cx.entity();
+                col()
+                    .w_80()
+                    .gap_2()
+                    .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
+                    .when(!errors.is_empty(), |column| column.child(errors.clone()))
+                    .when_some(state.as_ref(), |column, state| {
+                        column.child(
+                            Command::new(state)
+                                .placeholder("Search")
+                                .items(entries.iter().map(|(label, _)| {
+                                    let item = CommandItem::new().label(label.clone());
+                                    let Some((label, _, checked, action)) =
+                                        toggles.iter().find(|(name, _, _, _)| *name == label)
+                                    else {
+                                        return item;
+                                    };
+                                    let (label, checked) = (*label, *checked);
+                                    let action = action.clone();
+                                    let owner = owner.clone();
+                                    item.child(move |_, _| {
+                                        let owner = owner.clone();
+                                        let action = action.clone();
+                                        row()
+                                            .w_full()
+                                            .gap_3()
+                                            .child(div().flex_1().child(label))
+                                            .child(
+                                                Switch::new(label)
+                                                    .checked(checked)
+                                                    .accessibility_label(label)
+                                                    .on_change(move |_, window, cx| {
+                                                        cx.stop_propagation();
+                                                        let _ = owner.update(cx, |app, cx| {
+                                                            app.act(action.clone(), window, cx);
+                                                        });
+                                                    }),
+                                            )
+                                    })
+                                }))
+                                .on_confirm(move |path, window, cx| {
+                                    if let Some((_, action)) = entries.get(path.row) {
+                                        if !matches!(
+                                            action,
+                                            Action::ShowCompleted
+                                                | Action::HideToolCalls
+                                                | Action::LeftPanel(_)
+                                                | Action::RightPanel(_)
+                                        ) {
+                                            popover
+                                                .update(cx, |state, cx| state.dismiss(window, cx));
+                                        }
+                                        let _ = owner.update(cx, |app, cx| {
+                                            app.act(action.clone(), window, cx);
+                                        });
+                                    }
+                                }),
+                        )
+                    })
+            })
+    }
+
+    pub(super) fn open_commands(
+        &mut self,
+        menu: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(
+            menu,
+            "agent" | "agents" | "projects" | "app" | "mode-settings"
+        ) {
+            let state = cx.new(|cx| CommandState::new(window, cx));
+            window.focus(&state.focus_handle(cx), cx);
+            self.command_popup = Some(state);
+            self.menu = Some(menu);
+            self.header_region.update(cx, |_, cx| cx.notify());
+            self.control_pane.update(cx, |_, cx| cx.notify());
+            self.composer_region.update(cx, |_, cx| cx.notify());
+            cx.notify();
+            return;
+        }
+        let (title, entries) = self.command_entries(menu);
         self.menu = Some(menu);
         let entries = std::rc::Rc::new(entries);
         let state = cx.new(|cx| CommandState::new(window, cx));

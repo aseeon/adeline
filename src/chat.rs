@@ -511,7 +511,15 @@ impl Adeline {
         use crate::Action::*;
         if matches!(
             action,
-            Section(_) | Project(_) | NewChat | ShowCompleted | ToggleLeftPanel
+            Section(_)
+                | Project(_)
+                | NewChat
+                | ShowCompleted
+                | HideToolCalls
+                | LeftPanel(_)
+                | RightPanel(_)
+                | ToggleLeftPanel
+                | ToggleSidePanel
         ) {
             self.control_pane.update(cx, |_, cx| cx.notify());
         }

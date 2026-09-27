@@ -22,7 +22,7 @@ mod views;
 use data::*;
 use gpui_kit::base::actions::Cancel;
 use gpui_kit::component::{
-    ActiveTheme, Root, Selectable, Sizable, WindowExt,
+    ActiveTheme, Icon, Root, Selectable, Sizable, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState, TextareaState},
 };
@@ -227,6 +227,7 @@ struct Adeline {
     name_input: Entity<InputState>,
     modal: Option<&'static str>,
     menu: Option<&'static str>,
+    command_popup: Option<Entity<component::command::CommandState>>,
     speed: usize,
     permission: usize,
     left_panel_open: [bool; 7],
@@ -315,6 +316,7 @@ impl Adeline {
             name_input,
             modal: None,
             menu: None,
+            command_popup: None,
             speed: 0,
             permission: 2,
             left_panel_open: [true, false, false, true, true, true, true],
@@ -477,6 +479,23 @@ impl Adeline {
                 .cleanable(true),
         )
     }
+    fn icon_button(
+        &self,
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        icon: Icon,
+        action: Action,
+        cx: &Context<Self>,
+    ) -> Button {
+        let label = label.into();
+        Button::new(id)
+            .icon(icon)
+            .accessibility_label(label.clone())
+            .tooltip(label)
+            .small()
+            .ghost()
+            .on_click(cx.listener(move |app, _, window, cx| app.act(action.clone(), window, cx)))
+    }
     fn notify_toast(&self, value: &str, cx: &mut Context<Self>) {
         let handle = self.main_window;
         let value = value.to_owned();
@@ -489,9 +508,11 @@ impl Adeline {
     fn header(&self, cx: &Context<Self>) -> Div {
         let mut projects = row()
             .id("projects")
+            .role(Role::TabList)
+            .aria_label("Projects")
             .overflow_x_scroll()
             .min_w_0()
-            .flex_1()
+            .items_end()
             .gap_1();
         for (ix, project) in self
             .projects
@@ -500,62 +521,114 @@ impl Adeline {
             .filter(|(ix, _)| self.open_projects[*ix])
         {
             let attention = project.attention_count();
+            let active = ix == self.project;
+            let name = if attention == 0 {
+                project.config.name.clone()
+            } else {
+                format!("{} ({attention})", project.config.name)
+            };
             projects = projects.child(
-                row()
-                    .gap_1()
+                project_tab(active, cx)
+                    .pl_3()
+                    .pr_1()
                     .child(
-                        self.button(
-                            SharedString::from(format!("project-{}", project.config.id)),
-                            if attention == 0 {
-                                project.config.name.clone()
-                            } else {
-                                format!("{} ({attention})", project.config.name)
-                            },
-                            Action::Project(ix),
-                            cx,
-                        )
-                        .ghost()
-                        .selected(ix == self.project)
-                        .child(
-                            div()
-                                .size_2()
-                                .rounded_full()
-                                .bg(rgb(theme::project_colors()[self.project_tints[ix]])),
-                        ),
+                        row()
+                            .id(SharedString::from(format!("project-{}", project.config.id)))
+                            .role(Role::Tab)
+                            .aria_label(name.clone())
+                            .aria_selected(active)
+                            .h_full()
+                            .gap_2()
+                            .cursor_pointer()
+                            .on_click(cx.listener(move |app, _, window, cx| {
+                                app.act(Action::Project(ix), window, cx);
+                            }))
+                            .child(
+                                div()
+                                    .size_2()
+                                    .flex_shrink_0()
+                                    .rounded_full()
+                                    .bg(rgb(theme::project_colors()[self.project_tints[ix]])),
+                            )
+                            .child(div().max_w(px(180.)).truncate().child(name)),
                     )
-                    .child(
-                        self.button(
-                            SharedString::from(format!("close-{}", project.config.id)),
-                            "Close",
-                            Action::CloseProject(ix),
-                            cx,
-                        )
-                        .ghost()
-                        .tooltip("Close project tab"),
-                    ),
+                    .child(self.icon_button(
+                        SharedString::from(format!("close-{}", project.config.id)),
+                        "Close project tab",
+                        Icon::default().path("close.svg"),
+                        Action::CloseProject(ix),
+                        cx,
+                    )),
             );
         }
+        projects = projects.child(
+            project_tab(false, cx)
+                .id("new-project")
+                .role(Role::Button)
+                .aria_label("New project…")
+                .px_2()
+                .cursor_pointer()
+                .on_click(cx.listener(|app, _, window, cx| app.act(Action::AddProject, window, cx)))
+                .child(Icon::default().path("plus.svg").small()),
+        );
         let top = row()
             .id("project-toolbar")
-            .overflow_x_scroll()
+            .items_end()
             .gap_2()
-            .p_2()
+            .px_2()
+            .pt_1()
+            .relative()
+            .bg(cx.theme().title_bar)
+            // Painted before the tabs so the active tab covers it and opens into the modes bar.
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(px(1.))
+                    .bg(cx.theme().border),
+            )
             .child(projects)
-            .child(self.button("new-project", "New project…", Action::AddProject, cx))
-            .when(config::current().general.features.machine_selector, |row| {
-                row.child(self.button("machines", "Machines", Action::Machines, cx))
-            })
-            .child(self.button("agents", "Agents", Action::Agents, cx))
-            .child(self.button("project-menu", "Projects", Action::Projects, cx));
-        let mut modes = row().id("modes").overflow_x_scroll().gap_1().px_2().py_1();
-        for (section, name) in [
-            (Section::Chats, "Chats"),
-            (Section::Docs, "Docs"),
-            (Section::Workflows, "Workflows"),
-            (Section::Services, "Services"),
-            (Section::Groupchats, "Groupchats"),
-            (Section::Issues, "Issues"),
-            (Section::Whiteboard, "Whiteboard"),
+            .child(div().flex_1())
+            .child(
+                row()
+                    .flex_shrink_0()
+                    .gap_2()
+                    .pb_1()
+                    .when(config::current().general.features.machine_selector, |row| {
+                        row.child(self.button("machines", "Machines", Action::Machines, cx))
+                    })
+                    .child(
+                        self.command_popover(
+                            "projects",
+                            Button::new("project-menu")
+                                .icon(Icon::default().path("folder.svg"))
+                                .label("Projects")
+                                .small(),
+                            Anchor::TopRight,
+                            cx,
+                        ),
+                    ),
+            );
+        let mut modes = row()
+            .id("modes")
+            .role(Role::TabList)
+            .aria_label("Modes")
+            .overflow_x_scroll()
+            .gap_1()
+            .px_2()
+            .bg(cx.theme().background)
+            .border_b_1()
+            .border_color(cx.theme().border);
+        for (section, name, icon_path) in [
+            (Section::Chats, "Chats", "chat.svg"),
+            (Section::Docs, "Docs", "file.svg"),
+            (Section::Workflows, "Workflows", "workflow.svg"),
+            (Section::Services, "Services", "service.svg"),
+            (Section::Groupchats, "Groupchats", "group.svg"),
+            (Section::Issues, "Issues", "flag.svg"),
+            (Section::Whiteboard, "Whiteboard", "whiteboard.svg"),
         ] {
             if self.has_open_project() && config::current().general.features.enabled(section) {
                 let label = if section == Section::Chats {
@@ -569,18 +642,56 @@ impl Adeline {
                 } else {
                     name.to_owned()
                 };
+                let active = self.section == section;
+                // An underline marks the active mode; a selection fill would blur
+                // the shared surface with the active project tab.
                 modes = modes.child(
-                    self.button(name, label, Action::Section(section), cx)
-                        .ghost()
-                        .selected(self.section == section),
+                    col()
+                        .pt_1()
+                        .child(
+                            self.button(name, label, Action::Section(section), cx)
+                                .icon(Icon::default().path(icon_path))
+                                .ghost()
+                                .toggled(active)
+                                .when(active, |button| button.text_color(cx.theme().foreground)),
+                        )
+                        .child(
+                            div()
+                                .mx_2()
+                                .mt_1()
+                                .h(px(2.))
+                                .rounded_full()
+                                .when(active, |line| line.bg(cx.theme().foreground)),
+                        ),
                 );
             }
         }
         col()
             .flex_shrink_0()
-            .bg(cx.theme().sidebar)
             .child(top)
-            .child(modes)
+            .when(self.has_open_project(), |header| header.child(modes))
+    }
+}
+// The active project tab shares the modes bar background so the two read as one surface.
+fn project_tab(active: bool, cx: &App) -> Div {
+    let tab = row()
+        .flex_shrink_0()
+        .h(px(32.))
+        .gap_2()
+        .text_sm()
+        .rounded_t(cx.theme().radius)
+        .border_t_1()
+        .border_l_1()
+        .border_r_1()
+        .border_color(cx.theme().border);
+    if active {
+        tab.bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+    } else {
+        tab.bg(cx.theme().muted)
+            .border_b_1()
+            .text_color(cx.theme().muted_foreground)
+            .hover(|style| style.text_color(cx.theme().foreground))
     }
 }
 impl Render for Adeline {
