@@ -114,11 +114,14 @@ fn rail_canvas(rail: Rail) -> impl IntoElement {
 }
 
 /// A section label: pip on the rail, title, new messages and the chat count.
+/// A compact label drops the new messages and tightens its gaps so the title
+/// and count fit a narrow list.
 pub(super) fn section_label(
     group: Group,
     count: usize,
     fresh: usize,
     current: bool,
+    compact: bool,
     placement: LabelPlacement,
     on_jump: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     cx: &App,
@@ -151,7 +154,8 @@ pub(super) fn section_label(
                 .relative()
                 .h(rems(SECTION_HEIGHT))
                 .px_2()
-                .gap_3()
+                .when(compact, |label| label.gap_1p5())
+                .when(!compact, |label| label.gap_3())
                 .text_xs()
                 .text_color(if current {
                     theme.sidebar_primary_foreground
@@ -191,10 +195,12 @@ pub(super) fn section_label(
                 .child(
                     div()
                         .flex_1()
+                        .min_w_0()
+                        .truncate()
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(group.title()),
                 )
-                .when(fresh > 0, |label| {
+                .when(fresh > 0 && !compact, |label| {
                     label.child(
                         div()
                             .font_weight(FontWeight::SEMIBOLD)
@@ -202,7 +208,12 @@ pub(super) fn section_label(
                             .child(format!("{fresh} new")),
                     )
                 })
-                .child(div().pr_1().child(count.to_string())),
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .when(!compact, |count| count.pr_1())
+                        .child(count.to_string()),
+                ),
         )
         .into_any_element()
 }
@@ -445,13 +456,20 @@ impl Adeline {
                                     .child(highlighted_title(thread.title.trim(), &query, cx)),
                             )
                             .child(
+                                // The time wraps onto a clipped second line when it
+                                // would run into the status circle.
                                 row()
+                                    .flex_wrap()
+                                    .h(rems(1.))
+                                    .overflow_hidden()
                                     .gap_3()
                                     .text_xs()
                                     .line_height(rems(1.))
+                                    .whitespace_nowrap()
                                     .text_color(theme.muted_foreground)
                                     .child(
                                         row()
+                                            .flex_shrink_0()
                                             .gap_1()
                                             .when(unread, |count| count.text_color(theme.primary))
                                             .child(
@@ -463,6 +481,7 @@ impl Adeline {
                                     .when_some(updated, |meta, updated| {
                                         meta.child(
                                             row()
+                                                .flex_shrink_0()
                                                 .gap_1()
                                                 .child(icon("clock").size(rems(0.75)))
                                                 .child(updated),
@@ -571,6 +590,7 @@ impl Adeline {
         list: AnyElement,
         outcome: &Outcome,
         search_focused: bool,
+        tab_cap: Option<Pixels>,
         cx: &Context<Self>,
     ) -> Div {
         let theme = cx.theme();
@@ -618,12 +638,13 @@ impl Adeline {
             .segmented()
             .w_full()
             .selected_index(selected)
+            .when_some(tab_cap, |tabs, cap| tabs.max_width(cap))
             .children(
-                ["All", "Needs input", "Unread"]
+                [("All", "All"), ("Attention", "At"), ("Unread", "Un")]
                     .into_iter()
                     .zip(outcome.scopes)
                     .enumerate()
-                    .map(|(ix, (label, count))| {
+                    .map(|(ix, ((label, short), count))| {
                         let active = ix == selected;
                         Tab::new()
                             .flex_1()
@@ -643,7 +664,7 @@ impl Adeline {
                                             .when(!active, |label| {
                                                 label.text_color(theme.muted_foreground)
                                             })
-                                            .child(label),
+                                            .child(if tab_cap.is_some() { short } else { label }),
                                     )
                                     .child(
                                         div()

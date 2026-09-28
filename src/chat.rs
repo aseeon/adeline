@@ -16,6 +16,10 @@ use std::sync::Arc;
 pub(super) const ROW_HEIGHT: f32 = 3.25;
 pub(super) const SECTION_HEIGHT: f32 = 2.;
 const END_HEIGHT: f32 = 2.25;
+/// Below these list widths, in rems, the scope tabs use short labels and the
+/// section labels drop their new message counts.
+const COMPACT_TABS_WIDTH: f32 = 17.;
+const COMPACT_SECTIONS_WIDTH: f32 = 14.;
 
 /// One entry of the virtualized chat list.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -149,6 +153,10 @@ pub(super) struct ChatList {
     keys: Vec<Arc<str>>,
     tail: Pixels,
     layout: Layout,
+    /// Width of the list panel at the last paint; narrow panels drop details.
+    width: Pixels,
+    /// The search placeholder last set, shortened with the tabs.
+    placeholder: &'static str,
 }
 
 impl ChatList {
@@ -174,6 +182,8 @@ impl ChatList {
             keys: Vec::new(),
             tail: px(0.),
             layout: Layout::default(),
+            width: px(0.),
+            placeholder: "Search chats",
         }
     }
 
@@ -423,6 +433,31 @@ impl Render for ChatList {
         self.measure(window);
         let stacks = self.layout.stacks(self.scroll());
         let this = cx.weak_entity();
+        let measured = this.clone();
+        let rem = window.rem_size();
+        // Compact tabs share the bar evenly: each is capped at a third of the
+        // room inside the list's side padding and the segmented bar's inset and
+        // gaps, so the labels give up tab padding instead of clipping the last tab.
+        let tab_cap = (self.width > px(0.) && self.width < rem * COMPACT_TABS_WIDTH)
+            .then(|| (self.width - rem * 1.5 - px(12.)) / 3.);
+        let compact_sections = self.width > px(0.) && self.width < rem * COMPACT_SECTIONS_WIDTH;
+        if let Some(query) = self
+            .owner
+            .upgrade()
+            .map(|owner| owner.read(cx).query.clone())
+        {
+            let placeholder = if tab_cap.is_some() {
+                "Search"
+            } else {
+                "Search chats"
+            };
+            if self.placeholder != placeholder {
+                self.placeholder = placeholder;
+                query.update(cx, |query, cx| {
+                    query.set_placeholder(placeholder, window, cx);
+                });
+            }
+        }
         let list_focus = window
             .use_keyed_state("chat-list-keyboard", cx, |_, cx| {
                 cx.focus_handle().tab_stop(true)
@@ -434,9 +469,12 @@ impl Render for ChatList {
             || self.criteria.agent.is_some();
         let rows = if self.items.is_empty() {
             let owner = self.owner.clone();
+            // A narrow list lines the message up with the tabs and shortens the button.
+            let compact = tab_cap.is_some();
             col()
                 .flex_1()
-                .p_5()
+                .when(compact, |empty| empty.px_3().py_5())
+                .when(!compact, |empty| empty.p_5())
                 .gap_3()
                 .items_start()
                 .text_sm()
@@ -455,7 +493,14 @@ impl Render for ChatList {
                         Button::new("clear-chat-filters")
                             .outline()
                             .small()
-                            .label("Clear search and filters")
+                            .max_w_full()
+                            .label(if compact {
+                                "Clear filters"
+                            } else {
+                                "Clear search and filters"
+                            })
+                            .accessibility_label("Clear search and filters")
+                            .when(compact, |button| button.tooltip("Clear search and filters"))
                             .on_click(move |_, window, cx| {
                                 let _ = owner.update(cx, |app, cx| {
                                     app.act(Action::ClearChatFilters, window, cx);
@@ -484,6 +529,7 @@ impl Render for ChatList {
                         rows.len(),
                         fresh,
                         slot == current,
+                        compact_sections,
                         placement,
                         {
                             let this = this.clone();
@@ -595,12 +641,28 @@ impl Render for ChatList {
             .owner
             .upgrade()
             .is_some_and(|owner| owner.read(cx).query.focus_handle(cx).is_focused(window));
-        self.owner
+        let sidebar = self
+            .owner
             .update(cx, |app, cx| {
-                app.chat_sidebar(rows, &self.outcome, focused, cx)
+                app.chat_sidebar(rows, &self.outcome, focused, tab_cap, cx)
                     .into_any_element()
             })
-            .unwrap_or_else(|_| div().into_any_element())
+            .unwrap_or_else(|_| div().into_any_element());
+        div().relative().size_full().child(sidebar).child(
+            canvas(
+                move |bounds, _, cx| {
+                    let _ = measured.update(cx, |list, cx| {
+                        if (list.width - bounds.size.width).abs() > px(0.5) {
+                            list.width = bounds.size.width;
+                            cx.notify();
+                        }
+                    });
+                },
+                |_, (), _, _| {},
+            )
+            .absolute()
+            .size_full(),
+        )
     }
 }
 

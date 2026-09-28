@@ -89,13 +89,16 @@ impl Adeline {
                 row()
                     .gap_2()
                     .child(div().flex_1().text_lg().child("Chats"))
-                    .child(self.icon_button(
-                        "new-chat",
-                        "New chat",
-                        Icon::default().path("plus.svg"),
-                        Action::NewChat,
-                        cx,
-                    )),
+                    .child(
+                        self.icon_button(
+                            "new-chat",
+                            "New chat",
+                            Icon::default().path("plus.svg"),
+                            Action::NewChat,
+                            cx,
+                        )
+                        .label("New"),
+                    ),
             )
             .child(search)
     }
