@@ -1,9 +1,9 @@
 use super::*;
-use crate::chat::{ROW_HEIGHT, SECTION_HEIGHT};
+use crate::chat::{self, ROW_HEIGHT, SECTION_HEIGHT};
 use crate::prepared::{Group, Outcome};
 use gpui_kit::component::plot::shape::{Arc as ArcShape, ArcData};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Selectable as _, Side, Sizable as _,
+    ActiveTheme as _, Disableable as _, Selectable as _, Side, Sizable as _, ThemeStyled as _,
     bubble::{Bubble, BubbleVariant},
     button::{Button, ButtonVariants as _},
     input::Textarea,
@@ -68,35 +68,45 @@ fn agent_icon(agent: &str, cx: &App) -> (&'static str, Hsla) {
     (asset, color)
 }
 
+/// Paints the rail's dots down `x` from `from` to `to`. `offset` is how far
+/// `from` sits below the top of the whole rail, so separately painted pieces
+/// share one pitch.
+fn paint_dots(x: Pixels, from: Pixels, to: Pixels, offset: Pixels, window: &mut Window, cx: &App) {
+    let rem = window.rem_size();
+    let dot = rem * 0.125;
+    let pitch = rem * 0.375;
+    let phase = offset % pitch;
+    let mut y = from
+        + if phase > px(0.) {
+            pitch - phase
+        } else {
+            px(0.)
+        };
+    let color = cx.theme().input;
+    while y + dot <= to {
+        window.paint_quad(
+            fill(Bounds::new(point(x - dot / 2., y), size(dot, dot)), color).corner_radii(dot / 2.),
+        );
+        y += pitch;
+    }
+}
+
 fn rail_canvas(rail: Rail) -> impl IntoElement {
     canvas(
         |_, _, _| {},
         move |bounds, (), window, cx| {
-            let rem = window.rem_size();
-            let dot = rem * 0.125;
-            let pitch = rem * 0.375;
             let center = bounds.center();
             let from = if rail.starts { center.y } else { bounds.top() };
             let to = if rail.ends { center.y } else { bounds.bottom() };
             // Align every item's dots to one pitch measured from the top of the list.
-            let phase = (rail.top + (from - bounds.top())) % pitch;
-            let mut y = from
-                + if phase > px(0.) {
-                    pitch - phase
-                } else {
-                    px(0.)
-                };
-            let color = cx.theme().input;
-            while y + dot <= to {
-                window.paint_quad(
-                    fill(
-                        Bounds::new(point(center.x - dot / 2., y), size(dot, dot)),
-                        color,
-                    )
-                    .corner_radii(dot / 2.),
-                );
-                y += pitch;
-            }
+            paint_dots(
+                center.x,
+                from,
+                to,
+                rail.top + (from - bounds.top()),
+                window,
+                cx,
+            );
         },
     )
     .absolute()
@@ -104,6 +114,50 @@ fn rail_canvas(rail: Rail) -> impl IntoElement {
     .bottom_0()
     .left(rems(0.5))
     .w(rems(LANE))
+}
+
+/// Height of one item of the collapsed list: a tile and the gap below it, in rems.
+const COLLAPSED_ITEM: f32 = LANE + 0.5;
+/// Width of the collapsed list: a tile with half a gap on either side, in rems.
+pub(super) const COLLAPSED_WIDTH: f32 = LANE + 0.5;
+
+/// One item of the collapsed list: its tile over the rail, which runs from the
+/// center of the first tile to the center of the last. `ix` and `count` place
+/// the item in the list so every item's dots share one pitch.
+pub(super) fn collapsed_item(ix: usize, count: usize, tile: AnyElement) -> impl IntoElement {
+    div()
+        .relative()
+        .w_full()
+        .h(rems(COLLAPSED_ITEM))
+        .flex()
+        .justify_center()
+        .child(
+            canvas(
+                |_, _, _| {},
+                move |bounds, (), window, cx| {
+                    let rem = window.rem_size();
+                    let center = bounds.top() + rem * (LANE / 2.);
+                    let from = if ix == 0 { center } else { bounds.top() };
+                    let to = if ix + 1 == count {
+                        center
+                    } else {
+                        bounds.bottom()
+                    };
+                    let top = rem * (COLLAPSED_ITEM * ix as f32);
+                    paint_dots(
+                        bounds.center().x,
+                        from,
+                        to,
+                        top + (from - bounds.top()),
+                        window,
+                        cx,
+                    );
+                },
+            )
+            .absolute()
+            .size_full(),
+        )
+        .child(tile)
 }
 
 /// A section label: pip on the rail, title, new messages and the chat count.
@@ -340,6 +394,40 @@ fn status_badge(thread: &Thread, selected: bool, cx: &App) -> AnyElement {
     }
 }
 
+/// A command square on the collapsed list, the size of an agent tile.
+pub(super) fn collapsed_button(id: &'static str, label: &'static str, icon_name: &str) -> Button {
+    Button::new(id)
+        .outline()
+        .size(rems(LANE))
+        .p_0()
+        .accessibility_label(label)
+        .tooltip(label)
+        .child(icon(icon_name).size(rems(1.)))
+}
+
+/// The chat's status in words, for accessible labels.
+fn status_name(thread: &Thread) -> &'static str {
+    match thread.status.as_str() {
+        "working" => "running",
+        "completed" => "completed",
+        "blocked" => "needs input",
+        "archived" => "archived",
+        _ => "idle",
+    }
+}
+
+/// The agent tile shared by list rows and the collapsed list.
+fn agent_tile(agent: &str, fill: Hsla, cx: &App) -> Div {
+    let (asset, color) = agent_icon(agent, cx);
+    row()
+        .flex_shrink_0()
+        .size(rems(LANE))
+        .justify_center()
+        .rounded(cx.theme().radius)
+        .bg(fill)
+        .child(icon(asset).size(rems(1.0625)).text_color(color))
+}
+
 impl Adeline {
     fn agent_name(&self, agent: &str) -> String {
         if self.demo_mode {
@@ -354,15 +442,8 @@ impl Adeline {
         let theme = cx.theme();
         let selected = self.selected == Some(i);
         let unread = thread.unread();
-        let status = match thread.status.as_str() {
-            "working" => "running",
-            "completed" => "completed",
-            "blocked" => "needs input",
-            "archived" => "archived",
-            _ => "idle",
-        };
+        let status = status_name(thread);
         let agent = self.agent_name(&thread.provider);
-        let (agent_asset, agent_color) = agent_icon(&thread.provider, cx);
         let activity = thread.last_activity();
         let updated = (activity > 0).then(|| recency::label(activity, recency::now()));
         let messages = thread.messages.len();
@@ -403,19 +484,15 @@ impl Adeline {
                         cx.listener(move |app, _, window, cx| app.act(Action::Chat(i), window, cx)),
                     )
                     .child(rail_canvas(rail))
-                    .child(
-                        row()
-                            .flex_shrink_0()
-                            .size(rems(LANE))
-                            .justify_center()
-                            .rounded(theme.radius)
-                            .bg(if selected {
-                                theme.sidebar
-                            } else {
-                                theme.secondary
-                            })
-                            .child(icon(agent_asset).size(rems(1.0625)).text_color(agent_color)),
-                    )
+                    .child(agent_tile(
+                        &thread.provider,
+                        if selected {
+                            theme.sidebar
+                        } else {
+                            theme.secondary
+                        },
+                        cx,
+                    ))
                     .child(
                         col()
                             .flex_1()
@@ -470,6 +547,229 @@ impl Adeline {
                     )
                     .child(status_badge(thread, selected, cx)),
             )
+            .into_any_element()
+    }
+
+    /// The collapsed list's search: a tile the size of an agent tile that
+    /// unfurls, like a chat, into the search field and the number of matches.
+    /// It stays unfurled while the field has focus.
+    pub(super) fn collapsed_search(
+        &self,
+        open: bool,
+        matches: Option<usize>,
+        list: WeakEntity<chat::ChatList>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let theme = cx.theme();
+        let key: Arc<str> = Arc::from(chat::COLLAPSED_SEARCH);
+        let search_icon = |color: Hsla| icon("search").size(rems(1.)).text_color(color);
+        let trigger = Button::new("chat-rail-search")
+            .outline()
+            .size(rems(LANE))
+            .p_0()
+            .accessibility_label("Search chats")
+            .child(search_icon(if matches.is_some() {
+                theme.primary
+            } else {
+                theme.foreground
+            }))
+            .on_click(cx.listener(|app, _, window, cx| app.focus_chat_search(window, cx)));
+        // Same geometry as a chat's flyout: it covers the tile exactly.
+        let inset = rems(0.25);
+        let flyout = row()
+            .id("chat-rail-search-flyout")
+            .absolute()
+            .top(-inset)
+            .left(-inset)
+            .w(rems(20.))
+            .p(inset)
+            .pr_2()
+            .gap_2()
+            .popover_style(cx)
+            .rounded(theme.radius_lg)
+            .on_hover({
+                let key = key.clone();
+                let list = list.clone();
+                move |hovered, _, cx| {
+                    if !*hovered {
+                        let _ = list.update(cx, |list, cx| list.hover_collapsed(&key, false, cx));
+                    }
+                }
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|app, _, window, cx| app.focus_chat_search(window, cx)),
+            )
+            .child(
+                row()
+                    .flex_shrink_0()
+                    .size(rems(LANE))
+                    .justify_center()
+                    .rounded(theme.radius)
+                    .border_1()
+                    .border_color(theme.primary)
+                    .child(search_icon(theme.primary)),
+            )
+            .child(
+                div().flex_1().min_w_0().child(
+                    Input::new(&self.query)
+                        .aria_label("Search chats")
+                        .cleanable(true)
+                        .appearance(false),
+                ),
+            )
+            .when_some(matches, |flyout, matches| {
+                flyout.child(
+                    div()
+                        .flex_shrink_0()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(matches.to_string()),
+                )
+            });
+        div()
+            .id("chat-rail-search-slot")
+            .relative()
+            .flex_shrink_0()
+            .size(rems(LANE))
+            .on_hover(move |hovered, _, cx| {
+                if *hovered {
+                    let _ = list.update(cx, |list, cx| list.hover_collapsed(&key, true, cx));
+                }
+            })
+            .child(trigger)
+            .when(open, |slot| slot.child(deferred(flyout).with_priority(1)))
+            .into_any_element()
+    }
+
+    /// A chat in the collapsed list: its agent tile. While the pointer is on it,
+    /// or keyboard focus, the tile unfurls toward the chats into a flyout with
+    /// the title, time and status; the rail itself keeps its width.
+    pub(super) fn collapsed_chat(
+        &self,
+        i: usize,
+        hovered: bool,
+        focus: &FocusHandle,
+        keyboard_focus: bool,
+        list: WeakEntity<chat::ChatList>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let thread = &self.workspace().threads[i];
+        let theme = cx.theme();
+        let selected = self.selected == Some(i);
+        let unread = thread.unread();
+        let key: Arc<str> = Arc::from(thread.id.as_str());
+        let id = format!("{}:{}", self.workspace().config.id, thread.id);
+        let activity = thread.last_activity();
+        let updated = (activity > 0).then(|| recency::label(activity, recency::now()));
+        let mut description = format!(
+            "{}, {}",
+            thread.title.trim(),
+            self.agent_name(&thread.provider)
+        );
+        if let Some(updated) = &updated {
+            write!(description, ", updated {updated}").unwrap();
+        }
+        write!(description, ", {}", status_name(thread)).unwrap();
+        if unread {
+            description.push_str(", unread");
+        }
+        let fill = if selected {
+            theme.sidebar_primary
+        } else {
+            theme.secondary
+        };
+        // Without a row fill around it, the open chat's tile also carries an outline.
+        let outlined = |tile: Div| {
+            tile.when(selected, |tile| {
+                tile.border_1().border_color(theme.muted_foreground)
+            })
+        };
+        let open = move |app: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
+            app.act(Action::Chat(i), window, cx);
+        };
+        let tile = outlined(agent_tile(&thread.provider, fill, cx))
+            .id(SharedString::from(format!("chat-rail:{id}")))
+            .role(Role::ListBoxOption)
+            .aria_selected(selected)
+            .aria_label(description)
+            .track_focus(focus)
+            .on_hover({
+                let list = list.clone();
+                let key = key.clone();
+                move |hovered, _, cx| {
+                    if *hovered {
+                        let _ = list.update(cx, |list, cx| list.hover_collapsed(&key, true, cx));
+                    }
+                }
+            })
+            .on_click(cx.listener(move |app, _, window, cx| open(app, window, cx)))
+            .on_key_down(cx.listener(move |app, event: &KeyDownEvent, window, cx| {
+                if !event.keystroke.modifiers.modified()
+                    && matches!(event.keystroke.key.as_str(), "enter" | "space")
+                {
+                    open(app, window, cx);
+                    cx.stop_propagation();
+                }
+            }));
+        // The flyout covers the tile exactly and draws above the chats beside the rail.
+        let inset = rems(0.25);
+        let flyout = row()
+            .id(SharedString::from(format!("chat-rail-flyout:{id}")))
+            .absolute()
+            .top(-inset)
+            .left(-inset)
+            .w(rems(20.))
+            .p(inset)
+            .pr_2()
+            .gap_3()
+            .popover_style(cx)
+            .rounded(theme.radius_lg)
+            .on_hover(move |hovered, _, cx| {
+                if !*hovered {
+                    let _ = list.update(cx, |list, cx| list.hover_collapsed(&key, false, cx));
+                }
+            })
+            .on_click(cx.listener(move |app, _, window, cx| open(app, window, cx)))
+            .child(
+                outlined(agent_tile(&thread.provider, fill, cx)).when(keyboard_focus, |tile| {
+                    tile.border_2().border_color(theme.ring)
+                }),
+            )
+            .child(
+                col()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .min_w_0()
+                            .truncate()
+                            .text_sm()
+                            .line_height(rems(1.25))
+                            .when(unread, |title| title.font_weight(FontWeight::SEMIBOLD))
+                            .child(thread.title.trim().to_owned()),
+                    )
+                    .when_some(updated, |text, updated| {
+                        text.child(
+                            row()
+                                .gap_1()
+                                .text_xs()
+                                .line_height(rems(1.))
+                                .text_color(theme.muted_foreground)
+                                .child(icon("clock").size(rems(0.75)))
+                                .child(updated),
+                        )
+                    }),
+            )
+            .child(status_badge(thread, false, cx));
+        div()
+            .relative()
+            .flex_shrink_0()
+            .size(rems(LANE))
+            .child(tile)
+            .when(hovered || keyboard_focus, |slot| {
+                slot.child(deferred(flyout).with_priority(1))
+            })
             .into_any_element()
     }
 

@@ -549,6 +549,11 @@ impl Adeline {
             .ghost()
             .on_click(cx.listener(move |app, _, window, cx| app.act(action.clone(), window, cx)))
     }
+    /// Focuses the chat search: in the list, or unfurled from the collapsed list.
+    fn focus_chat_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        window.focus(&self.query.focus_handle(cx), cx);
+        cx.notify();
+    }
     fn notify_toast(&self, value: &str, cx: &mut Context<Self>) {
         let handle = self.main_window;
         let value = value.to_owned();
@@ -601,9 +606,7 @@ impl Render for Adeline {
             )
             .on_action(cx.listener(|app, _: &Search, window, cx| {
                 if app.has_open_project() && app.section == Section::Chats {
-                    app.left_panel_open[0] = true;
-                    window.focus(&app.query.focus_handle(cx), cx);
-                    cx.notify();
+                    app.focus_chat_search(window, cx);
                 } else {
                     app.act(Action::Projects, window, cx);
                 }

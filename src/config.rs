@@ -542,6 +542,21 @@ mod tests {
         std::fs::remove_file(path).unwrap();
     }
     #[test]
+    fn conversation_list_starts_expanded_then_remembers_the_last_choice() {
+        let path = std::env::temp_dir().join(format!(
+            "adeline-left-panel-{}-{:?}.yml",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        seed_yaml(&path, &Settings::default()).unwrap();
+        assert!(read(&path).unwrap().modes.chats.show_left_panel);
+        update_at(&path, |s| s.modes.chats.show_left_panel = false).unwrap();
+        assert!(!read(&path).unwrap().modes.chats.show_left_panel);
+        update_at(&path, |s| s.modes.chats.show_left_panel = true).unwrap();
+        assert!(read(&path).unwrap().modes.chats.show_left_panel);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
     fn legacy_values_survive_unrelated_updates_without_validation_or_recreation() {
         let path = std::env::temp_dir().join(format!(
             "adeline-legacy-settings-{}-{:?}.yml",

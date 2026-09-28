@@ -136,6 +136,41 @@ pub(super) struct Stacks {
     pub current: usize,
 }
 
+/// What `ChatList::hover_collapsed` records while the pointer is on the
+/// collapsed list's search; chat ids never start with a NUL.
+pub(super) const COLLAPSED_SEARCH: &str = "\0search";
+
+/// One chat tile of the collapsed list, with its retained focus handle.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the pinned tile and the virtualized rows share this"
+)]
+fn collapsed_tile(
+    owner: &WeakEntity<Adeline>,
+    list: &WeakEntity<ChatList>,
+    project: &str,
+    id: &str,
+    row: usize,
+    hovered: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let focus = window
+        .use_keyed_state(
+            SharedString::from(format!("chat-rail-focus:{project}:{id}")),
+            cx,
+            |_, cx| cx.focus_handle().tab_stop(true),
+        )
+        .read(cx)
+        .clone();
+    let keyboard_focus = focus.is_focused(window) && window.last_input_was_keyboard();
+    owner
+        .update(cx, |app, cx| {
+            app.collapsed_chat(row, hovered, &focus, keyboard_focus, list.clone(), cx)
+        })
+        .unwrap_or_else(|_| div().into_any_element())
+}
+
 pub(super) struct ChatList {
     owner: WeakEntity<Adeline>,
     state: ListState,
@@ -157,6 +192,10 @@ pub(super) struct ChatList {
     width: Pixels,
     /// The search placeholder last set, shortened with the tabs.
     placeholder: &'static str,
+    /// The collapsed list's chat under the pointer, by thread id.
+    collapsed_hover: Option<Arc<str>>,
+    /// Scroll position of the collapsed list's chats.
+    collapsed_scroll: UniformListScrollHandle,
 }
 
 impl ChatList {
@@ -184,6 +223,8 @@ impl ChatList {
             layout: Layout::default(),
             width: px(0.),
             placeholder: "Search chats",
+            collapsed_hover: None,
+            collapsed_scroll: UniformListScrollHandle::new(),
         }
     }
 
@@ -391,6 +432,129 @@ impl ChatList {
         }
     }
 
+    /// A collapsed chat unfurls when the pointer enters its tile and folds when
+    /// the pointer leaves its flyout.
+    pub fn hover_collapsed(&mut self, id: &Arc<str>, hovered: bool, cx: &mut Context<Self>) {
+        let next = if hovered {
+            Some(id.clone())
+        } else if self.collapsed_hover.as_ref() == Some(id) {
+            None
+        } else {
+            return;
+        };
+        if self.collapsed_hover != next {
+            self.collapsed_hover = next;
+            cx.notify();
+        }
+    }
+
+    /// The collapsed list: new chat and search above the agent tiles of the
+    /// current and today's chats, without section labels.
+    fn render_collapsed(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let Some(owner) = self.owner.upgrade() else {
+            return div().into_any_element();
+        };
+        // While a search is typed, the scrolling tiles are its results instead.
+        let searching = !self.criteria.query.is_empty();
+        let selected = self.selected.filter(|&row| row < self.records.len());
+        let (rows, project, search_focused) = {
+            let app = owner.read(cx);
+            let rows: Vec<usize> = if searching {
+                self.outcome
+                    .groups
+                    .iter()
+                    .flat_map(|(_, rows)| rows.iter().copied())
+                    .filter(|&row| Some(row) != selected)
+                    .collect()
+            } else {
+                prepared::rail(&self.records, app.show_completed, selected, recency::now())
+            };
+            (
+                rows,
+                SharedString::from(app.workspace().config.id.clone()),
+                app.query.focus_handle(cx).is_focused(window),
+            )
+        };
+        let list = cx.weak_entity();
+        // The open chat stays pinned under search while the others scroll.
+        let pinned = selected.and_then(|row| {
+            let id = self.records.get(row)?.id.clone();
+            let hovered = self.collapsed_hover.as_ref() == Some(&id);
+            Some(collapsed_tile(
+                &self.owner,
+                &list,
+                &project,
+                &id,
+                row,
+                hovered,
+                window,
+                cx,
+            ))
+        });
+        let items: Arc<[(usize, Arc<str>)]> = rows
+            .into_iter()
+            .filter_map(|row| Some((row, self.records.get(row)?.id.clone())))
+            .collect();
+        let count = items.len();
+        let chats = uniform_list("chat-rail-items", count, {
+            let (owner, list, hover) = (
+                self.owner.clone(),
+                list.clone(),
+                self.collapsed_hover.clone(),
+            );
+            move |range, window, cx| {
+                range
+                    .map(|ix| {
+                        let (row, id) = &items[ix];
+                        let hovered = hover.as_ref() == Some(id);
+                        chat_render::collapsed_item(
+                            ix,
+                            count,
+                            collapsed_tile(&owner, &list, &project, id, *row, hovered, window, cx),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            }
+        })
+        .track_scroll(&self.collapsed_scroll)
+        .size_full();
+        let search_open =
+            search_focused || self.collapsed_hover.as_deref() == Some(COLLAPSED_SEARCH);
+        let matches = searching.then(|| self.outcome.matches());
+        let (new_chat, search) = owner.update(cx, |app, cx| {
+            let new_chat = chat_render::collapsed_button("chat-rail-new", "New chat", "new-chat")
+                .on_click(cx.listener(|app, _, window, cx| app.act(Action::NewChat, window, cx)));
+            let search = app.collapsed_search(search_open, matches, list.clone(), cx);
+            (new_chat, search)
+        });
+        col()
+            .id("chat-rail")
+            .h_full()
+            .w(rems(chat_render::COLLAPSED_WIDTH))
+            // New, search, the open chat and the first scrolling chat sit one gap
+            // apart, and one gap below the top.
+            .pt_2()
+            .gap_2()
+            .items_center()
+            .child(new_chat)
+            .child(search)
+            .child(
+                col()
+                    .id("chat-rail-list")
+                    .role(Role::ListBox)
+                    .aria_label(if searching { "Search results" } else { "Chats" })
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .gap_2()
+                    .items_center()
+                    .children(pinned)
+                    // No scrollbar: it would cover the tiles in a rail this narrow.
+                    .child(div().flex_1().min_h_0().w_full().child(chats)),
+            )
+            .into_any_element()
+    }
+
     /// The chat a navigation key moves to, as (item, thread index).
     fn navigation_target(&self, key: &str) -> Option<(usize, usize)> {
         let chats: Vec<(usize, usize)> = self
@@ -430,6 +594,14 @@ impl Render for ChatList {
             self.state.scroll_to(top);
         }
         ui_metrics::record(ui_metrics::Region::Sidebar);
+        if self
+            .owner
+            .upgrade()
+            .is_some_and(|owner| !owner.read(cx).left_panel_is_open())
+        {
+            return self.render_collapsed(window, cx);
+        }
+        self.collapsed_hover = None;
         self.measure(window);
         let stacks = self.layout.stacks(self.scroll());
         let this = cx.weak_entity();
@@ -639,21 +811,26 @@ impl Render for ChatList {
                     .into_any_element()
             })
             .unwrap_or_else(|_| div().into_any_element());
-        div().relative().size_full().child(sidebar).child(
-            canvas(
-                move |bounds, _, cx| {
-                    let _ = measured.update(cx, |list, cx| {
-                        if (list.width - bounds.size.width).abs() > px(0.5) {
-                            list.width = bounds.size.width;
-                            cx.notify();
-                        }
-                    });
-                },
-                |_, (), _, _| {},
+        div()
+            .relative()
+            .size_full()
+            .child(sidebar)
+            .child(
+                canvas(
+                    move |bounds, _, cx| {
+                        let _ = measured.update(cx, |list, cx| {
+                            if (list.width - bounds.size.width).abs() > px(0.5) {
+                                list.width = bounds.size.width;
+                                cx.notify();
+                            }
+                        });
+                    },
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .size_full(),
             )
-            .absolute()
-            .size_full(),
-        )
+            .into_any_element()
     }
 }
 

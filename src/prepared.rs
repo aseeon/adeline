@@ -172,6 +172,27 @@ pub fn search<'a>(
     outcome
 }
 
+/// The chats the collapsed list scrolls through, as record indexes: every chat
+/// in list order, except the open chat, which the list pins above them.
+/// Search, tabs and the agent filter apply to the full list only.
+pub fn rail(
+    records: &SearchCatalog,
+    completed: bool,
+    selected: Option<usize>,
+    now: i64,
+) -> Vec<usize> {
+    let criteria = Criteria {
+        completed,
+        ..Criteria::default()
+    };
+    search(records.iter(), &criteria, now)
+        .groups
+        .into_iter()
+        .flat_map(|(_, rows)| rows)
+        .filter(|&row| Some(row) != selected)
+        .collect()
+}
+
 impl SearchRecord {
     pub fn matches_filter(&self, filter: usize, completed: bool) -> bool {
         (completed || !self.completed)
@@ -528,6 +549,53 @@ mod tests {
                 (Group::Earlier, vec!["old"]),
             ]
         );
+    }
+
+    #[test]
+    fn rail_lists_every_chat_in_list_order_without_the_open_one() {
+        const NOW: i64 = 1_790_510_400;
+        let day = 86_400;
+        let catalog: SearchCatalog = [
+            SearchRecord {
+                activity: NOW - 3 * day,
+                ..record("week", "")
+            },
+            SearchRecord {
+                activity: NOW - 60,
+                ..record("today", "")
+            },
+            SearchRecord {
+                blocked: true,
+                activity: NOW - 9 * day,
+                ..record("waiting", "")
+            },
+            SearchRecord {
+                completed: true,
+                activity: NOW - 120,
+                ..record("done-today", "")
+            },
+        ]
+        .into_iter()
+        .collect();
+        let ids = |rows: Vec<usize>| {
+            rows.into_iter()
+                .map(|i| catalog.get(i).unwrap().id.to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            ids(rail(&catalog, true, None, NOW)),
+            ["waiting", "today", "done-today", "week"]
+        );
+        assert_eq!(
+            ids(rail(&catalog, false, None, NOW)),
+            ["waiting", "today", "week"]
+        );
+        // The open chat is pinned above the rail, so the rail leaves it out.
+        assert_eq!(
+            ids(rail(&catalog, false, Some(1), NOW)),
+            ["waiting", "week"]
+        );
+        assert!(rail(&SearchCatalog::default(), true, None, NOW).is_empty());
     }
 
     #[test]

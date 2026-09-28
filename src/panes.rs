@@ -109,7 +109,21 @@ impl Adeline {
         self.section == Section::Chats && self.side_panel_open[0]
     }
     pub(super) fn workspace_panels(&self, cx: &Context<Self>) -> AnyElement {
-        h_resizable("chat-panels")
+        // A collapsed conversation list stays on screen as the chat rail.
+        let rail = (!self.left_panel_is_open()).then(|| {
+            div()
+                .id("conversation-rail-panel")
+                .role(Role::Group)
+                .aria_label("Collapsed conversation list")
+                .h_full()
+                .flex_shrink_0()
+                .bg(cx.theme().sidebar)
+                .text_color(cx.theme().sidebar_foreground)
+                .border_r_1()
+                .border_color(cx.theme().border)
+                .child(self.chat_list.clone())
+        });
+        let panels = h_resizable("chat-panels")
             .with_state(&self.panel_state)
             .child(
                 resizable_panel()
@@ -160,7 +174,12 @@ impl Adeline {
                                     .child(self.activity_content(cx)),
                             ),
                     ),
-            )
+            );
+        row()
+            .size_full()
+            .items_stretch()
+            .children(rail)
+            .child(div().flex_1().min_w_0().h_full().child(panels))
             .into_any_element()
     }
 }

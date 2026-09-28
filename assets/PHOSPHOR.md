@@ -35,6 +35,7 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `menu.svg` | `list.svg` |
 | `minus.svg` | `minus.svg` |
 | `more.svg` | `dots-three.svg` |
+| `new-chat.svg` | `note-pencil.svg` |
 | `panel-left.svg` | `sidebar-simple.svg` |
 | `pin.svg` | `push-pin.svg` |
 | `play.svg` | `play.svg` |
