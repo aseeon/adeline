@@ -831,10 +831,12 @@ impl Render for Composer {
 
 pub(super) struct Header(pub WeakEntity<Adeline>);
 impl Render for Header {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         ui_metrics::record(ui_metrics::Region::Header);
         self.0
-            .update(cx, |app, cx| app.header(cx).w_full().into_any_element())
+            .update(cx, |app, cx| {
+                app.header(window, cx).w_full().into_any_element()
+            })
             .unwrap_or_else(|_| div().into_any_element())
     }
 }

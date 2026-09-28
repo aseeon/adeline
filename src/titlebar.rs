@@ -1,6 +1,29 @@
-//! Windows title bar with Kit window controls and Adeline's scaled app icon.
+//! Title bars drawn by Adeline: Kit window controls and Adeline's scaled app icon.
+//!
+//! The main window draws its own title bar on every platform. The project tabs share it, so
+//! Windows and Linux put Kit's caption buttons at its right end and macOS keeps its traffic
+//! lights at the left, with the app icon beside them.
 use super::*;
 use gpui_kit::component::TitleBar;
+
+/// Height of the main window's title bar: 4px of headroom over the 32px project tabs.
+pub(super) const MAIN_HEIGHT: Pixels = px(36.);
+
+/// Options for a window that draws the unified title bar, so the title bar owns dragging.
+pub(super) fn main_window_options() -> WindowOptions {
+    WindowOptions {
+        titlebar: Some(TitlebarOptions {
+            title: Some("Adeline".into()),
+            appears_transparent: true,
+            // Centre the traffic lights on the project tabs, which fill the bar's bottom 32px.
+            traffic_light_position: Some(point(px(9.), px(12.))),
+        }),
+        // Linux asks the window manager to drop its frame; Kit keeps the frame and hides its own
+        // caption buttons when the session can't draw client-side decorations.
+        window_decorations: cfg!(target_os = "linux").then_some(WindowDecorations::Client),
+        ..TitleBar::window_options()
+    }
+}
 
 // Match the raster to the monitor's physical pixels instead of shrinking a large PNG.
 fn portrait_asset(scale_factor: f32) -> String {
@@ -14,25 +37,23 @@ fn portrait_asset(scale_factor: f32) -> String {
         .expect("title-bar icon sizes");
     format!("adeline-titlebar-{size}.png")
 }
+pub(super) fn app_icon(window: &Window) -> Img {
+    img(ImageSource::Resource(Resource::Embedded(
+        portrait_asset(window.scale_factor()).into(),
+    )))
+    .size(px(24.))
+    .flex_shrink_0()
+}
+/// Title bar for secondary windows, which Windows draws itself and other platforms leave native.
 pub(super) fn render(title: String, window: &Window) -> TitleBar {
     TitleBar::new().border_b_0().child(
-        row()
-            .min_w_0()
-            .gap_2()
-            .child(
-                img(ImageSource::Resource(Resource::Embedded(
-                    portrait_asset(window.scale_factor()).into(),
-                )))
-                .size(px(24.))
-                .flex_shrink_0(),
-            )
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(theme::muted_foreground()))
-                    .truncate()
-                    .child(title),
-            ),
+        row().min_w_0().gap_2().child(app_icon(window)).child(
+            div()
+                .text_sm()
+                .text_color(rgb(theme::muted_foreground()))
+                .truncate()
+                .child(title),
+        ),
     )
 }
 

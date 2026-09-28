@@ -23,7 +23,7 @@ mod views;
 use data::*;
 use gpui_kit::base::actions::Cancel;
 use gpui_kit::component::{
-    ActiveTheme, Icon, Root, Selectable, Sizable, WindowExt,
+    ActiveTheme, Icon, Root, Selectable, Sizable, TitleBar, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState, TextareaState},
 };
@@ -509,7 +509,7 @@ impl Adeline {
             });
         });
     }
-    fn header(&self, cx: &Context<Self>) -> Div {
+    fn header(&self, window: &Window, cx: &Context<Self>) -> Div {
         let mut projects = row()
             .id("projects")
             .role(Role::TabList)
@@ -517,6 +517,8 @@ impl Adeline {
             .overflow_x_scroll()
             .min_w_0()
             .items_end()
+            // Reach through the bar's bottom padding so the active tab covers the border line.
+            .mb(px(-1.))
             .gap_1();
         for (ix, project) in self
             .projects
@@ -575,31 +577,28 @@ impl Adeline {
                 .on_click(cx.listener(|app, _, window, cx| app.act(Action::AddProject, window, cx)))
                 .child(Icon::default().path("plus.svg").small()),
         );
-        let top = row()
+        // The project toolbar is the window's title bar. Its empty space drags the window, so
+        // everything clickable in it occludes the drag area beneath.
+        let toolbar = row()
             .id("project-toolbar")
+            .size_full()
             .items_end()
             .gap_2()
-            .px_2()
-            .pt_1()
-            .relative()
-            .bg(cx.theme().title_bar)
-            // Painted before the tabs so the active tab covers it and opens into the modes bar.
             .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .h(px(1.))
-                    .bg(cx.theme().border),
+                row()
+                    .h(px(32.))
+                    .flex_shrink_0()
+                    .child(titlebar::app_icon(window)),
             )
             .child(projects)
             .child(div().flex_1())
             .child(
                 row()
+                    .self_center()
                     .flex_shrink_0()
                     .gap_2()
-                    .pb_1()
+                    .pr_2()
+                    .occlude()
                     .when(config::current().general.features.machine_selector, |row| {
                         row.child(self.button("machines", "Machines", Action::Machines, cx))
                     })
@@ -614,6 +613,29 @@ impl Adeline {
                             cx,
                         ),
                     ),
+            );
+        let top = div()
+            .relative()
+            .bg(cx.theme().title_bar)
+            // Painted before the tabs so the active tab covers it and opens into the modes bar.
+            .child(
+                div()
+                    .absolute()
+                    .left_0()
+                    .right_0()
+                    .bottom_0()
+                    .h(px(1.))
+                    .bg(cx.theme().border),
+            )
+            .child(
+                TitleBar::new()
+                    .h(titlebar::MAIN_HEIGHT)
+                    .when(!cfg!(target_os = "macos"), |bar| bar.pl_2())
+                    // Keeps the window buttons' hover fill above the border line.
+                    .pb(px(1.))
+                    .border_b_0()
+                    .bg(transparent_black())
+                    .child(toolbar),
             );
         let mut modes = row()
             .id("modes")
@@ -683,6 +705,7 @@ fn project_tab(active: bool, cx: &App) -> Div {
         .h(px(32.))
         .gap_2()
         .text_sm()
+        .occlude()
         .rounded_t(cx.theme().radius)
         .border_t_1()
         .border_l_1()
@@ -755,17 +778,9 @@ impl Render for Adeline {
             .child(self.header_region.clone())
             .child(div().flex_1().min_h_0().child(body))
             .child(self.control_pane.clone());
-        let shell = col().size_full().bg(cx.theme().background);
-        #[cfg(target_os = "windows")]
-        let shell = shell.child(titlebar::render(
-            if self.has_open_project() {
-                format!("{} · Adeline", self.workspace().config.name)
-            } else {
-                "Adeline".into()
-            },
-            window,
-        ));
-        shell
+        col()
+            .size_full()
+            .bg(cx.theme().background)
             .child(content)
             .children(window_layers(window, cx).into_iter().flatten())
     }
@@ -796,12 +811,7 @@ fn main() {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(800.), px(600.))),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Adeline".into()),
-                    appears_transparent: cfg!(target_os = "windows"),
-                    ..Default::default()
-                }),
-                ..Default::default()
+                ..titlebar::main_window_options()
             },
             move |window, cx| {
                 let view = cx.new(|cx| Adeline::new(demo_mode, window, cx));
