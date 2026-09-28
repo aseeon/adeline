@@ -10,6 +10,26 @@ impl Adeline {
             .value()
             .trim()
             .to_owned();
+        match self.add_project(name, &directory, window, cx) {
+            Ok(()) => {
+                self.project_error = None;
+                self.modal = None;
+            }
+            Err(error) => {
+                self.project_error = Some(error);
+                cx.notify();
+            }
+        }
+    }
+
+    /// Saves a new project and opens it in a tab.
+    pub(super) fn add_project(
+        &mut self,
+        name: String,
+        directory: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
         let project = if self.demo_mode {
             if name.is_empty() {
                 Err("Enter a project name.".into())
@@ -29,7 +49,7 @@ impl Adeline {
                 .lock()
                 .map_err(|_| "Project storage is unavailable.".to_owned())
                 .and_then(|mut store| {
-                    let id = store.save_project(None, &name, Path::new(&directory))?;
+                    let id = store.save_project(None, &name, Path::new(directory))?;
                     Ok(store
                         .projects
                         .iter()
@@ -37,21 +57,36 @@ impl Adeline {
                         .expect("saved project is in the store")
                         .to_workspace())
                 })
-        };
-        match project {
-            Ok(project) => {
-                let index = self.projects.len();
-                self.projects.push(project);
-                self.open_projects.push(false);
-                self.project_tints.push(0);
-                self.project_error = None;
-                self.modal = None;
-                self.act(Action::Project(index), window, cx);
-            }
-            Err(error) => {
-                self.project_error = Some(error);
-                cx.notify();
-            }
+        }?;
+        let index = self.projects.len();
+        self.projects.push(project);
+        self.open_projects.push(false);
+        self.project_tints
+            .push(index % theme::project_colors().len());
+        self.act(Action::Project(index), window, cx);
+        Ok(())
+    }
+
+    /// Remembers when a project was opened, for the projects menu's order.
+    pub(super) fn record_project_opened(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let now = recency::now();
+        self.projects[ix].config.opened_at = Some(now);
+        if self.demo_mode {
+            return;
+        }
+        let id = self.projects[ix].config.id.clone();
+        let saved = self
+            .project_store
+            .lock()
+            .map_err(|_| "Project storage is unavailable.".to_owned())
+            .and_then(|mut store| store.mark_opened(&id, now));
+        if let Err(error) = saved {
+            window.push_notification(format!("Couldn't record opening {id}: {error}"), cx);
         }
     }
 
@@ -170,6 +205,11 @@ impl Adeline {
             cx.notify();
             return;
         }
+        self.remove_project_at(index, cx);
+    }
+
+    /// Forgets a deleted project: its tab, runtime state and selection.
+    pub(super) fn remove_project_at(&mut self, index: usize, cx: &mut Context<Self>) {
         let ids: Vec<_> = self.projects[index]
             .threads
             .iter()

@@ -226,6 +226,25 @@ fn project_rename_preserves_history_and_directory_snapshot() {
 }
 
 #[test]
+fn opened_time_persists_and_survives_a_rename() {
+    let test = TestRoot::new();
+    let work = test.working("work");
+    let mut store = test.store();
+    let id = store.save_project(None, "Opened", &work).unwrap();
+    assert_eq!(store.projects[0].opened_at, None);
+    assert!(store.mark_opened("missing", 1).is_err());
+    store.mark_opened(&id, 1_700_000_000).unwrap();
+    assert_eq!(test.store().projects[0].opened_at, Some(1_700_000_000));
+    let renamed = store
+        .save_project(Some(&id), "Opened Again", &work)
+        .unwrap();
+    let reloaded = test.store();
+    let project = reloaded.projects.iter().find(|p| p.id == renamed).unwrap();
+    assert_eq!(project.opened_at, Some(1_700_000_000));
+    assert_eq!(project.to_workspace().config.opened_at, Some(1_700_000_000));
+}
+
+#[test]
 fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
     let test = TestRoot::new();
     let work = test.working("work");
@@ -674,6 +693,7 @@ fn unsafe_config_contents_block_delete_without_touching_workdir() {
     let malicious_yaml = serde_yaml_ng::to_string(&ProjectDefinition {
         name: "Project".into(),
         directory: project_folder.clone(),
+        opened_at: None,
     })
     .unwrap();
     fs::write(&config_file, malicious_yaml).unwrap();

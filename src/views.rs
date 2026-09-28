@@ -376,10 +376,11 @@ impl Adeline {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        if matches!(
-            menu,
-            "agent" | "agents" | "projects" | "app" | "mode-settings"
-        ) {
+        if menu == "projects" {
+            self.open_projects_menu(window, cx);
+            return;
+        }
+        if matches!(menu, "agent" | "agents" | "app" | "mode-settings") {
             let state = cx.new(|cx| CommandState::new(window, cx));
             window.focus(&state.focus_handle(cx), cx);
             self.command_popup = Some(state);

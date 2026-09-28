@@ -736,6 +736,11 @@ impl SettingsWindow {
             &query,
             window,
             |this, input, event: &InputEvent, window, cx| {
+                if matches!(event, InputEvent::Focus | InputEvent::Blur) {
+                    // The field's border marks focus.
+                    cx.notify();
+                    return;
+                }
                 if !matches!(event, InputEvent::Change) {
                     return;
                 }
@@ -1572,7 +1577,12 @@ impl Render for SettingsWindow {
             .bg(cx.theme().sidebar)
             .border_r_1()
             .border_color(cx.theme().sidebar_border)
-            .child(Input::new(&self.query).aria_label("Search settings"))
+            .child(search_field(
+                Input::new(&self.query).aria_label("Search settings"),
+                &self.query,
+                window,
+                cx,
+            ))
             .child(
                 div()
                     .flex_1()

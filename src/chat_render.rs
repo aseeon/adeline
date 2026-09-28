@@ -596,8 +596,8 @@ impl Adeline {
         let theme = cx.theme();
         let searching = search_focused || !self.query.read(cx).value().is_empty();
         // The frame belongs to the list rather than the input, so the agent button
-        // shares the frame's inset instead of the input's fixed text padding. It
-        // keeps its border when focused; the search icon lights up instead.
+        // shares the frame's inset instead of the input's fixed text padding. Like
+        // every search field, focus shows as a primary border rather than a glow.
         let search = row()
             .id("chat-search-field")
             .w_full()
@@ -607,7 +607,11 @@ impl Adeline {
             .pr(px(1.))
             .rounded(theme.radius)
             .border_1()
-            .border_color(theme.input)
+            .border_color(if search_focused {
+                theme.primary
+            } else {
+                theme.input
+            })
             .bg(theme.background)
             .on_mouse_down(
                 MouseButton::Left,

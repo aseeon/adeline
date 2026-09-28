@@ -17,6 +17,8 @@ pub struct Config {
     pub name: String,
     pub provider: String,
     pub directory: PathBuf,
+    /// When the project was last opened, in seconds since the Unix epoch.
+    pub opened_at: Option<i64>,
 }
 #[derive(Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -221,9 +223,6 @@ impl Workspace {
         for ((count, before), after) in self.counts.iter_mut().zip(before).zip(after) {
             *count = *count - before + after;
         }
-    }
-    pub fn notifications(&self) -> (usize, usize) {
-        (self.counts[2], self.counts[3])
     }
 }
 

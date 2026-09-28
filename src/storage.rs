@@ -75,6 +75,9 @@ impl TranscriptEvent {
 struct ProjectDefinition {
     name: String,
     directory: PathBuf,
+    /// When the project was last opened, in seconds since the Unix epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    opened_at: Option<i64>,
 }
 
 #[derive(Clone, Debug)]
@@ -246,6 +249,7 @@ pub struct ProjectRecord {
     pub id: String,
     pub name: String,
     pub directory: PathBuf,
+    pub opened_at: Option<i64>,
     pub conversations: Vec<StoredConversation>,
 }
 
@@ -257,6 +261,7 @@ impl ProjectRecord {
                 name: self.name.clone(),
                 provider: String::new(),
                 directory: self.directory.clone(),
+                opened_at: self.opened_at,
             },
             threads: self
                 .conversations
@@ -387,6 +392,7 @@ impl ProjectStore {
                     id,
                     name: definition.name,
                     directory: definition.directory,
+                    opened_at: definition.opened_at,
                     conversations: Vec::new(),
                 };
                 let conversations = folder.join("conversations");
@@ -471,9 +477,14 @@ impl ProjectStore {
                 }
             }
         }
+        // Editing a project keeps when it was last opened.
+        let opened_at = original
+            .and_then(|old| self.projects.iter().find(|p| p.id == old))
+            .and_then(|project| project.opened_at);
         let definition = ProjectDefinition {
             name: name.to_owned(),
             directory: directory.to_owned(),
+            opened_at,
         };
         let text = serde_yaml_ng::to_string(&definition).map_err(|e| e.to_string())?;
         if let Some(old) = original {
@@ -511,10 +522,33 @@ impl ProjectStore {
                 id: id.clone(),
                 name: name.to_owned(),
                 directory: directory.to_owned(),
+                opened_at: None,
                 conversations: Vec::new(),
             });
         }
         Ok(id)
+    }
+
+    /// Records that the project was opened at `at`, seconds since the Unix epoch.
+    pub fn mark_opened(&mut self, id: &str, at: i64) -> Result<(), String> {
+        checked_id(id)?;
+        let root = self.root.as_ref().map_err(Clone::clone)?;
+        let project = self
+            .projects
+            .iter_mut()
+            .find(|p| p.id == id)
+            .ok_or_else(|| format!("Project {id} no longer exists."))?;
+        let folder = root.join(id);
+        safe_directory(&folder)?;
+        let definition = ProjectDefinition {
+            name: project.name.clone(),
+            directory: project.directory.clone(),
+            opened_at: Some(at),
+        };
+        let text = serde_yaml_ng::to_string(&definition).map_err(|e| e.to_string())?;
+        replace_file(&folder.join("project.yml"), text.as_bytes())?;
+        project.opened_at = Some(at);
+        Ok(())
     }
 
     /// Call only after every live agent in this project has stopped successfully.

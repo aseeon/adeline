@@ -10,6 +10,7 @@ mod fonts;
 mod interaction;
 mod panes;
 mod prepared;
+mod project_bar;
 mod project_ui;
 mod recency;
 mod runtime_ui;
@@ -81,6 +82,15 @@ fn text(s: impl Into<SharedString>, size: f32, color: u32) -> Div {
         .text_color(rgb(color))
         .child(s.into())
 }
+/// Search fields drop Kit's focus glow; a focused one shows a 1px primary
+/// border instead.
+fn search_field(input: Input, state: &Entity<InputState>, window: &Window, cx: &App) -> Input {
+    use gpui_kit::base::FocusableExt as _;
+    let focused = state.focus_handle(cx).contains_focused(window, cx);
+    input
+        .focus_ring(false)
+        .when(focused, |input| input.border_color(cx.theme().primary))
+}
 fn icon(name: &str) -> themed_icon::ThemedIcon {
     themed_icon::ThemedIcon::new(name)
         .size(px(16.))
@@ -114,6 +124,11 @@ enum Section {
 enum Action {
     Project(usize),
     CloseProject(usize),
+    /// Delete a closed project after a short undo window.
+    RemoveClosedProject(String),
+    UndoProjectRemoval(String),
+    ToggleProjectSort,
+    OpenFolder,
     AddProject,
     SaveProject,
     DeleteProject,
@@ -215,6 +230,17 @@ struct Adeline {
     project_directory_input: Entity<InputState>,
     project_error: Option<String>,
     delete_project: Option<usize>,
+    project_search: Entity<InputState>,
+    project_sort: project_bar::ProjectSort,
+    /// The projects-menu row the arrow keys have reached, by project id.
+    project_highlight: Option<String>,
+    project_list_scroll: ScrollHandle,
+    pending_removal: Option<project_bar::PendingRemoval>,
+    removal_generation: u64,
+    /// A folded tab under the pointer, which shows its name.
+    hovered_tab: Option<String>,
+    tab_fit: std::rc::Rc<project_bar::TabFit>,
+    tab_scroll: ScrollHandle,
     project: usize,
     machine: usize,
     section: Section,
@@ -275,7 +301,9 @@ impl Adeline {
                 .placeholder("Ask your agent to do anything")
         });
         let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Project name"));
-        let subscriptions = vec![cx.subscribe(&query, |app, _, event: &InputEvent, cx| {
+        let project_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search projects"));
+        let mut subscriptions = vec![cx.subscribe(&query, |app, _, event: &InputEvent, cx| {
             match event {
                 InputEvent::Change => app.search_sidebar(cx),
                 // The search icon lights up while the field is focused.
@@ -285,6 +313,19 @@ impl Adeline {
                 InputEvent::PressEnter { .. } => {}
             }
         })];
+        subscriptions.push(
+            cx.subscribe(
+                &project_search,
+                |app, _, event: &InputEvent, cx| match event {
+                    InputEvent::Change => app.search_projects(cx),
+                    // The field's border marks focus.
+                    InputEvent::Focus | InputEvent::Blur => {
+                        app.header_region.update(cx, |_, cx| cx.notify());
+                    }
+                    InputEvent::PressEnter { .. } => {}
+                },
+            ),
+        );
         let owner = cx.weak_entity();
         let chat_list = cx.new(|_| chat::ChatList::new(owner.clone()));
         let transcript = cx.new(|cx| chat::Transcript::new(owner.clone(), cx));
@@ -311,6 +352,15 @@ impl Adeline {
                 .new(|cx| InputState::new(window, cx).placeholder("Existing working directory")),
             project_error: None,
             delete_project: None,
+            project_search,
+            project_sort: project_bar::ProjectSort::default(),
+            project_highlight: None,
+            project_list_scroll: ScrollHandle::new(),
+            pending_removal: None,
+            removal_generation: 0,
+            hovered_tab: None,
+            tab_fit: std::rc::Rc::default(),
+            tab_scroll: ScrollHandle::new(),
             projects,
             project: 0,
             machine: 0,
@@ -507,217 +557,6 @@ impl Adeline {
                 window.push_notification(value.clone(), cx);
             });
         });
-    }
-    fn header(&self, window: &Window, cx: &Context<Self>) -> Div {
-        let mut projects = row()
-            .id("projects")
-            .role(Role::TabList)
-            .aria_label("Projects")
-            .overflow_x_scroll()
-            .min_w_0()
-            .items_end()
-            // Reach through the bar's bottom padding so the active tab covers the border line.
-            .mb(px(-1.))
-            .gap_1();
-        for (ix, project) in self
-            .projects
-            .iter()
-            .enumerate()
-            .filter(|(ix, _)| self.open_projects[*ix])
-        {
-            let attention = project.attention_count();
-            let active = ix == self.project;
-            let name = if attention == 0 {
-                project.config.name.clone()
-            } else {
-                format!("{} ({attention})", project.config.name)
-            };
-            projects = projects.child(
-                project_tab(active, cx)
-                    .pl_3()
-                    .pr_1()
-                    .child(
-                        row()
-                            .id(SharedString::from(format!("project-{}", project.config.id)))
-                            .role(Role::Tab)
-                            .aria_label(name.clone())
-                            .aria_selected(active)
-                            .h_full()
-                            .gap_2()
-                            .cursor_pointer()
-                            .on_click(cx.listener(move |app, _, window, cx| {
-                                app.act(Action::Project(ix), window, cx);
-                            }))
-                            .child(
-                                div()
-                                    .size_2()
-                                    .flex_shrink_0()
-                                    .rounded_full()
-                                    .bg(rgb(theme::project_colors()[self.project_tints[ix]])),
-                            )
-                            .child(div().max_w(px(180.)).truncate().child(name)),
-                    )
-                    .child(self.icon_button(
-                        SharedString::from(format!("close-{}", project.config.id)),
-                        "Close project tab",
-                        Icon::default().path("close.svg"),
-                        Action::CloseProject(ix),
-                        cx,
-                    )),
-            );
-        }
-        projects = projects.child(
-            project_tab(false, cx)
-                .id("new-project")
-                .role(Role::Button)
-                .aria_label("New project…")
-                .px_2()
-                .cursor_pointer()
-                .on_click(cx.listener(|app, _, window, cx| app.act(Action::AddProject, window, cx)))
-                .child(Icon::default().path("plus.svg").small()),
-        );
-        // The project toolbar is the window's title bar. Its empty space drags the window, so
-        // everything clickable in it occludes the drag area beneath.
-        let toolbar = row()
-            .id("project-toolbar")
-            .size_full()
-            .items_end()
-            .gap_2()
-            .child(
-                row()
-                    .h(px(32.))
-                    .flex_shrink_0()
-                    .child(titlebar::app_icon(window)),
-            )
-            .child(projects)
-            .child(div().flex_1())
-            .child(
-                row()
-                    .self_center()
-                    .flex_shrink_0()
-                    .gap_2()
-                    .pr_2()
-                    .occlude()
-                    .when(config::current().general.features.machine_selector, |row| {
-                        row.child(self.button("machines", "Machines", Action::Machines, cx))
-                    })
-                    .child(
-                        self.command_popover(
-                            "projects",
-                            Button::new("project-menu")
-                                .icon(Icon::default().path("folder.svg"))
-                                .label("Projects")
-                                .small(),
-                            Anchor::TopRight,
-                            cx,
-                        ),
-                    ),
-            );
-        let top = div()
-            .relative()
-            .bg(cx.theme().title_bar)
-            // Painted before the tabs so the active tab covers it and opens into the modes bar.
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .right_0()
-                    .bottom_0()
-                    .h(px(1.))
-                    .bg(cx.theme().border),
-            )
-            .child(
-                TitleBar::new()
-                    .h(titlebar::MAIN_HEIGHT)
-                    .when(!cfg!(target_os = "macos"), |bar| bar.pl_2())
-                    // Keeps the window buttons' hover fill above the border line.
-                    .pb(px(1.))
-                    .border_b_0()
-                    .bg(transparent_black())
-                    .child(toolbar),
-            );
-        let mut modes = row()
-            .id("modes")
-            .role(Role::TabList)
-            .aria_label("Modes")
-            .overflow_x_scroll()
-            .gap_1()
-            .px_2()
-            .bg(cx.theme().background)
-            .border_b_1()
-            .border_color(cx.theme().border);
-        for (section, name, icon_path) in [
-            (Section::Chats, "Chats", "chat.svg"),
-            (Section::Docs, "Docs", "file.svg"),
-            (Section::Workflows, "Workflows", "workflow.svg"),
-            (Section::Services, "Services", "service.svg"),
-            (Section::Groupchats, "Groupchats", "group.svg"),
-            (Section::Issues, "Issues", "flag.svg"),
-            (Section::Whiteboard, "Whiteboard", "whiteboard.svg"),
-        ] {
-            if self.has_open_project() && config::current().general.features.enabled(section) {
-                let label = if section == Section::Chats {
-                    let (_, unread) = self.workspace().notifications();
-                    let attention = unread + self.workspace().counts[1];
-                    if attention == 0 {
-                        name.to_owned()
-                    } else {
-                        format!("{name} ({attention})")
-                    }
-                } else {
-                    name.to_owned()
-                };
-                let active = self.section == section;
-                // An underline marks the active mode; a selection fill would blur
-                // the shared surface with the active project tab.
-                modes = modes.child(
-                    col()
-                        .pt_1()
-                        .child(
-                            self.button(name, label, Action::Section(section), cx)
-                                .icon(Icon::default().path(icon_path))
-                                .ghost()
-                                .toggled(active)
-                                .when(active, |button| button.text_color(cx.theme().foreground)),
-                        )
-                        .child(
-                            div()
-                                .mx_2()
-                                .mt_1()
-                                .h(px(2.))
-                                .rounded_full()
-                                .when(active, |line| line.bg(cx.theme().foreground)),
-                        ),
-                );
-            }
-        }
-        col()
-            .flex_shrink_0()
-            .child(top)
-            .when(self.has_open_project(), |header| header.child(modes))
-    }
-}
-// The active project tab shares the modes bar background so the two read as one surface.
-fn project_tab(active: bool, cx: &App) -> Div {
-    let tab = row()
-        .flex_shrink_0()
-        .h(px(32.))
-        .gap_2()
-        .text_sm()
-        .occlude()
-        .rounded_t(cx.theme().radius)
-        .border_t_1()
-        .border_l_1()
-        .border_r_1()
-        .border_color(cx.theme().border);
-    if active {
-        tab.bg(cx.theme().background)
-            .text_color(cx.theme().foreground)
-    } else {
-        tab.bg(cx.theme().muted)
-            .border_b_1()
-            .text_color(cx.theme().muted_foreground)
-            .hover(|style| style.text_color(cx.theme().foreground))
     }
 }
 impl Render for Adeline {

@@ -26,6 +26,10 @@ impl Adeline {
                     | Action::HideToolCalls
                     | Action::ToggleMode(_)
                     | Action::ToggleMachineSelector
+                    | Action::RemoveClosedProject(_)
+                    | Action::UndoProjectRemoval(_)
+                    | Action::ToggleProjectSort
+                    | Action::OpenFolder
             )
         {
             return;
@@ -123,6 +127,38 @@ impl Adeline {
                 self.project = ix;
                 self.section = Section::Chats;
                 window.set_window_title(&format!("{} · Adeline", self.workspace().config.name));
+                self.record_project_opened(ix, window, cx);
+            }
+            Action::RemoveClosedProject(id) => self.remove_closed_project(&id, window, cx),
+            Action::UndoProjectRemoval(id) => self.undo_project_removal(&id, window, cx),
+            Action::ToggleProjectSort => {
+                self.project_sort = match self.project_sort {
+                    project_bar::ProjectSort::Recent => project_bar::ProjectSort::Name,
+                    project_bar::ProjectSort::Name => project_bar::ProjectSort::Recent,
+                };
+                self.project_list_scroll.scroll_to_item(0);
+            }
+            Action::OpenFolder => {
+                self.menu = None;
+                let selection = cx.prompt_for_paths(PathPromptOptions {
+                    files: false,
+                    directories: true,
+                    multiple: false,
+                    prompt: Some("Open folder".into()),
+                });
+                cx.spawn_in(window, async move |this, cx| {
+                    let result = selection.await;
+                    let _ = this.update_in(cx, |app, window, cx| match result {
+                        Ok(Ok(Some(paths))) => {
+                            if let Some(directory) = paths.into_iter().next() {
+                                app.open_folder(&directory, window, cx);
+                            }
+                        }
+                        Ok(Ok(None)) => {}
+                        _ => window.push_notification("Could not open the folder picker.", cx),
+                    });
+                })
+                .detach();
             }
             Action::CloseProject(ix) => {
                 if let Some(next) = close_project_tab(&mut self.open_projects, self.project, ix) {

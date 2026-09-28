@@ -45,6 +45,7 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `send.svg` | `arrow-up.svg` |
 | `service.svg` | `stack.svg` |
 | `settings.svg` | `gear-six.svg` |
+| `sort.svg` | `sort-ascending.svg` |
 | `sparkle.svg` | `sparkle.svg` |
 | `square.svg` | `square.svg` |
 | `stop.svg` | `stop.svg` |
@@ -52,6 +53,7 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `text-b.svg` | `text-b.svg` |
 | `text-italic.svg` | `text-italic.svg` |
 | `text-strikethrough.svg` | `text-strikethrough.svg` |
+| `trash.svg` | `trash.svg` |
 | `user.svg` | `user-circle.svg` |
 | `workflow.svg` | `flow-arrow.svg` |
 | `working.svg` | `spinner-gap.svg` |

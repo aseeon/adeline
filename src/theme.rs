@@ -1,7 +1,7 @@
 //! Application themes. Existing 32-color YAML files project onto Kit's global
 //! theme for every window. Preferences stay separate from workspace data.
 use gpui_kit::{
-    App,
+    App, Hsla,
     component::{Colorize as _, Theme as KitTheme, ThemeMode},
     px, rgb,
 };
@@ -194,7 +194,7 @@ pub fn parse_hex(value: &str) -> Option<u32> {
 }
 /// Kit has one global focus ring; sidebar navigation uses the YAML sidebar ring
 /// on its focused border to preserve the separate palette role.
-pub fn sidebar_focus() -> gpui_kit::Hsla {
+pub fn sidebar_focus() -> Hsla {
     rgb(sidebar_ring()).into()
 }
 fn read(path: &Path) -> Result<ThemeFile, String> {
@@ -399,6 +399,50 @@ pub fn apply(cx: &mut App) {
 
 pub fn project_colors() -> [u32; 5] {
     [chart_1(), chart_2(), chart_3(), chart_4(), chart_5()]
+}
+
+/// Title-bar cell roles derived from the active palette, so every theme gets
+/// them without new YAML keys.
+pub struct BarColors {
+    /// The line between title-bar cells, one step quieter than `border`.
+    pub divider: Hsla,
+    /// An inactive cell under the pointer.
+    pub hover: Hsla,
+    /// A projects-menu row under the pointer or the keyboard highlight.
+    pub menu_hover: Hsla,
+}
+pub fn bar_colors(theme: &KitTheme) -> BarColors {
+    BarColors {
+        divider: theme.border.mix_oklab(theme.title_bar, 0.5),
+        hover: theme.foreground.mix_oklab(theme.title_bar, 0.04),
+        menu_hover: theme.foreground.mix_oklab(theme.popover, 0.08),
+    }
+}
+
+/// A project's letter mark: a soft wash of its tint at rest and the full tint
+/// when active, with the letter in whichever of foreground or background
+/// stands further from the fill.
+pub fn project_mark(tint: Hsla, active: bool, theme: &KitTheme) -> (Hsla, Hsla) {
+    if active {
+        let letter = if (tint.l - theme.foreground.l).abs() >= (tint.l - theme.background.l).abs() {
+            theme.foreground
+        } else {
+            theme.background
+        };
+        (tint, letter)
+    } else {
+        // Palettes include near-black tints, so the letter leans on the
+        // foreground to stay legible whatever the tint.
+        (
+            tint.mix_oklab(theme.title_bar, 0.4),
+            tint.mix_oklab(theme.foreground, 0.35),
+        )
+    }
+}
+
+pub fn project_tint(index: usize) -> Hsla {
+    let colors = project_colors();
+    rgb(colors[index % colors.len()]).into()
 }
 #[cfg(test)]
 mod tests {
