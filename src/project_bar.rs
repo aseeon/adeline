@@ -411,7 +411,8 @@ impl Adeline {
             .overflow_y_scroll()
             .track_scroll(&self.project_list_scroll)
             .px_1()
-            .py_1()
+            .pt_1()
+            .pb_2()
             // Room for the last row to scroll clear of the fade.
             .when(overflows, |list| list.pb(rems(1.25)))
             .children(

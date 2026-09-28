@@ -2,7 +2,7 @@
 //! data/action coordinator; list state and input invalidation live in these views.
 use super::*;
 use crate::Action;
-use crate::chat_render::{LabelPlacement, Rail, RowContext, end_label, section_label};
+use crate::chat_render::{LabelPlacement, Rail, end_label, section_label};
 use crate::prepared::{Criteria, Group, Outcome};
 use gpui_kit::component::{
     ActiveTheme as _,
@@ -467,129 +467,119 @@ impl Render for ChatList {
         let filtered = !self.criteria.query.is_empty()
             || self.criteria.filter != 0
             || self.criteria.agent.is_some();
-        let rows = if self.items.is_empty() {
-            let owner = self.owner.clone();
-            // A narrow list lines the message up with the tabs and shortens the button.
-            let compact = tab_cap.is_some();
-            col()
-                .flex_1()
-                .when(compact, |empty| empty.px_3().py_5())
-                .when(!compact, |empty| empty.p_5())
-                .gap_3()
-                .items_start()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(if self.searching {
-                    "Searching…".to_owned()
-                } else if !self.criteria.query.is_empty() {
-                    format!("No chats match “{}”.", self.criteria.query)
-                } else if filtered {
-                    "No chats match these filters.".to_owned()
-                } else {
-                    "No chats yet.".to_owned()
-                })
-                .when(filtered && !self.searching, |empty| {
-                    empty.child(
-                        Button::new("clear-chat-filters")
-                            .outline()
-                            .small()
-                            .max_w_full()
-                            .label(if compact {
-                                "Clear filters"
-                            } else {
-                                "Clear search and filters"
-                            })
-                            .accessibility_label("Clear search and filters")
-                            .when(compact, |button| button.tooltip("Clear search and filters"))
-                            .on_click(move |_, window, cx| {
-                                let _ = owner.update(cx, |app, cx| {
-                                    app.act(Action::ClearChatFilters, window, cx);
-                                });
-                            }),
-                    )
-                })
-                .into_any_element()
-        } else {
-            let owner = self.owner.clone();
-            let items = self.items.clone();
-            let tops: Arc<[Pixels]> = self.layout.tops.clone().into();
-            let groups: Arc<[(Group, Vec<usize>)]> = self.outcome.groups.clone().into();
-            let selected = self.selected;
-            let tail = self.tail;
-            let total = self.outcome.matches();
-            let current = stacks.current;
-            let section_view = {
-                let records = self.records.clone();
-                let this = this.clone();
-                move |slot: usize, placement: LabelPlacement, cx: &mut App| {
-                    let (group, rows) = &groups[slot];
-                    let fresh = rows.iter().filter(|&&row| records[row].unread).count();
-                    section_label(
-                        *group,
-                        rows.len(),
-                        fresh,
-                        slot == current,
-                        compact_sections,
-                        placement,
-                        {
-                            let this = this.clone();
-                            move |_, _, cx: &mut App| {
-                                let _ = this.update(cx, |list, cx| list.jump(slot, cx));
-                            }
-                        },
-                        cx,
-                    )
-                }
-            };
-            let list_view = {
-                let section_view = section_view.clone();
-                list(self.state.clone(), move |ix, _, cx| {
-                    let rail = Rail {
-                        top: tops[ix],
-                        starts: ix == 0,
-                        ends: matches!(items[ix], Item::End),
-                    };
-                    match items[ix] {
-                        Item::Section(slot) => section_view(slot, LabelPlacement::Inline(rail), cx),
-                        Item::Chat(row) => {
-                            ui_metrics::record(ui_metrics::Region::ChatRow);
-                            let next = items.get(ix + 1).copied();
-                            let context = RowContext {
-                                rail,
-                                separator: matches!(next, Some(Item::Chat(next)) if selected != Some(next)),
-                            };
-                            owner
-                                .update(cx, |app, cx| app.chat_card(row, context, cx))
-                                .unwrap_or_else(|_| div().into_any_element())
-                        }
-                        Item::End => end_label(total, rail, cx),
-                        Item::Tail => div().h(tail).into_any_element(),
-                    }
-                })
-                .size_full()
-            };
-            let top_stack =
+        let rows =
+            if self.items.is_empty() {
+                let owner = self.owner.clone();
+                // A narrow list lines the message up with the tabs and shortens the button.
+                let compact = tab_cap.is_some();
                 col()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right_0()
-                    .children(stacks.top.clone().map(|slot| {
-                        section_view(
-                            slot,
-                            LabelPlacement::Top {
-                                last: slot + 1 == stacks.top.end,
+                    .flex_1()
+                    .when(compact, |empty| empty.px_3().py_5())
+                    .when(!compact, |empty| empty.p_5())
+                    .gap_3()
+                    .items_start()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(if self.searching {
+                        "Searching…".to_owned()
+                    } else if !self.criteria.query.is_empty() {
+                        format!("No chats match “{}”.", self.criteria.query)
+                    } else if filtered {
+                        "No chats match these filters.".to_owned()
+                    } else {
+                        "No chats yet.".to_owned()
+                    })
+                    .when(filtered && !self.searching, |empty| {
+                        empty.child(
+                            Button::new("clear-chat-filters")
+                                .outline()
+                                .small()
+                                .max_w_full()
+                                .label(if compact {
+                                    "Clear filters"
+                                } else {
+                                    "Clear search and filters"
+                                })
+                                .accessibility_label("Clear search and filters")
+                                .when(compact, |button| button.tooltip("Clear search and filters"))
+                                .on_click(move |_, window, cx| {
+                                    let _ = owner.update(cx, |app, cx| {
+                                        app.act(Action::ClearChatFilters, window, cx);
+                                    });
+                                }),
+                        )
+                    })
+                    .into_any_element()
+            } else {
+                let owner = self.owner.clone();
+                let items = self.items.clone();
+                let tops: Arc<[Pixels]> = self.layout.tops.clone().into();
+                let groups: Arc<[(Group, Vec<usize>)]> = self.outcome.groups.clone().into();
+                let selected = self.selected;
+                let tail = self.tail;
+                let total = self.outcome.matches();
+                let current = stacks.current;
+                let section_view = {
+                    let this = this.clone();
+                    move |slot: usize, placement: LabelPlacement, cx: &mut App| {
+                        let (group, rows) = &groups[slot];
+                        section_label(
+                            *group,
+                            rows.len(),
+                            slot == current,
+                            compact_sections,
+                            placement,
+                            {
+                                let this = this.clone();
+                                move |_, _, cx: &mut App| {
+                                    let _ = this.update(cx, |list, cx| list.jump(slot, cx));
+                                }
                             },
                             cx,
                         )
-                    }));
-            let bottom_stack =
-                col()
-                    .absolute()
-                    .bottom_0()
-                    .left_0()
-                    .right_0()
-                    .children(stacks.bottom.clone().map(|slot| {
+                    }
+                };
+                let list_view = {
+                    let section_view = section_view.clone();
+                    list(self.state.clone(), move |ix, _, cx| {
+                        let rail = Rail {
+                            top: tops[ix],
+                            starts: ix == 0,
+                            ends: matches!(items[ix], Item::End),
+                        };
+                        match items[ix] {
+                            Item::Section(slot) => {
+                                section_view(slot, LabelPlacement::Inline(rail), cx)
+                            }
+                            Item::Chat(row) => {
+                                ui_metrics::record(ui_metrics::Region::ChatRow);
+                                owner
+                                    .update(cx, |app, cx| app.chat_card(row, rail, cx))
+                                    .unwrap_or_else(|_| div().into_any_element())
+                            }
+                            Item::End => end_label(total, rail, cx),
+                            Item::Tail => div().h(tail).into_any_element(),
+                        }
+                    })
+                    .size_full()
+                };
+                let top_stack =
+                    col()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .right_0()
+                        .children(stacks.top.clone().map(|slot| {
+                            section_view(
+                                slot,
+                                LabelPlacement::Top {
+                                    last: slot + 1 == stacks.top.end,
+                                },
+                                cx,
+                            )
+                        }));
+                let bottom_stack = col().absolute().bottom_0().left_0().right_0().children(
+                    stacks.bottom.clone().map(|slot| {
                         section_view(
                             slot,
                             LabelPlacement::Bottom {
@@ -597,46 +587,47 @@ impl Render for ChatList {
                             },
                             cx,
                         )
-                    }));
-            div()
-                .id("chat-list-viewport")
-                .role(Role::ListBox)
-                .aria_label("Chats")
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .track_focus(&list_focus)
-                .on_key_down({
-                    let owner = self.owner.clone();
-                    move |event, window, cx| {
-                        if event.keystroke.modifiers.modified() {
-                            return;
+                    }),
+                );
+                div()
+                    .id("chat-list-viewport")
+                    .role(Role::ListBox)
+                    .aria_label("Chats")
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .track_focus(&list_focus)
+                    .on_key_down({
+                        let owner = self.owner.clone();
+                        move |event, window, cx| {
+                            if event.keystroke.modifiers.modified() {
+                                return;
+                            }
+                            // Selecting runs the shell's action, which updates this list again,
+                            // so the target is read first and the action runs outside the list.
+                            let Some((_, row)) = this.upgrade().and_then(|list| {
+                                let list = list.read(cx);
+                                let target = list.navigation_target(&event.keystroke.key)?;
+                                list.reveal(target.0);
+                                Some(target)
+                            }) else {
+                                return;
+                            };
+                            list_focus.focus(window, cx);
+                            if selected != Some(row) {
+                                let _ = owner
+                                    .update(cx, |app, cx| app.act(Action::Chat(row), window, cx));
+                            }
+                            window.refresh();
+                            cx.stop_propagation();
                         }
-                        // Selecting runs the shell's action, which updates this list again,
-                        // so the target is read first and the action runs outside the list.
-                        let Some((_, row)) = this.upgrade().and_then(|list| {
-                            let list = list.read(cx);
-                            let target = list.navigation_target(&event.keystroke.key)?;
-                            list.reveal(target.0);
-                            Some(target)
-                        }) else {
-                            return;
-                        };
-                        list_focus.focus(window, cx);
-                        if selected != Some(row) {
-                            let _ =
-                                owner.update(cx, |app, cx| app.act(Action::Chat(row), window, cx));
-                        }
-                        window.refresh();
-                        cx.stop_propagation();
-                    }
-                })
-                .child(list_view)
-                .child(top_stack)
-                .child(bottom_stack)
-                .child(Scrollbar::vertical(&self.state))
-                .into_any_element()
-        };
+                    })
+                    .child(list_view)
+                    .child(top_stack)
+                    .child(bottom_stack)
+                    .child(Scrollbar::vertical(&self.state))
+                    .into_any_element()
+            };
         let focused = self
             .owner
             .upgrade()

@@ -34,13 +34,6 @@ pub(super) struct Rail {
     pub ends: bool,
 }
 
-#[derive(Clone, Copy)]
-pub(super) struct RowContext {
-    pub rail: Rail,
-    /// Draw the separator under this row: the next item is a chat that is not selected.
-    pub separator: bool,
-}
-
 /// Where a section label is drawn.
 #[derive(Clone, Copy)]
 pub(super) enum LabelPlacement {
@@ -119,7 +112,6 @@ fn rail_canvas(rail: Rail) -> impl IntoElement {
 pub(super) fn section_label(
     group: Group,
     count: usize,
-    fresh: usize,
     current: bool,
     compact: bool,
     placement: LabelPlacement,
@@ -166,8 +158,8 @@ pub(super) fn section_label(
                 .hover(|style| style.bg(theme.secondary))
                 .on_click(on_jump)
                 .map(|label| match placement {
-                    // U2: one edge where a label meets the chats, none inside a stack.
-                    LabelPlacement::Inline(rail) => label.border_b_1().child(rail_canvas(rail)),
+                    // U2: an edge only where a pinned stack meets the chats.
+                    LabelPlacement::Inline(rail) => label.child(rail_canvas(rail)),
                     LabelPlacement::Top { last } => label.when(last, |label| label.border_b_1()),
                     LabelPlacement::Bottom { first } => {
                         label.when(first, |label| label.border_t_1())
@@ -200,14 +192,6 @@ pub(super) fn section_label(
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(group.title()),
                 )
-                .when(fresh > 0 && !compact, |label| {
-                    label.child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(theme.primary)
-                            .child(format!("{fresh} new")),
-                    )
-                })
                 .child(
                     div()
                         .flex_shrink_0()
@@ -365,12 +349,7 @@ impl Adeline {
         }
     }
 
-    pub(super) fn chat_card(
-        &self,
-        i: usize,
-        context: RowContext,
-        cx: &Context<Self>,
-    ) -> AnyElement {
+    pub(super) fn chat_card(&self, i: usize, rail: Rail, cx: &Context<Self>) -> AnyElement {
         let thread = &self.workspace().threads[i];
         let theme = cx.theme();
         let selected = self.selected == Some(i);
@@ -423,7 +402,7 @@ impl Adeline {
                     .on_click(
                         cx.listener(move |app, _, window, cx| app.act(Action::Chat(i), window, cx)),
                     )
-                    .child(rail_canvas(context.rail))
+                    .child(rail_canvas(rail))
                     .child(
                         row()
                             .flex_shrink_0()
@@ -489,20 +468,7 @@ impl Adeline {
                                     }),
                             ),
                     )
-                    .child(status_badge(thread, selected, cx))
-                    .when(context.separator && !selected, |row| {
-                        row.child(
-                            div()
-                                .absolute()
-                                .bottom_0()
-                                .left(rems(0.5 + LANE + 0.75))
-                                .right(rems(0.5))
-                                // A one-device-pixel hairline, not a spacing value.
-                                .h(px(1.))
-                                .bg(theme.border)
-                                .group_hover("chat-row", |style| style.opacity(0.)),
-                        )
-                    }),
+                    .child(status_badge(thread, selected, cx)),
             )
             .into_any_element()
     }
