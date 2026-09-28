@@ -24,9 +24,17 @@ resvg = { version = "0.45.1", default-features = false }
 [profile.dev]
 debug = 0
 
+# Local release builds skip LTO and reuse unchanged code between builds:
+# a one-line edit rebuilds in ~14s instead of ~78s. Thin LTO alone took ~60s.
 [profile.release]
-lto = "thin"
+incremental = true
 strip = true
+
+# Shipped builds (`scripts/package.ps1`, CI artifacts) keep thin LTO.
+[profile.dist]
+inherits = "release"
+lto = "thin"
+incremental = false
 
 # Static analysis — the Rust counterpart of basedpyright's strict mode. `rustc`
 # already type-checks; these lints add the checks basedpyright layers on top.

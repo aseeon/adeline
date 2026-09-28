@@ -117,6 +117,8 @@ cargo nextest run --locked --all-features
 cargo build --release --locked
 ```
 
+`--release` builds skip LTO and build incrementally, so local rebuilds are fast. Shipped binaries use the `dist` profile, which adds thin LTO: `scripts/package.ps1` and CI run `cargo build --profile dist --locked`, which writes to `target/dist/`.
+
 On Windows, use `scripts\clippy.ps1`. Running `cargo test --locked` works too if nextest isn't installed.
 
 The [framework migration record](docs/gpui-migration-guide.md#9-implementation-and-verification) describes the earlier GPUI migration and its platform verification limits. GPUI Kit is now the production UI dependency; gpui-whiteboard is not included.
