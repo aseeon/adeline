@@ -24,6 +24,7 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `codex.svg` | `code.svg` |
 | `copy.svg` | `copy.svg` |
 | `devices.svg` | `devices.svg` |
+| `edit.svg` | `pencil-simple.svg` |
 | `file.svg` | `file-text.svg` |
 | `flag.svg` | `flag.svg` |
 | `folder.svg` | `folder.svg` |
@@ -41,6 +42,7 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `play.svg` | `play.svg` |
 | `plus.svg` | `plus.svg` |
 | `quotes.svg` | `quotes.svg` |
+| `reply.svg` | `arrow-bend-up-left.svg` |
 | `robot.svg` | `robot.svg` |
 | `search.svg` | `magnifying-glass.svg` |
 | `send.svg` | `arrow-up.svg` |
@@ -58,4 +60,5 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `user.svg` | `user-circle.svg` |
 | `workflow.svg` | `flow-arrow.svg` |
 | `working.svg` | `spinner-gap.svg` |
+| `wrench.svg` | `wrench.svg` |
 

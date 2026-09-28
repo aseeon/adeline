@@ -57,7 +57,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Write a concise skill introduction",
-            "id": "demo-skills-history-1"
+            "id": "demo-skills-history-1",
+            "context": [
+              24421,
+              200000
+            ]
           },
           {
             "messages": [
@@ -79,7 +83,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Add examples for ambiguous requests",
-            "id": "demo-skills-history-2"
+            "id": "demo-skills-history-2",
+            "context": [
+              44415,
+              200000
+            ]
           },
           {
             "messages": [
@@ -101,7 +109,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Review the research skill sources",
-            "id": "demo-skills-history-3"
+            "id": "demo-skills-history-3",
+            "context": [
+              73897,
+              200000
+            ]
           },
           {
             "messages": [
@@ -123,7 +135,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Test the document review checklist",
-            "id": "demo-skills-history-4"
+            "id": "demo-skills-history-4",
+            "context": [
+              87194,
+              200000
+            ]
           },
           {
             "messages": [
@@ -145,7 +161,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Improve the bug report template",
-            "id": "demo-skills-history-5"
+            "id": "demo-skills-history-5",
+            "context": [
+              87020,
+              200000
+            ]
           },
           {
             "messages": [
@@ -167,7 +187,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Organize the shared examples folder",
-            "id": "demo-skills-history-6"
+            "id": "demo-skills-history-6",
+            "context": [
+              102262,
+              200000
+            ]
           },
           {
             "messages": [
@@ -189,7 +213,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Trim repeated instructions in the library",
-            "id": "demo-skills-history-7"
+            "id": "demo-skills-history-7",
+            "context": [
+              88288,
+              200000
+            ]
           },
           {
             "messages": [
@@ -211,7 +239,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Add negative trigger examples",
-            "id": "demo-skills-history-8"
+            "id": "demo-skills-history-8",
+            "context": [
+              118305,
+              200000
+            ]
           },
           {
             "messages": [
@@ -233,7 +265,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Check the onboarding skill inputs",
-            "id": "demo-skills-history-9"
+            "id": "demo-skills-history-9",
+            "context": [
+              50135,
+              200000
+            ]
           },
           {
             "messages": [
@@ -255,7 +291,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Document the skill review process",
-            "id": "demo-skills-history-10"
+            "id": "demo-skills-history-10",
+            "context": [
+              82414,
+              200000
+            ]
           },
           {
             "messages": [
@@ -277,7 +317,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Review the handoff summary format",
-            "id": "demo-skills-history-11"
+            "id": "demo-skills-history-11",
+            "context": [
+              88680,
+              200000
+            ]
           },
           {
             "messages": [
@@ -299,7 +343,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Add a release note example",
-            "id": "demo-skills-history-12"
+            "id": "demo-skills-history-12",
+            "context": [
+              69650,
+              200000
+            ]
           },
           {
             "messages": [
@@ -321,7 +369,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Check names across the skill catalog",
-            "id": "demo-skills-history-13"
+            "id": "demo-skills-history-13",
+            "context": [
+              114932,
+              200000
+            ]
           },
           {
             "messages": [
@@ -343,7 +395,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Capture evaluation failure patterns",
-            "id": "demo-skills-history-14"
+            "id": "demo-skills-history-14",
+            "context": [
+              75319,
+              200000
+            ]
           },
           {
             "messages": [
@@ -365,7 +421,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Prepare the next library review",
-            "id": "demo-skills-history-15"
+            "id": "demo-skills-history-15",
+            "context": [
+              119361,
+              200000
+            ]
           },
           {
             "messages": [
@@ -399,7 +459,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Stop the meeting skill from activating on ordinary calendar questions",
-            "id": "skills-trigger"
+            "id": "skills-trigger",
+            "context": [
+              122216,
+              200000
+            ]
           },
           {
             "messages": [
@@ -421,7 +485,11 @@
             "provider": "codex",
             "status": "working",
             "title": "Evaluate the document review skill against messy real-world drafts",
-            "id": "skills-eval"
+            "id": "skills-eval",
+            "context": [
+              19919,
+              200000
+            ]
           },
           {
             "messages": [
@@ -443,7 +511,11 @@
             "provider": "claude",
             "status": "blocked",
             "title": "Decide where shared skills should live",
-            "id": "skills-location"
+            "id": "skills-location",
+            "context": [
+              107899,
+              200000
+            ]
           },
           {
             "messages": [
@@ -477,7 +549,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Add a worked example to the bug report skill",
-            "id": "skills-examples"
+            "id": "skills-examples",
+            "context": [
+              14805,
+              200000
+            ]
           },
           {
             "messages": [
@@ -511,7 +587,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Remove repeated instructions from the research skill",
-            "id": "skills-audit"
+            "id": "skills-audit",
+            "context": [
+              91603,
+              200000
+            ]
           }
         ],
         "recipes": [
@@ -596,7 +676,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Review retry delays for busy destinations",
-            "id": "demo-relay-history-1"
+            "id": "demo-relay-history-1",
+            "context": [
+              83450,
+              200000
+            ]
           },
           {
             "messages": [
@@ -618,7 +702,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Add a readable delivery history",
-            "id": "demo-relay-history-2"
+            "id": "demo-relay-history-2",
+            "context": [
+              110016,
+              200000
+            ]
           },
           {
             "messages": [
@@ -640,7 +728,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Check webhook payload validation",
-            "id": "demo-relay-history-3"
+            "id": "demo-relay-history-3",
+            "context": [
+              70694,
+              200000
+            ]
           },
           {
             "messages": [
@@ -662,7 +754,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Document the dead letter queue",
-            "id": "demo-relay-history-4"
+            "id": "demo-relay-history-4",
+            "context": [
+              133381,
+              200000
+            ]
           },
           {
             "messages": [
@@ -684,7 +780,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Keep request identifiers in service logs",
-            "id": "demo-relay-history-5"
+            "id": "demo-relay-history-5",
+            "context": [
+              57427,
+              200000
+            ]
           },
           {
             "messages": [
@@ -706,7 +806,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Review graceful shutdown behavior",
-            "id": "demo-relay-history-6"
+            "id": "demo-relay-history-6",
+            "context": [
+              91529,
+              200000
+            ]
           },
           {
             "messages": [
@@ -728,7 +832,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Add a destination health summary",
-            "id": "demo-relay-history-7"
+            "id": "demo-relay-history-7",
+            "context": [
+              31183,
+              200000
+            ]
           },
           {
             "messages": [
@@ -750,7 +858,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Test slow consumer recovery",
-            "id": "demo-relay-history-8"
+            "id": "demo-relay-history-8",
+            "context": [
+              134174,
+              200000
+            ]
           },
           {
             "messages": [
@@ -772,7 +884,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Clarify delivery timeout messages",
-            "id": "demo-relay-history-9"
+            "id": "demo-relay-history-9",
+            "context": [
+              126216,
+              200000
+            ]
           },
           {
             "messages": [
@@ -794,7 +910,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Review event ordering guarantees",
-            "id": "demo-relay-history-10"
+            "id": "demo-relay-history-10",
+            "context": [
+              155291,
+              200000
+            ]
           },
           {
             "messages": [
@@ -816,7 +936,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Add a replay preview",
-            "id": "demo-relay-history-11"
+            "id": "demo-relay-history-11",
+            "context": [
+              146557,
+              200000
+            ]
           },
           {
             "messages": [
@@ -838,7 +962,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Check queue capacity warnings",
-            "id": "demo-relay-history-12"
+            "id": "demo-relay-history-12",
+            "context": [
+              144151,
+              200000
+            ]
           },
           {
             "messages": [
@@ -860,7 +988,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Document local relay setup",
-            "id": "demo-relay-history-13"
+            "id": "demo-relay-history-13",
+            "context": [
+              54881,
+              200000
+            ]
           },
           {
             "messages": [
@@ -882,7 +1014,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Review service metrics labels",
-            "id": "demo-relay-history-14"
+            "id": "demo-relay-history-14",
+            "context": [
+              19058,
+              200000
+            ]
           },
           {
             "messages": [
@@ -904,7 +1040,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Prepare the relay release checklist",
-            "id": "demo-relay-history-15"
+            "id": "demo-relay-history-15",
+            "context": [
+              144980,
+              200000
+            ]
           },
           {
             "messages": [
@@ -938,7 +1078,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Verify webhook signatures before accepting an event",
-            "id": "relay-signature"
+            "id": "relay-signature",
+            "context": [
+              126149,
+              200000
+            ]
           },
           {
             "messages": [
@@ -960,7 +1104,11 @@
             "provider": "claude",
             "status": "working",
             "title": "Check retry timing when a destination is temporarily unavailable",
-            "id": "relay-retry"
+            "id": "relay-retry",
+            "context": [
+              112833,
+              200000
+            ]
           },
           {
             "messages": [
@@ -982,7 +1130,11 @@
             "provider": "codex",
             "status": "blocked",
             "title": "Choose how long failed delivery payloads remain available",
-            "id": "relay-retention"
+            "id": "relay-retention",
+            "context": [
+              121048,
+              200000
+            ]
           },
           {
             "messages": [
@@ -1016,7 +1168,11 @@
             "provider": "claude",
             "status": "completed",
             "title": "Avoid delivering the same event twice after a worker restart",
-            "id": "relay-dedupe"
+            "id": "relay-dedupe",
+            "context": [
+              34767,
+              200000
+            ]
           },
           {
             "messages": [
@@ -1050,7 +1206,11 @@
             "provider": "codex",
             "status": "completed",
             "title": "Make manual replay clear about which destination will receive the event",
-            "id": "relay-replay"
+            "id": "relay-replay",
+            "context": [
+              24433,
+              200000
+            ]
           }
         ],
         "recipes": [
@@ -1237,7 +1397,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Sketch the first sidebar layout",
-        "id": "demo-adeline-earlier-9"
+        "id": "demo-adeline-earlier-9",
+        "context": [
+          60243,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1259,7 +1423,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Choose a font for code blocks",
-        "id": "demo-adeline-earlier-8"
+        "id": "demo-adeline-earlier-8",
+        "context": [
+          33429,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1281,7 +1449,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Name chats from their first message",
-        "id": "demo-adeline-earlier-7"
+        "id": "demo-adeline-earlier-7",
+        "context": [
+          30996,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1303,7 +1475,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Handle agents that disconnect mid-reply",
-        "id": "demo-adeline-earlier-6"
+        "id": "demo-adeline-earlier-6",
+        "context": [
+          67698,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1325,7 +1501,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Prepare the next desktop review",
-        "id": "demo-adeline-history-15"
+        "id": "demo-adeline-history-15",
+        "context": [
+          71307,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1347,7 +1527,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Reduce memory use of image previews",
-        "id": "demo-adeline-earlier-5"
+        "id": "demo-adeline-earlier-5",
+        "context": [
+          12872,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1369,7 +1553,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Keep the selection when filtering chats",
-        "id": "demo-adeline-earlier-4"
+        "id": "demo-adeline-earlier-4",
+        "context": [
+          69486,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1391,7 +1579,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Preserve scroll position after selecting a chat",
-        "id": "demo-adeline-history-14"
+        "id": "demo-adeline-history-14",
+        "context": [
+          132221,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1413,7 +1605,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Add export to Markdown",
-        "id": "demo-adeline-earlier-3"
+        "id": "demo-adeline-earlier-3",
+        "context": [
+          108845,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1435,7 +1631,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Make links in replies open in the browser",
-        "id": "demo-adeline-earlier-2"
+        "id": "demo-adeline-earlier-2",
+        "context": [
+          97931,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1457,7 +1657,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Review the service log empty state",
-        "id": "demo-adeline-history-13"
+        "id": "demo-adeline-history-13",
+        "context": [
+          64238,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1479,7 +1683,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Speed up opening very long chats",
-        "id": "demo-adeline-earlier-1"
+        "id": "demo-adeline-earlier-1",
+        "context": [
+          76209,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1501,7 +1709,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Explain why a model is unavailable",
-        "id": "demo-adeline-week-6"
+        "id": "demo-adeline-week-6",
+        "context": [
+          128968,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1523,7 +1735,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Check notification counter alignment",
-        "id": "demo-adeline-history-12"
+        "id": "demo-adeline-history-12",
+        "context": [
+          22168,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1545,7 +1761,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Make workflow descriptions easier to scan",
-        "id": "demo-adeline-history-11"
+        "id": "demo-adeline-history-11",
+        "context": [
+          30002,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1567,7 +1787,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Keep the composer visible when resizing",
-        "id": "demo-adeline-history-10"
+        "id": "demo-adeline-history-10",
+        "context": [
+          69892,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1589,7 +1813,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Stop notifications for chats you're viewing",
-        "id": "demo-adeline-week-5"
+        "id": "demo-adeline-week-5",
+        "context": [
+          100418,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1611,7 +1839,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Review document list spacing",
-        "id": "demo-adeline-history-9"
+        "id": "demo-adeline-history-9",
+        "context": [
+          71764,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1633,7 +1865,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Show which files a chat has changed",
-        "id": "demo-adeline-week-4"
+        "id": "demo-adeline-week-4",
+        "context": [
+          75124,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1655,7 +1891,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Add a clear action to chat search",
-        "id": "demo-adeline-history-8"
+        "id": "demo-adeline-history-8",
+        "context": [
+          43538,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1677,7 +1917,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Check the theme picker with dark palettes",
-        "id": "demo-adeline-history-7"
+        "id": "demo-adeline-history-7",
+        "context": [
+          74851,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1699,7 +1943,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Retry failed uploads without losing the message",
-        "id": "demo-adeline-week-3"
+        "id": "demo-adeline-week-3",
+        "context": [
+          112647,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1721,7 +1969,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Keep long project names readable",
-        "id": "demo-adeline-history-6"
+        "id": "demo-adeline-history-6",
+        "context": [
+          149909,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1743,7 +1995,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Keep code blocks readable in the light theme",
-        "id": "demo-adeline-week-2"
+        "id": "demo-adeline-week-2",
+        "context": [
+          93665,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1765,7 +2021,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Remember the width of the activity panel",
-        "id": "demo-adeline-history-5"
+        "id": "demo-adeline-history-5",
+        "context": [
+          159327,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1787,7 +2047,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Add Ctrl+K to jump between chats",
-        "id": "demo-adeline-week-1"
+        "id": "demo-adeline-week-1",
+        "context": [
+          69803,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1809,7 +2073,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Improve keyboard navigation in the sidebar",
-        "id": "demo-adeline-history-4"
+        "id": "demo-adeline-history-4",
+        "context": [
+          49097,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1831,7 +2099,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Keep draft messages when switching chats",
-        "id": "demo-adeline-today-3"
+        "id": "demo-adeline-today-3",
+        "context": [
+          27102,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1853,7 +2125,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Warn before closing a window with a running chat",
-        "id": "demo-adeline-today-2"
+        "id": "demo-adeline-today-2",
+        "context": [
+          134408,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1875,7 +2151,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Review the empty document state",
-        "id": "demo-adeline-history-3"
+        "id": "demo-adeline-history-3",
+        "context": [
+          120474,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1897,7 +2177,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Collapse long tool output by default",
-        "id": "demo-adeline-today-1"
+        "id": "demo-adeline-today-1",
+        "context": [
+          149746,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1914,12 +2198,68 @@
             "createdAt": "2026-09-25T07:00:00Z"
           }
         ],
-        "activity": [],
+        "activity": [
+          {
+            "kind": "tool:search-filters-1",
+            "title": "Read src/chat.rs (completed)",
+            "detail": "",
+            "running": false,
+            "tool": "read",
+            "paths": [
+              "src/chat.rs"
+            ],
+            "turn": 0
+          },
+          {
+            "kind": "tool:search-filters-2",
+            "title": "Read src/prepared.rs (completed)",
+            "detail": "",
+            "running": false,
+            "tool": "read",
+            "paths": [
+              "src/prepared.rs"
+            ],
+            "turn": 0
+          },
+          {
+            "kind": "tool:search-filters-3",
+            "title": "Search for criteria.query (completed)",
+            "detail": "",
+            "running": false,
+            "tool": "search",
+            "paths": [],
+            "turn": 0
+          },
+          {
+            "kind": "tool:search-filters-4",
+            "title": "Edit src/chat.rs (completed)",
+            "detail": "",
+            "running": false,
+            "tool": "edit",
+            "paths": [
+              "src/chat.rs"
+            ],
+            "turn": 0
+          },
+          {
+            "kind": "tool:search-filters-5",
+            "title": "Run cargo test (completed)",
+            "detail": "",
+            "running": false,
+            "tool": "execute",
+            "paths": [],
+            "turn": 0
+          }
+        ],
         "createdAt": "2026-09-25T06:56:00Z",
         "provider": "claude",
         "status": "completed",
         "title": "Keep search text when changing filters",
-        "id": "demo-adeline-history-2"
+        "id": "demo-adeline-history-2",
+        "context": [
+          62364,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1941,7 +2281,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Align the project picker rows",
-        "id": "demo-adeline-history-1"
+        "id": "demo-adeline-history-1",
+        "context": [
+          125894,
+          200000
+        ]
       },
       {
         "messages": [
@@ -1975,7 +2319,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Keep the composer usable in a narrow desktop window",
-        "id": "adeline-layout"
+        "id": "adeline-layout",
+        "context": [
+          145033,
+          200000
+        ]
       },
       {
         "messages": [
@@ -2009,7 +2357,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Make document edits safe when the preview is still updating",
-        "id": "adeline-docs"
+        "id": "adeline-docs",
+        "context": [
+          142681,
+          200000
+        ]
       },
       {
         "messages": [
@@ -2043,7 +2395,11 @@
         "provider": "codex",
         "status": "completed",
         "title": "Keep keyboard focus visible when moving between chats and documents",
-        "id": "adeline-focus"
+        "id": "adeline-focus",
+        "context": [
+          133698,
+          200000
+        ]
       },
       {
         "messages": [
@@ -2065,7 +2421,11 @@
         "provider": "codex",
         "status": "blocked",
         "title": "Pick a default agent for new chats",
-        "id": "demo-adeline-attention-2"
+        "id": "demo-adeline-attention-2",
+        "context": [
+          33876,
+          200000
+        ]
       },
       {
         "messages": [
@@ -2087,7 +2447,11 @@
         "provider": "codex",
         "status": "blocked",
         "title": "Choose what Adeline should restore when a session reopens",
-        "id": "adeline-session"
+        "id": "adeline-session",
+        "context": [
+          72578,
+          200000
+        ]
       },
       {
         "messages": [
@@ -2109,7 +2473,11 @@
         "provider": "claude",
         "status": "completed",
         "title": "Import sessions from the old workspace format",
-        "id": "demo-adeline-running-2"
+        "id": "demo-adeline-running-2",
+        "context": [
+          109897,
+          200000
+        ]
       },
       {
         "messages": [
@@ -2131,7 +2499,11 @@
         "provider": "claude",
         "status": "working",
         "title": "Search long conversations without pausing the interface",
-        "id": "adeline-search"
+        "id": "adeline-search",
+        "context": [
+          107596,
+          200000
+        ]
       }
     ],
     "recipes": [

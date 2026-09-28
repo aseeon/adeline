@@ -96,6 +96,7 @@ name = "adeline"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "chrono",
  "embed-resource",
  "gpui-kit",
  "notify 8.2.0",

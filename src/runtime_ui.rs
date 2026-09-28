@@ -138,6 +138,26 @@ impl Adeline {
             .and_then(|live| live.execution.clone())
     }
 
+    /// The open chat's permission mode, or the one a new chat will start with.
+    pub(super) fn current_permission_mode(&self) -> Option<agents::PermissionMode> {
+        if self.selected.is_none() {
+            return self.new_chat_permission.or_else(|| {
+                self.selected_definition()
+                    .map(|agent| agent.permission_mode)
+            });
+        }
+        if self.demo_mode {
+            return Some(if self.permission == 0 {
+                agents::PermissionMode::Ask
+            } else {
+                agents::PermissionMode::AllowEverything
+            });
+        }
+        self.current_id()
+            .and_then(|id| self.runtime.conversations.get(&id))
+            .and_then(|live| live.permission_mode)
+    }
+
     pub(super) fn conversation_processing(&self) -> bool {
         self.current_id()
             .and_then(|id| self.runtime.conversations.get(&id))
@@ -307,11 +327,11 @@ impl Adeline {
                         .record_event(id, &storage::TranscriptEvent::new("session", value.clone()));
                     let settings_result = store.update_conversation(&project_id, id, settings);
                     event_result.and(settings_result)
-                } else if matches!(direction, "visible_text" | "visible_tool") {
-                    let kind = if direction == "visible_text" {
-                        "assistant_chunk"
-                    } else {
-                        "tool"
+                } else if matches!(direction, "visible_text" | "visible_tool" | "visible_usage") {
+                    let kind = match direction {
+                        "visible_text" => "assistant_chunk",
+                        "visible_tool" => "tool",
+                        _ => "usage",
                     };
                     store.record_event(id, &storage::TranscriptEvent::new(kind, value.clone()))
                 } else {
@@ -360,11 +380,14 @@ impl Adeline {
             if self.selected_definition().is_none() && self.agent_catalog.entries.len() == 1 {
                 self.selected_agent = Some(self.agent_catalog.entries[0].id.clone());
             }
-            let Some(agent) = self.selected_definition().cloned() else {
+            let Some(mut agent) = self.selected_definition().cloned() else {
                 self.notify_toast("Create or select an agent before sending.", cx);
                 self.open_commands("agent", window, cx);
                 return;
             };
+            if let Some(mode) = self.new_chat_permission.take() {
+                agent.permission_mode = mode;
+            }
             let project_id = self.workspace().config.id.clone();
             let result = self
                 .project_store
@@ -419,6 +442,7 @@ impl Adeline {
             role: "user".into(),
             text: prompt.clone(),
             read: true,
+            created_at: recency::now().to_string(),
             ..Default::default()
         };
         self.runtime
@@ -542,6 +566,7 @@ impl Adeline {
                         role: "assistant".into(),
                         text: delta,
                         read: self.project == p && self.selected == Some(t),
+                        created_at: recency::now().to_string(),
                         ..Default::default()
                     });
                     self.runtime
@@ -562,9 +587,12 @@ impl Adeline {
                 title,
                 status,
                 detail,
+                kind,
+                paths,
             } => {
                 // Streamed tool state is durably recorded by the worker before dispatch.
                 let thread = &mut self.projects[p].threads[t];
+                let turn = thread.messages.iter().rposition(|m| m.role == "user");
                 let key = format!("tool:{tool_id}");
                 let item = if let Some(index) = thread.activity.iter().position(|a| a.kind == key) {
                     index
@@ -579,6 +607,13 @@ impl Adeline {
                 thread.activity[item].detail = detail;
                 thread.activity[item].running =
                     matches!(status.as_str(), "pending" | "in_progress");
+                if !kind.is_empty() {
+                    thread.activity[item].tool = kind;
+                }
+                if !paths.is_empty() {
+                    thread.activity[item].paths = paths;
+                }
+                thread.activity[item].turn = thread.activity[item].turn.or(turn);
                 self.runtime
                     .conversations
                     .entry(id.clone())
@@ -740,6 +775,9 @@ impl Adeline {
                     let owner = cx.weak_entity();
                     cx.defer(move |cx| settings::request_close(handle, owner, cx));
                 }
+            }
+            acp::EventKind::Usage { used, size } => {
+                self.projects[p].threads[t].context = Some((used, size));
             }
             acp::EventKind::StorageError(error) => {
                 self.storage_failure(&id, &error);
@@ -1201,67 +1239,25 @@ impl Adeline {
     pub(super) fn runtime_footer(&self, index: usize, cx: &Context<Self>) -> AnyElement {
         let thread = &self.workspace().threads[index];
         let mut content = col().w_full().gap_3().pb_4();
-        if let Some(permission_mode) = self
+        let processing = self
             .runtime
             .conversations
             .get(&thread.id)
-            .and_then(|live| live.permission_mode)
+            .is_some_and(|live| live.processing);
+        // The running turn's steps show live; finished turns fold them into
+        // the summary under their reply.
+        let turn = thread.messages.iter().rposition(|m| m.role == "user");
+        if processing
+            && let Some(turn) = turn
+            && !config::current().modes.chats.hide_tool_calls
         {
-            content = content.child(
-                row()
-                    .gap_2()
-                    .child(text("Permissions", 12., theme::muted_foreground()))
-                    .child(self.button(
-                        "permission-ask",
-                        if permission_mode == agents::PermissionMode::Ask {
-                            "Ask (selected)"
-                        } else {
-                            "Ask"
-                        },
-                        Action::Permission(0),
-                        cx,
-                    ))
-                    .child(self.button(
-                        "permission-all",
-                        if permission_mode == agents::PermissionMode::AllowEverything {
-                            "Allow everything (selected)"
-                        } else {
-                            "Allow everything"
-                        },
-                        Action::Permission(1),
-                        cx,
-                    )),
-            );
-        }
-        for (i, activity) in thread.activity.iter().enumerate() {
-            if !config::current().modes.chats.hide_tool_calls || activity.kind == "error" {
-                let key = format!("{}:{}", thread.id, activity.kind);
-                let expanded = self.runtime.expanded_tools.contains(&key);
-                content = content.child(
-                    col()
-                        .gap_2()
-                        .child(
-                            self.button(
-                                SharedString::from(format!("tool-{}-{i}", thread.id)),
-                                activity.title.clone(),
-                                Action::ToggleTool(key),
-                                cx,
-                            )
-                            .child(icon(if expanded {
-                                "chevron"
-                            } else {
-                                "plus"
-                            })),
-                        )
-                        .when(expanded, |d| {
-                            d.child(
-                                text(activity.detail.clone(), 12., theme::foreground())
-                                    .font_family(config::code_font())
-                                    .text_size(config::code_text_pixels(14.)),
-                            )
-                        }),
-                );
+            let steps: Vec<_> = thread.turn_tools(turn).collect();
+            if !steps.is_empty() {
+                content = content.child(chat_render::tool_steps(steps, cx));
             }
+        }
+        for activity in thread.activity.iter().filter(|a| a.kind == "error") {
+            content = content.child(text(activity.title.clone(), 13., theme::foreground()));
         }
         if let Some(live) = self.runtime.conversations.get(&thread.id) {
             if live.processing && live.storage_failed {
@@ -1278,10 +1274,7 @@ impl Adeline {
                 ));
             }
             if let Some(request) = live.permission.front() {
-                let mut options =
-                    col()
-                        .gap_2()
-                        .child(text(request.title.clone(), 14., theme::foreground()));
+                let mut options = row().flex_wrap().gap_2();
                 for option in &request.options {
                     if option.kind == "reject_always" {
                         continue;
@@ -1294,14 +1287,41 @@ impl Adeline {
                         "reject_once" => format!("Deny once: {}", option.name),
                         _ => continue,
                     };
-                    options = options.child(self.button(
-                        SharedString::from(format!("permission-{}", option.option_id)),
-                        label,
-                        Action::PermissionResponse(option.option_id.clone()),
-                        cx,
-                    ));
+                    let action = Action::PermissionResponse(option.option_id.clone());
+                    let button = Button::new(SharedString::from(format!(
+                        "permission-{}",
+                        option.option_id
+                    )))
+                    .small()
+                    .label(label)
+                    .on_click(cx.listener(move |app, _, window, cx| {
+                        app.act(action.clone(), window, cx);
+                    }));
+                    options = options.child(if option.kind == "allow_once" {
+                        button.primary()
+                    } else {
+                        button.outline()
+                    });
                 }
-                content = content.child(options);
+                content = content.child(
+                    col()
+                        .id("permission-request")
+                        .role(Role::Group)
+                        .aria_label("Permission request")
+                        .w_full()
+                        .gap_3()
+                        .p_4()
+                        .bg(cx.theme().group_box)
+                        .border_1()
+                        .border_color(cx.theme().border)
+                        .rounded_lg()
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(request.title.clone()),
+                        )
+                        .child(options),
+                );
             }
             if let Some(error) = &live.error {
                 content = content.child(text(error.clone(), 13., theme::foreground()));

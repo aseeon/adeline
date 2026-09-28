@@ -266,6 +266,8 @@ impl Adeline {
                     .any(|entry| entry.id == id)
                 {
                     self.selected_agent = Some(id);
+                    // A new chat takes the newly chosen agent's permission default.
+                    self.new_chat_permission = None;
                 } else {
                     self.notify_toast("The selected agent is no longer available.", cx);
                 }
@@ -277,7 +279,13 @@ impl Adeline {
             }
             Action::Speed(ix) => self.speed = ix,
             Action::Permission(ix) => {
-                if self.demo_mode {
+                if self.selected.is_none() {
+                    self.new_chat_permission = Some(if ix == 0 {
+                        agents::PermissionMode::Ask
+                    } else {
+                        agents::PermissionMode::AllowEverything
+                    });
+                } else if self.demo_mode {
                     self.permission = ix;
                 } else {
                     self.set_conversation_permission(ix, cx);
@@ -307,6 +315,28 @@ impl Adeline {
             Action::RetryStorage => self.retry_storage(cx),
             Action::ReplaceSession => self.replace_session(cx),
             Action::PermissionResponse(option) => self.answer_permission(option, cx),
+            Action::ReplyTo(message) => {
+                if let Some(text) = self.message_text(message) {
+                    let mut quote = String::new();
+                    for line in text.lines() {
+                        let _ = writeln!(quote, "> {line}");
+                    }
+                    self.composer.update(cx, |state, cx| {
+                        let lead = if state.value().trim().is_empty() {
+                            ""
+                        } else {
+                            "\n\n"
+                        };
+                        state.insert(format!("{lead}{quote}\n"), window, cx);
+                    });
+                    window.focus(&self.composer.focus_handle(cx), cx);
+                }
+            }
+            Action::CopyMessage(message) => {
+                if let Some(text) = self.message_text(message) {
+                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                }
+            }
             Action::ToggleTool(id) => {
                 if !self.runtime.expanded_tools.remove(&id) {
                     self.runtime.expanded_tools.insert(id);
@@ -383,7 +413,6 @@ impl Adeline {
             | Action::Projects
             | Action::Agents
             | Action::AgentMenu
-            | Action::ChatMenu
             | Action::InsertFiles => unreachable!("command surfaces handled above"),
         }
         if !self.demo_mode
@@ -425,6 +454,12 @@ impl Adeline {
             window.close_dialog(cx);
         }
         cx.notify();
+    }
+
+    /// The text of a message in the open chat.
+    fn message_text(&self, message: usize) -> Option<String> {
+        let thread = &self.workspace().threads[self.selected?];
+        Some(thread.messages.get(message)?.text.clone())
     }
 
     fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {

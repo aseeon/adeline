@@ -150,7 +150,6 @@ enum Action {
     ResetPanels,
     Event(usize),
     Complete,
-    ChatMenu,
     Projects,
     AppMenu,
     Machines,
@@ -182,6 +181,10 @@ enum Action {
     ReplaceSession,
     PermissionResponse(String),
     ToggleTool(String),
+    /// Quote a message of the open chat into the composer.
+    ReplyTo(usize),
+    /// Copy a message of the open chat to the clipboard.
+    CopyMessage(usize),
     ArchiveChat,
     Decision(usize),
     InsertFiles,
@@ -198,7 +201,6 @@ impl Action {
             Self::Projects => Some("projects"),
             Self::Agents => Some("agents"),
             Self::AgentMenu => Some("agent"),
-            Self::ChatMenu => Some("chat"),
             Self::InsertFiles => Some("files"),
             _ => None,
         }
@@ -260,6 +262,8 @@ struct Adeline {
     command_popup: Option<Entity<component::command::CommandState>>,
     speed: usize,
     permission: usize,
+    /// The permission mode chosen for the next new chat, over its agent's default.
+    new_chat_permission: Option<agents::PermissionMode>,
     left_panel_open: [bool; 7],
     sidebar_width: f32,
     selected_tint: usize,
@@ -379,6 +383,7 @@ impl Adeline {
             command_popup: None,
             speed: 0,
             permission: 2,
+            new_chat_permission: None,
             left_panel_open: [true, false, false, true, true, true, true],
             sidebar_width: 360.,
             selected_tint: 3,

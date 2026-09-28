@@ -184,6 +184,7 @@ impl StoredConversation {
                         .get("detail")
                         .and_then(Value::as_str)
                         .unwrap_or("");
+                    let turn = thread.messages.iter().rposition(|m| m.role == "user");
                     let activity =
                         if let Some(index) = thread.activity.iter().position(|a| a.kind == key) {
                             &mut thread.activity[index]
@@ -197,6 +198,26 @@ impl StoredConversation {
                     activity.title = format!("{title} ({status})");
                     detail.clone_into(&mut activity.detail);
                     activity.running = matches!(status, "pending" | "in_progress");
+                    if let Some(tool) = event.data.get("kind").and_then(Value::as_str) {
+                        tool.clone_into(&mut activity.tool);
+                    }
+                    if let Some(paths) = event.data.get("paths").and_then(Value::as_array) {
+                        activity.paths = paths
+                            .iter()
+                            .filter_map(|path| path.as_str().map(str::to_owned))
+                            .collect();
+                    }
+                    if activity.turn.is_none() {
+                        activity.turn = turn;
+                    }
+                }
+                "usage" => {
+                    if let (Some(used), Some(size)) = (
+                        event.data.get("used").and_then(Value::as_u64),
+                        event.data.get("size").and_then(Value::as_u64),
+                    ) {
+                        thread.context = Some((used, size));
+                    }
                 }
                 "error" => {
                     let title = event
@@ -209,6 +230,7 @@ impl StoredConversation {
                         title: title.to_owned(),
                         detail: String::new(),
                         running: false,
+                        ..Default::default()
                     });
                 }
                 "lifecycle"
@@ -229,6 +251,7 @@ impl StoredConversation {
                 title: "Prompt interrupted by application exit".into(),
                 detail: "Send a new message to continue this conversation.".into(),
                 running: false,
+                ..Default::default()
             });
         }
         if let Some(error) = &self.storage_error {
@@ -237,6 +260,7 @@ impl StoredConversation {
                 title: "Conversation data could not be saved".into(),
                 detail: error.clone(),
                 running: false,
+                ..Default::default()
             });
         }
         thread.prepare_search();

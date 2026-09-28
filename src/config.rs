@@ -232,10 +232,6 @@ pub fn code_font_size() -> u16 {
     })
 }
 
-pub fn code_text_pixels(base: f32) -> gpui_kit::Pixels {
-    gpui_kit::px(base * f32::from(code_font_size()) / 14.)
-}
-
 /// Virtual rows must be measured again when either font family or size changes.
 #[derive(PartialEq)]
 pub struct Typography {
@@ -443,7 +439,6 @@ mod tests {
             ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.code_font_size = requested);
             assert_eq!(font_size(), 18);
             assert_eq!(code_font_size(), expected);
-            assert_eq!(code_text_pixels(14.), gpui_kit::px(f32::from(expected)));
         }
         let settings = current();
         assert_eq!(

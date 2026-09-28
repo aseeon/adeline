@@ -289,19 +289,24 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
             ),
         )
         .unwrap();
-    for (status, detail) in [("pending", ""), ("completed", "done")] {
+    // The completed update omits the kind and paths the first one carried.
+    for update in [
+        serde_json::json!({
+            "id":"tool-1", "title":"Read", "status":"pending", "detail":"",
+            "kind":"read", "paths":["/work/a.md"],
+        }),
+        serde_json::json!({"id":"tool-1", "title":"Read", "status":"completed", "detail":"done"}),
+    ] {
         store
-            .record_event(
-                &conversation,
-                &TranscriptEvent::new(
-                    "tool",
-                    serde_json::json!({
-                        "id":"tool-1", "title":"Read", "status":status,"detail":detail,
-                    }),
-                ),
-            )
+            .record_event(&conversation, &TranscriptEvent::new("tool", update))
             .unwrap();
     }
+    store
+        .record_event(
+            &conversation,
+            &TranscriptEvent::new("usage", serde_json::json!({"used":38_000,"size":200_000})),
+        )
+        .unwrap();
     store
         .record_event(
             &conversation,
@@ -383,7 +388,7 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
         .join(&conversation)
         .join("transcript.jsonl");
     let lines = fs::read_to_string(&transcript).unwrap();
-    assert_eq!(lines.lines().count(), 15);
+    assert_eq!(lines.lines().count(), 16);
     assert!(lines.lines().all(|line| {
         serde_json::from_str::<TranscriptEvent>(line)
             .unwrap()
@@ -415,6 +420,11 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
     assert_eq!(thread.activity[0].kind, "tool:tool-1");
     assert_eq!(thread.activity[0].title, "Read (completed)");
     assert_eq!(thread.activity[0].detail, "done");
+    assert_eq!(thread.activity[0].tool, "read");
+    assert_eq!(thread.activity[0].paths, ["/work/a.md"]);
+    // Recorded during the first turn, before the next user message.
+    assert_eq!(thread.activity[0].turn, Some(0));
+    assert_eq!(thread.context, Some((38_000, 200_000)));
     assert_eq!(thread.activity[1].title, "provider unavailable");
     fs::remove_dir(&work).unwrap();
     let mut reloaded = test.store();

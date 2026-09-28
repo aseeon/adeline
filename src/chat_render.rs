@@ -4,13 +4,13 @@ use crate::prepared::{Group, Outcome};
 use gpui_kit::component::plot::shape::{Arc as ArcShape, ArcData};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Selectable as _, Side, Sizable as _, ThemeStyled as _,
-    bubble::{Bubble, BubbleVariant},
     button::{Button, ButtonVariants as _},
     input::Textarea,
     menu::{DropdownMenu as _, PopupMenuItem},
-    message::{Message, MessageAlignment, MessageContent, MessageHeader},
+    spinner::Spinner,
     tab::{Tab, TabBar},
     text::TextView,
+    tooltip::Tooltip,
 };
 use std::f32::consts::TAU;
 use std::fmt::Write as _;
@@ -983,44 +983,19 @@ impl Adeline {
             )
     }
 
-    pub(super) fn message_row(&self, index: usize, i: usize, _cx: &Context<Self>) -> AnyElement {
+    pub(super) fn message_row(&self, index: usize, i: usize, cx: &Context<Self>) -> AnyElement {
+        let theme = cx.theme();
         let thread = &self.workspace().threads[index];
         let message = &thread.messages[i];
         let user = message.role == "user";
-        let time = if message.created_at.len() > 15 {
-            format!(
-                "{}:{} PM",
-                message.created_at[11..13].parse::<u32>().unwrap_or(14) + 2 - 12,
-                &message.created_at[14..16]
-            )
-        } else {
-            "Now".into()
-        };
-        let avatar = if user {
-            icon("user").size(rems(1.75)).into_any_element()
-        } else if thread.provider == "claude" {
-            icon("claude").size(rems(1.75)).into_any_element()
-        } else {
-            icon("codex").size(rems(1.75)).into_any_element()
-        };
-        let message_id = format!(
-            "chat-message:{}:{}:{i}",
-            self.workspace().config.id,
-            thread.id
-        );
-        let mut bubble = Bubble::new()
-            .with_variant(if user {
-                BubbleVariant::Secondary
-            } else {
-                BubbleVariant::Ghost
-            })
-            .min_w_0();
+        let time = message_time(&message.created_at);
+        let mut body = col().w_full().min_w_0().gap_2();
         if user || self.demo_mode {
             for paragraph in message.text.split("\n\n") {
-                bubble = bubble.child(div().min_w_0().text_sm().child(paragraph.to_owned()));
+                body = body.child(div().min_w_0().text_sm().child(paragraph.to_owned()));
             }
         } else {
-            bubble = bubble.child(
+            body = body.child(
                 TextView::markdown("response", message.text.clone())
                     .w_full()
                     .min_w_0(),
@@ -1032,7 +1007,7 @@ impl Adeline {
             let bytes = embedded(asset).expect("bundled message image");
             let width = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
             let height = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
-            bubble = bubble.child(
+            body = body.child(
                 img(ImageSource::Resource(Resource::Embedded(asset.into())))
                     .w_full()
                     .max_w(rems(47.5))
@@ -1044,34 +1019,201 @@ impl Adeline {
                     .object_fit(ObjectFit::Contain),
             );
         }
+        let content = if user {
+            col()
+                .items_end()
+                .child(
+                    row()
+                        .h_6()
+                        .gap_2()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child("You")
+                        .children(time),
+                )
+                .child(
+                    div()
+                        .max_w(relative(0.78))
+                        .min_w_0()
+                        .bg(theme.secondary)
+                        .rounded(rems(0.875))
+                        .px(rems(0.875))
+                        .py(rems(0.5625))
+                        .child(body),
+                )
+                .into_any_element()
+        } else {
+            let (asset, color) = agent_icon(&thread.provider, cx);
+            let name = if self.demo_mode {
+                provider(&thread.provider).to_owned()
+            } else {
+                thread.provider.clone()
+            };
+            // The reply being written gets its closing row when the turn ends.
+            let writing = self.conversation_processing()
+                && thread
+                    .messages
+                    .iter()
+                    .rposition(|m| m.role == "user")
+                    .is_some_and(|last| i > last);
+            col()
+                .w_full()
+                .min_w_0()
+                .child(
+                    row()
+                        .h_7()
+                        .gap_2()
+                        .child(
+                            div()
+                                .size_5()
+                                .flex_shrink_0()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .rounded(theme.radius)
+                                .bg(theme.secondary)
+                                .child(icon(asset).size(rems(0.75)).text_color(color)),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .child(name),
+                        )
+                        .children(time.map(|time| {
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(time)
+                        })),
+                )
+                .child(div().mt_1().child(body))
+                .when(thread.ends_turn(i) && !writing, |content| {
+                    content.child(self.closing_row(thread, i, cx))
+                })
+                .into_any_element()
+        };
         div()
-            .id(SharedString::from(message_id))
+            .id(SharedString::from(format!(
+                "chat-message:{}:{}:{i}",
+                self.workspace().config.id,
+                thread.id
+            )))
             .w_full()
             .min_w_0()
-            .pb_6()
-            .px_5()
             .child(
-                Message::new()
-                    .alignment(if user {
-                        MessageAlignment::End
-                    } else {
-                        MessageAlignment::Start
-                    })
-                    .avatar(avatar)
-                    .header(
-                        MessageHeader::new()
-                            .child(if user {
-                                "You".to_owned()
-                            } else if self.demo_mode {
-                                provider(&thread.provider).to_owned()
-                            } else {
-                                thread.provider.clone()
-                            })
-                            .child(time),
-                    )
-                    .content(MessageContent::new().bubble(bubble)),
+                chat_column()
+                    .pb(rems(if user { 1.5 } else { 2. }))
+                    .child(content),
             )
             .into_any_element()
+    }
+
+    /// What a finished turn did, then Reply, Copy and Retry for its last reply.
+    fn closing_row(&self, thread: &Thread, i: usize, cx: &Context<Self>) -> Div {
+        let theme = cx.theme();
+        let turn = thread.turn_of(i);
+        let summary = turn
+            .map(|turn| thread.turn_summary(turn))
+            .filter(|summary| summary.tools > 0);
+        let key = format!("summary:{}:{i}", thread.id);
+        let expanded = summary.is_some() && self.runtime.expanded_tools.contains(&key);
+        let retry = !self.demo_mode && i + 1 == thread.messages.len();
+        let action =
+            |name: &str, asset: &str, label: &'static str, tooltip: bool, action: Action| {
+                Button::new(SharedString::from(format!("{name}:{}:{i}", thread.id)))
+                    .ghost()
+                    .small()
+                    .icon(Icon::default().path(format!("{asset}.svg")))
+                    .accessibility_label(label)
+                    .when(tooltip, |button| button.tooltip(label))
+                    .on_click(cx.listener(move |app, _, window, cx| {
+                        app.act(action.clone(), window, cx);
+                    }))
+            };
+        let mut content = row().w_full().min_w_0().gap_1();
+        if let Some(summary) = summary {
+            let mut parts = Vec::new();
+            if summary.read > 0 {
+                parts.push(("file", summary.read, "file", "Read"));
+            }
+            if summary.edited > 0 {
+                parts.push(("edit", summary.edited, "file", "edited"));
+            }
+            parts.push(("wrench", summary.tools, "tool", "used"));
+            let spoken = parts
+                .iter()
+                .map(|(_, number, noun, verb)| format!("{verb} {}", count(*number, noun)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let last = parts.len() - 1;
+            let mut button = Button::new(SharedString::from(format!(
+                "turn-summary:{}:{i}",
+                thread.id
+            )))
+            .ghost()
+            .small()
+            // Cancel the ghost padding so the first icon sits on the text edge.
+            .ml(rems(-0.5))
+            .text_color(theme.muted_foreground)
+            .accessibility_label(format!(
+                "{spoken}. {}",
+                if expanded { "Hide steps" } else { "Show steps" }
+            ))
+            .on_click(cx.listener(move |app, _, window, cx| {
+                app.act(Action::ToggleTool(key.clone()), window, cx);
+            }));
+            for (ix, (asset, number, noun, _)) in parts.into_iter().enumerate() {
+                button = button.child(
+                    row()
+                        .gap_1()
+                        .when(ix < last, |part| part.mr_1p5())
+                        .child(icon(asset).size(rems(0.8125)))
+                        .child(
+                            div()
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(theme.foreground)
+                                .child(number.to_string()),
+                        )
+                        .child(format!(
+                            "{noun}{}{}",
+                            if number == 1 { "" } else { "s" },
+                            if ix < last { "," } else { "" }
+                        )),
+                );
+            }
+            content =
+                content.child(button.child(
+                    icon(if expanded { "chevron" } else { "caret-right" }).size(rems(0.625)),
+                ));
+        }
+        let actions = row()
+            .ml_auto()
+            .gap(rems(0.125))
+            .child(action("reply", "reply", "Reply", true, Action::ReplyTo(i)))
+            .child(action(
+                "copy",
+                "copy",
+                "Copy",
+                false,
+                Action::CopyMessage(i),
+            ))
+            .when(retry, |actions| {
+                actions.child(action(
+                    "retry",
+                    "arrow-counter-clockwise",
+                    "Retry",
+                    true,
+                    Action::RetryPrompt,
+                ))
+            });
+        col()
+            .w_full()
+            .mt_2()
+            .child(content.child(actions))
+            .when_some(turn.filter(|_| expanded), |column, turn| {
+                column.child(tool_steps(thread.turn_tools(turn).collect(), cx))
+            })
     }
 
     pub(super) fn decision_row(&self, index: usize, cx: &Context<Self>) -> AnyElement {
@@ -1122,6 +1264,7 @@ impl Adeline {
         }
     }
     pub(super) fn composer_view(&self, cx: &Context<Self>) -> Div {
+        let theme = cx.theme();
         let bound = self.bound_definition();
         let selected = self.selected_definition();
         let agent_name: SharedString = bound
@@ -1131,12 +1274,13 @@ impl Adeline {
             .unwrap_or("Select an agent")
             .to_owned()
             .into();
-        let agent_details = bound
+        let execution = bound
             .as_ref()
-            .map(|definition| format!("{} {}", definition.model, definition.effort))
+            .map(|definition| (definition.model.clone(), definition.effort.clone()))
             .or_else(|| {
-                selected.map(|definition| format!("{} {}", definition.model, definition.effort))
+                selected.map(|definition| (definition.model.clone(), definition.effort.clone()))
             });
+        let (agent_asset, agent_color) = agent_icon(&agent_name, cx);
         let processing = self.conversation_processing();
         let can_send = self
             .composer
@@ -1144,57 +1288,113 @@ impl Adeline {
             .text()
             .chars()
             .any(|character| !character.is_whitespace());
-        col()
+        let permission = self.current_permission_mode().map(|mode| {
+            let label = permission_label(mode);
+            let owner = cx.weak_entity();
+            Button::new("chat-permission-mode")
+                .ghost()
+                .small()
+                .flex_shrink_0()
+                .label(label)
+                .dropdown_caret(true)
+                .accessibility_label(format!("Permissions: {label}"))
+                .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
+                    let mut menu = menu.check_side(Side::Right).label("Permissions");
+                    for (ix, choice) in [
+                        agents::PermissionMode::Ask,
+                        agents::PermissionMode::AllowEverything,
+                    ]
+                    .into_iter()
+                    .enumerate()
+                    {
+                        let owner = owner.clone();
+                        menu = menu.item(
+                            PopupMenuItem::new(permission_label(choice))
+                                .checked(choice == mode)
+                                .on_click(move |_, window, cx| {
+                                    let _ = owner.update(cx, |app, cx| {
+                                        app.act(Action::Permission(ix), window, cx);
+                                    });
+                                }),
+                        );
+                    }
+                    menu
+                })
+        });
+        let send = if processing {
+            Button::new("send-chat-message")
+                .small()
+                .outline()
+                .icon(Icon::default().path("stop.svg"))
+                .accessibility_label("Stop")
+                .tooltip("Stop")
+                .on_click(cx.listener(|app, _, window, cx| app.act(Action::Stop, window, cx)))
+        } else {
+            Button::new("send-chat-message")
+                .small()
+                .primary()
+                .icon(Icon::default().path("send.svg"))
+                .accessibility_label("Send")
+                .tooltip("Send")
+                .disabled(!can_send)
+                .on_click(cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx)))
+        };
+        let island = col()
             .w_full()
-            .flex_shrink_0()
             .min_w_0()
-            .bg(cx.theme().background)
-            .border_t_1()
-            .border_color(cx.theme().border)
+            .bg(theme.group_box)
+            .border_1()
+            .border_color(theme.border)
+            .rounded(rems(0.875))
+            .pt_3()
+            .pb_2()
+            .pl(rems(0.875))
+            .pr(rems(0.625))
             .child(
-                div().w_full().px_3().py_2().child(
-                    Textarea::new(&self.composer)
-                        .aria_label("Message")
-                        .w_full()
-                        .min_w_0(),
-                ),
+                Textarea::new(&self.composer)
+                    .aria_label("Message")
+                    .appearance(false)
+                    .w_full()
+                    .min_w_0(),
             )
             .child(
                 row()
                     .w_full()
                     .min_w_0()
-                    .flex_wrap()
-                    .items_start()
-                    .px_3()
-                    .py_2()
-                    .gap_2()
-                    .border_t_1()
-                    .border_color(cx.theme().border)
+                    .mt_2()
+                    .gap(rems(0.125))
                     .child(
                         Button::new("attach-chat-files")
                             .ghost()
                             .small()
+                            .flex_shrink_0()
+                            .icon(Icon::default().path("plus.svg"))
                             .accessibility_label("Attach files…")
                             .tooltip("Attach files…")
-                            .child(icon("file").size(rems(1.)))
                             .on_click(cx.listener(|app, _, window, cx| {
                                 app.act(Action::InsertFiles, window, cx);
                             })),
                     )
+                    .child(div().w_px().h_4().mx_1p5().flex_shrink_0().bg(theme.border))
                     .child(
-                        col()
+                        row()
                             .id("chat-agent-selection")
                             .role(Role::Group)
                             .aria_label("Agent selection")
                             .flex_1()
-                            .min_w(rems(4.))
+                            .min_w_0()
+                            .gap_1()
                             .child(
                                 self.command_popover(
                                     "agent",
                                     Button::new("chat-agent-picker")
                                         .ghost()
                                         .small()
-                                        .w_full()
+                                        .icon(
+                                            Icon::default()
+                                                .path(format!("{agent_asset}.svg"))
+                                                .text_color(agent_color),
+                                        )
                                         .label(agent_name.clone())
                                         .tooltip(agent_name)
                                         .dropdown_caret(true),
@@ -1202,36 +1402,240 @@ impl Adeline {
                                     cx,
                                 ),
                             )
-                            .when_some(agent_details, |panel, details| {
-                                panel.child(
-                                    div()
-                                        .min_w_0()
-                                        .truncate()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(details),
-                                )
+                            .when_some(execution, |selection, (model, effort)| {
+                                selection
+                                    .child(execution_setting(
+                                        "chat-model",
+                                        "Model",
+                                        model_label(&model),
+                                        cx,
+                                    ))
+                                    .child(execution_setting(
+                                        "chat-effort",
+                                        "Effort",
+                                        effort_label(&effort),
+                                        cx,
+                                    ))
                             }),
                     )
-                    .child(
-                        Button::new("send-chat-message")
-                            .small()
-                            .ml_auto()
-                            .label(if processing { "Stop" } else { "Send" })
-                            .when(processing, |button| button.danger())
-                            .when(!processing, |button| button.primary().disabled(!can_send))
-                            .on_click(cx.listener(move |app, _, window, cx| {
-                                app.act(
-                                    if processing {
-                                        Action::Stop
-                                    } else {
-                                        Action::Send
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            })),
-                    ),
-            )
+                    .children(permission)
+                    .child(div().ml_1p5().flex_shrink_0().child(send)),
+            );
+        col()
+            .w_full()
+            .flex_shrink_0()
+            .min_w_0()
+            .bg(theme.background)
+            .pb_4()
+            .child(chat_column().child(island))
+    }
+}
+
+/// Width of the chat column, in rems. The header, replies and composer share its edges.
+pub(super) const CHAT_COLUMN: f32 = 46.;
+
+/// The centered column the chat header, transcript and composer align to.
+pub(super) fn chat_column() -> Div {
+    div().w_full().max_w(rems(CHAT_COLUMN)).mx_auto().px_8()
+}
+
+/// How much of the agent's context the chat uses: `19%`, a bar, then the window
+/// size. Dashes stand in until the agent reports its usage.
+pub(super) fn context_meter(usage: Option<(u64, u64)>, cx: &App) -> Stateful<Div> {
+    let theme = cx.theme();
+    let share = match usage {
+        Some((used, size)) if size > 0 => (used as f32 / size as f32).clamp(0., 1.),
+        _ => 0.,
+    };
+    let (percent, window, label) = match usage {
+        Some((used, size)) => (
+            format!("{}%", (share * 100.).round()),
+            tokens(size),
+            format!("Context: {} of {} tokens used", tokens(used), tokens(size)),
+        ),
+        None => (
+            "–".to_owned(),
+            "–".to_owned(),
+            "Context: the agent hasn’t reported its usage yet".to_owned(),
+        ),
+    };
+    row()
+        .id("chat-context")
+        .role(Role::ProgressIndicator)
+        .aria_label(label.clone())
+        .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+        .flex_shrink_0()
+        .gap_2()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .child(percent)
+        .child(
+            div()
+                .w_12()
+                .h_1()
+                .rounded_full()
+                .bg(theme.secondary)
+                .overflow_hidden()
+                .child(div().h_full().w(relative(share)).bg(theme.muted_foreground)),
+        )
+        .child(window)
+}
+
+/// A model name without its provider path: `anthropic/claude-opus-5` is `claude-opus-5`.
+fn model_label(model: &str) -> String {
+    model.rsplit('/').next().unwrap_or(model).to_owned()
+}
+
+/// An effort level as the composer shows it: `high` is `High`.
+fn effort_label(effort: &str) -> String {
+    let mut chars = effort.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
+
+/// A composer selector for a setting the agent owns. Its menu shows the
+/// current value and where to change it.
+fn execution_setting(
+    id: &'static str,
+    heading: &'static str,
+    value: String,
+    cx: &Context<Adeline>,
+) -> impl IntoElement {
+    let owner = cx.weak_entity();
+    let current: SharedString = value.into();
+    Button::new(id)
+        .ghost()
+        .small()
+        .flex_shrink_0()
+        .label(current.clone())
+        .dropdown_caret(true)
+        .accessibility_label(format!("{heading}: {current}"))
+        .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
+            let owner = owner.clone();
+            menu.check_side(Side::Right)
+                .label(heading)
+                .item(PopupMenuItem::new(current.clone()).checked(true))
+                .separator()
+                .item(
+                    PopupMenuItem::new("Agent settings…").on_click(move |_, window, cx| {
+                        let _ = owner.update(cx, |app, cx| {
+                            app.act(Action::AppSettings, window, cx);
+                        });
+                    }),
+                )
+        })
+}
+
+/// A token count as the header shows it: `950`, `38k`, `1.5M`.
+fn tokens(count: u64) -> String {
+    if count >= 1_000_000 {
+        format!("{:.1}M", count as f64 / 1_000_000.).replace(".0M", "M")
+    } else if count >= 1_000 {
+        format!("{}k", (count + 500) / 1_000)
+    } else {
+        count.to_string()
+    }
+}
+
+/// `1 file`, `4 files`.
+fn count(number: usize, noun: &str) -> String {
+    format!("{number} {noun}{}", if number == 1 { "" } else { "s" })
+}
+
+fn permission_label(mode: agents::PermissionMode) -> &'static str {
+    match mode {
+        agents::PermissionMode::Ask => "Ask for approval",
+        agents::PermissionMode::AllowEverything => "Allow everything",
+    }
+}
+
+/// When a message was sent, in local time: `2:43 PM` today, else with its date.
+fn message_time(stamp: &str) -> Option<String> {
+    use chrono::Datelike as _;
+    let at = recency::parse(stamp)?;
+    let local = chrono::DateTime::from_timestamp(at, 0)?.with_timezone(&chrono::Local);
+    let today = chrono::Local::now().date_naive();
+    let format = if local.date_naive() == today {
+        "%-I:%M %p"
+    } else if local.year() == today.year() {
+        "%b %-d, %-I:%M %p"
+    } else {
+        "%b %-d %Y, %-I:%M %p"
+    };
+    Some(local.format(format).to_string())
+}
+
+/// The icon for a tool call, by its protocol kind.
+fn tool_icon(tool: &str) -> &'static str {
+    match tool {
+        "read" => "file",
+        "edit" | "delete" | "move" => "edit",
+        "execute" => "code",
+        "search" => "search",
+        "fetch" => "link",
+        "think" => "sparkle",
+        _ => "wrench",
+    }
+}
+
+/// A tool call's title without the status the runtime appends to it.
+fn step_title(call: &Activity) -> String {
+    call.title
+        .strip_suffix(" (completed)")
+        .unwrap_or(&call.title)
+        .to_owned()
+}
+
+/// Tool calls as a compact list; running calls show a spinner.
+pub(super) fn tool_steps(calls: Vec<&Activity>, cx: &App) -> Div {
+    let theme = cx.theme();
+    col()
+        .w_full()
+        .min_w_0()
+        .py_1()
+        .children(calls.into_iter().map(|call| {
+            row()
+                .h_6()
+                .min_w_0()
+                .gap_2()
+                .text_sm()
+                .text_color(if call.running {
+                    theme.foreground
+                } else {
+                    theme.muted_foreground
+                })
+                .child(if call.running {
+                    Spinner::new().xsmall().into_any_element()
+                } else {
+                    icon(tool_icon(&call.tool))
+                        .size(rems(0.75))
+                        .into_any_element()
+                })
+                .child(div().min_w_0().truncate().child(step_title(call)))
+        }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{effort_label, model_label, tokens};
+
+    #[test]
+    fn composer_labels_drop_provider_paths_and_capitalize_effort() {
+        assert_eq!(model_label("anthropic/claude-opus-5"), "claude-opus-5");
+        assert_eq!(model_label("openrouter/openai/gpt-6"), "gpt-6");
+        assert_eq!(model_label("sonnet"), "sonnet");
+        assert_eq!(effort_label("medium"), "Medium");
+        assert_eq!(effort_label("High"), "High");
+        assert_eq!(effort_label(""), "");
+    }
+
+    #[test]
+    fn token_counts_round_to_short_units() {
+        assert_eq!(tokens(950), "950");
+        assert_eq!(tokens(38_400), "38k");
+        assert_eq!(tokens(200_000), "200k");
+        assert_eq!(tokens(1_000_000), "1M");
+        assert_eq!(tokens(1_500_000), "1.5M");
     }
 }

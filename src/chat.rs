@@ -933,10 +933,10 @@ impl Render for Transcript {
                     if row < messages {
                         app.message_row(selected, row, cx)
                     } else {
-                        col()
-                            .w_full()
+                        chat_render::chat_column()
+                            .flex()
+                            .flex_col()
                             .track_focus(&footer_focus)
-                            .px_5()
                             .child(if app.demo_mode {
                                 app.decision_row(selected, cx)
                             } else {

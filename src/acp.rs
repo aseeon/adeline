@@ -48,6 +48,15 @@ pub enum EventKind {
         title: String,
         status: String,
         detail: String,
+        /// The protocol's tool kind: `read`, `edit`, `delete`, `move`, `execute`, ...
+        kind: String,
+        /// Files the call reads or changes.
+        paths: Vec<String>,
+    },
+    /// How much of the agent's context window the session uses, in tokens.
+    Usage {
+        used: u64,
+        size: u64,
     },
     Permission {
         request_id: u64,
@@ -167,6 +176,16 @@ enum Request {
     Close,
 }
 
+/// The latest state of one tool call. Updates may omit fields they don't change.
+#[derive(Clone, Default)]
+struct ToolState {
+    title: String,
+    status: String,
+    detail: String,
+    kind: String,
+    paths: Vec<String>,
+}
+
 struct Turn {
     text: String,
     retries: u32,
@@ -197,7 +216,7 @@ struct Worker {
     permissions: HashMap<u64, (u64, Vec<PermissionChoice>)>,
     capabilities: Value,
     options: Vec<Value>,
-    tools: HashMap<String, (String, String, String)>,
+    tools: HashMap<String, ToolState>,
     setup: Option<Request>,
     configured: bool,
     restore_required: bool,
@@ -973,6 +992,19 @@ impl Worker {
         if params.get("sessionId").and_then(Value::as_str) != self.session_id.as_deref() {
             return;
         }
+        let update = &params["update"];
+        // Context usage describes the session, so it counts between turns too.
+        if update.get("sessionUpdate").and_then(Value::as_str) == Some("usage_update") {
+            if let (Some(used), Some(size)) = (
+                update.get("used").and_then(Value::as_u64),
+                update.get("size").and_then(Value::as_u64),
+            ) && self.setup.is_none()
+                && self.record("visible_usage", &json!({"used":used,"size":size}))
+            {
+                self.emit(EventKind::Usage { used, size });
+            }
+            return;
+        }
         if self.setup.is_some()
             || self
                 .active
@@ -981,7 +1013,6 @@ impl Worker {
         {
             return;
         }
-        let update = &params["update"];
         match update.get("sessionUpdate").and_then(Value::as_str) {
             Some("agent_message_chunk") => {
                 if let Some(text) = update.pointer("/content/text").and_then(Value::as_str)
@@ -1005,18 +1036,43 @@ impl Worker {
                 let id = string(update, "toolCallId");
                 let entry = self.tools.entry(id.clone()).or_default();
                 if let Some(title) = update.get("title").and_then(Value::as_str) {
-                    entry.0 = title.into();
+                    entry.title = title.into();
                 }
                 if let Some(status) = update.get("status").and_then(Value::as_str) {
-                    entry.1 = status.into();
+                    entry.status = status.into();
                 }
                 let detail = tool_detail(update);
                 if !detail.is_empty() {
-                    entry.2 = detail;
+                    entry.detail = detail;
                 }
-                let (title, status, detail) = entry.clone();
-                if self.record("visible_tool", &json!({"turn":self.turn,"id":id,"title":title,"status":status,"detail":detail})) {
-                    self.emit(EventKind::Tool { id, title, status, detail });
+                if let Some(kind) = update.get("kind").and_then(Value::as_str) {
+                    entry.kind = kind.into();
+                }
+                if let Some(locations) = update.get("locations").and_then(Value::as_array) {
+                    entry.paths = locations
+                        .iter()
+                        .filter_map(|location| location.get("path")?.as_str().map(str::to_owned))
+                        .collect();
+                }
+                let ToolState {
+                    title,
+                    status,
+                    detail,
+                    kind,
+                    paths,
+                } = entry.clone();
+                if self.record(
+                    "visible_tool",
+                    &json!({"turn":self.turn,"id":id,"title":title,"status":status,"detail":detail,"kind":kind,"paths":paths}),
+                ) {
+                    self.emit(EventKind::Tool {
+                        id,
+                        title,
+                        status,
+                        detail,
+                        kind,
+                        paths,
+                    });
                 }
             }
             _ => (), // Reasoning and replay are retained in raw history, not displayed.
@@ -1753,6 +1809,45 @@ mod tests {
             recorded.try_iter().collect::<Vec<_>>(),
             vec!["incoming".to_owned(), "visible_text".to_owned()]
         );
+    }
+
+    #[test]
+    fn tool_kind_and_paths_survive_updates_that_omit_them() {
+        let (mut worker, events) = worker(Arc::new(|_, _, _| Ok(())));
+        worker.active = Some(turn(0));
+        let update = |update: Value| json!({"params":{"sessionId":"session-1","update":update}});
+        worker.update(&update(json!({
+            "sessionUpdate":"tool_call","toolCallId":"t1","title":"Read SKILL.md",
+            "kind":"read","status":"pending","locations":[{"path":"/repo/SKILL.md","line":3}]
+        })));
+        worker.update(&update(json!({
+            "sessionUpdate":"tool_call_update","toolCallId":"t1","status":"completed"
+        })));
+        let mut last = None;
+        while let Ok(event) = events.try_recv() {
+            last = Some(event.kind);
+        }
+        let last = last.expect("tool events");
+        assert!(matches!(
+            last,
+            EventKind::Tool { ref status, ref kind, ref paths, .. }
+                if status == "completed" && kind == "read" && paths == &["/repo/SKILL.md"]
+        ));
+    }
+
+    #[test]
+    fn usage_is_reported_between_turns() {
+        let (mut worker, events) = worker(Arc::new(|_, _, _| Ok(())));
+        assert!(worker.active.is_none());
+        worker.update(&json!({"params":{"sessionId":"session-1","update":{
+            "sessionUpdate":"usage_update","used":38_000,"size":200_000}}}));
+        assert!(matches!(
+            events.try_recv().unwrap().kind,
+            EventKind::Usage {
+                used: 38_000,
+                size: 200_000
+            }
+        ));
     }
 
     #[test]

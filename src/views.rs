@@ -1,13 +1,64 @@
 use super::*;
+use gpui_kit::component::Disableable as _;
 use gpui_kit::component::command::{Command, CommandItem, CommandState};
 use gpui_kit::component::switch::Switch;
 
 impl Adeline {
     pub(super) fn chats(&self, cx: &Context<Self>) -> AnyElement {
-        let title = self.selected.map_or_else(
-            || "New chat".to_owned(),
-            |ix| self.workspace().threads[ix].title.clone(),
-        );
+        let thread = self.selected.map(|ix| &self.workspace().threads[ix]);
+        let title = thread.map_or_else(|| "New chat".to_owned(), |thread| thread.title.clone());
+        // Status, message count and age live in the conversation list; the
+        // header adds only what the list can't show.
+        let header = chat_render::chat_column()
+            .h_12()
+            .flex()
+            .items_center()
+            .gap(rems(0.375))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child(title),
+            )
+            .when_some(thread, |header, thread| {
+                header.child(chat_render::context_meter(thread.context, cx).mr_2())
+            })
+            .when_some(thread, |header, thread| {
+                let done = matches!(thread.status.as_str(), "completed" | "archived");
+                let archived = thread.status == "archived";
+                let complete = if done {
+                    "Mark as incomplete"
+                } else {
+                    "Mark as complete"
+                };
+                header
+                    .child(
+                        Button::new("complete-chat")
+                            .small()
+                            .outline()
+                            .icon(Icon::default().path("check.svg"))
+                            .selected(done)
+                            .accessibility_label(complete)
+                            .tooltip(complete)
+                            .on_click(cx.listener(|app, _, window, cx| {
+                                app.act(Action::Complete, window, cx);
+                            })),
+                    )
+                    .child(
+                        Button::new("archive-chat")
+                            .small()
+                            .outline()
+                            .icon(Icon::default().path("archive.svg"))
+                            .disabled(archived)
+                            .accessibility_label(if archived { "Archived" } else { "Archive" })
+                            .tooltip(if archived { "Archived" } else { "Archive" })
+                            .on_click(cx.listener(|app, _, window, cx| {
+                                app.act(Action::ArchiveChat, window, cx);
+                            })),
+                    )
+            });
         col()
             .id("conversation-panel")
             .role(Role::Group)
@@ -15,49 +66,12 @@ impl Adeline {
             .size_full()
             .min_w_0()
             .child(
-                row()
-                    .p_3()
-                    .gap_2()
+                div()
+                    .w_full()
+                    .flex_shrink_0()
                     .border_b_1()
                     .border_color(cx.theme().border)
-                    .child(
-                        col()
-                            .flex_1()
-                            .min_w_0()
-                            .child(div().truncate().child(title))
-                            .when_some(self.selected, |column, ix| {
-                                column.child(
-                                    div()
-                                        .truncate()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(self.workspace().threads[ix].status.clone()),
-                                )
-                            }),
-                    )
-                    .when_some(self.selected, |row, _| {
-                        row.child(
-                            Button::new("complete-chat")
-                                .small()
-                                .accessibility_label("Complete")
-                                .tooltip("Complete")
-                                .child(icon("check").size(rems(1.)))
-                                .on_click(cx.listener(|app, _, window, cx| {
-                                    app.act(Action::Complete, window, cx);
-                                })),
-                        )
-                        .child(
-                            Button::new("chat-actions")
-                                .small()
-                                .ghost()
-                                .accessibility_label("Conversation actions")
-                                .tooltip("Conversation actions")
-                                .child(icon("more").size(rems(1.)))
-                                .on_click(cx.listener(|app, _, window, cx| {
-                                    app.act(Action::ChatMenu, window, cx);
-                                })),
-                        )
-                    }),
+                    .child(header),
             )
             .child(
                 div().flex_1().min_h_0().child(
@@ -139,17 +153,6 @@ impl Adeline {
                         ("Standard speed".into(), Action::Speed(0)),
                         ("Fast speed".into(), Action::Speed(1)),
                     ]);
-                    entries.extend(
-                        [
-                            "Read-only",
-                            "Ask for approval",
-                            "Approve for me",
-                            "Full access",
-                        ]
-                        .into_iter()
-                        .enumerate()
-                        .map(|(ix, label)| (label.into(), Action::Permission(ix))),
-                    );
                 }
                 "Agents"
             }
@@ -174,17 +177,6 @@ impl Adeline {
                         }),
                 );
                 "Machines"
-            }
-            "chat" => {
-                entries.push(("Complete conversation".into(), Action::Complete));
-                if !self.demo_mode {
-                    entries.push(("Archive conversation".into(), Action::ArchiveChat));
-                }
-                entries.extend([
-                    ("Toggle agent activity".into(), Action::ToggleSidePanel),
-                    ("New chat".into(), Action::NewChat),
-                ]);
-                "Conversation actions"
             }
             "files" => {
                 entries.extend([

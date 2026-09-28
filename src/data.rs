@@ -34,6 +34,8 @@ pub struct Thread {
     pub messages: Vec<Message>,
     pub activity: Vec<Activity>,
     pub created_at: String,
+    /// Tokens in the agent's context and the size of its window, once the agent reports them.
+    pub context: Option<(u64, u64)>,
 }
 #[derive(Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -51,6 +53,23 @@ pub struct Activity {
     pub title: String,
     pub detail: String,
     pub running: bool,
+    /// For a tool call, the protocol's tool kind: `read`, `edit`, `execute`, ...
+    pub tool: String,
+    /// Files a tool call reads or changes.
+    pub paths: Vec<String>,
+    /// The user message whose turn made this tool call.
+    pub turn: Option<usize>,
+}
+
+/// What one agent turn did with its tools.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TurnSummary {
+    /// Distinct files read.
+    pub read: usize,
+    /// Distinct files edited, deleted or moved.
+    pub edited: usize,
+    /// Tool calls made.
+    pub tools: usize,
 }
 
 #[derive(Clone, Default, Deserialize)]
@@ -143,6 +162,49 @@ impl Thread {
             self.unread_messages.push(self.messages.len());
         }
         self.messages.push(message);
+    }
+    /// The user message that opened the turn an assistant message belongs to.
+    pub fn turn_of(&self, message: usize) -> Option<usize> {
+        self.messages
+            .get(..message)?
+            .iter()
+            .rposition(|m| m.role == "user")
+    }
+    /// Whether an assistant message is the last reply of its turn.
+    pub fn ends_turn(&self, message: usize) -> bool {
+        self.messages
+            .get(message)
+            .is_some_and(|m| m.role == "assistant")
+            && self
+                .messages
+                .get(message + 1)
+                .is_none_or(|next| next.role == "user")
+    }
+    /// The tool calls made in the turn opened by a user message.
+    pub fn turn_tools(&self, turn: usize) -> impl Iterator<Item = &Activity> {
+        self.activity
+            .iter()
+            .filter(move |a| a.kind.starts_with("tool:") && a.turn == Some(turn))
+    }
+    /// What the turn opened by a user message did.
+    pub fn turn_summary(&self, turn: usize) -> TurnSummary {
+        let mut read = std::collections::HashSet::new();
+        let mut edited = std::collections::HashSet::new();
+        let mut tools = 0;
+        for call in self.turn_tools(turn) {
+            tools += 1;
+            let files = match call.tool.as_str() {
+                "read" => &mut read,
+                "edit" | "delete" | "move" => &mut edited,
+                _ => continue,
+            };
+            files.extend(call.paths.iter().map(String::as_str));
+        }
+        TurnSummary {
+            read: read.len(),
+            edited: edited.len(),
+            tools,
+        }
     }
     pub fn unread(&self) -> bool {
         !self.unread_messages.is_empty()
@@ -437,6 +499,54 @@ mod tests {
             }
         }
     }
+    #[test]
+    fn a_turn_summary_counts_distinct_files_and_every_call() {
+        let message = |role: &str| Message {
+            role: role.into(),
+            ..Default::default()
+        };
+        let call = |id: &str, tool: &str, paths: &[&str], turn: usize| Activity {
+            kind: format!("tool:{id}"),
+            tool: tool.into(),
+            paths: paths.iter().map(|&p| p.to_owned()).collect(),
+            turn: Some(turn),
+            ..Default::default()
+        };
+        let thread = Thread {
+            messages: vec![
+                message("user"),
+                message("assistant"),
+                message("user"),
+                message("assistant"),
+                message("assistant"),
+            ],
+            activity: vec![
+                call("1", "read", &["a.md"], 0),
+                call("2", "read", &["a.md", "b.md"], 2),
+                call("3", "edit", &["b.md"], 2),
+                call("4", "execute", &[], 2),
+                Activity {
+                    kind: "error".into(),
+                    turn: Some(2),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(thread.turn_of(4), Some(2));
+        assert!(thread.ends_turn(1) && !thread.ends_turn(3) && thread.ends_turn(4));
+        assert!(!thread.ends_turn(2));
+        assert_eq!(
+            thread.turn_summary(2),
+            TurnSummary {
+                read: 2,
+                edited: 1,
+                tools: 3
+            }
+        );
+        assert_eq!(thread.turn_summary(0).tools, 1);
+    }
+
     #[test]
     fn search_and_status_filters_compose() {
         let p = load();
