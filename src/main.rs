@@ -16,7 +16,6 @@ mod runtime_ui;
 mod settings;
 mod storage;
 mod themed_icon;
-#[cfg(target_os = "windows")]
 mod titlebar;
 mod ui_metrics;
 mod views;

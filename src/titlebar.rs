@@ -45,6 +45,7 @@ pub(super) fn app_icon(window: &Window) -> Img {
     .flex_shrink_0()
 }
 /// Title bar for secondary windows, which Windows draws itself and other platforms leave native.
+#[cfg(target_os = "windows")]
 pub(super) fn render(title: String, window: &Window) -> TitleBar {
     TitleBar::new().border_b_0().child(
         row().min_w_0().gap_2().child(app_icon(window)).child(
