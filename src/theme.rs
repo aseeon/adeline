@@ -325,6 +325,9 @@ pub fn apply(cx: &mut App) {
         theme.chart_5 = c("chart_5");
         theme.success = c("chart_3");
         theme.warning = c("chart_2");
+        theme.link = c("chart_2");
+        theme.link_hover = theme.link.mix_oklab(theme.foreground, 0.12);
+        theme.link_active = theme.link.mix_oklab(theme.foreground, 0.22);
         theme.info = c("chart_4");
         theme.success_foreground = c("background");
         theme.warning_foreground = c("foreground");

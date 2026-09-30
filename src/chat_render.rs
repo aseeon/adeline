@@ -8,7 +8,7 @@ use gpui_kit::component::{
     input::Textarea,
     menu::{DropdownMenu as _, PopupMenuItem},
     spinner::Spinner,
-    text::TextView,
+    text::{TextView, TextViewStyle},
     tooltip::Tooltip,
 };
 use std::f32::consts::TAU;
@@ -779,8 +779,21 @@ impl Adeline {
                 body = body.child(div().min_w_0().text_sm().child(paragraph.to_owned()));
             }
         } else {
+            // Compact text with inline code in the accent on the muted fill; the
+            // default fill is nearly the background and hides code spans. Links
+            // take `chart_2` through the theme's link color.
             body = body.child(
                 TextView::markdown("response", message.text.clone())
+                    .style(
+                        TextViewStyle::default()
+                            .paragraph_gap(rems(0.5))
+                            .inline_code(HighlightStyle {
+                                color: Some(theme.primary),
+                                background_color: Some(theme.muted),
+                                ..Default::default()
+                            }),
+                    )
+                    .text_sm()
                     .w_full()
                     .min_w_0(),
             );
