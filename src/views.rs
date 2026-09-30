@@ -121,6 +121,20 @@ impl Adeline {
                     .right(scrollbar)
                     .pl(scrollbar)
                     .bg(theme.background)
+                    // Messages fade out just above the composer, mirroring the header.
+                    .child(
+                        div()
+                            .absolute()
+                            .bottom_full()
+                            .left_0()
+                            .right_0()
+                            .h(rems(chat_render::HEADER_FADE))
+                            .bg(linear_gradient(
+                                0.,
+                                linear_color_stop(theme.background.alpha(0.9), 0.),
+                                linear_color_stop(theme.background.alpha(0.), 1.),
+                            )),
+                    )
                     .child(self.composer_region.clone())
                     .child(measure),
             )
