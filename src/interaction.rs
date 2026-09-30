@@ -211,6 +211,7 @@ impl Adeline {
                     .update(cx, |state, cx| state.set_value("", window, cx));
             }
             Action::ShowCompleted => self.show_completed = !self.show_completed,
+            Action::ShowArchived => self.show_archived = !self.show_archived,
             Action::HideToolCalls => {
                 if let Err(error) = config::update(|settings| {
                     settings.modes.chats.hide_tool_calls = !settings.modes.chats.hide_tool_calls;
@@ -256,7 +257,11 @@ impl Adeline {
                     .into();
                 }
             }
-            Action::ArchiveChat => self.complete_conversation(true, cx),
+            Action::ArchiveChat(ix) => {
+                if let Some(id) = self.workspace().threads.get(ix).map(|t| t.id.clone()) {
+                    self.finish_conversation(&id, true, cx);
+                }
+            }
             Action::Agent(id) => {
                 if self
                     .agent_catalog
@@ -417,7 +422,7 @@ impl Adeline {
         if !self.demo_mode
             && matches!(
                 changed,
-                Action::Chat(_) | Action::Complete | Action::Send | Action::ArchiveChat
+                Action::Chat(_) | Action::Complete | Action::Send | Action::ArchiveChat(_)
             )
         {
             if let Some(project) = self.projects.get_mut(self.project) {
@@ -438,6 +443,7 @@ impl Adeline {
         if matches!(
             changed,
             Action::ShowCompleted
+                | Action::ShowArchived
                 | Action::LeftPanel(_)
                 | Action::RightPanel(_)
                 | Action::ToggleLeftPanel

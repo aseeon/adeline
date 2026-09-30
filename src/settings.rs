@@ -53,10 +53,16 @@ impl Adeline {
         }
         vec![
             (
-                "Show idle chats",
+                "Show completed chats",
                 "Include completed conversations in the chat list.",
                 self.show_completed,
                 Action::ShowCompleted,
+            ),
+            (
+                "Show archived chats",
+                "Include archived conversations in the chat list.",
+                self.show_archived,
+                Action::ShowArchived,
             ),
             (
                 "Hide tool calls",

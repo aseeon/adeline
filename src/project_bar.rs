@@ -181,12 +181,25 @@ impl Adeline {
             .border_b_0()
             .bg(theme.title_bar)
             .child(toolbar);
-        col().flex_shrink_0().child(top)
+        // Windows and Linux: the line under the project tabs runs on under Kit's
+        // window controls. It is drawn after the title bar so their hover fill
+        // stops above it. It starts past the app icon, which has no left padding
+        // on these platforms.
+        let line = (!cfg!(target_os = "macos")).then(|| {
+            div()
+                .absolute()
+                .left(rems(2.75))
+                .right_0()
+                .bottom_0()
+                .h(px(1.))
+                .bg(theme.border)
+        });
+        col().relative().flex_shrink_0().child(top).children(line)
     }
 
-    /// The project tabs, the machine selector and the Projects menu, closed by
-    /// the line under the title bar. Kit draws the window controls beside this
-    /// strip, so the line runs on under them; the window edge clips it.
+    /// The project tabs, the machine selector and the Projects menu. On macOS,
+    /// where the window controls sit at the left, the strip draws the line
+    /// under the title bar itself.
     fn project_strip(
         &self,
         tabs: Div,
@@ -195,13 +208,15 @@ impl Adeline {
         cx: &Context<Self>,
     ) -> Div {
         let bar = theme::bar_colors(cx.theme());
-        let line = div()
-            .absolute()
-            .left_0()
-            .bottom_0()
-            .right(px(-1000.))
-            .h(px(1.))
-            .bg(cx.theme().border);
+        let line = cfg!(target_os = "macos").then(|| {
+            div()
+                .absolute()
+                .left_0()
+                .right_0()
+                .bottom_0()
+                .h(px(1.))
+                .bg(cx.theme().border)
+        });
         row()
             .relative()
             .flex_1()
@@ -251,7 +266,7 @@ impl Adeline {
                     .border_color(bar.divider)
                     .child(self.projects_menu(projects, cx)),
             )
-            .child(line)
+            .children(line)
     }
 
     fn project_cell(

@@ -1,5 +1,5 @@
 //! When a chat was last active, in the terms the chat list shows: a period
-//! ("Today", "Last 7 days", "Earlier") and a short label ("5m", "Tue").
+//! ("Today", "Last 3 days", "Earlier") and a short label ("5m", "Tue").
 //!
 //! Calendar days are UTC days. The standard library has no time zone database,
 //! so a chat active shortly after local midnight can land in the neighbouring
@@ -14,7 +14,8 @@ const WEEKDAYS: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Period {
     Today,
-    LastWeek,
+    /// The two days before today; with today, the last three calendar days.
+    LastThreeDays,
     Earlier,
 }
 
@@ -56,7 +57,7 @@ pub fn parse(stamp: &str) -> Option<i64> {
 pub fn period(at: i64, now: i64) -> Period {
     match now.div_euclid(DAY) - at.div_euclid(DAY) {
         ..=0 => Period::Today,
-        1..=6 => Period::LastWeek,
+        1..=2 => Period::LastThreeDays,
         _ => Period::Earlier,
     }
 }
@@ -166,9 +167,9 @@ mod tests {
     fn periods_follow_calendar_days() {
         let midnight = NOW - 12 * 3600;
         assert_eq!(period(midnight, NOW), Period::Today);
-        assert_eq!(period(midnight - 1, NOW), Period::LastWeek);
-        assert_eq!(period(midnight - 6 * DAY, NOW), Period::LastWeek);
-        assert_eq!(period(midnight - 6 * DAY - 1, NOW), Period::Earlier);
+        assert_eq!(period(midnight - 1, NOW), Period::LastThreeDays);
+        assert_eq!(period(midnight - 2 * DAY, NOW), Period::LastThreeDays);
+        assert_eq!(period(midnight - 2 * DAY - 1, NOW), Period::Earlier);
         // A clock ahead of ours still counts as today.
         assert_eq!(period(NOW + 90, NOW), Period::Today);
     }

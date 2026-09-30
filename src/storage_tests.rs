@@ -132,7 +132,7 @@ fn project_rename_preserves_history_and_directory_snapshot() {
     assert_eq!(document["directory"], work.to_string_lossy().as_ref());
 
     let conversation = store.create_conversation(&id, &agent(), "Hello").unwrap();
-    for status in ["active", "working", "blocked", "idle"] {
+    for status in ["active", "idle", "processing", "blocked"] {
         let mut settings = store.conversation(&conversation).unwrap().settings.clone();
         settings.status = status.into();
         store
@@ -603,7 +603,7 @@ fn bad_transcript_keeps_prior_history_and_exposes_error() {
         )
         .unwrap();
     let mut settings = store.conversation(&conversation).unwrap().settings.clone();
-    settings.status = "working".into();
+    settings.status = "processing".into();
     store
         .update_conversation(&id, &conversation, settings)
         .unwrap();

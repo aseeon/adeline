@@ -175,6 +175,7 @@ fn legacy_value<'de, D: Deserializer<'de>>(
 #[serde(default, deny_unknown_fields)]
 pub struct Chats {
     pub show_completed_chats: bool,
+    pub show_archived_chats: bool,
     pub show_left_panel: bool,
     pub show_agent_activity: bool,
     pub hide_tool_calls: bool,
@@ -184,6 +185,7 @@ impl Default for Chats {
     fn default() -> Self {
         Self {
             show_completed_chats: true,
+            show_archived_chats: false,
             show_left_panel: true,
             show_agent_activity: false,
             hide_tool_calls: false,
@@ -361,6 +363,7 @@ impl super::Adeline {
     pub(super) fn load_settings(&mut self) {
         let s = current();
         self.show_completed = s.modes.chats.show_completed_chats;
+        self.show_archived = s.modes.chats.show_archived_chats;
         self.left_panel_open = [
             s.modes.chats.show_left_panel,
             false,
@@ -385,6 +388,7 @@ impl super::Adeline {
         if !(matches!(
             action,
             Action::ShowCompleted
+                | Action::ShowArchived
                 | Action::LeftPanel(Section::Chats)
                 | Action::RightPanel(Section::Chats)
         ) || (self.section == Section::Chats
@@ -394,6 +398,7 @@ impl super::Adeline {
         }
         update(|s| match action {
             Action::ShowCompleted => s.modes.chats.show_completed_chats = self.show_completed,
+            Action::ShowArchived => s.modes.chats.show_archived_chats = self.show_archived,
             Action::LeftPanel(Section::Chats) => {
                 s.modes.chats.show_left_panel = self.left_panel_open[Section::Chats as usize];
             }

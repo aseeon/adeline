@@ -143,6 +143,7 @@ enum Action {
     AgentFilter(Option<std::sync::Arc<str>>),
     ClearChatFilters,
     ShowCompleted,
+    ShowArchived,
     ToggleSidePanel,
     ToggleLeftPanel,
     ResizePanel(usize, f32),
@@ -184,7 +185,8 @@ enum Action {
     ReplyTo(usize),
     /// Copy a message of the open chat to the clipboard.
     CopyMessage(usize),
-    ArchiveChat,
+    /// Archive a chat of the current project, by its index.
+    ArchiveChat(usize),
     Decision(usize),
     InsertFiles,
     AddFile,
@@ -253,6 +255,7 @@ struct Adeline {
     /// Height of the composer, which floats over the end of the transcript.
     composer_height: std::rc::Rc<std::cell::Cell<Pixels>>,
     show_completed: bool,
+    show_archived: bool,
     side_panel_open: [bool; 7],
     right_panel_width: f32,
     panel_state: Entity<component::ResizableState>,
@@ -384,6 +387,7 @@ impl Adeline {
             chat_search_open: false,
             composer_height,
             show_completed: true,
+            show_archived: false,
             side_panel_open: [false, false, false, false, true, true, true],
             expanded_event: None,
             query,

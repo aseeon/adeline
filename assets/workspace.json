@@ -185,7 +185,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "archived",
             "title": "Organize the shared examples folder",
             "id": "demo-skills-history-6",
             "context": [
@@ -483,7 +483,7 @@
             "activity": [],
             "createdAt": "2026-09-25T10:00:00Z",
             "provider": "codex",
-            "status": "working",
+            "status": "processing",
             "title": "Evaluate the document review skill against messy real-world drafts",
             "id": "skills-eval",
             "context": [
@@ -1102,7 +1102,7 @@
             "activity": [],
             "createdAt": "2026-09-25T10:00:00Z",
             "provider": "claude",
-            "status": "working",
+            "status": "processing",
             "title": "Check retry timing when a destination is temporarily unavailable",
             "id": "relay-retry",
             "context": [
@@ -2497,7 +2497,7 @@
         "activity": [],
         "createdAt": "2026-09-25T11:56:00Z",
         "provider": "claude",
-        "status": "working",
+        "status": "processing",
         "title": "Search long conversations without pausing the interface",
         "id": "adeline-search",
         "context": [

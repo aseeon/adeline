@@ -216,7 +216,7 @@ impl ChatList {
             collapsed_hover: None,
             collapsed_scroll: UniformListScrollHandle::new(),
             // Finished chats stay out of the way until asked for.
-            folded: vec![Group::Done],
+            folded: vec![Group::Completed],
         }
     }
 
@@ -224,9 +224,10 @@ impl ChatList {
         prepared::SearchRecord {
             id: Arc::from(thread.id.as_str()),
             text: thread.search_text.clone(),
-            completed: !thread.matches_status(0, false),
+            completed: thread.status == "completed",
+            archived: thread.status == "archived",
             blocked: thread.status == "blocked",
-            working: thread.status == "working",
+            processing: thread.status == "processing",
             unread: thread.unread(),
             agent: Arc::from(thread.provider.as_str()),
             activity: thread.last_activity(),
@@ -272,8 +273,9 @@ impl ChatList {
             let record = Self::record(thread);
             let unchanged = old.text.same_snapshot(&record.text)
                 && old.completed == record.completed
+                && old.archived == record.archived
                 && old.blocked == record.blocked
-                && old.working == record.working
+                && old.processing == record.processing
                 && old.unread == record.unread
                 && old.activity == record.activity;
             if !unchanged {
@@ -471,7 +473,13 @@ impl ChatList {
                     .filter(|&row| Some(row) != selected)
                     .collect()
             } else {
-                prepared::rail(&self.records, app.show_completed, selected, recency::now())
+                prepared::rail(
+                    &self.records,
+                    app.show_completed,
+                    app.show_archived,
+                    selected,
+                    recency::now(),
+                )
             };
             (
                 rows,
@@ -1007,6 +1015,7 @@ impl Adeline {
             query: self.query(cx),
             filter: self.filter,
             completed: self.show_completed,
+            archived: self.show_archived,
             agent: self.agent_filter.clone(),
         }
     }
@@ -1033,6 +1042,7 @@ impl Adeline {
                 | Project(_)
                 | NewChat
                 | ShowCompleted
+                | ShowArchived
                 | HideToolCalls
                 | LeftPanel(_)
                 | RightPanel(_)
@@ -1049,7 +1059,8 @@ impl Adeline {
             | NewChat
             | AgentFilter(_)
             | ClearChatFilters
-            | ShowCompleted => {
+            | ShowCompleted
+            | ShowArchived => {
                 let criteria = self.chat_criteria(cx);
                 self.chat_list.update(cx, |list, cx| {
                     list.selected = self.selected;

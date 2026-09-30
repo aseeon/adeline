@@ -51,8 +51,10 @@ impl Adeline {
             for conversation in store.projects.iter().flat_map(|p| &p.conversations) {
                 let thread = conversation.to_thread();
                 let last_user = thread.messages.iter().rposition(|m| m.role == "user");
-                let interrupted =
-                    matches!(conversation.settings.status.as_str(), "working" | "blocked");
+                let interrupted = matches!(
+                    conversation.settings.status.as_str(),
+                    "processing" | "blocked"
+                );
                 let last_error = conversation
                     .events
                     .iter()
@@ -468,7 +470,7 @@ impl Adeline {
     }
 
     fn start_prompt(&mut self, id: &str, prompt: String, retry: bool, cx: &mut Context<Self>) {
-        if !self.set_runtime_status(id, "working") {
+        if !self.set_runtime_status(id, "processing") {
             return;
         }
         if !self.ensure_driver(id, cx) {
@@ -829,9 +831,15 @@ impl Adeline {
     }
 
     pub(super) fn complete_conversation(&mut self, archive: bool, cx: &mut Context<Self>) {
-        let Some(id) = self.current_id() else {
-            return;
-        };
+        if let Some(id) = self.current_id() {
+            self.finish_conversation(&id, archive, cx);
+        }
+    }
+
+    /// Completes or archives a chat, stopping its agent. Completing a finished
+    /// chat reopens it as idle.
+    pub(super) fn finish_conversation(&mut self, id: &str, archive: bool, cx: &mut Context<Self>) {
+        let id = id.to_owned();
         let Some((p, t)) = self.locate_conversation(&id) else {
             return;
         };
@@ -1112,7 +1120,7 @@ impl Adeline {
             .map(|m| format!("{}: {}", m.role, m.text))
             .collect::<Vec<_>>()
             .join("\n\n");
-        if !self.set_runtime_status(&id, "working") {
+        if !self.set_runtime_status(&id, "processing") {
             self.refresh_runtime_views(cx);
             return;
         }
@@ -1230,7 +1238,7 @@ impl Adeline {
             }
             live.permission.pop_front();
             if live.permission.is_empty() {
-                self.set_runtime_status(&id, "working");
+                self.set_runtime_status(&id, "processing");
             }
         }
         self.refresh_runtime_views(cx);

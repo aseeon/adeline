@@ -641,7 +641,7 @@ impl ProjectStore {
         let settings = ConversationSettings {
             agent_id,
             title: title.to_owned(),
-            status: "active".into(),
+            status: "idle".into(),
             created_at: now_millis().to_string(),
             execution: ExecutionConfig {
                 name: agent.name.clone(),
@@ -936,7 +936,11 @@ fn load_conversation(folder: &Path) -> Result<Option<StoredConversation>, String
         &fs::read_to_string(&settings_path).map_err(|e| file_error(&settings_path, e))?,
     )
     .map_err(|e| file_error(&settings_path, e))?;
-    let interrupted = settings.status == "working";
+    // Earlier versions saved running chats as "working" and new ones as "active".
+    if settings.status == "active" {
+        settings.status = "idle".into();
+    }
+    let interrupted = matches!(settings.status.as_str(), "processing" | "working");
     if interrupted {
         settings.status = "blocked".into();
     }

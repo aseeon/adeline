@@ -113,7 +113,7 @@ pub fn load() -> Vec<Workspace> {
         project.threads.reverse();
         for thread in &mut project.threads {
             if let Some(work) = data.scene.working.iter().find(|w| w.thread_id == thread.id) {
-                thread.status = "working".into();
+                thread.status = "processing".into();
                 thread.activity = work.activity.clone();
             }
             thread.prepare_search();
@@ -228,17 +228,9 @@ impl Thread {
         [
             1,
             usize::from(self.status == "blocked"),
-            usize::from(self.status == "working"),
+            usize::from(self.status == "processing"),
             usize::from(self.unread()),
         ]
-    }
-    pub fn matches_status(&self, filter: usize, completed: bool) -> bool {
-        (completed || !matches!(self.status.as_str(), "completed" | "archived"))
-            && match filter {
-                1 => self.status == "blocked",
-                2 => self.status == "working",
-                _ => true,
-            }
     }
     pub fn prepare_search(&mut self) {
         self.unread_messages = self
@@ -260,9 +252,18 @@ impl Thread {
         .to_lowercase()
         .into();
     }
+    /// Whether the chat shows for a search and tab (0 all, 1 needs input,
+    /// 2 processing), with completed and archived chats each shown only when
+    /// asked for.
     #[cfg(test)]
-    pub fn matches(&self, query: &str, filter: usize, completed: bool) -> bool {
-        self.matches_status(filter, completed)
+    pub fn matches(&self, query: &str, filter: usize, completed: bool, archived: bool) -> bool {
+        (completed || self.status != "completed")
+            && (archived || self.status != "archived")
+            && match filter {
+                1 => self.status == "blocked",
+                2 => self.status == "processing",
+                _ => true,
+            }
             && (query.is_empty() || self.search_text.contains(&query.to_lowercase()))
     }
 }
@@ -302,13 +303,16 @@ pub fn image_asset(path: &str) -> &'static str {
 mod tests {
     use super::*;
     #[test]
-    fn archived_and_completed_conversations_stay_in_saved_history() {
-        let mut thread = Thread::default();
-        for status in ["completed", "archived"] {
-            thread.status = status.into();
-            assert!(!thread.matches("", 0, false));
-            assert!(thread.matches("", 0, true));
-        }
+    fn completed_and_archived_conversations_show_only_when_asked_for() {
+        let mut thread = Thread {
+            status: "completed".into(),
+            ..Default::default()
+        };
+        assert!(!thread.matches("", 0, false, true));
+        assert!(thread.matches("", 0, true, false));
+        thread.status = "archived".into();
+        assert!(!thread.matches("", 0, true, false));
+        assert!(thread.matches("", 0, false, true));
     }
 
     #[test]
@@ -381,8 +385,9 @@ mod tests {
                     id: Arc::from(t.id.as_str()),
                     text: t.search_text.clone(),
                     completed: t.status == "completed",
+                    archived: t.status == "archived",
                     blocked: t.status == "blocked",
-                    working: t.status == "working",
+                    processing: t.status == "processing",
                     unread: t.unread(),
                     agent: Arc::from(t.provider.as_str()),
                     activity: t.last_activity(),
@@ -405,14 +410,14 @@ mod tests {
             };
             // Four live chats split between waiting and running, and every period
             // holds enough chats to scroll.
-            assert!(rows(Group::NeedsYou) > 0, "{sections:?}");
-            assert!(rows(Group::Working) > 0, "{sections:?}");
+            assert!(rows(Group::NeedsInput) > 0, "{sections:?}");
+            assert!(rows(Group::Processing) > 0, "{sections:?}");
             assert_eq!(
-                rows(Group::NeedsYou) + rows(Group::Working),
+                rows(Group::NeedsInput) + rows(Group::Processing),
                 4,
                 "{sections:?}"
             );
-            for period in [Group::Today, Group::LastWeek, Group::Earlier] {
+            for period in [Group::Today, Group::LastThreeDays, Group::Earlier] {
                 assert!(rows(period) >= 6, "{sections:?}");
             }
         }
@@ -425,7 +430,7 @@ mod tests {
         for index in 0..workspace.threads.len() {
             let before = workspace.threads[index].flags();
             workspace.threads[index].mark_read();
-            workspace.threads[index].status = "working".into();
+            workspace.threads[index].status = "processing".into();
             workspace.update_counts(before, workspace.threads[index].flags());
             let mut expected = workspace.clone();
             expected.rebuild_counts();
@@ -470,7 +475,7 @@ mod tests {
             )
             .to_lowercase();
             assert_eq!(
-                thread.matches(query, 0, true),
+                thread.matches(query, 0, true, true),
                 original.contains(&query.to_lowercase())
             );
         }
@@ -479,8 +484,8 @@ mod tests {
             ..Default::default()
         });
         thread.prepare_search();
-        assert!(thread.matches("newly APPENDED", 0, true));
-        assert!(!thread.matches("anything", 1, true));
+        assert!(thread.matches("newly APPENDED", 0, true, true));
+        assert!(!thread.matches("anything", 1, true, true));
     }
     #[test]
     fn fixture_keeps_chat_activity_and_decisions_with_their_projects() {
@@ -499,7 +504,7 @@ mod tests {
                 .iter()
                 .find(|thread| thread.id == working)
                 .unwrap();
-            assert_eq!(thread.status, "working");
+            assert_eq!(thread.status, "processing");
             assert!(!thread.activity.is_empty());
             for decision in &project.decisions {
                 let thread = project
@@ -567,14 +572,14 @@ mod tests {
             .iter()
             .find(|t| t.id == "adeline-session")
             .unwrap();
-        assert!(t.matches("SESSION", 1, false));
-        assert!(!t.matches("session", 2, true));
-        assert!(!t.matches("no matching text", 0, true));
+        assert!(t.matches("SESSION", 1, false, false));
+        assert!(!t.matches("session", 2, true, true));
+        assert!(!t.matches("no matching text", 0, true, true));
         let done = p[0]
             .threads
             .iter()
             .find(|t| t.status == "completed")
             .unwrap();
-        assert!(!done.matches("", 0, false));
+        assert!(!done.matches("", 0, false, false));
     }
 }

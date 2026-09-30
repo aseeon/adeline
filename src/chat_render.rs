@@ -65,7 +65,7 @@ pub(super) fn collapsed_item(tile: AnyElement) -> impl IntoElement {
 }
 
 /// A section label: a chevron, the title in capitals and the chat count.
-/// Needs you takes the accent; the section being read takes the foreground.
+/// Needs Input takes the accent; the section being read takes the foreground.
 pub(super) fn section_label(
     group: Group,
     count: usize,
@@ -86,7 +86,7 @@ pub(super) fn section_label(
         (LabelPlacement::Inline, false) => "Hide",
         _ => "Go to",
     };
-    let color = if group == Group::NeedsYou {
+    let color = if group == Group::NeedsInput {
         theme.primary
     } else if current {
         theme.foreground
@@ -209,7 +209,7 @@ fn row_status(thread: &Thread, updated: Option<String>, cx: &App) -> AnyElement 
             .bg(theme.primary.alpha(0.22))
             .child(div().size(rems(0.4375)).rounded_full().bg(theme.primary))
             .into_any_element(),
-        "working" => {
+        "processing" => {
             let (track, arc) = (theme.border, theme.foreground);
             div()
                 .flex_shrink_0()
@@ -245,7 +245,7 @@ pub(super) fn collapsed_button(id: &'static str, label: &'static str, icon_name:
 /// The chat's status in words, for accessible labels.
 fn status_name(thread: &Thread) -> &'static str {
     match thread.status.as_str() {
-        "working" => "running",
+        "processing" => "running",
         "completed" => "completed",
         "blocked" => "needs input",
         "archived" => "archived",
@@ -273,11 +273,18 @@ impl Adeline {
     /// identity, fill and pointer handling.
     fn chat_line(&self, i: usize, selected: bool, cx: &Context<Self>) -> Div {
         let thread = &self.workspace().threads[i];
-        let theme = cx.theme();
-        let done = matches!(thread.status.as_str(), "completed" | "archived");
-        let live = matches!(thread.status.as_str(), "blocked" | "working");
         let activity = thread.last_activity();
         let updated = (activity > 0).then(|| recency::label(activity, recency::now()));
+        self.chat_title(i, selected, cx)
+            .child(row_status(thread, updated, cx))
+    }
+
+    /// A row's agent icon and title, without the status at its right end.
+    fn chat_title(&self, i: usize, selected: bool, cx: &Context<Self>) -> Div {
+        let thread = &self.workspace().threads[i];
+        let theme = cx.theme();
+        let done = matches!(thread.status.as_str(), "completed" | "archived");
+        let live = matches!(thread.status.as_str(), "blocked" | "processing");
         // Unread, waiting and running chats read bright; the rest recede.
         let title_color = if selected || thread.unread() || live {
             theme.foreground
@@ -302,7 +309,52 @@ impl Adeline {
                     })
                     .child(highlighted_title(thread.title.trim(), &self.query(cx), cx)),
             )
-            .child(row_status(thread, updated, cx))
+    }
+
+    /// A list row's right end. A completed chat trades its time for an Archive
+    /// button while the pointer is over the row.
+    fn chat_row_end(&self, i: usize, group: &SharedString, cx: &Context<Self>) -> AnyElement {
+        let thread = &self.workspace().threads[i];
+        let activity = thread.last_activity();
+        let updated = (activity > 0).then(|| recency::label(activity, recency::now()));
+        let status = row_status(thread, updated, cx);
+        if thread.status != "completed" {
+            return status;
+        }
+        div()
+            .relative()
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_end()
+            .min_w(rems(1.5))
+            .child(
+                div()
+                    .group_hover(group.clone(), |style| style.invisible())
+                    .child(status),
+            )
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .bottom_0()
+                    .right(rems(-0.25))
+                    .flex()
+                    .items_center()
+                    .invisible()
+                    .group_hover(group.clone(), |style| style.visible())
+                    .child(
+                        self.icon_button(
+                            SharedString::from(format!("archive-chat:{}", thread.id)),
+                            "Archive",
+                            Icon::default().path("archive.svg"),
+                            Action::ArchiveChat(i),
+                            cx,
+                        )
+                        .xsmall(),
+                    ),
+            )
+            .into_any_element()
     }
 
     /// A chat's accessible description: title, agent, size, age and state.
@@ -330,16 +382,19 @@ impl Adeline {
     pub(super) fn chat_card(&self, i: usize, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let selected = self.selected == Some(i);
+        let id = SharedString::from(format!(
+            "chat:{}:{}",
+            self.workspace().config.id,
+            self.workspace().threads[i].id
+        ));
         div()
             .w_full()
             .px_1p5()
             .child(
-                self.chat_line(i, selected, cx)
-                    .id(SharedString::from(format!(
-                        "chat:{}:{}",
-                        self.workspace().config.id,
-                        self.workspace().threads[i].id
-                    )))
+                self.chat_title(i, selected, cx)
+                    .child(self.chat_row_end(i, &id, cx))
+                    .id(id.clone())
+                    .group(id)
                     .role(Role::ListBoxOption)
                     .aria_selected(selected)
                     .aria_label(self.chat_description(i))

@@ -34,8 +34,9 @@ pub struct SearchRecord {
     pub id: Arc<str>,
     pub text: SearchText,
     pub completed: bool,
+    pub archived: bool,
     pub blocked: bool,
-    pub working: bool,
+    pub processing: bool,
     pub unread: bool,
     /// The chat's agent, as stored on the thread.
     pub agent: Arc<str>,
@@ -44,29 +45,30 @@ pub struct SearchRecord {
 }
 
 /// Sections of the chat list, in display order: live chats by state, then
-/// the rest by when they were last active, then finished chats.
+/// idle chats by when they were last active, then completed and archived chats.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {
     /// Chats waiting on the user.
-    NeedsYou,
+    NeedsInput,
     /// Chats whose agent is running.
-    Working,
+    Processing,
     Today,
-    LastWeek,
+    LastThreeDays,
     Earlier,
-    /// Completed and archived chats.
-    Done,
+    Completed,
+    Archived,
 }
 
 impl Group {
     pub fn title(self) -> &'static str {
         match self {
-            Self::NeedsYou => "Needs you",
-            Self::Working => "Working",
+            Self::NeedsInput => "Needs Input",
+            Self::Processing => "Processing",
             Self::Today => "Today",
-            Self::LastWeek => "Last 7 days",
+            Self::LastThreeDays => "Last 3 days",
             Self::Earlier => "Earlier",
-            Self::Done => "Done",
+            Self::Completed => "Completed",
+            Self::Archived => "Archived",
         }
     }
 }
@@ -78,7 +80,15 @@ pub struct Criteria {
     pub query: String,
     pub filter: usize,
     pub completed: bool,
+    pub archived: bool,
     pub agent: Option<Arc<str>>,
+}
+
+impl Criteria {
+    /// Completed and archived chats are left out unless their section is shown.
+    fn hides(&self, record: &SearchRecord) -> bool {
+        (record.completed && !self.completed) || (record.archived && !self.archived)
+    }
 }
 
 #[derive(Clone, Default)]
@@ -108,9 +118,10 @@ pub fn search<'a>(
     let mut needing_input = Vec::new();
     let mut running = Vec::new();
     let mut periods: [Vec<(i64, usize)>; 3] = Default::default();
-    let mut done = Vec::new();
+    let mut completed = Vec::new();
+    let mut archived = Vec::new();
     for (index, record) in records.into_iter().enumerate() {
-        if (!criteria.completed && record.completed)
+        if criteria.hides(record)
             || !(criteria.query.is_empty() || record.text.contains(&criteria.query))
         {
             continue;
@@ -124,7 +135,7 @@ pub fn search<'a>(
             outcome.scopes[1] += usize::from(record.blocked);
             outcome.scopes[2] += usize::from(record.unread);
         }
-        if !record.matches_filter(criteria.filter, criteria.completed) {
+        if !record.matches_filter(criteria.filter) {
             continue;
         }
         match outcome
@@ -143,16 +154,18 @@ pub fn search<'a>(
         } else {
             record.activity
         };
-        if record.completed {
-            done.push((activity, index));
+        if record.archived {
+            archived.push((activity, index));
+        } else if record.completed {
+            completed.push((activity, index));
         } else if record.blocked {
             needing_input.push((activity, index));
-        } else if record.working {
+        } else if record.processing {
             running.push((activity, index));
         } else {
             let slot = match crate::recency::period(activity, now) {
                 crate::recency::Period::Today => 0,
-                crate::recency::Period::LastWeek => 1,
+                crate::recency::Period::LastThreeDays => 1,
                 crate::recency::Period::Earlier => 2,
             };
             periods[slot].push((activity, index));
@@ -161,15 +174,16 @@ pub fn search<'a>(
     let newest_first = |rows: &mut Vec<(i64, usize)>| {
         rows.sort_by_key(|&(activity, index)| (std::cmp::Reverse(activity), index));
     };
-    let [today, week, earlier] = periods;
-    let mut groups = Vec::with_capacity(6);
+    let [today, recent, earlier] = periods;
+    let mut groups = Vec::with_capacity(7);
     for (group, mut rows) in [
-        (Group::NeedsYou, needing_input),
-        (Group::Working, running),
+        (Group::NeedsInput, needing_input),
+        (Group::Processing, running),
         (Group::Today, today),
-        (Group::LastWeek, week),
+        (Group::LastThreeDays, recent),
         (Group::Earlier, earlier),
-        (Group::Done, done),
+        (Group::Completed, completed),
+        (Group::Archived, archived),
     ] {
         newest_first(&mut rows);
         groups.push((group, rows.into_iter().map(|(_, index)| index).collect()));
@@ -187,11 +201,13 @@ pub fn search<'a>(
 pub fn rail(
     records: &SearchCatalog,
     completed: bool,
+    archived: bool,
     selected: Option<usize>,
     now: i64,
 ) -> Vec<usize> {
     let criteria = Criteria {
         completed,
+        archived,
         ..Criteria::default()
     };
     search(records.iter(), &criteria, now)
@@ -203,14 +219,13 @@ pub fn rail(
 }
 
 impl SearchRecord {
-    pub fn matches_filter(&self, filter: usize, completed: bool) -> bool {
-        (completed || !self.completed)
-            && match filter {
-                1 => self.blocked,
-                2 => self.working,
-                3 => self.unread,
-                _ => true,
-            }
+    pub fn matches_filter(&self, filter: usize) -> bool {
+        match filter {
+            1 => self.blocked,
+            2 => self.processing,
+            3 => self.unread,
+            _ => true,
+        }
     }
 }
 
@@ -370,8 +385,9 @@ mod tests {
             id: id.into(),
             text: text.into(),
             completed: false,
+            archived: false,
             blocked: false,
-            working: false,
+            processing: false,
             unread: false,
             agent: "codex".into(),
             activity: 0,
@@ -391,6 +407,7 @@ mod tests {
             query: query.into(),
             filter,
             completed,
+            archived: false,
             agent: None,
         }
     }
@@ -507,7 +524,7 @@ mod tests {
     }
 
     #[test]
-    fn sections_put_live_chats_first_then_newest_by_period_then_done() {
+    fn sections_put_live_chats_first_then_newest_by_period_then_finished() {
         const NOW: i64 = 1_790_510_400;
         let day = 86_400;
         let records = [
@@ -516,13 +533,13 @@ mod tests {
                 ..record("old", "")
             },
             SearchRecord {
-                working: true,
+                processing: true,
                 activity: NOW - 60,
                 ..record("running", "")
             },
             SearchRecord {
-                activity: NOW - 3 * day,
-                ..record("week", "")
+                activity: NOW - 2 * day,
+                ..record("recent", "")
             },
             SearchRecord {
                 activity: NOW - 600,
@@ -542,8 +559,17 @@ mod tests {
                 activity: NOW - 30,
                 ..record("done", "")
             },
+            SearchRecord {
+                archived: true,
+                activity: NOW - 20,
+                ..record("put-away", "")
+            },
         ];
-        let outcome = search(&records, &criteria("", 0, true), NOW);
+        let everything = Criteria {
+            archived: true,
+            ..criteria("", 0, true)
+        };
+        let outcome = search(&records, &everything, NOW);
         let sections: Vec<_> = outcome
             .groups
             .iter()
@@ -557,17 +583,31 @@ mod tests {
         assert_eq!(
             sections,
             [
-                (Group::NeedsYou, vec!["waiting"]),
-                (Group::Working, vec!["running"]),
+                (Group::NeedsInput, vec!["waiting"]),
+                (Group::Processing, vec!["running"]),
                 (Group::Today, vec!["today-newer", "today-older"]),
-                (Group::LastWeek, vec!["week"]),
+                (Group::LastThreeDays, vec!["recent"]),
                 (Group::Earlier, vec!["old"]),
-                (Group::Done, vec!["done"]),
+                (Group::Completed, vec!["done"]),
+                (Group::Archived, vec!["put-away"]),
             ]
         );
-        // Hiding completed chats drops the Done section.
-        let hidden = search(&records, &criteria("", 0, false), NOW);
-        assert!(hidden.groups.iter().all(|(group, _)| *group != Group::Done));
+        // Each finished section can be hidden on its own; archived is by default.
+        let shown = |criteria: &Criteria| -> Vec<Group> {
+            search(&records, criteria, NOW)
+                .groups
+                .iter()
+                .map(|(group, _)| *group)
+                .collect()
+        };
+        let default = shown(&criteria("", 0, true));
+        assert!(default.contains(&Group::Completed) && !default.contains(&Group::Archived));
+        let archived_only = shown(&Criteria {
+            archived: true,
+            ..criteria("", 0, false)
+        });
+        assert!(!archived_only.contains(&Group::Completed));
+        assert!(archived_only.contains(&Group::Archived));
     }
 
     #[test]
@@ -577,7 +617,7 @@ mod tests {
         let catalog: SearchCatalog = [
             SearchRecord {
                 activity: NOW - 3 * day,
-                ..record("week", "")
+                ..record("older", "")
             },
             SearchRecord {
                 activity: NOW - 60,
@@ -602,19 +642,19 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(
-            ids(rail(&catalog, true, None, NOW)),
-            ["waiting", "today", "week", "done-today"]
+            ids(rail(&catalog, true, false, None, NOW)),
+            ["waiting", "today", "older", "done-today"]
         );
         assert_eq!(
-            ids(rail(&catalog, false, None, NOW)),
-            ["waiting", "today", "week"]
+            ids(rail(&catalog, false, false, None, NOW)),
+            ["waiting", "today", "older"]
         );
         // The open chat is pinned above the rail, so the rail leaves it out.
         assert_eq!(
-            ids(rail(&catalog, false, Some(1), NOW)),
-            ["waiting", "week"]
+            ids(rail(&catalog, false, false, Some(1), NOW)),
+            ["waiting", "older"]
         );
-        assert!(rail(&SearchCatalog::default(), true, None, NOW).is_empty());
+        assert!(rail(&SearchCatalog::default(), true, true, None, NOW).is_empty());
     }
 
     #[test]

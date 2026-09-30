@@ -55,7 +55,9 @@ impl Adeline {
                             .accessibility_label(if archived { "Archived" } else { "Archive" })
                             .tooltip(if archived { "Archived" } else { "Archive" })
                             .on_click(cx.listener(|app, _, window, cx| {
-                                app.act(Action::ArchiveChat, window, cx);
+                                if let Some(ix) = app.selected {
+                                    app.act(Action::ArchiveChat(ix), window, cx);
+                                }
                             })),
                     )
             });
@@ -387,6 +389,7 @@ impl Adeline {
                                         if !matches!(
                                             action,
                                             Action::ShowCompleted
+                                                | Action::ShowArchived
                                                 | Action::HideToolCalls
                                                 | Action::LeftPanel(_)
                                                 | Action::RightPanel(_)
