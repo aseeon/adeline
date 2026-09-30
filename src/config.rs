@@ -177,6 +177,7 @@ pub struct Chats {
     pub show_agent_activity: bool,
     pub hide_tool_calls: bool,
     pub retry_limit: usize,
+    pub thinking_animation: ThinkingAnimation,
 }
 impl Default for Chats {
     fn default() -> Self {
@@ -187,6 +188,28 @@ impl Default for Chats {
             show_agent_activity: false,
             hide_tool_calls: false,
             retry_limit: 5,
+            thinking_animation: ThinkingAnimation::default(),
+        }
+    }
+}
+/// How the "Thinking…" row moves while an agent works on a turn.
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ThinkingAnimation {
+    #[default]
+    Dots,
+    Words,
+    Braille,
+    Fill,
+}
+impl ThinkingAnimation {
+    pub const ALL: [Self; 4] = [Self::Dots, Self::Words, Self::Braille, Self::Fill];
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Dots => "Typing dots",
+            Self::Words => "Cycling words",
+            Self::Braille => "Braille spinner",
+            Self::Fill => "Liquid fill",
         }
     }
 }
@@ -421,6 +444,27 @@ mod tests {
             settings
         );
         ACTIVE.with(|s| s.borrow_mut().settings = original);
+    }
+
+    #[test]
+    fn thinking_animation_defaults_to_dots_and_round_trips_by_name() {
+        let defaults: Chats = serde_yaml_ng::from_str("{}").unwrap();
+        assert_eq!(defaults.thinking_animation, ThinkingAnimation::Dots);
+        for choice in ThinkingAnimation::ALL {
+            let yaml = serde_yaml_ng::to_string(&Chats {
+                thinking_animation: choice,
+                ..Chats::default()
+            })
+            .unwrap();
+            assert_eq!(
+                serde_yaml_ng::from_str::<Chats>(&yaml)
+                    .unwrap()
+                    .thinking_animation,
+                choice
+            );
+        }
+        let saved: Chats = serde_yaml_ng::from_str("thinking_animation: fill").unwrap();
+        assert_eq!(saved.thinking_animation, ThinkingAnimation::Fill);
     }
 
     #[test]

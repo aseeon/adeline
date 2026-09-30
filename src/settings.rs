@@ -45,6 +45,8 @@ const KEYMAP: [&str; 8] = [
     "Activate focused control (built in)",
 ];
 type SettingOption = (&'static str, &'static str, bool, Action);
+const THINKING_LABEL: &str = "Thinking animation";
+const THINKING_DESCRIPTION: &str = "How the row under your message moves while the agent works.";
 
 impl Adeline {
     pub(super) fn mode_options(&self, section: Section) -> Vec<SettingOption> {
@@ -561,6 +563,8 @@ struct SettingsWindow {
     font_size_errors: [Option<String>; 2],
     retry_limit: Entity<InputState>,
     retry_limit_error: Option<String>,
+    thinking_picker: Entity<SelectState<SearchableVec<String>>>,
+    thinking_error: Option<String>,
     theme_picker: Entity<SelectState<SearchableVec<theme::ThemeChoice>>>,
     font_pickers: [Entity<SelectState<SearchableVec<String>>>; 2],
     theme_status: Option<String>,
@@ -650,6 +654,22 @@ impl SettingsWindow {
             window,
             cx,
         );
+        let thinking = config::current().modes.chats.thinking_animation;
+        let thinking_picker = cx.new(|cx| {
+            SelectState::new(
+                SearchableVec::new(
+                    config::ThinkingAnimation::ALL
+                        .map(|choice| choice.label().to_owned())
+                        .to_vec(),
+                ),
+                config::ThinkingAnimation::ALL
+                    .iter()
+                    .position(|choice| *choice == thinking)
+                    .map(|index| IndexPath::default().row(index)),
+                window,
+                cx,
+            )
+        });
         let (theme_choices, errors) =
             theme::discover().unwrap_or_else(|error| (Vec::new(), vec![error]));
         let selected_theme = config::current().general.appearance.theme;
@@ -716,6 +736,27 @@ impl SettingsWindow {
                 cx.notify();
             }),
         );
+        subscriptions.push(cx.subscribe(
+            &thinking_picker,
+            |this, _, event: &SelectEvent<SearchableVec<String>>, cx| {
+                let SelectEvent::Confirm(Some(label)) = event else {
+                    return;
+                };
+                let Some(choice) = config::ThinkingAnimation::ALL
+                    .into_iter()
+                    .find(|choice| choice.label() == label)
+                else {
+                    return;
+                };
+                this.thinking_error = config::update(|settings| {
+                    settings.modes.chats.thinking_animation = choice;
+                })
+                .err();
+                // A running turn's row picks up the new animation on its next frame.
+                let _ = this.owner.entity.update(cx, |_, cx| cx.notify());
+                cx.notify();
+            },
+        ));
         subscriptions.push(cx.subscribe_in(
             &query,
             window,
@@ -810,6 +851,8 @@ impl SettingsWindow {
             font_size_errors: [None, None],
             retry_limit,
             retry_limit_error: None,
+            thinking_picker,
+            thinking_error: None,
             theme_picker,
             font_pickers,
             theme_status,
@@ -1273,6 +1316,27 @@ impl SettingsWindow {
                 .child(div().w_24().child(Input::new(&self.retry_limit).aria_label("Automatic retry limit"))))
             .when_some(self.retry_limit_error.clone(), |row, message| row.child(error(message, cx)))
     }
+    fn thinking_animation_row(&self, cx: &Context<Self>) -> Div {
+        div()
+            .w_full()
+            .py_4()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                Field::new()
+                    .label(THINKING_LABEL)
+                    .description(THINKING_DESCRIPTION)
+                    .child(div().w_64().child(
+                        Select::new(&self.thinking_picker).accessibility_label(THINKING_LABEL),
+                    )),
+            )
+            .when_some(self.thinking_error.clone(), |row, message| {
+                row.child(error(message, cx))
+            })
+    }
     fn appearance_settings(&self, cx: &Context<Self>) -> Div {
         let mut page = div()
             .w_full()
@@ -1693,7 +1757,11 @@ impl Render for SettingsWindow {
                         "Additional attempts after a temporary failure",
                     ],
                 );
-                if !options.is_empty() || retry_matches {
+                let thinking_matches = matches_query(
+                    &query,
+                    &["Modes", "Chats", THINKING_LABEL, THINKING_DESCRIPTION],
+                );
+                if !options.is_empty() || retry_matches || thinking_matches {
                     found = true;
                     if searching || self.subgroup.is_none() {
                         content = content.child(div().text_lg().child("Chats"));
@@ -1707,6 +1775,9 @@ impl Render for SettingsWindow {
                             action,
                             cx,
                         ));
+                    }
+                    if thinking_matches {
+                        content = content.child(self.thinking_animation_row(cx));
                     }
                     if retry_matches {
                         content = content.child(self.retry_limit_row(cx));

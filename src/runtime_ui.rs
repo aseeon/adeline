@@ -1269,11 +1269,10 @@ impl Adeline {
                     theme::muted_foreground(),
                 ));
             } else if live.processing && live.permission.is_empty() {
-                content = content.child(text(
-                    live.progress.clone().unwrap_or_else(|| "Thinking…".into()),
-                    13.,
-                    theme::muted_foreground(),
-                ));
+                content = content.child(
+                    chat_render::agent_header(&thread.provider, thread.provider.clone(), cx)
+                        .child(chat_render::thinking_label(live.progress.clone(), cx)),
+                );
             }
             if let Some(request) = live.permission.front() {
                 let mut options = row().flex_wrap().gap_2();

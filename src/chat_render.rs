@@ -14,6 +14,7 @@ use gpui_kit::component::{
 use std::f32::consts::TAU;
 use std::fmt::Write as _;
 use std::sync::Arc;
+use std::time::Duration;
 
 /// The running indicator turns once per this many milliseconds.
 const RUNNING_TURN_MS: u64 = 2400;
@@ -216,8 +217,7 @@ fn row_status(thread: &Thread, updated: Option<String>, cx: &App) -> AnyElement 
                 .size(rems(0.625))
                 .with_animation(
                     "chat-row-running",
-                    Animation::new(std::time::Duration::from_millis(RUNNING_TURN_MS))
-                        .repeat_synced(),
+                    Animation::new(Duration::from_millis(RUNNING_TURN_MS)).repeat_synced(),
                     move |ring, turn| ring.child(running_ring(turn, track, arc)),
                 )
                 .into_any_element()
@@ -840,7 +840,6 @@ impl Adeline {
                 )
                 .into_any_element()
         } else {
-            let (asset, color) = agent_icon(&thread.provider, cx);
             let name = if self.demo_mode {
                 provider(&thread.provider).to_owned()
             } else {
@@ -857,32 +856,12 @@ impl Adeline {
                 .w_full()
                 .min_w_0()
                 .child(
-                    row()
-                        .h_7()
-                        .gap_2()
-                        .child(
-                            div()
-                                .size_5()
-                                .flex_shrink_0()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .rounded(theme.radius)
-                                .bg(theme.secondary)
-                                .child(icon(asset).size(rems(0.75)).text_color(color)),
-                        )
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(name),
-                        )
-                        .children(time.map(|time| {
-                            div()
-                                .text_xs()
-                                .text_color(theme.muted_foreground)
-                                .child(time)
-                        })),
+                    agent_header(&thread.provider, name, cx).children(time.map(|time| {
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child(time)
+                    })),
                 )
                 .child(div().mt_1().child(body))
                 .when(thread.ends_turn(i) && !writing, |content| {
@@ -1235,6 +1214,161 @@ pub(super) const HEADER_FADE: f32 = 1.75;
 
 /// Width of the chat column, in rems. The header, replies and composer share its edges.
 pub(super) const CHAT_COLUMN: f32 = 46.;
+
+/// The agent's icon and name that head its replies and its live progress.
+pub(super) fn agent_header(provider: &str, name: impl Into<SharedString>, cx: &App) -> Div {
+    let theme = cx.theme();
+    let (asset, color) = agent_icon(provider, cx);
+    row()
+        .h_7()
+        .gap_2()
+        .child(
+            div()
+                .size_5()
+                .flex_shrink_0()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(theme.radius)
+                .bg(theme.secondary)
+                .child(icon(asset).size(rems(0.75)).text_color(color)),
+        )
+        .child(
+            div()
+                .text_sm()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(name.into()),
+        )
+}
+
+/// Braille frames ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ as dot masks: bits 0-2 are the left column top
+/// to bottom, bits 3-5 the right. The bundled fonts have no braille glyphs, so
+/// the cell is drawn from dots.
+const BRAILLE_FRAMES: [u8; 10] = [0x0B, 0x19, 0x39, 0x38, 0x3C, 0x34, 0x26, 0x27, 0x07, 0x0F];
+const THINKING_WORDS: [&str; 4] = ["Thinking…", "Reasoning…", "Pondering…", "Working it out…"];
+
+/// The label after the agent's name while it works, animated as chosen in
+/// settings. Progress the agent reports replaces the cycling words, which only
+/// decorate.
+pub(super) fn thinking_label(progress: Option<String>, cx: &App) -> AnyElement {
+    let muted: Hsla = rgb(theme::muted_foreground()).into();
+    let accent = cx.theme().primary;
+    let size = config::text_pixels(13.);
+    let base = div().text_size(size).text_color(muted).whitespace_nowrap();
+    match config::current().modes.chats.thinking_animation {
+        config::ThinkingAnimation::Words if progress.is_none() => {
+            let line = size * 1.5;
+            // One word shows at a time; each holds, then rolls up to the next.
+            base.h(line)
+                .overflow_hidden()
+                .child(
+                    div()
+                        .relative()
+                        .children(
+                            THINKING_WORDS
+                                .iter()
+                                .chain(THINKING_WORDS.first())
+                                .map(|word| div().h(line).flex().items_center().child(*word)),
+                        )
+                        .with_animation(
+                            "thinking-words",
+                            Animation::new(Duration::from_secs(8)).repeat(),
+                            move |words, delta| {
+                                let step = delta * THINKING_WORDS.len() as f32;
+                                let slide = ((step.fract() - 0.875) / 0.125).clamp(0., 1.);
+                                words.top(-line * (step.floor() + ease_in_out(slide)))
+                            },
+                        ),
+                )
+                .into_any_element()
+        }
+        config::ThinkingAnimation::Dots => {
+            let label = progress.unwrap_or_else(|| "Thinking".into());
+            let dot = size * 0.23;
+            row()
+                .child(base.child(label.trim_end_matches(['…', '.']).to_owned()))
+                .child(row().gap(dot).ml(dot).with_animation(
+                    "thinking-dots",
+                    Animation::new(Duration::from_millis(1200)).repeat(),
+                    move |dots, delta| {
+                        dots.children((0..3).map(|i| {
+                            // Each dot rises and brightens in its own
+                            // part of the cycle, a beat after the last.
+                            let phase = (delta - i as f32 * 0.125).rem_euclid(1.);
+                            let lift = if phase < 0.6 {
+                                (phase / 0.6 * std::f32::consts::PI).sin()
+                            } else {
+                                0.
+                            };
+                            div()
+                                .size(dot)
+                                .rounded_full()
+                                .bg(muted)
+                                .opacity(0.4 + 0.6 * lift)
+                                .relative()
+                                .top(-dot * 1.3 * lift)
+                        }))
+                    },
+                ))
+                .into_any_element()
+        }
+        config::ThinkingAnimation::Braille => {
+            let dot = size * 0.2;
+            row()
+                .gap(size * 0.5)
+                .child(
+                    row().gap(dot * 0.6).with_animation(
+                        "thinking-braille",
+                        Animation::new(Duration::from_millis(800))
+                            .repeat()
+                            .with_max_fps(12.5),
+                        move |cell, delta| {
+                            let frames = BRAILLE_FRAMES.len();
+                            let frame = (1..frames)
+                                .filter(|&i| delta * frames as f32 >= i as f32)
+                                .count();
+                            let mask = BRAILLE_FRAMES[frame];
+                            cell.children((0..2).map(|column| {
+                                col().gap(dot * 0.6).children((0..3).map(move |dot_row| {
+                                    let lit = mask >> (column * 3 + dot_row) & 1 == 1;
+                                    div().size(dot).rounded_full().when(lit, |d| d.bg(accent))
+                                }))
+                            }))
+                        },
+                    ),
+                )
+                .child(base.child(progress.unwrap_or_else(|| "Thinking…".into())))
+                .into_any_element()
+        }
+        // Accent paints into the text from the left, then starts over.
+        config::ThinkingAnimation::Fill => {
+            let label: SharedString = progress.unwrap_or_else(|| "Thinking…".into()).into();
+            base.relative()
+                .child(label.clone())
+                .child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .h_full()
+                        .overflow_hidden()
+                        .text_color(accent)
+                        .child(div().whitespace_nowrap().child(label))
+                        .with_animation(
+                            "thinking-fill",
+                            Animation::new(Duration::from_millis(2400))
+                                .repeat()
+                                .with_easing(ease_in_out),
+                            |fill, delta| fill.w(relative(delta)),
+                        ),
+                )
+                .into_any_element()
+        }
+        config::ThinkingAnimation::Words => {
+            base.child(progress.unwrap_or_default()).into_any_element()
+        }
+    }
+}
 
 /// The centered column the chat header, transcript and composer align to.
 pub(super) fn chat_column() -> Div {

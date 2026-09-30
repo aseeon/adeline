@@ -915,15 +915,18 @@ impl Render for Transcript {
                     if row < messages {
                         app.message_row(selected, row, cx)
                     } else {
-                        chat_render::chat_column()
-                            .flex()
-                            .flex_col()
+                        // Wrapped like message rows so the column centers in the row.
+                        div()
+                            .w_full()
+                            .min_w_0()
                             .track_focus(&footer_focus)
-                            .child(if app.demo_mode {
-                                app.decision_row(selected, cx)
-                            } else {
-                                app.runtime_footer(selected, cx)
-                            })
+                            .child(chat_render::chat_column().flex().flex_col().child(
+                                if app.demo_mode {
+                                    app.decision_row(selected, cx)
+                                } else {
+                                    app.runtime_footer(selected, cx)
+                                },
+                            ))
                             .into_any_element()
                     }
                 })
