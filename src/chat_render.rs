@@ -838,6 +838,18 @@ impl Adeline {
                         .py(rems(0.5625))
                         .child(body),
                 )
+                .child(
+                    Button::new(SharedString::from(format!("copy-prompt:{}:{i}", thread.id)))
+                        .ghost()
+                        .small()
+                        .mt_1()
+                        .icon(Icon::default().path("copy.svg"))
+                        .accessibility_label("Copy")
+                        .tooltip("Copy")
+                        .on_click(cx.listener(move |app, _, window, cx| {
+                            app.act(Action::CopyMessage(i), window, cx);
+                        })),
+                )
                 .into_any_element()
         } else {
             let name = if self.demo_mode {
@@ -885,7 +897,7 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// What a finished turn did, then Reply, Copy and Retry for its last reply.
+    /// Reply, Copy and Retry for a finished turn's last reply, then what the turn did.
     fn closing_row(&self, thread: &Thread, i: usize, cx: &Context<Self>) -> Div {
         let theme = cx.theme();
         let turn = thread.turn_of(i);
@@ -895,19 +907,32 @@ impl Adeline {
         let key = format!("summary:{}:{i}", thread.id);
         let expanded = summary.is_some() && self.runtime.expanded_tools.contains(&key);
         let retry = !self.demo_mode && i + 1 == thread.messages.len();
-        let action =
-            |name: &str, asset: &str, label: &'static str, tooltip: bool, action: Action| {
-                Button::new(SharedString::from(format!("{name}:{}:{i}", thread.id)))
-                    .ghost()
-                    .small()
-                    .icon(Icon::default().path(format!("{asset}.svg")))
-                    .accessibility_label(label)
-                    .when(tooltip, |button| button.tooltip(label))
-                    .on_click(cx.listener(move |app, _, window, cx| {
-                        app.act(action.clone(), window, cx);
-                    }))
-            };
-        let mut content = row().w_full().min_w_0().gap_1();
+        let action = |name: &str, asset: &str, label: &'static str, action: Action| {
+            Button::new(SharedString::from(format!("{name}:{}:{i}", thread.id)))
+                .ghost()
+                .small()
+                .icon(Icon::default().path(format!("{asset}.svg")))
+                .accessibility_label(label)
+                .tooltip(label)
+                .on_click(cx.listener(move |app, _, window, cx| {
+                    app.act(action.clone(), window, cx);
+                }))
+        };
+        let actions = row()
+            // Cancel the button inset so the first icon sits on the text edge.
+            .ml(rems(-0.3125))
+            .gap(rems(0.125))
+            .child(action("reply", "reply", "Reply", Action::ReplyTo(i)))
+            .child(action("copy", "copy", "Copy", Action::CopyMessage(i)))
+            .when(retry, |actions| {
+                actions.child(action(
+                    "retry",
+                    "arrow-counter-clockwise",
+                    "Retry",
+                    Action::RetryPrompt,
+                ))
+            });
+        let mut content = row().w_full().min_w_0().gap_1().child(actions);
         if let Some(summary) = summary {
             let mut parts = Vec::new();
             if summary.read > 0 {
@@ -929,8 +954,6 @@ impl Adeline {
             )))
             .ghost()
             .small()
-            // Cancel the ghost padding so the first icon sits on the text edge.
-            .ml(rems(-0.5))
             .text_color(theme.muted_foreground)
             .accessibility_label(format!(
                 "{spoken}. {}",
@@ -963,30 +986,10 @@ impl Adeline {
                     icon(if expanded { "chevron" } else { "caret-right" }).size(rems(0.625)),
                 ));
         }
-        let actions = row()
-            .ml_auto()
-            .gap(rems(0.125))
-            .child(action("reply", "reply", "Reply", true, Action::ReplyTo(i)))
-            .child(action(
-                "copy",
-                "copy",
-                "Copy",
-                false,
-                Action::CopyMessage(i),
-            ))
-            .when(retry, |actions| {
-                actions.child(action(
-                    "retry",
-                    "arrow-counter-clockwise",
-                    "Retry",
-                    true,
-                    Action::RetryPrompt,
-                ))
-            });
         col()
             .w_full()
             .mt_2()
-            .child(content.child(actions))
+            .child(content)
             .when_some(turn.filter(|_| expanded), |column, turn| {
                 column.child(tool_steps(thread.turn_tools(turn).collect(), cx))
             })
@@ -1100,16 +1103,26 @@ impl Adeline {
         let send = if processing {
             Button::new("send-chat-message")
                 .small()
-                .outline()
+                .ghost()
                 .icon(Icon::default().path("stop.svg"))
                 .accessibility_label("Stop")
                 .tooltip("Stop")
                 .on_click(cx.listener(|app, _, window, cx| app.act(Action::Stop, window, cx)))
         } else {
+            // The icons spell the send shortcut: Enter, or Shift+Enter. Both
+            // are content, not the button's icon, so the padding and the Enter
+            // key stay put when the shortcut changes.
             Button::new("send-chat-message")
                 .small()
-                .primary()
-                .icon(Icon::default().path("send.svg"))
+                .ghost()
+                .child(
+                    row()
+                        .gap_0p5()
+                        .when(!config::with(|s| s.modes.chats.submit_on_enter), |keys| {
+                            keys.child(Icon::default().path("arrow-fat-up.svg").size_4())
+                        })
+                        .child(Icon::default().path("arrow-elbow-down-left.svg").size_4()),
+                )
                 .accessibility_label("Send")
                 .tooltip("Send")
                 .disabled(!can_send)
@@ -1127,11 +1140,19 @@ impl Adeline {
             .pl(rems(0.875))
             .pr(rems(0.625))
             .child(
-                Textarea::new(&self.composer)
-                    .aria_label("Message")
-                    .appearance(false)
+                row()
                     .w_full()
-                    .min_w_0(),
+                    .min_w_0()
+                    .items_start()
+                    .gap_2()
+                    .child(
+                        Textarea::new(&self.composer)
+                            .aria_label("Message")
+                            .appearance(false)
+                            .flex_1()
+                            .min_w_0(),
+                    )
+                    .child(div().flex_shrink_0().child(send)),
             )
             .child(
                 row()
@@ -1194,8 +1215,7 @@ impl Adeline {
                                     ))
                             }),
                     )
-                    .children(permission)
-                    .child(div().ml_1p5().flex_shrink_0().child(send)),
+                    .children(permission),
             );
         col()
             .w_full()
@@ -1255,7 +1275,7 @@ pub(super) fn thinking_label(progress: Option<String>, cx: &App) -> AnyElement {
     let accent = cx.theme().primary;
     let size = config::text_pixels(13.);
     let base = div().text_size(size).text_color(muted).whitespace_nowrap();
-    match config::current().modes.chats.thinking_animation {
+    match config::with(|s| s.modes.chats.thinking_animation) {
         config::ThinkingAnimation::Words if progress.is_none() => {
             let line = size * 1.5;
             // One word shows at a time; each holds, then rolls up to the next.

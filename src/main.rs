@@ -135,6 +135,7 @@ enum Action {
     ConfirmDeleteProject,
     ForceDeleteProject,
     HideToolCalls,
+    SubmitOnEnter,
     AddAgent,
     Section(Section),
     Chat(usize),
@@ -146,8 +147,6 @@ enum Action {
     ShowArchived,
     ToggleSidePanel,
     ToggleLeftPanel,
-    ResizePanel(usize, f32),
-    ResetPanels,
     Event(usize),
     Complete,
     Projects,
@@ -156,7 +155,6 @@ enum Action {
     Agents,
     Machine(usize),
     About,
-    KeyboardShortcuts,
     QuitApp,
     Settings,
     AppSettings,
@@ -296,6 +294,7 @@ impl Adeline {
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(2, 4)
+                .submit_on_enter(config::current().modes.chats.submit_on_enter)
                 .placeholder("Ask your agent to do anything")
         });
         let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Project name"));
@@ -328,6 +327,24 @@ impl Adeline {
                 },
             ),
         );
+        subscriptions.push(cx.subscribe_in(
+            &composer,
+            window,
+            |app, _, event: &InputEvent, window, cx| {
+                // With submit on Enter, the textarea reports a plain Enter
+                // instead of inserting a line.
+                if matches!(
+                    event,
+                    InputEvent::PressEnter {
+                        secondary: false,
+                        shift: false
+                    }
+                ) && config::current().modes.chats.submit_on_enter
+                {
+                    app.act(Action::Send, window, cx);
+                }
+            },
+        ));
         let owner = cx.weak_entity();
         let chat_list = cx.new(|_| chat::ChatList::new(owner.clone()));
         let composer_height = std::rc::Rc::new(std::cell::Cell::new(px(0.)));

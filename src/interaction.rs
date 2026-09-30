@@ -19,11 +19,11 @@ impl Adeline {
                     | Action::AppMenu
                     | Action::AppSettings
                     | Action::About
-                    | Action::KeyboardShortcuts
                     | Action::QuitApp
                     | Action::Close
                     | Action::ForceStopAll
                     | Action::HideToolCalls
+                    | Action::SubmitOnEnter
                     | Action::ToggleMode(_)
                     | Action::ToggleMachineSelector
                     | Action::RemoveClosedProject(_)
@@ -70,7 +70,6 @@ impl Adeline {
                 cx.defer(move |cx| settings::request_close(handle, owner, cx));
             }
             Action::About => self.modal = Some("about"),
-            Action::KeyboardShortcuts => self.modal = Some("shortcuts"),
             Action::AddProject => {
                 self.name_input
                     .update(cx, |state, cx| state.set_value("", window, cx));
@@ -205,6 +204,18 @@ impl Adeline {
             }
             Action::ShowCompleted => self.show_completed = !self.show_completed,
             Action::ShowArchived => self.show_archived = !self.show_archived,
+            Action::SubmitOnEnter => {
+                let submit = !config::current().modes.chats.submit_on_enter;
+                if let Err(error) =
+                    config::update(|settings| settings.modes.chats.submit_on_enter = submit)
+                {
+                    window.push_notification(error, cx);
+                }
+                let submit = config::current().modes.chats.submit_on_enter;
+                self.composer
+                    .update(cx, |state, cx| state.set_submit_on_enter(submit, cx));
+                self.composer_region.update(cx, |_, cx| cx.notify());
+            }
             Action::HideToolCalls => {
                 if let Err(error) = config::update(|settings| {
                     settings.modes.chats.hide_tool_calls = !settings.modes.chats.hide_tool_calls;
@@ -373,19 +384,6 @@ impl Adeline {
                 .detach();
             }
             Action::Tint(ix) => self.selected_tint = ix,
-            Action::ResizePanel(ix, delta) => {
-                self.panel_state.update(cx, |state, cx| {
-                    if let Some(size) = state.sizes().get(ix).copied() {
-                        state.resize_panel(ix, size + config::text_pixels(delta), window, cx);
-                    }
-                });
-            }
-            Action::ResetPanels => {
-                self.panel_state.update(cx, |state, cx| {
-                    state.resize_panel(0, config::text_pixels(360.), window, cx);
-                    state.resize_panel(2, config::text_pixels(302.), window, cx);
-                });
-            }
             Action::AppMenu
             | Action::ModeSettings
             | Action::Machines

@@ -249,56 +249,17 @@ impl Adeline {
                         .into_iter()
                         .map(|(label, _, _, action)| (label.into(), action)),
                 );
-                entries.push(("Chat settings…".into(), Action::ConfigureModeSettings));
-                if self.left_panel_is_open() {
-                    entries.extend([
-                        (
-                            "Widen conversation list".into(),
-                            Action::ResizePanel(0, 24.),
-                        ),
-                        (
-                            "Narrow conversation list".into(),
-                            Action::ResizePanel(0, -24.),
-                        ),
-                    ]);
-                }
-                if self.side_panel_is_open() {
-                    entries.extend([
-                        ("Widen agent activity".into(), Action::ResizePanel(2, 24.)),
-                        ("Narrow agent activity".into(), Action::ResizePanel(2, -24.)),
-                    ]);
-                }
-                entries.push(("Reset panel widths".into(), Action::ResetPanels));
+                entries.push(("Full chat settings…".into(), Action::ConfigureModeSettings));
                 "Chat settings"
             }
             _ => {
-                entries.extend([
-                    ("About Adeline…".into(), Action::About),
-                    ("Settings…".into(), Action::AppSettings),
-                    ("Add an agent…".into(), Action::AddAgent),
-                    ("Switch project…".into(), Action::Projects),
-                ]);
+                entries.push(("Add an agent…".into(), Action::AddAgent));
                 if self.has_open_project() {
-                    entries.extend([
-                        ("Project settings…".into(), Action::Settings),
-                        ("New chat".into(), Action::NewChat),
-                    ]);
-                    for (section, label) in [
-                        (Section::Chats, "Chats"),
-                        (Section::Docs, "Docs"),
-                        (Section::Workflows, "Workflows"),
-                        (Section::Services, "Services"),
-                        (Section::Groupchats, "Groupchats"),
-                        (Section::Issues, "Issues"),
-                        (Section::Whiteboard, "Whiteboard"),
-                    ] {
-                        if config::current().general.features.enabled(section) {
-                            entries.push((label.into(), Action::Section(section)));
-                        }
-                    }
+                    entries.push(("Project settings…".into(), Action::Settings));
                 }
                 entries.extend([
-                    ("Keyboard shortcuts…".into(), Action::KeyboardShortcuts),
+                    ("Settings…".into(), Action::AppSettings),
+                    ("About Adeline…".into(), Action::About),
                     ("Quit Adeline".into(), Action::QuitApp),
                 ]);
                 "Adeline"
@@ -316,7 +277,7 @@ impl Adeline {
     ) -> component::popover::Popover {
         let owner = cx.weak_entity();
         let content_owner = owner.clone();
-        let (title, entries) = self.command_entries(menu);
+        let (_, entries) = self.command_entries(menu);
         let toggles = if menu == "mode-settings" {
             self.mode_options(Section::Chats)
         } else {
@@ -332,6 +293,8 @@ impl Adeline {
             .anchor(anchor)
             .trigger(trigger)
             .open(self.menu == Some(menu))
+            .p_0()
+            .shadow(project_bar::menu_shadow(cx))
             .when_some(state.as_ref(), |popover, state| {
                 popover.track_focus(&state.focus_handle(cx))
             })
@@ -360,13 +323,23 @@ impl Adeline {
                 let entries = entries.clone();
                 let popover = cx.entity();
                 col()
-                    .w_80()
-                    .gap_2()
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child(title))
-                    .when(!errors.is_empty(), |column| column.child(errors.clone()))
+                    .w(rems(22.))
+                    .when(!errors.is_empty(), |column| {
+                        column.child(
+                            div()
+                                .px_3()
+                                .py_2()
+                                .text_sm()
+                                .text_color(cx.theme().danger)
+                                .border_b_1()
+                                .border_color(cx.theme().border)
+                                .child(errors.clone()),
+                        )
+                    })
                     .when_some(state.as_ref(), |column, state| {
                         column.child(
                             Command::new(state)
+                                .bordered(false)
                                 .placeholder("Search")
                                 .items(entries.iter().map(|(label, _)| {
                                     let item = CommandItem::new().label(label.clone());
@@ -405,6 +378,7 @@ impl Adeline {
                                             Action::ShowCompleted
                                                 | Action::ShowArchived
                                                 | Action::HideToolCalls
+                                                | Action::SubmitOnEnter
                                         ) {
                                             popover
                                                 .update(cx, |state, cx| state.dismiss(window, cx));
@@ -566,29 +540,6 @@ impl Render for ModalContent {
                         column.child("Demo changes reset when Adeline restarts.")
                     })
                     .into_any_element(),
-                Some("shortcuts") => {
-                    let keys = config::current().general.keymap;
-                    let mut column = col()
-                        .gap_3()
-                        .child(div().text_lg().child("Keyboard shortcuts"));
-                    for (label, bindings) in [
-                        ("Settings", keys.open_settings),
-                        ("New chat", keys.new_chat),
-                        ("Search", keys.focus_search),
-                        ("Send message", keys.send_message),
-                        ("Dismiss", keys.close_dialog_or_popup),
-                        ("Next control", keys.next_control),
-                        ("Previous control", keys.previous_control),
-                    ] {
-                        column = column.child(
-                            row()
-                                .gap_4()
-                                .child(div().flex_1().child(label))
-                                .child(bindings.join(" / ")),
-                        );
-                    }
-                    column.into_any_element()
-                }
                 _ => app.project_modal(cx),
             })
             .unwrap_or_else(|_| div().into_any_element())

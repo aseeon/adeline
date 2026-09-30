@@ -176,6 +176,8 @@ pub struct Chats {
     pub show_left_panel: bool,
     pub show_agent_activity: bool,
     pub hide_tool_calls: bool,
+    /// Enter sends the message and Shift+Enter starts a new line.
+    pub submit_on_enter: bool,
     pub retry_limit: usize,
     pub thinking_animation: ThinkingAnimation,
 }
@@ -187,6 +189,7 @@ impl Default for Chats {
             show_left_panel: true,
             show_agent_activity: false,
             hide_tool_calls: false,
+            submit_on_enter: true,
             retry_limit: 5,
             thinking_animation: ThinkingAnimation::default(),
         }
@@ -226,6 +229,10 @@ pub fn directory() -> Result<PathBuf, String> {
 }
 pub fn current() -> Settings {
     ACTIVE.with(|s| s.borrow().settings.clone())
+}
+/// Reads one value without cloning all settings, for render paths.
+pub fn with<T>(f: impl FnOnce(&Settings) -> T) -> T {
+    ACTIVE.with(|s| f(&s.borrow().settings))
 }
 pub fn error() -> Option<String> {
     ACTIVE.with(|s| s.borrow().error.clone())

@@ -307,8 +307,10 @@ pub fn apply(cx: &mut App) {
         theme.secondary_active = c("sidebar_accent");
         theme.muted = c("muted");
         theme.muted_foreground = c("muted_foreground");
-        theme.accent = c("accent");
-        theme.accent_foreground = c("accent_foreground");
+        // The kit highlights menu, list and command rows with `accent`: a quiet
+        // wash of the text over the popover, as in the projects menu.
+        theme.accent = theme.foreground.mix_oklab(theme.popover, 0.08);
+        theme.accent_foreground = theme.popover_foreground;
         theme.danger = c("destructive");
         theme.danger_foreground = c("destructive_foreground");
         theme.danger_hover = theme.danger.mix_oklab(theme.foreground, 0.12);
@@ -431,14 +433,11 @@ pub struct BarColors {
     pub divider: Hsla,
     /// An inactive cell under the pointer.
     pub hover: Hsla,
-    /// A projects-menu row under the pointer or the keyboard highlight.
-    pub menu_hover: Hsla,
 }
 pub fn bar_colors(theme: &KitTheme) -> BarColors {
     BarColors {
         divider: theme.border.mix_oklab(theme.title_bar, 0.5),
         hover: theme.foreground.mix_oklab(theme.title_bar, 0.04),
-        menu_hover: theme.foreground.mix_oklab(theme.popover, 0.08),
     }
 }
 

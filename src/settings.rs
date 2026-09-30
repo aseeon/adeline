@@ -73,6 +73,12 @@ impl Adeline {
                 Action::HideToolCalls,
             ),
             (
+                "Submit on Enter",
+                "Enter sends the message and Shift+Enter starts a new line.",
+                config::current().modes.chats.submit_on_enter,
+                Action::SubmitOnEnter,
+            ),
+            (
                 "Show left panel",
                 "Display chat navigation.",
                 self.left_panel_open[Section::Chats as usize],

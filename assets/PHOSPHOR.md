@@ -8,7 +8,9 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | Asset | Phosphor source |
 | --- | --- |
 | `archive.svg` | `archive.svg` |
+| `arrow-fat-up.svg` | `arrow-fat-up.svg` |
 | `arrow-counter-clockwise.svg` | `arrow-counter-clockwise.svg` |
+| `arrow-elbow-down-left.svg` | `arrow-elbow-down-left.svg` |
 | `arrow.svg` | `arrow-right.svg` |
 | `at.svg` | `at.svg` |
 | `caret-right.svg` | `caret-right.svg` |
@@ -45,7 +47,6 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `reply.svg` | `arrow-bend-up-left.svg` |
 | `robot.svg` | `robot.svg` |
 | `search.svg` | `magnifying-glass.svg` |
-| `send.svg` | `arrow-up.svg` |
 | `service.svg` | `stack.svg` |
 | `settings.svg` | `gear-six.svg` |
 | `sort.svg` | `sort-ascending.svg` |

@@ -27,7 +27,7 @@ const MENU_ROWS: f32 = 5.5;
 /// A deep drop shadow that lifts the projects menu off the dark workspace.
 ///
 /// Replaces the popover's default shadow, so it redraws its hairline ring too.
-fn menu_shadow(cx: &App) -> Vec<BoxShadow> {
+pub(super) fn menu_shadow(cx: &App) -> Vec<BoxShadow> {
     let ring = cx.theme().foreground.alpha(0.1);
     let ink = |a| hsla(0., 0., 0., a);
     vec![
@@ -521,7 +521,6 @@ impl Adeline {
         cx: &App,
     ) -> AnyElement {
         let theme = cx.theme();
-        let bar = theme::bar_colors(theme);
         let query = self.project_search.read(cx).value().trim().to_lowercase();
         let listed = self.menu_projects(&query);
         let (sort_icon, sort_label) = match self.project_sort {
@@ -551,11 +550,7 @@ impl Adeline {
             .pb_2()
             // Room for the last row to scroll clear of the fade.
             .when(overflows, |list| list.pb(rems(1.25)))
-            .children(
-                listed
-                    .iter()
-                    .map(|&ix| self.menu_row(ix, now, owner, &bar, cx)),
-            )
+            .children(listed.iter().map(|&ix| self.menu_row(ix, now, owner, cx)))
             .when(listed.is_empty(), |list| {
                 list.child(
                     div()
@@ -650,14 +645,7 @@ impl Adeline {
             .into_any_element()
     }
 
-    fn menu_row(
-        &self,
-        ix: usize,
-        now: i64,
-        owner: &WeakEntity<Self>,
-        bar: &theme::BarColors,
-        cx: &App,
-    ) -> AnyElement {
+    fn menu_row(&self, ix: usize, now: i64, owner: &WeakEntity<Self>, cx: &App) -> AnyElement {
         let theme = cx.theme();
         let project = &self.projects[ix];
         let id = &project.config.id;
@@ -717,8 +705,8 @@ impl Adeline {
             .px_2()
             .gap_3()
             .rounded(theme.radius)
-            .when(highlighted, |row| row.bg(bar.menu_hover))
-            .hover(|style| style.bg(bar.menu_hover))
+            .when(highlighted, |row| row.bg(theme.accent))
+            .hover(|style| style.bg(theme.accent))
             .on_click(move |_, window, cx| {
                 let _ = select_owner.update(cx, |app, cx| {
                     app.menu = None;
