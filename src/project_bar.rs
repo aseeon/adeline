@@ -1,4 +1,4 @@
-//! The unified title bar and the modes bar beneath it.
+//! The unified title bar and the mode rail down the window's left edge.
 //!
 //! Open projects are full-height cells separated by quiet dividers. Each cell
 //! shows the project's letter mark, its name and its attention count; the
@@ -7,6 +7,9 @@
 //! cannot fit them. The Projects cell opens a searchable menu of every
 //! project, where open projects can be closed and closed ones deleted, with a
 //! short window to undo the delete.
+//!
+//! The mode rail continues the title bar's app-icon cell down to the bottom of
+//! the window: one icon per enabled mode, and the main menu at the foot.
 use super::*;
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
@@ -171,6 +174,39 @@ impl Adeline {
                     .border_color(bar.divider)
                     .child(titlebar::app_icon(window)),
             )
+            .child(self.project_strip(tabs, projects, measure, cx));
+        let top = TitleBar::new()
+            .h(titlebar::MAIN_HEIGHT)
+            .when(!cfg!(target_os = "macos"), |bar| bar.pl_0())
+            .border_b_0()
+            .bg(theme.title_bar)
+            .child(toolbar);
+        col().flex_shrink_0().child(top)
+    }
+
+    /// The project tabs, the machine selector and the Projects menu, closed by
+    /// the line under the title bar. Kit draws the window controls beside this
+    /// strip, so the line runs on under them; the window edge clips it.
+    fn project_strip(
+        &self,
+        tabs: Div,
+        projects: Button,
+        measure: Canvas<()>,
+        cx: &Context<Self>,
+    ) -> Div {
+        let bar = theme::bar_colors(cx.theme());
+        let line = div()
+            .absolute()
+            .left_0()
+            .bottom_0()
+            .right(px(-1000.))
+            .h(px(1.))
+            .bg(cx.theme().border);
+        row()
+            .relative()
+            .flex_1()
+            .min_w_0()
+            .h_full()
             .child(
                 div()
                     .id("projects")
@@ -214,19 +250,8 @@ impl Adeline {
                     .border_r_1()
                     .border_color(bar.divider)
                     .child(self.projects_menu(projects, cx)),
-            );
-        let top = TitleBar::new()
-            .h(titlebar::MAIN_HEIGHT)
-            .when(!cfg!(target_os = "macos"), |bar| bar.pl_0())
-            .border_b_0()
-            .bg(theme.title_bar)
-            .child(toolbar);
-        col()
-            .flex_shrink_0()
-            .child(top)
-            .when(self.has_open_project(), |header| {
-                header.child(self.modes(cx))
-            })
+            )
+            .child(line)
     }
 
     fn project_cell(
@@ -305,7 +330,7 @@ impl Adeline {
                     .justify_center()
                     .size(rems(1.5))
                     .child(
-                        count_badge(attention, active, bar, cx)
+                        count_badge(attention, bar, cx)
                             .group_hover(group.clone(), |style| style.invisible()),
                     )
                     .child(
@@ -328,42 +353,118 @@ impl Adeline {
             )
     }
 
-    fn modes(&self, cx: &Context<Self>) -> Stateful<Div> {
+    /// The mode rail: the width and color of the app-icon cell above it, from
+    /// the title bar to the bottom of the window. Each enabled mode is an icon
+    /// named by its tooltip; the chosen one is filled and marked on its left
+    /// edge, and Chats carries a dot while a chat waits on the user.
+    pub(super) fn mode_rail(&self, cx: &Context<Self>) -> Div {
         let theme = cx.theme();
-        let mut modes = row()
+        let bar = theme::bar_colors(theme);
+        let waiting = self
+            .workspace()
+            .threads
+            .iter()
+            .any(|thread| thread.status == "blocked");
+        let mut modes = col()
             .id("modes")
             .role(Role::TabList)
             .aria_label("Modes")
-            .overflow_x_scroll()
-            .gap(rems(0.125))
-            .px_2()
-            .py(rems(0.375))
-            .bg(theme.background)
-            .border_b_1()
-            .border_color(theme.border);
-        for (section, name, icon_path) in [
-            (Section::Chats, "Chats", "chat.svg"),
-            (Section::Docs, "Docs", "file.svg"),
-            (Section::Workflows, "Workflows", "workflow.svg"),
-            (Section::Services, "Services", "service.svg"),
-            (Section::Groupchats, "Groupchats", "group.svg"),
-            (Section::Issues, "Issues", "flag.svg"),
-            (Section::Whiteboard, "Whiteboard", "whiteboard.svg"),
-        ] {
-            if config::current().general.features.enabled(section) {
+            .items_center()
+            .gap_1();
+        if self.has_open_project() {
+            for (section, name, icon_path) in [
+                (Section::Chats, "Chats", "chat.svg"),
+                (Section::Docs, "Docs", "file.svg"),
+                (Section::Workflows, "Workflows", "workflow.svg"),
+                (Section::Services, "Services", "service.svg"),
+                (Section::Groupchats, "Groupchats", "group.svg"),
+                (Section::Issues, "Issues", "flag.svg"),
+                (Section::Whiteboard, "Whiteboard", "whiteboard.svg"),
+            ] {
+                if !config::current().general.features.enabled(section) {
+                    continue;
+                }
                 let active = self.section == section;
+                let dot = section == Section::Chats && waiting;
+                let label = if dot {
+                    format!("{name}, a chat needs you")
+                } else {
+                    name.to_owned()
+                };
                 modes = modes.child(
-                    self.button(name, name, Action::Section(section), cx)
-                        .icon(Icon::default().path(icon_path))
-                        .ghost()
-                        .selected(active)
-                        .toggled(active)
-                        .when(active, |button| button.text_color(theme.foreground))
-                        .when(!active, |button| button.text_color(theme.muted_foreground)),
+                    div()
+                        .relative()
+                        .child(
+                            Button::new(name)
+                                .ghost()
+                                .icon(Icon::default().path(icon_path))
+                                .size(rems(2.))
+                                .p_0()
+                                .selected(active)
+                                .toggled(active)
+                                .accessibility_label(label)
+                                .tooltip(name)
+                                .text_color(if active {
+                                    theme.foreground
+                                } else {
+                                    theme.muted_foreground
+                                })
+                                .on_click(cx.listener(move |app, _, window, cx| {
+                                    app.act(Action::Section(section), window, cx);
+                                })),
+                        )
+                        .when(active, |mode| {
+                            mode.child(
+                                div()
+                                    .absolute()
+                                    .left(rems(-0.375))
+                                    .top(rems(0.5))
+                                    .bottom(rems(0.5))
+                                    .w(px(2.))
+                                    .rounded_full()
+                                    .bg(theme.foreground),
+                            )
+                        })
+                        .when(dot, |mode| {
+                            mode.child(
+                                div()
+                                    .absolute()
+                                    .top(rems(0.1875))
+                                    .right(rems(0.1875))
+                                    .size(rems(0.6875))
+                                    .rounded_full()
+                                    .border_2()
+                                    .border_color(theme.title_bar)
+                                    .bg(theme.primary),
+                            )
+                        }),
                 );
             }
         }
-        modes
+        col()
+            .h_full()
+            .w(rems(2.75))
+            .flex_shrink_0()
+            .items_center()
+            .p_2()
+            .bg(theme.title_bar)
+            .border_r_1()
+            .border_color(bar.divider)
+            .child(modes)
+            .child(div().flex_1())
+            .child(
+                self.command_popover(
+                    "app",
+                    Button::new("app-menu")
+                        .icon(Icon::default().path("menu.svg"))
+                        .accessibility_label("Main menu")
+                        .tooltip("Main menu")
+                        .small()
+                        .ghost(),
+                    Anchor::BottomLeft,
+                    cx,
+                ),
+            )
     }
 
     fn projects_menu(&self, trigger: Button, cx: &Context<Self>) -> Popover {
@@ -918,8 +1019,8 @@ fn letter_mark(name: &str, fill: Hsla, letter: Hsla, size: Rems, cx: &App) -> Di
 }
 
 /// A project's attention count. Zero stays visible but quiet, so every tab
-/// keeps the same shape.
-fn count_badge(count: usize, active: bool, bar: &theme::BarColors, cx: &App) -> Div {
+/// keeps the same shape; anything more fills with the accent.
+fn count_badge(count: usize, bar: &theme::BarColors, cx: &App) -> Div {
     let theme = cx.theme();
     div()
         .flex()
@@ -937,10 +1038,8 @@ fn count_badge(count: usize, active: bool, bar: &theme::BarColors, cx: &App) -> 
                     .border_color(bar.divider)
                     .text_color(theme.muted_foreground)
                     .opacity(0.7)
-            } else if active {
-                badge.bg(theme.sidebar_primary).text_color(theme.foreground)
             } else {
-                badge.bg(theme.secondary).text_color(theme.muted_foreground)
+                badge.bg(theme.primary).text_color(theme.primary_foreground)
             }
         })
         .child(count.to_string())

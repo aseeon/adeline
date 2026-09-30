@@ -202,8 +202,7 @@ impl Adeline {
                 }
                 window.focus(&self.composer.focus_handle(cx), cx);
             }
-            // Tabs, agent and search combine, so changing one keeps the others.
-            Action::Filter(ix) => self.filter = ix,
+            // Agent and search combine, so changing one keeps the other.
             Action::AgentFilter(agent) => self.agent_filter = agent,
             Action::ClearChatFilters => {
                 self.filter = 0;

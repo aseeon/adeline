@@ -397,12 +397,24 @@ mod tests {
                 .into_iter()
                 .map(|(group, rows)| (group, rows.len()))
                 .collect();
-            assert_eq!(sections.len(), 4, "{sections:?}");
-            assert_eq!(sections[0], (Group::Current, 4));
-            assert!(
-                sections[1..].iter().all(|&(_, rows)| rows >= 6),
+            let rows = |wanted: Group| {
+                sections
+                    .iter()
+                    .find(|&&(group, _)| group == wanted)
+                    .map_or(0, |&(_, rows)| rows)
+            };
+            // Four live chats split between waiting and running, and every period
+            // holds enough chats to scroll.
+            assert!(rows(Group::NeedsYou) > 0, "{sections:?}");
+            assert!(rows(Group::Working) > 0, "{sections:?}");
+            assert_eq!(
+                rows(Group::NeedsYou) + rows(Group::Working),
+                4,
                 "{sections:?}"
             );
+            for period in [Group::Today, Group::LastWeek, Group::Earlier] {
+                assert!(rows(period) >= 6, "{sections:?}");
+            }
         }
     }
 

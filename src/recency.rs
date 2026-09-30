@@ -1,5 +1,5 @@
 //! When a chat was last active, in the terms the chat list shows: a period
-//! ("Today", "Last 7 days", "Earlier") and a short label ("5m", "Yesterday").
+//! ("Today", "Last 7 days", "Earlier") and a short label ("5m", "Tue").
 //!
 //! Calendar days are UTC days. The standard library has no time zone database,
 //! so a chat active shortly after local midnight can land in the neighbouring
@@ -61,8 +61,8 @@ pub fn period(at: i64, now: i64) -> Period {
     }
 }
 
-/// The compact time shown beside a chat: `now`, `5m`, `3h`, `Yesterday`,
-/// a weekday within the last week, then a date.
+/// The compact time shown beside a chat or project: `now`, `5m`, `3h`, the
+/// weekday within the last week (yesterday included), then a date.
 pub fn label(at: i64, now: i64) -> String {
     let elapsed = now - at;
     let days = now.div_euclid(DAY) - at.div_euclid(DAY);
@@ -72,11 +72,8 @@ pub fn label(at: i64, now: i64) -> String {
         format!("{}m", elapsed / 60)
     } else if days <= 0 {
         format!("{}h", elapsed / 3600)
-    } else if days == 1 {
-        "Yesterday".into()
     } else if days < 7 {
-        let weekday = (at.div_euclid(DAY) + 4).rem_euclid(7);
-        WEEKDAYS[usize::try_from(weekday).unwrap_or(0)].into()
+        weekday(at).into()
     } else {
         let (year, month, day) = civil_from_days(at.div_euclid(DAY));
         let month = MONTHS[usize::try_from(month - 1).unwrap_or(0)];
@@ -86,6 +83,12 @@ pub fn label(at: i64, now: i64) -> String {
             format!("{month} {day}, {year}")
         }
     }
+}
+
+/// The three-letter weekday of a time; the epoch fell on a Thursday.
+fn weekday(at: i64) -> &'static str {
+    let weekday = (at.div_euclid(DAY) + 4).rem_euclid(7);
+    WEEKDAYS[usize::try_from(weekday).unwrap_or(0)]
 }
 
 /// RFC 3339 UTC, as the bundled demo chats store their times.
@@ -177,7 +180,7 @@ mod tests {
             (NOW - 59, "now"),
             (NOW - 5 * 60, "5m"),
             (NOW - 3 * 3600, "3h"),
-            (NOW - DAY, "Yesterday"),
+            (NOW - DAY, "Sat"),
             (NOW - 2 * DAY, "Fri"),
             (NOW - 6 * DAY, "Mon"),
             (NOW - 8 * DAY, "Sep 19"),

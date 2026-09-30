@@ -2,7 +2,7 @@
 //! data/action coordinator; list state and input invalidation live in these views.
 use super::*;
 use crate::Action;
-use crate::chat_render::{LabelPlacement, Rail, end_label, section_label};
+use crate::chat_render::{LabelPlacement, section_label};
 use crate::prepared::{Criteria, Group, Outcome};
 use gpui_kit::component::{
     ActiveTheme as _,
@@ -13,13 +13,14 @@ use std::sync::Arc;
 
 /// Heights of the chat list's items in rems. Rows and section labels have fixed
 /// heights so the list can place its stacked section labels by arithmetic.
-pub(super) const ROW_HEIGHT: f32 = 3.25;
-pub(super) const SECTION_HEIGHT: f32 = 2.;
-const END_HEIGHT: f32 = 2.25;
-/// Below these list widths, in rems, the scope tabs use short labels and the
-/// section labels drop their new message counts.
-const COMPACT_TABS_WIDTH: f32 = 17.;
-const COMPACT_SECTIONS_WIDTH: f32 = 14.;
+pub(super) const ROW_HEIGHT: f32 = 1.75;
+/// A section label includes the gap above it that sets it off from the chats before.
+pub(super) const SECTION_HEIGHT: f32 = 2.125;
+pub(super) const LABEL_GAP: f32 = 0.375;
+/// Room after the last chat.
+const END_HEIGHT: f32 = 0.75;
+/// Below this list width, in rems, the search and the empty list shorten their text.
+const COMPACT_WIDTH: f32 = 17.;
 
 /// One entry of the virtualized chat list.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -70,13 +71,11 @@ impl Layout {
             .saturating_sub(1)
     }
 
-    /// Which labels sit in the top and bottom stacks at a scroll offset. A label
-    /// sticks once its natural place reaches its slot, like CSS sticky positioning
-    /// with a top of slot times the label height.
+    /// Which labels sit in the top stack at a scroll offset. A label sticks once
+    /// its natural place reaches its slot, like CSS sticky positioning with a top
+    /// of slot times the label height.
     fn stacks(&self, scroll: Pixels) -> Stacks {
-        let n = self.sections.len();
         let mut top = 0;
-        let mut bottom = n;
         let mut current = 0;
         for (k, &ix) in self.sections.iter().enumerate() {
             let natural = self.tops[ix] - scroll;
@@ -87,17 +86,9 @@ impl Layout {
             if scroll + px(1.) >= self.tops[ix] - slot {
                 current = k;
             }
-            if bottom == n
-                && k >= top
-                && self.viewport > px(0.)
-                && natural > self.viewport - self.section * (n - k) as f32
-            {
-                bottom = k;
-            }
         }
         Stacks {
             top: 0..top,
-            bottom: bottom.max(top)..n,
             current,
         }
     }
@@ -108,17 +99,16 @@ impl Layout {
         Some(self.tops[ix] - self.section * section as f32)
     }
 
-    /// The scroll offset that brings an item clear of both stacks, if it is covered.
+    /// The scroll offset that brings an item into view below the top stack, if it
+    /// is covered or out of view.
     fn reveal_target(&self, item: usize, scroll: Pixels) -> Option<Pixels> {
-        let n = self.sections.len();
         let section = self.section_of(item);
         let covered_top = self.section * (section + 1) as f32;
-        let covered_bottom = self.section * (n - 1 - section) as f32;
         let (row_top, row_bottom) = (self.tops[item], self.tops[item + 1]);
         if row_top - scroll < covered_top {
             Some(row_top - covered_top)
-        } else if row_bottom - scroll > self.viewport - covered_bottom {
-            Some(row_bottom - self.viewport + covered_bottom)
+        } else if row_bottom - scroll > self.viewport {
+            Some(row_bottom - self.viewport)
         } else {
             None
         }
@@ -130,8 +120,6 @@ impl Layout {
 pub(super) struct Stacks {
     /// Sections stacked under the controls, from the first.
     pub top: std::ops::Range<usize>,
-    /// Sections stacked at the bottom edge, up to the last.
-    pub bottom: std::ops::Range<usize>,
     /// The section being read: the last one that reached its place in the top stack.
     pub current: usize,
 }
@@ -196,6 +184,8 @@ pub(super) struct ChatList {
     collapsed_hover: Option<Arc<str>>,
     /// Scroll position of the collapsed list's chats.
     collapsed_scroll: UniformListScrollHandle,
+    /// Sections whose chats are hidden under their label.
+    folded: Vec<Group>,
 }
 
 impl ChatList {
@@ -225,6 +215,8 @@ impl ChatList {
             placeholder: "Search chats",
             collapsed_hover: None,
             collapsed_scroll: UniformListScrollHandle::new(),
+            // Finished chats stay out of the way until asked for.
+            folded: vec![Group::Done],
         }
     }
 
@@ -327,9 +319,11 @@ impl ChatList {
 
     fn publish(&mut self, outcome: Outcome, cx: &mut Context<Self>) {
         let mut items = Vec::new();
-        for (slot, (_, rows)) in outcome.groups.iter().enumerate() {
+        for (slot, (group, rows)) in outcome.groups.iter().enumerate() {
             items.push(Item::Section(slot));
-            items.extend(rows.iter().map(|&row| Item::Chat(row)));
+            if !self.folded.contains(group) {
+                items.extend(rows.iter().map(|&row| Item::Chat(row)));
+            }
         }
         if !items.is_empty() {
             items.extend([Item::End, Item::Tail]);
@@ -417,6 +411,16 @@ impl ChatList {
         self.layout.scroll_offset(self.state.logical_scroll_top())
     }
 
+    /// Show or hide a section's chats under its label.
+    fn toggle_fold(&mut self, group: Group, cx: &mut Context<Self>) {
+        if let Some(ix) = self.folded.iter().position(|&folded| folded == group) {
+            self.folded.remove(ix);
+        } else {
+            self.folded.push(group);
+        }
+        self.publish(self.outcome.clone(), cx);
+    }
+
     /// Scroll so the first chat of a section sits right under the top stack.
     pub fn jump(&mut self, section: usize, cx: &mut Context<Self>) {
         if let Some(target) = self.layout.jump_target(section) {
@@ -425,7 +429,7 @@ impl ChatList {
         }
     }
 
-    /// Keep a chat clear of both stacks after keyboard selection.
+    /// Keep a chat clear of the top stack and in view after keyboard selection.
     fn reveal(&self, item: usize) {
         if let Some(target) = self.layout.reveal_target(item, self.scroll()) {
             self.state.scroll_to(self.layout.offset_at(target));
@@ -507,11 +511,9 @@ impl ChatList {
                     .map(|ix| {
                         let (row, id) = &items[ix];
                         let hovered = hover.as_ref() == Some(id);
-                        chat_render::collapsed_item(
-                            ix,
-                            count,
-                            collapsed_tile(&owner, &list, &project, id, *row, hovered, window, cx),
-                        )
+                        chat_render::collapsed_item(collapsed_tile(
+                            &owner, &list, &project, id, *row, hovered, window, cx,
+                        ))
                     })
                     .collect::<Vec<_>>()
             }
@@ -610,19 +612,13 @@ impl Render for ChatList {
         // Compact tabs share the bar evenly: each is capped at a third of the
         // room inside the list's side padding and the segmented bar's inset and
         // gaps, so the labels give up tab padding instead of clipping the last tab.
-        let tab_cap = (self.width > px(0.) && self.width < rem * COMPACT_TABS_WIDTH)
-            .then(|| (self.width - rem * 1.5 - px(12.)) / 3.);
-        let compact_sections = self.width > px(0.) && self.width < rem * COMPACT_SECTIONS_WIDTH;
+        let compact = self.width > px(0.) && self.width < rem * COMPACT_WIDTH;
         if let Some(query) = self
             .owner
             .upgrade()
             .map(|owner| owner.read(cx).query.clone())
         {
-            let placeholder = if tab_cap.is_some() {
-                "Search"
-            } else {
-                "Search chats"
-            };
+            let placeholder = if compact { "Search" } else { "Search chats" };
             if self.placeholder != placeholder {
                 self.placeholder = placeholder;
                 query.update(cx, |query, cx| {
@@ -639,167 +635,149 @@ impl Render for ChatList {
         let filtered = !self.criteria.query.is_empty()
             || self.criteria.filter != 0
             || self.criteria.agent.is_some();
-        let rows =
-            if self.items.is_empty() {
-                let owner = self.owner.clone();
-                // A narrow list lines the message up with the tabs and shortens the button.
-                let compact = tab_cap.is_some();
-                col()
-                    .flex_1()
-                    .when(compact, |empty| empty.px_3().py_5())
-                    .when(!compact, |empty| empty.p_5())
-                    .gap_3()
-                    .items_start()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(if self.searching {
-                        "Searching…".to_owned()
-                    } else if !self.criteria.query.is_empty() {
-                        format!("No chats match “{}”.", self.criteria.query)
-                    } else if filtered {
-                        "No chats match these filters.".to_owned()
-                    } else {
-                        "No chats yet.".to_owned()
-                    })
-                    .when(filtered && !self.searching, |empty| {
-                        empty.child(
-                            Button::new("clear-chat-filters")
-                                .outline()
-                                .small()
-                                .max_w_full()
-                                .label(if compact {
-                                    "Clear filters"
-                                } else {
-                                    "Clear search and filters"
-                                })
-                                .accessibility_label("Clear search and filters")
-                                .when(compact, |button| button.tooltip("Clear search and filters"))
-                                .on_click(move |_, window, cx| {
-                                    let _ = owner.update(cx, |app, cx| {
-                                        app.act(Action::ClearChatFilters, window, cx);
-                                    });
-                                }),
-                        )
-                    })
-                    .into_any_element()
-            } else {
-                let owner = self.owner.clone();
-                let items = self.items.clone();
-                let tops: Arc<[Pixels]> = self.layout.tops.clone().into();
-                let groups: Arc<[(Group, Vec<usize>)]> = self.outcome.groups.clone().into();
-                let selected = self.selected;
-                let tail = self.tail;
-                let total = self.outcome.matches();
-                let current = stacks.current;
-                let section_view = {
-                    let this = this.clone();
-                    move |slot: usize, placement: LabelPlacement, cx: &mut App| {
-                        let (group, rows) = &groups[slot];
-                        section_label(
-                            *group,
-                            rows.len(),
-                            slot == current,
-                            compact_sections,
-                            placement,
-                            {
-                                let this = this.clone();
-                                move |_, _, cx: &mut App| {
-                                    let _ = this.update(cx, |list, cx| list.jump(slot, cx));
-                                }
-                            },
-                            cx,
-                        )
-                    }
-                };
-                let list_view = {
-                    let section_view = section_view.clone();
-                    list(self.state.clone(), move |ix, _, cx| {
-                        let rail = Rail {
-                            top: tops[ix],
-                            starts: ix == 0,
-                            ends: matches!(items[ix], Item::End),
-                        };
-                        match items[ix] {
-                            Item::Section(slot) => {
-                                section_view(slot, LabelPlacement::Inline(rail), cx)
+        let rows = if self.items.is_empty() {
+            let owner = self.owner.clone();
+            // A narrow list tightens the message and shortens the button.
+            col()
+                .flex_1()
+                .when(compact, |empty| empty.px_3().py_5())
+                .when(!compact, |empty| empty.p_5())
+                .gap_3()
+                .items_start()
+                .text_sm()
+                .text_color(cx.theme().muted_foreground)
+                .child(if self.searching {
+                    "Searching…".to_owned()
+                } else if !self.criteria.query.is_empty() {
+                    format!("No chats match “{}”.", self.criteria.query)
+                } else if filtered {
+                    "No chats match these filters.".to_owned()
+                } else {
+                    "No chats yet.".to_owned()
+                })
+                .when(filtered && !self.searching, |empty| {
+                    empty.child(
+                        Button::new("clear-chat-filters")
+                            .outline()
+                            .small()
+                            .max_w_full()
+                            .label(if compact {
+                                "Clear filters"
+                            } else {
+                                "Clear search and filters"
+                            })
+                            .accessibility_label("Clear search and filters")
+                            .when(compact, |button| button.tooltip("Clear search and filters"))
+                            .on_click(move |_, window, cx| {
+                                let _ = owner.update(cx, |app, cx| {
+                                    app.act(Action::ClearChatFilters, window, cx);
+                                });
+                            }),
+                    )
+                })
+                .into_any_element()
+        } else {
+            let owner = self.owner.clone();
+            let items = self.items.clone();
+            let groups: Arc<[(Group, Vec<usize>)]> = self.outcome.groups.clone().into();
+            let folded: Arc<[Group]> = self.folded.clone().into();
+            let selected = self.selected;
+            let tail = self.tail;
+            let current = stacks.current;
+            let section_view = {
+                let this = this.clone();
+                move |slot: usize, placement: LabelPlacement, cx: &mut App| {
+                    let (group, rows) = &groups[slot];
+                    let group = *group;
+                    section_label(
+                        group,
+                        rows.len(),
+                        folded.contains(&group),
+                        slot == current,
+                        placement,
+                        {
+                            let this = this.clone();
+                            // A label in the list folds its section; a pinned one
+                            // scrolls to it.
+                            move |_, _, cx: &mut App| {
+                                let _ = this.update(cx, |list, cx| match placement {
+                                    LabelPlacement::Inline => list.toggle_fold(group, cx),
+                                    LabelPlacement::Top { .. } => list.jump(slot, cx),
+                                });
                             }
-                            Item::Chat(row) => {
-                                ui_metrics::record(ui_metrics::Region::ChatRow);
-                                owner
-                                    .update(cx, |app, cx| app.chat_card(row, rail, cx))
-                                    .unwrap_or_else(|_| div().into_any_element())
-                            }
-                            Item::End => end_label(total, rail, cx),
-                            Item::Tail => div().h(tail).into_any_element(),
-                        }
-                    })
-                    .size_full()
-                };
-                let top_stack =
-                    col()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .right_0()
-                        .children(stacks.top.clone().map(|slot| {
-                            section_view(
-                                slot,
-                                LabelPlacement::Top {
-                                    last: slot + 1 == stacks.top.end,
-                                },
-                                cx,
-                            )
-                        }));
-                let bottom_stack = col().absolute().bottom_0().left_0().right_0().children(
-                    stacks.bottom.clone().map(|slot| {
-                        section_view(
-                            slot,
-                            LabelPlacement::Bottom {
-                                first: slot == stacks.bottom.start,
-                            },
-                            cx,
-                        )
-                    }),
-                );
-                div()
-                    .id("chat-list-viewport")
-                    .role(Role::ListBox)
-                    .aria_label("Chats")
-                    .relative()
-                    .flex_1()
-                    .min_h_0()
-                    .track_focus(&list_focus)
-                    .on_key_down({
-                        let owner = self.owner.clone();
-                        move |event, window, cx| {
-                            if event.keystroke.modifiers.modified() {
-                                return;
-                            }
-                            // Selecting runs the shell's action, which updates this list again,
-                            // so the target is read first and the action runs outside the list.
-                            let Some((_, row)) = this.upgrade().and_then(|list| {
-                                let list = list.read(cx);
-                                let target = list.navigation_target(&event.keystroke.key)?;
-                                list.reveal(target.0);
-                                Some(target)
-                            }) else {
-                                return;
-                            };
-                            list_focus.focus(window, cx);
-                            if selected != Some(row) {
-                                let _ = owner
-                                    .update(cx, |app, cx| app.act(Action::Chat(row), window, cx));
-                            }
-                            window.refresh();
-                            cx.stop_propagation();
-                        }
-                    })
-                    .child(list_view)
-                    .child(top_stack)
-                    .child(bottom_stack)
-                    .child(Scrollbar::vertical(&self.state))
-                    .into_any_element()
+                        },
+                        cx,
+                    )
+                }
             };
+            let list_view = {
+                let section_view = section_view.clone();
+                list(self.state.clone(), move |ix, _, cx| match items[ix] {
+                    Item::Section(slot) => section_view(slot, LabelPlacement::Inline, cx),
+                    Item::Chat(row) => {
+                        ui_metrics::record(ui_metrics::Region::ChatRow);
+                        owner
+                            .update(cx, |app, cx| app.chat_card(row, cx))
+                            .unwrap_or_else(|_| div().into_any_element())
+                    }
+                    Item::End => div().h(rems(END_HEIGHT)).into_any_element(),
+                    Item::Tail => div().h(tail).into_any_element(),
+                })
+                .size_full()
+                .pr(theme::SCROLLBAR_TRACK)
+            };
+            let top_stack = col()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right(theme::SCROLLBAR_TRACK)
+                .children(stacks.top.clone().map(|slot| {
+                    section_view(
+                        slot,
+                        LabelPlacement::Top {
+                            last: slot + 1 == stacks.top.end,
+                        },
+                        cx,
+                    )
+                }));
+            div()
+                .id("chat-list-viewport")
+                .role(Role::ListBox)
+                .aria_label("Chats")
+                .relative()
+                .flex_1()
+                .min_h_0()
+                .track_focus(&list_focus)
+                .on_key_down({
+                    let owner = self.owner.clone();
+                    move |event, window, cx| {
+                        if event.keystroke.modifiers.modified() {
+                            return;
+                        }
+                        // Selecting runs the shell's action, which updates this list again,
+                        // so the target is read first and the action runs outside the list.
+                        let Some((_, row)) = this.upgrade().and_then(|list| {
+                            let list = list.read(cx);
+                            let target = list.navigation_target(&event.keystroke.key)?;
+                            list.reveal(target.0);
+                            Some(target)
+                        }) else {
+                            return;
+                        };
+                        list_focus.focus(window, cx);
+                        if selected != Some(row) {
+                            let _ =
+                                owner.update(cx, |app, cx| app.act(Action::Chat(row), window, cx));
+                        }
+                        window.refresh();
+                        cx.stop_propagation();
+                    }
+                })
+                .child(list_view)
+                .child(top_stack)
+                .child(Scrollbar::vertical(&self.state))
+                .into_any_element()
+        };
         let focused = self
             .owner
             .upgrade()
@@ -807,7 +785,7 @@ impl Render for ChatList {
         let sidebar = self
             .owner
             .update(cx, |app, cx| {
-                app.chat_sidebar(rows, &self.outcome, focused, tab_cap, cx)
+                app.chat_sidebar(rows, &self.outcome, focused, cx)
                     .into_any_element()
             })
             .unwrap_or_else(|_| div().into_any_element());
@@ -842,10 +820,16 @@ pub(super) struct Transcript {
     selected: Option<usize>,
     messages: usize,
     footer_focus: FocusHandle,
+    /// Height of the composer floating over the end of the transcript.
+    composer_height: std::rc::Rc<std::cell::Cell<Pixels>>,
 }
 
 impl Transcript {
-    pub fn new(owner: WeakEntity<Adeline>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        owner: WeakEntity<Adeline>,
+        composer_height: std::rc::Rc<std::cell::Cell<Pixels>>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let state = ListState::new(0, ListAlignment::Top, px(250.));
         Self {
             owner,
@@ -855,6 +839,7 @@ impl Transcript {
             selected: None,
             messages: 0,
             footer_focus: cx.focus_handle(),
+            composer_height,
         }
     }
 
@@ -907,7 +892,7 @@ impl Transcript {
 }
 
 impl Render for Transcript {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let typography = config::typography();
         if self.typography != typography {
             self.typography = typography;
@@ -917,6 +902,11 @@ impl Render for Transcript {
             self.state.scroll_to(top);
         }
         ui_metrics::record(ui_metrics::Region::Transcript);
+        // The header and composer float over the transcript so its scrollbar runs
+        // the full height; the messages start and end clear of both.
+        let gap = window.rem_size() * 0.5;
+        let top = window.rem_size() * chat_render::CHAT_HEADER_HEIGHT + gap;
+        let bottom = self.composer_height.get() + gap;
         let Some(selected) = self.selected else {
             return self
                 .owner
@@ -948,7 +938,8 @@ impl Render for Transcript {
                 .unwrap_or_else(|_| div().into_any_element())
         })
         .size_full()
-        .py_2();
+        .pt(top)
+        .pb(bottom);
         div()
             .relative()
             .size_full()
@@ -1056,7 +1047,6 @@ impl Adeline {
             Project(_) => self.sync_sidebar(cx),
             Section(crate::Section::Chats)
             | NewChat
-            | Filter(_)
             | AgentFilter(_)
             | ClearChatFilters
             | ShowCompleted => {
@@ -1137,14 +1127,13 @@ mod tests {
     }
 
     #[test]
-    fn labels_stack_under_the_controls_and_wait_at_the_bottom() {
+    fn labels_stack_under_the_controls() {
         let layout = layout();
-        // At the top, the first label is in place and the others wait at the bottom.
+        // At the top, every label is in its place in the list.
         assert_eq!(
             at(&layout, 0.),
             Stacks {
                 top: 0..0,
-                bottom: 1..3,
                 current: 0
             }
         );
@@ -1160,7 +1149,6 @@ mod tests {
             at(&layout, last),
             Stacks {
                 top: 0..3,
-                bottom: 3..3,
                 current: 2
             }
         );
@@ -1187,18 +1175,16 @@ mod tests {
     }
 
     #[test]
-    fn keyboard_reveal_keeps_rows_clear_of_both_stacks() {
+    fn keyboard_reveal_keeps_rows_clear_of_the_stack_and_in_view() {
         let layout = layout();
         let row_under_top_stack = layout.sections[1] + 1;
         let scroll = layout.tops[row_under_top_stack] - px(40.);
         let target = layout.reveal_target(row_under_top_stack, scroll).unwrap();
         assert_eq!(layout.tops[row_under_top_stack] - target, px(64.));
-        let row_under_bottom_stack = layout.sections[0] + 7;
-        let target = layout
-            .reveal_target(row_under_bottom_stack, px(0.))
-            .unwrap();
-        let bottom_edge: Pixels = layout.tops[row_under_bottom_stack + 1] - target;
-        assert_eq!(bottom_edge, px(400.) - px(32.) * 2.);
+        let row_below_view = layout.sections[0] + 8;
+        let target = layout.reveal_target(row_below_view, px(0.)).unwrap();
+        let bottom_edge: Pixels = layout.tops[row_below_view + 1] - target;
+        assert_eq!(bottom_edge, px(400.));
         assert_eq!(layout.reveal_target(layout.sections[0] + 2, px(0.)), None);
     }
 

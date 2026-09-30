@@ -139,7 +139,6 @@ enum Action {
     Section(Section),
     Chat(usize),
     NewChat,
-    Filter(usize),
     /// Show one agent's chats, or every agent's with `None`.
     AgentFilter(Option<std::sync::Arc<str>>),
     ClearChatFilters,
@@ -249,6 +248,10 @@ struct Adeline {
     selected: Option<usize>,
     filter: usize,
     agent_filter: Option<std::sync::Arc<str>>,
+    /// The chat search field is shown under the list's header.
+    chat_search_open: bool,
+    /// Height of the composer, which floats over the end of the transcript.
+    composer_height: std::rc::Rc<std::cell::Cell<Pixels>>,
     show_completed: bool,
     side_panel_open: [bool; 7],
     right_panel_width: f32,
@@ -310,8 +313,12 @@ impl Adeline {
         let mut subscriptions = vec![cx.subscribe(&query, |app, _, event: &InputEvent, cx| {
             match event {
                 InputEvent::Change => app.search_sidebar(cx),
-                // The search icon lights up while the field is focused.
+                // The search icon lights up while the field is focused; an empty
+                // search folds away once focus leaves it.
                 InputEvent::Focus | InputEvent::Blur => {
+                    if matches!(event, InputEvent::Blur) && app.query.read(cx).value().is_empty() {
+                        app.chat_search_open = false;
+                    }
                     app.chat_list.update(cx, |_, cx| cx.notify());
                 }
                 InputEvent::PressEnter { .. } => {}
@@ -332,7 +339,9 @@ impl Adeline {
         );
         let owner = cx.weak_entity();
         let chat_list = cx.new(|_| chat::ChatList::new(owner.clone()));
-        let transcript = cx.new(|cx| chat::Transcript::new(owner.clone(), cx));
+        let composer_height = std::rc::Rc::new(std::cell::Cell::new(px(0.)));
+        let transcript =
+            cx.new(|cx| chat::Transcript::new(owner.clone(), composer_height.clone(), cx));
         let composer_region = cx.new(|cx| chat::Composer::new(owner.clone(), &composer, cx));
         let control_pane = cx.new(|_| panes::ControlPane::new(owner.clone()));
         let header_region = cx.new(|_| chat::Header(owner.clone()));
@@ -372,6 +381,8 @@ impl Adeline {
             selected: None,
             filter: 0,
             agent_filter: None,
+            chat_search_open: false,
+            composer_height,
             show_completed: true,
             side_panel_open: [false, false, false, false, true, true, true],
             expanded_event: None,
@@ -556,8 +567,22 @@ impl Adeline {
     }
     /// Focuses the chat search: in the list, or unfurled from the collapsed list.
     fn focus_chat_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.chat_search_open = true;
         window.focus(&self.query.focus_handle(cx), cx);
+        self.chat_list.update(cx, |_, cx| cx.notify());
         cx.notify();
+    }
+    /// The list header's search button: opens and focuses the search, or clears
+    /// and closes an open one.
+    fn toggle_chat_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.chat_search_open || !self.query.read(cx).value().is_empty() {
+            self.chat_search_open = false;
+            self.act(Action::ClearChatFilters, window, cx);
+            window.focus(&self.focus, cx);
+            self.chat_list.update(cx, |_, cx| cx.notify());
+        } else {
+            self.focus_chat_search(window, cx);
+        }
     }
     fn notify_toast(&self, value: &str, cx: &mut Context<Self>) {
         let handle = self.main_window;
@@ -622,8 +647,20 @@ impl Render for Adeline {
             .on_action(cx.listener(|_, _: &NextFocus, window, cx| window.focus_next(cx)))
             .on_action(cx.listener(|_, _: &PreviousFocus, window, cx| window.focus_prev(cx)))
             .child(self.header_region.clone())
-            .child(div().flex_1().min_h_0().child(body))
-            .child(self.control_pane.clone());
+            .child(
+                row()
+                    .flex_1()
+                    .min_h_0()
+                    .items_stretch()
+                    .child(self.mode_rail(cx))
+                    .child(
+                        col()
+                            .flex_1()
+                            .min_w_0()
+                            .child(div().flex_1().min_h_0().child(body))
+                            .child(self.control_pane.clone()),
+                    ),
+            );
         col()
             .size_full()
             .bg(cx.theme().background)

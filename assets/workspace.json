@@ -55,7 +55,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Write a concise skill introduction",
             "id": "demo-skills-history-1",
             "context": [
@@ -81,7 +81,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "idle",
             "title": "Add examples for ambiguous requests",
             "id": "demo-skills-history-2",
             "context": [
@@ -107,7 +107,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Review the research skill sources",
             "id": "demo-skills-history-3",
             "context": [
@@ -133,7 +133,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "idle",
             "title": "Test the document review checklist",
             "id": "demo-skills-history-4",
             "context": [
@@ -159,7 +159,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Improve the bug report template",
             "id": "demo-skills-history-5",
             "context": [
@@ -211,7 +211,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Trim repeated instructions in the library",
             "id": "demo-skills-history-7",
             "context": [
@@ -237,7 +237,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "idle",
             "title": "Add negative trigger examples",
             "id": "demo-skills-history-8",
             "context": [
@@ -263,7 +263,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Check the onboarding skill inputs",
             "id": "demo-skills-history-9",
             "context": [
@@ -289,7 +289,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "idle",
             "title": "Document the skill review process",
             "id": "demo-skills-history-10",
             "context": [
@@ -315,7 +315,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Review the handoff summary format",
             "id": "demo-skills-history-11",
             "context": [
@@ -367,7 +367,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Check names across the skill catalog",
             "id": "demo-skills-history-13",
             "context": [
@@ -393,7 +393,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "idle",
             "title": "Capture evaluation failure patterns",
             "id": "demo-skills-history-14",
             "context": [
@@ -419,7 +419,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Prepare the next library review",
             "id": "demo-skills-history-15",
             "context": [
@@ -457,7 +457,7 @@
             "activity": [],
             "createdAt": "2026-09-25T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "idle",
             "title": "Stop the meeting skill from activating on ordinary calendar questions",
             "id": "skills-trigger",
             "context": [
@@ -547,7 +547,7 @@
             "activity": [],
             "createdAt": "2026-09-25T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Add a worked example to the bug report skill",
             "id": "skills-examples",
             "context": [
@@ -674,7 +674,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Review retry delays for busy destinations",
             "id": "demo-relay-history-1",
             "context": [
@@ -700,7 +700,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "idle",
             "title": "Add a readable delivery history",
             "id": "demo-relay-history-2",
             "context": [
@@ -726,7 +726,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Check webhook payload validation",
             "id": "demo-relay-history-3",
             "context": [
@@ -752,7 +752,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "idle",
             "title": "Document the dead letter queue",
             "id": "demo-relay-history-4",
             "context": [
@@ -778,7 +778,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Keep request identifiers in service logs",
             "id": "demo-relay-history-5",
             "context": [
@@ -830,7 +830,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Add a destination health summary",
             "id": "demo-relay-history-7",
             "context": [
@@ -856,7 +856,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "idle",
             "title": "Test slow consumer recovery",
             "id": "demo-relay-history-8",
             "context": [
@@ -882,7 +882,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Clarify delivery timeout messages",
             "id": "demo-relay-history-9",
             "context": [
@@ -908,7 +908,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "idle",
             "title": "Review event ordering guarantees",
             "id": "demo-relay-history-10",
             "context": [
@@ -934,7 +934,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Add a replay preview",
             "id": "demo-relay-history-11",
             "context": [
@@ -986,7 +986,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Document local relay setup",
             "id": "demo-relay-history-13",
             "context": [
@@ -1012,7 +1012,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "idle",
             "title": "Review service metrics labels",
             "id": "demo-relay-history-14",
             "context": [
@@ -1038,7 +1038,7 @@
             "activity": [],
             "createdAt": "2026-09-24T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Prepare the relay release checklist",
             "id": "demo-relay-history-15",
             "context": [
@@ -1076,7 +1076,7 @@
             "activity": [],
             "createdAt": "2026-09-25T10:00:00Z",
             "provider": "codex",
-            "status": "completed",
+            "status": "idle",
             "title": "Verify webhook signatures before accepting an event",
             "id": "relay-signature",
             "context": [
@@ -1166,7 +1166,7 @@
             "activity": [],
             "createdAt": "2026-09-25T10:00:00Z",
             "provider": "claude",
-            "status": "completed",
+            "status": "idle",
             "title": "Avoid delivering the same event twice after a worker restart",
             "id": "relay-dedupe",
             "context": [
@@ -1395,7 +1395,7 @@
         "activity": [],
         "createdAt": "2026-08-04T11:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Sketch the first sidebar layout",
         "id": "demo-adeline-earlier-9",
         "context": [
@@ -1421,7 +1421,7 @@
         "activity": [],
         "createdAt": "2026-08-16T11:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Choose a font for code blocks",
         "id": "demo-adeline-earlier-8",
         "context": [
@@ -1447,7 +1447,7 @@
         "activity": [],
         "createdAt": "2026-08-24T11:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Name chats from their first message",
         "id": "demo-adeline-earlier-7",
         "context": [
@@ -1473,7 +1473,7 @@
         "activity": [],
         "createdAt": "2026-08-30T11:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Handle agents that disconnect mid-reply",
         "id": "demo-adeline-earlier-6",
         "context": [
@@ -1499,7 +1499,7 @@
         "activity": [],
         "createdAt": "2026-09-02T11:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Prepare the next desktop review",
         "id": "demo-adeline-history-15",
         "context": [
@@ -1551,7 +1551,7 @@
         "activity": [],
         "createdAt": "2026-09-08T11:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Keep the selection when filtering chats",
         "id": "demo-adeline-earlier-4",
         "context": [
@@ -1577,7 +1577,7 @@
         "activity": [],
         "createdAt": "2026-09-11T11:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Preserve scroll position after selecting a chat",
         "id": "demo-adeline-history-14",
         "context": [
@@ -1603,7 +1603,7 @@
         "activity": [],
         "createdAt": "2026-09-12T11:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Add export to Markdown",
         "id": "demo-adeline-earlier-3",
         "context": [
@@ -1629,7 +1629,7 @@
         "activity": [],
         "createdAt": "2026-09-14T11:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Make links in replies open in the browser",
         "id": "demo-adeline-earlier-2",
         "context": [
@@ -1655,7 +1655,7 @@
         "activity": [],
         "createdAt": "2026-09-16T11:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Review the service log empty state",
         "id": "demo-adeline-history-13",
         "context": [
@@ -1707,7 +1707,7 @@
         "activity": [],
         "createdAt": "2026-09-19T08:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Explain why a model is unavailable",
         "id": "demo-adeline-week-6",
         "context": [
@@ -1733,7 +1733,7 @@
         "activity": [],
         "createdAt": "2026-09-19T11:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Check notification counter alignment",
         "id": "demo-adeline-history-12",
         "context": [
@@ -1759,7 +1759,7 @@
         "activity": [],
         "createdAt": "2026-09-20T05:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Make workflow descriptions easier to scan",
         "id": "demo-adeline-history-11",
         "context": [
@@ -1785,7 +1785,7 @@
         "activity": [],
         "createdAt": "2026-09-20T11:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Keep the composer visible when resizing",
         "id": "demo-adeline-history-10",
         "context": [
@@ -1811,7 +1811,7 @@
         "activity": [],
         "createdAt": "2026-09-21T06:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Stop notifications for chats you're viewing",
         "id": "demo-adeline-week-5",
         "context": [
@@ -1863,7 +1863,7 @@
         "activity": [],
         "createdAt": "2026-09-22T07:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Show which files a chat has changed",
         "id": "demo-adeline-week-4",
         "context": [
@@ -1889,7 +1889,7 @@
         "activity": [],
         "createdAt": "2026-09-22T11:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Add a clear action to chat search",
         "id": "demo-adeline-history-8",
         "context": [
@@ -1915,7 +1915,7 @@
         "activity": [],
         "createdAt": "2026-09-23T06:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Check the theme picker with dark palettes",
         "id": "demo-adeline-history-7",
         "context": [
@@ -1941,7 +1941,7 @@
         "activity": [],
         "createdAt": "2026-09-23T08:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Retry failed uploads without losing the message",
         "id": "demo-adeline-week-3",
         "context": [
@@ -1967,7 +1967,7 @@
         "activity": [],
         "createdAt": "2026-09-23T11:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Keep long project names readable",
         "id": "demo-adeline-history-6",
         "context": [
@@ -2019,7 +2019,7 @@
         "activity": [],
         "createdAt": "2026-09-24T07:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Remember the width of the activity panel",
         "id": "demo-adeline-history-5",
         "context": [
@@ -2045,7 +2045,7 @@
         "activity": [],
         "createdAt": "2026-09-24T09:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Add Ctrl+K to jump between chats",
         "id": "demo-adeline-week-1",
         "context": [
@@ -2071,7 +2071,7 @@
         "activity": [],
         "createdAt": "2026-09-24T10:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Improve keyboard navigation in the sidebar",
         "id": "demo-adeline-history-4",
         "context": [
@@ -2097,7 +2097,7 @@
         "activity": [],
         "createdAt": "2026-09-25T02:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Keep draft messages when switching chats",
         "id": "demo-adeline-today-3",
         "context": [
@@ -2123,7 +2123,7 @@
         "activity": [],
         "createdAt": "2026-09-25T03:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Warn before closing a window with a running chat",
         "id": "demo-adeline-today-2",
         "context": [
@@ -2175,7 +2175,7 @@
         "activity": [],
         "createdAt": "2026-09-25T05:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Collapse long tool output by default",
         "id": "demo-adeline-today-1",
         "context": [
@@ -2253,7 +2253,7 @@
         ],
         "createdAt": "2026-09-25T06:56:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Keep search text when changing filters",
         "id": "demo-adeline-history-2",
         "context": [
@@ -2279,7 +2279,7 @@
         "activity": [],
         "createdAt": "2026-09-25T07:56:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Align the project picker rows",
         "id": "demo-adeline-history-1",
         "context": [
@@ -2317,7 +2317,7 @@
         "activity": [],
         "createdAt": "2026-09-25T08:52:00Z",
         "provider": "codex",
-        "status": "completed",
+        "status": "idle",
         "title": "Keep the composer usable in a narrow desktop window",
         "id": "adeline-layout",
         "context": [
@@ -2355,7 +2355,7 @@
         "activity": [],
         "createdAt": "2026-09-25T09:52:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Make document edits safe when the preview is still updating",
         "id": "adeline-docs",
         "context": [
@@ -2471,7 +2471,7 @@
         "activity": [],
         "createdAt": "2026-09-25T11:53:00Z",
         "provider": "claude",
-        "status": "completed",
+        "status": "idle",
         "title": "Import sessions from the old workspace format",
         "id": "demo-adeline-running-2",
         "context": [

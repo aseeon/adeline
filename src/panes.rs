@@ -1,5 +1,7 @@
 use super::*;
+use gpui_kit::base::ResizeHandleContext;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel};
+use std::rc::Rc;
 
 pub(super) struct ControlPane {
     owner: WeakEntity<Adeline>,
@@ -21,23 +23,21 @@ impl Render for ControlPane {
                     .gap_2()
                     .border_t_1()
                     .border_color(cx.theme().border)
-                    .child(
-                        app.command_popover(
-                            "app",
-                            Button::new("app-menu")
-                                .icon(Icon::default().path("menu.svg"))
-                                .accessibility_label("Main menu")
-                                .tooltip("Main menu")
-                                .small()
-                                .ghost(),
-                            Anchor::BottomLeft,
-                            cx,
-                        ),
-                    )
+                    .bg(cx.theme().status_bar)
                     .when(
                         app.has_open_project() && app.section == Section::Chats,
                         |row| {
                             row.child(
+                                app.icon_button(
+                                    "left-panel",
+                                    "Conversations",
+                                    Icon::default().path("panel-left.svg"),
+                                    Action::ToggleLeftPanel,
+                                    cx,
+                                )
+                                .selected(app.left_panel_open[0]),
+                            )
+                            .child(
                                 app.command_popover(
                                     "mode-settings",
                                     Button::new("chat-settings")
@@ -49,16 +49,6 @@ impl Render for ControlPane {
                                     Anchor::BottomLeft,
                                     cx,
                                 ),
-                            )
-                            .child(
-                                app.icon_button(
-                                    "left-panel",
-                                    "Conversations",
-                                    Icon::default().path("panel-left.svg"),
-                                    Action::ToggleLeftPanel,
-                                    cx,
-                                )
-                                .selected(app.left_panel_open[0]),
                             )
                             .child(div().flex_1())
                             .child(
@@ -81,27 +71,6 @@ impl Render for ControlPane {
     }
 }
 impl Adeline {
-    pub(super) fn mode_sidebar_header(&self, search: impl IntoElement, cx: &Context<Self>) -> Div {
-        col()
-            .p_3()
-            .gap_3()
-            .child(
-                row()
-                    .gap_2()
-                    .child(div().flex_1().text_lg().child("Chats"))
-                    .child(
-                        self.icon_button(
-                            "new-chat",
-                            "New chat",
-                            Icon::default().path("plus.svg"),
-                            Action::NewChat,
-                            cx,
-                        )
-                        .label("New"),
-                    ),
-            )
-            .child(search)
-    }
     pub(super) fn left_panel_is_open(&self) -> bool {
         self.section == Section::Chats && self.left_panel_open[0]
     }
@@ -115,16 +84,17 @@ impl Adeline {
                 .id("conversation-rail-panel")
                 .role(Role::Group)
                 .aria_label("Collapsed conversation list")
+                .relative()
                 .h_full()
                 .flex_shrink_0()
-                .bg(cx.theme().sidebar)
-                .text_color(cx.theme().sidebar_foreground)
-                .border_r_1()
-                .border_color(cx.theme().border)
+                .bg(cx.theme().background)
+                .text_color(cx.theme().foreground)
                 .child(self.chat_list.clone())
+                .child(fading_line(cx).absolute().top_0().right_0())
         });
         let panels = h_resizable("chat-panels")
             .with_state(&self.panel_state)
+            .with_handle_appearance(Rc::new(fading_divider))
             .child(
                 resizable_panel()
                     .visible(self.left_panel_is_open())
@@ -139,8 +109,8 @@ impl Adeline {
                             .role(Role::Group)
                             .aria_label("Conversation list panel")
                             .size_full()
-                            .bg(cx.theme().sidebar)
-                            .text_color(cx.theme().sidebar_foreground)
+                            .bg(cx.theme().background)
+                            .text_color(cx.theme().foreground)
                             .child(self.chat_list.clone()),
                     ),
             )
@@ -182,4 +152,42 @@ impl Adeline {
             .child(div().flex_1().min_w_0().h_full().child(panels))
             .into_any_element()
     }
+}
+
+/// Paints a panel divider as a line that fades toward its ends, so it never
+/// touches the borders above and below it. While dragged, the divider shows
+/// Kit's own highlighted line.
+fn fading_divider(
+    handle: &ResizeHandleContext,
+    _: &mut Window,
+    cx: &mut App,
+) -> Option<AnyElement> {
+    if handle.is_active() || handle.axis() != Axis::Horizontal {
+        return None;
+    }
+    Some(fading_line(cx).into_any_element())
+}
+
+/// A full-height 1px line in the border color that fades out toward its ends:
+/// absent for the first and last `CLEAR` rems, full strength from `FADE` rems in.
+fn fading_line(cx: &App) -> Div {
+    const CLEAR: f32 = 2.5;
+    const FADE: f32 = 7.5;
+    let line = cx.theme().border;
+    let ramp = |from: Hsla, to: Hsla| {
+        div().flex_none().h(rems(FADE - CLEAR)).bg(linear_gradient(
+            180.,
+            linear_color_stop(from, 0.),
+            linear_color_stop(to, 1.),
+        ))
+    };
+    col()
+        .flex_none()
+        .h_full()
+        .w(px(1.))
+        .child(div().flex_none().h(rems(CLEAR)))
+        .child(ramp(line.alpha(0.), line))
+        .child(div().flex_1().min_h_0().bg(line))
+        .child(ramp(line, line.alpha(0.)))
+        .child(div().flex_none().h(rems(CLEAR)))
 }

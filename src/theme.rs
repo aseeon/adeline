@@ -394,7 +394,39 @@ pub fn apply(cx: &mut App) {
         theme.tokens = (&theme.colors).into();
     });
     KitTheme::sync_base(cx);
+    style_scrollbars(cx);
     cx.refresh_windows();
+}
+
+/// Width of every scrollbar's track. Panels that float over a scrolling view
+/// stop this far from its right edge so the bar stays visible.
+pub const SCROLLBAR_TRACK: gpui_kit::Pixels = px(10.);
+
+/// Scrollbars have no track: only a narrow bar in the border color, the same at
+/// rest, under the pointer and while dragged. Kit's scroll-to-reveal timing stays.
+fn style_scrollbars(cx: &mut App) {
+    use gpui_kit::base::{
+        ScrollbarStyles, ScrollbarTheme, ScrollbarThumbStyle, ScrollbarTrackStyle,
+    };
+    let bar = KitTheme::global(cx).border;
+    let clear = gpui_kit::transparent_black();
+    let track =
+        |style: ScrollbarTrackStyle| style.bg(clear).border_color(clear).width(SCROLLBAR_TRACK);
+    let thumb =
+        |style: ScrollbarThumbStyle| style.bg(bar).width(px(6.)).inset(px(2.)).radius(px(3.));
+    let base = gpui_kit::base::Theme::global_mut(cx);
+    base.scrollbar = ScrollbarTheme::new()
+        .with_mode(base.scrollbar.mode())
+        .with_motion(base.scrollbar.motion())
+        .with_styles(
+            ScrollbarStyles::default()
+                .track(track)
+                .track_hover(track)
+                .track_active(track)
+                .thumb(thumb)
+                .thumb_hover(thumb)
+                .thumb_active(thumb),
+        );
 }
 
 pub fn project_colors() -> [u32; 5] {

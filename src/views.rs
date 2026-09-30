@@ -10,7 +10,7 @@ impl Adeline {
         // Status, message count and age live in the conversation list; the
         // header adds only what the list can't show.
         let header = chat_render::chat_column()
-            .h_12()
+            .h(rems(chat_render::CHAT_HEADER_HEIGHT))
             .flex()
             .items_center()
             .gap(rems(0.375))
@@ -59,27 +59,69 @@ impl Adeline {
                             })),
                     )
             });
-        col()
+        let theme = cx.theme();
+        // The transcript fills the pane so its scrollbar runs the full height. The
+        // header and composer float over it and stop short of the scrollbar;
+        // matching left padding keeps their columns centered on the messages.
+        let scrollbar = theme::SCROLLBAR_TRACK;
+        let composer_height = self.composer_height.clone();
+        let transcript = self.transcript.clone();
+        let measure = canvas(
+            move |bounds, _, cx| {
+                if (composer_height.get() - bounds.size.height).abs() > px(0.5) {
+                    composer_height.set(bounds.size.height);
+                    transcript.update(cx, |_, cx| cx.notify());
+                }
+            },
+            |_, (), _, _| {},
+        )
+        .absolute()
+        .size_full();
+        // Messages fade out just below the header's edge instead of meeting a line.
+        let fade = div()
+            .absolute()
+            .top(rems(chat_render::CHAT_HEADER_HEIGHT))
+            .left_0()
+            .right(scrollbar)
+            .h(rems(chat_render::HEADER_FADE))
+            .bg(linear_gradient(
+                180.,
+                linear_color_stop(theme.background.alpha(0.9), 0.),
+                linear_color_stop(theme.background.alpha(0.), 1.),
+            ));
+        div()
             .id("conversation-panel")
             .role(Role::Group)
             .aria_label("Conversation panel")
+            .relative()
             .size_full()
             .min_w_0()
             .child(
+                AnyView::from(self.transcript.clone())
+                    .cached(StyleRefinement::default().size_full()),
+            )
+            .child(fade)
+            .child(
                 div()
-                    .w_full()
-                    .flex_shrink_0()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right(scrollbar)
+                    .pl(scrollbar)
+                    .bg(theme.background)
                     .child(header),
             )
             .child(
-                div().flex_1().min_h_0().child(
-                    AnyView::from(self.transcript.clone())
-                        .cached(StyleRefinement::default().size_full()),
-                ),
+                div()
+                    .absolute()
+                    .bottom_0()
+                    .left_0()
+                    .right(scrollbar)
+                    .pl(scrollbar)
+                    .bg(theme.background)
+                    .child(self.composer_region.clone())
+                    .child(measure),
             )
-            .child(self.composer_region.clone())
             .into_any_element()
     }
 

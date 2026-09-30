@@ -43,23 +43,30 @@ pub struct SearchRecord {
     pub activity: i64,
 }
 
-/// Sections of the chat list, in display order.
+/// Sections of the chat list, in display order: live chats by state, then
+/// the rest by when they were last active, then finished chats.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {
-    /// Chats that need input, then chats that are running.
-    Current,
+    /// Chats waiting on the user.
+    NeedsYou,
+    /// Chats whose agent is running.
+    Working,
     Today,
     LastWeek,
     Earlier,
+    /// Completed and archived chats.
+    Done,
 }
 
 impl Group {
     pub fn title(self) -> &'static str {
         match self {
-            Self::Current => "Current",
+            Self::NeedsYou => "Needs you",
+            Self::Working => "Working",
             Self::Today => "Today",
             Self::LastWeek => "Last 7 days",
             Self::Earlier => "Earlier",
+            Self::Done => "Done",
         }
     }
 }
@@ -101,6 +108,7 @@ pub fn search<'a>(
     let mut needing_input = Vec::new();
     let mut running = Vec::new();
     let mut periods: [Vec<(i64, usize)>; 3] = Default::default();
+    let mut done = Vec::new();
     for (index, record) in records.into_iter().enumerate() {
         if (!criteria.completed && record.completed)
             || !(criteria.query.is_empty() || record.text.contains(&criteria.query))
@@ -135,7 +143,9 @@ pub fn search<'a>(
         } else {
             record.activity
         };
-        if record.blocked {
+        if record.completed {
+            done.push((activity, index));
+        } else if record.blocked {
             needing_input.push((activity, index));
         } else if record.working {
             running.push((activity, index));
@@ -151,19 +161,18 @@ pub fn search<'a>(
     let newest_first = |rows: &mut Vec<(i64, usize)>| {
         rows.sort_by_key(|&(activity, index)| (std::cmp::Reverse(activity), index));
     };
-    newest_first(&mut needing_input);
-    newest_first(&mut running);
-    let indexes = |rows: Vec<(i64, usize)>| rows.into_iter().map(|(_, index)| index);
-    let mut groups = vec![(
-        Group::Current,
-        indexes(needing_input).chain(indexes(running)).collect(),
-    )];
-    for (group, mut rows) in [Group::Today, Group::LastWeek, Group::Earlier]
-        .into_iter()
-        .zip(periods)
-    {
+    let [today, week, earlier] = periods;
+    let mut groups = Vec::with_capacity(6);
+    for (group, mut rows) in [
+        (Group::NeedsYou, needing_input),
+        (Group::Working, running),
+        (Group::Today, today),
+        (Group::LastWeek, week),
+        (Group::Earlier, earlier),
+        (Group::Done, done),
+    ] {
         newest_first(&mut rows);
-        groups.push((group, indexes(rows).collect()));
+        groups.push((group, rows.into_iter().map(|(_, index)| index).collect()));
     }
     outcome.groups = groups
         .into_iter()
@@ -498,7 +507,7 @@ mod tests {
     }
 
     #[test]
-    fn sections_put_live_chats_first_then_newest_by_period() {
+    fn sections_put_live_chats_first_then_newest_by_period_then_done() {
         const NOW: i64 = 1_790_510_400;
         let day = 86_400;
         let records = [
@@ -528,6 +537,11 @@ mod tests {
                 activity: NOW - 60,
                 ..record("today-newer", "")
             },
+            SearchRecord {
+                completed: true,
+                activity: NOW - 30,
+                ..record("done", "")
+            },
         ];
         let outcome = search(&records, &criteria("", 0, true), NOW);
         let sections: Vec<_> = outcome
@@ -543,12 +557,17 @@ mod tests {
         assert_eq!(
             sections,
             [
-                (Group::Current, vec!["waiting", "running"]),
+                (Group::NeedsYou, vec!["waiting"]),
+                (Group::Working, vec!["running"]),
                 (Group::Today, vec!["today-newer", "today-older"]),
                 (Group::LastWeek, vec!["week"]),
                 (Group::Earlier, vec!["old"]),
+                (Group::Done, vec!["done"]),
             ]
         );
+        // Hiding completed chats drops the Done section.
+        let hidden = search(&records, &criteria("", 0, false), NOW);
+        assert!(hidden.groups.iter().all(|(group, _)| *group != Group::Done));
     }
 
     #[test]
@@ -584,7 +603,7 @@ mod tests {
         };
         assert_eq!(
             ids(rail(&catalog, true, None, NOW)),
-            ["waiting", "today", "done-today", "week"]
+            ["waiting", "today", "week", "done-today"]
         );
         assert_eq!(
             ids(rail(&catalog, false, None, NOW)),
