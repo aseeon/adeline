@@ -34,7 +34,7 @@ New Chat opens a draft. First Send creates the conversation and starts its agent
 
 Filesystem changes are watched automatically. Invalid definitions report their filename and error while valid agents remain available. Unsaved forms offer Save, Discard, and Cancel when leaving or closing. If an external edit conflicts with a dirty Settings form, Save offers Reload, Overwrite, or Cancel.
 
-The Effort parameter name dropdown offers `thinking` (OMP), `effort` (Claude), and `reasoning_effort` (Codex). It defaults to `thinking` for new agents and older saved definitions or conversations. Each new conversation saves this choice with its execution settings; changing the agent affects only new conversations.
+The Effort parameter name dropdown offers `thinking` (OMP), `effort` (Claude), `reasoning_effort` (Codex), and `thought_level`. It defaults to `thinking` for new agents and older saved definitions or conversations. Each new conversation saves this choice with its execution settings; changing the agent affects only new conversations.
 
 ### Projects and conversations
 
@@ -159,9 +159,8 @@ Theme selection accepts YAML filenames within the themes folder. Path separators
 | `src/views.rs` | Chat header/activity, searchable command dialogs, project dialog hosting |
 | `src/chat.rs` | Chat entities, cache invalidation, virtual chat list with stacked section labels |
 | `src/chat_render.rs` | Chat rows, section labels, search and filter controls, messages, Markdown and multiline composer |
-| `src/prepared.rs` | Shared sequences, search snapshots, chat sections and filter counts, request generations |
+| `src/prepared.rs` | Search snapshots, chat sections and filter counts, request generations |
 | `src/recency.rs` | Chat timestamps, time sections and short time labels |
-| `src/ui_metrics.rs` | Optional native render counters and large test fixtures |
 | `src/interaction.rs` | UI action routing and isolated demo actions |
 | `src/data.rs` | Workspace projections, demo data and filtering |
 | `assets/` | Bundled workspace data, artwork, and SVGs |

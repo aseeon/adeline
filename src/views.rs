@@ -391,8 +391,6 @@ impl Adeline {
                                             Action::ShowCompleted
                                                 | Action::ShowArchived
                                                 | Action::HideToolCalls
-                                                | Action::LeftPanel(_)
-                                                | Action::RightPanel(_)
                                         ) {
                                             popover
                                                 .update(cx, |state, cx| state.dismiss(window, cx));

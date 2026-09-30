@@ -47,3 +47,6 @@ Desktop.ini
 *.pfx
 *.p12
 *.key
+
+# Local research material
+/.research/

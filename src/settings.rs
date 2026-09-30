@@ -74,13 +74,13 @@ impl Adeline {
                 "Show left panel",
                 "Display chat navigation.",
                 self.left_panel_open[Section::Chats as usize],
-                Action::LeftPanel(Section::Chats),
+                Action::ToggleLeftPanel,
             ),
             (
                 "Show agent activity",
                 "Display chat agent activity.",
                 self.side_panel_open[Section::Chats as usize],
-                Action::RightPanel(Section::Chats),
+                Action::ToggleSidePanel,
             ),
         ]
     }
@@ -110,34 +110,12 @@ impl Owner {
     }
 }
 
-fn settings_windows(cx: &App) -> Vec<(WindowHandle<Root>, Entity<SettingsWindow>)> {
+fn windows_of<V: 'static>(cx: &App) -> Vec<(WindowHandle<Root>, Entity<V>)> {
     cx.windows()
         .into_iter()
         .filter_map(|handle| {
             let root = handle.downcast::<Root>()?;
-            let view = root
-                .read(cx)
-                .ok()?
-                .view()
-                .clone()
-                .downcast::<SettingsWindow>()
-                .ok()?;
-            Some((root, view))
-        })
-        .collect()
-}
-fn agent_windows(cx: &App) -> Vec<(WindowHandle<Root>, Entity<AgentWindow>)> {
-    cx.windows()
-        .into_iter()
-        .filter_map(|handle| {
-            let root = handle.downcast::<Root>()?;
-            let view = root
-                .read(cx)
-                .ok()?
-                .view()
-                .clone()
-                .downcast::<AgentWindow>()
-                .ok()?;
+            let view = root.read(cx).ok()?.view().clone().downcast::<V>().ok()?;
             Some((root, view))
         })
         .collect()
@@ -160,7 +138,7 @@ pub(super) fn open_mode(
 }
 fn open_at(owner: Owner, mode: Option<Section>, cx: &mut Context<Adeline>) {
     cx.defer(move |cx| {
-        if let Some((root, settings)) = settings_windows(cx)
+        if let Some((root, settings)) = windows_of::<SettingsWindow>(cx)
             .into_iter()
             .find(|(_, view)| view.read(cx).owner.window.window_id() == owner.window.window_id())
         {
@@ -231,7 +209,7 @@ pub(super) fn can_close_for(
     entity: &WeakEntity<Adeline>,
     cx: &mut App,
 ) -> bool {
-    for (root, settings) in settings_windows(cx) {
+    for (root, settings) in windows_of::<SettingsWindow>(cx) {
         if settings.read(cx).owner.window.window_id() == owner.window_id()
             && settings
                 .read(cx)
@@ -247,7 +225,7 @@ pub(super) fn can_close_for(
             return false;
         }
     }
-    for (root, creation) in agent_windows(cx) {
+    for (root, creation) in windows_of::<AgentWindow>(cx) {
         if creation.read(cx).owner.window.window_id() == owner.window_id()
             && creation.read(cx).form.dirty(cx)
         {
@@ -279,12 +257,12 @@ pub(super) fn request_close(owner: WindowHandle<Root>, entity: WeakEntity<Adelin
     });
 }
 pub(super) fn close_for(owner: WindowHandle<Root>, cx: &mut App) {
-    for (root, view) in settings_windows(cx) {
+    for (root, view) in windows_of::<SettingsWindow>(cx) {
         if view.read(cx).owner.window.window_id() == owner.window_id() {
             let _ = root.update(cx, |_, window, _| window.remove_window());
         }
     }
-    for (root, view) in agent_windows(cx) {
+    for (root, view) in windows_of::<AgentWindow>(cx) {
         if view.read(cx).owner.window.window_id() == owner.window_id() {
             let _ = root.update(cx, |_, window, _| window.remove_window());
         }

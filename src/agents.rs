@@ -1,10 +1,9 @@
 //! User agent definitions, stored under the Adeline configuration directory.
+use crate::files::{self, checked_id, error as file_error};
 use serde::{Deserialize, Serialize};
 use std::{
-    fs::{self, OpenOptions},
-    io::{self, Write},
+    fs, io,
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
 };
 
 pub const EFFORTS: [&str; 5] = ["Low", "Medium", "High", "Extra High", "Max"];
@@ -16,16 +15,23 @@ pub enum EffortParameterName {
     Thinking,
     Effort,
     ReasoningEffort,
+    ThoughtLevel,
 }
 
 impl EffortParameterName {
-    pub const ALL: [Self; 3] = [Self::Thinking, Self::Effort, Self::ReasoningEffort];
+    pub const ALL: [Self; 4] = [
+        Self::Thinking,
+        Self::Effort,
+        Self::ReasoningEffort,
+        Self::ThoughtLevel,
+    ];
 
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Thinking => "thinking",
             Self::Effort => "effort",
             Self::ReasoningEffort => "reasoning_effort",
+            Self::ThoughtLevel => "thought_level",
         }
     }
 }
@@ -35,8 +41,6 @@ pub enum PermissionMode {
     Ask,
     AllowEverything,
 }
-
-static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -125,14 +129,6 @@ pub(crate) fn normalize_name(name: &str) -> Result<String, String> {
         return Err("Name does not produce a valid agent folder name.".into());
     }
     Ok(id)
-}
-
-fn checked_id(id: &str) -> Result<(), String> {
-    if normalize_name(id).as_deref() == Ok(id) {
-        Ok(())
-    } else {
-        Err(format!("Invalid agent folder: {id}"))
-    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -359,10 +355,6 @@ impl AgentCatalog {
     }
 }
 
-fn file_error(path: &Path, error: impl std::fmt::Display) -> String {
-    format!("{}: {error}", path.display())
-}
-
 fn load(folder: &Path) -> Result<AgentDefinition, String> {
     let path = folder.join("agent.yml");
     if !fs::symlink_metadata(folder)
@@ -486,88 +478,24 @@ fn yaml(definition: &AgentDefinition, path: &Path) -> Result<String, String> {
 }
 
 fn write_new(path: &Path, definition: &AgentDefinition) -> Result<(), String> {
-    let text = yaml(definition, path)?;
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|e| file_error(path, e))?;
-    if let Err(error) = file
-        .write_all(text.as_bytes())
-        .and_then(|()| file.sync_all())
-    {
-        drop(file);
-        let _ = fs::remove_file(path);
-        return Err(file_error(path, error));
-    }
-    Ok(())
-}
-
-fn temporary(path: &Path, suffix: &str) -> PathBuf {
-    path.with_file_name(format!(
-        "agent.yml.{suffix}.{}.{}",
-        std::process::id(),
-        NEXT_FILE.fetch_add(1, Ordering::Relaxed)
-    ))
+    files::write_new(path, yaml(definition, path)?.as_bytes())
 }
 
 fn replace(path: &Path, definition: &AgentDefinition) -> Result<(), String> {
-    let text = yaml(definition, path)?;
-    let temp_path = loop {
-        let temporary = temporary(path, "tmp");
-        match OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&temporary)
-        {
-            Ok(mut file) => {
-                if let Err(error) = file
-                    .write_all(text.as_bytes())
-                    .and_then(|()| file.sync_all())
-                {
-                    drop(file);
-                    let _ = fs::remove_file(&temporary);
-                    return Err(file_error(&temporary, error));
-                }
-                break temporary;
-            }
-            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(error) => return Err(file_error(&temporary, error)),
-        }
-    };
-    let result = fs::rename(&temp_path, path).map_err(|e| file_error(path, e));
-    if result.is_err() {
-        let _ = fs::remove_file(&temp_path);
-    }
-    result
+    files::replace(path, yaml(definition, path)?.as_bytes())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    struct TestRoot(PathBuf);
-    impl TestRoot {
-        fn new() -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "adeline-agent-test-{}-{}",
-                std::process::id(),
-                NEXT_FILE.fetch_add(1, Ordering::Relaxed)
-            ));
-            fs::create_dir(&path).unwrap();
-            Self(path)
-        }
-        fn catalog(&self, demo: bool) -> AgentCatalog {
-            AgentCatalog::with_root(Ok(self.0.join("agents")), demo)
-        }
-        fn file(&self, id: &str) -> PathBuf {
-            self.0.join("agents").join(id).join("agent.yml")
-        }
+    use crate::files::TempDir;
+
+    fn open_catalog(root: &Path, demo: bool) -> AgentCatalog {
+        AgentCatalog::with_root(Ok(root.join("agents")), demo)
     }
-    impl Drop for TestRoot {
-        fn drop(&mut self) {
-            fs::remove_dir_all(&self.0).unwrap();
-        }
+    fn file(root: &Path, id: &str) -> PathBuf {
+        root.join("agents").join(id).join("agent.yml")
     }
     fn agent(name: &str) -> AgentDefinition {
         AgentDefinition {
@@ -586,13 +514,13 @@ mod tests {
 
     #[test]
     fn effort_parameter_names_persist_and_legacy_agents_default_to_thinking() {
-        let root = TestRoot::new();
-        let mut catalog = root.catalog(false);
+        let root = TempDir::new("adeline-agents");
+        let mut catalog = open_catalog(&root, false);
         for parameter in EffortParameterName::ALL {
             let mut definition = agent(parameter.as_str());
             definition.effort_parameter_name = parameter;
             let id = catalog.save(None, definition.clone(), None, false).unwrap();
-            let yaml = fs::read_to_string(root.file(&id)).unwrap();
+            let yaml = fs::read_to_string(file(&root, &id)).unwrap();
             assert!(yaml.contains(&format!("effort_parameter_name: {}", parameter.as_str())));
             assert_eq!(
                 serde_yaml_ng::from_str::<AgentDefinition>(&yaml).unwrap(),
@@ -615,9 +543,9 @@ mod tests {
 
     #[test]
     fn migrates_unambiguous_legacy_commands_and_preserves_literal_arguments() {
-        let root = TestRoot::new();
-        let mut catalog = root.catalog(false);
-        let path = root.file("josh");
+        let root = TempDir::new("adeline-agents");
+        let mut catalog = open_catalog(&root, false);
+        let path = file(&root, "josh");
         fs::create_dir(path.parent().unwrap()).unwrap();
         fs::write(
             &path,
@@ -634,7 +562,7 @@ mod tests {
             serde_yaml_ng::from_str::<AgentDefinition>(&migrated).unwrap(),
             loaded
         );
-        assert_eq!(root.catalog(false).entries[0].definition, loaded);
+        assert_eq!(open_catalog(&root, false).entries[0].definition, loaded);
 
         let mut updated = loaded.clone();
         updated.arguments = vec![
@@ -647,14 +575,14 @@ mod tests {
         catalog
             .save(Some("josh"), updated.clone(), Some(&loaded), false)
             .unwrap();
-        assert_eq!(root.catalog(false).entries[0].definition, updated);
+        assert_eq!(open_catalog(&root, false).entries[0].definition, updated);
     }
 
     #[test]
     fn rejects_ambiguous_legacy_without_changing_disk_and_respects_explicit_empty_arguments() {
-        let root = TestRoot::new();
-        let mut catalog = root.catalog(false);
-        let path = root.file("josh");
+        let root = TempDir::new("adeline-agents");
+        let mut catalog = open_catalog(&root, false);
+        let path = file(&root, "josh");
         fs::create_dir(path.parent().unwrap()).unwrap();
         let original = "name: Josh\nharness: OMP\ndriver: ACP\ncommand: '\"C:/Program Files/omp.exe\" acp'\nmodel: openai-codex/gpt-6-luna\neffort: Max\n";
         fs::write(&path, original).unwrap();
@@ -675,8 +603,8 @@ mod tests {
 
     #[test]
     fn existing_executable_path_with_spaces_is_not_split_during_legacy_load() {
-        let root = TestRoot::new();
-        let executable = root.0.join("Program Files").join("omp.exe");
+        let root = TempDir::new("adeline-agents");
+        let executable = root.join("Program Files").join("omp.exe");
         fs::create_dir(executable.parent().unwrap()).unwrap();
         fs::write(&executable, "").unwrap();
         let mut definition = agent("Josh");
@@ -691,44 +619,43 @@ mod tests {
                 .is_some()
         );
         let source = serde_yaml_ng::to_string(&document).unwrap();
-        let path = root.file("josh");
+        let path = file(&root, "josh");
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(&path, &source).unwrap();
-        let catalog = root.catalog(false);
+        let catalog = open_catalog(&root, false);
         assert_eq!(catalog.entries[0].definition, definition);
         assert_eq!(fs::read_to_string(path).unwrap(), source);
     }
     #[test]
     fn accepts_explicit_command_path_with_spaces_before_installation() {
-        let root = TestRoot::new();
-        let mut catalog = root.catalog(false);
+        let root = TempDir::new("adeline-agents");
+        let mut catalog = open_catalog(&root, false);
         let mut definition = agent("Future");
         definition.command = root
-            .0
             .join("Program Files")
             .join("omp.exe")
             .to_string_lossy()
             .into_owned();
         catalog.save(None, definition.clone(), None, false).unwrap();
-        assert_eq!(root.catalog(false).entries[0].definition, definition);
+        assert_eq!(open_catalog(&root, false).entries[0].definition, definition);
     }
 
     #[test]
     fn saves_non_omp_acp_agent() {
-        let root = TestRoot::new();
-        let mut catalog = root.catalog(false);
+        let root = TempDir::new("adeline-agents");
+        let mut catalog = open_catalog(&root, false);
         let mut definition = agent("Other harness");
         definition.harness = "Other".into();
         definition.command = "other-agent.exe".into();
         definition.arguments = vec!["--stdio".into()];
         catalog.save(None, definition.clone(), None, false).unwrap();
-        assert_eq!(root.catalog(false).entries[0].definition, definition);
+        assert_eq!(open_catalog(&root, false).entries[0].definition, definition);
     }
 
     #[test]
     fn persists_complete_definitions_and_refreshes_external_changes() {
-        let root = TestRoot::new();
-        let mut catalog = root.catalog(false);
+        let root = TempDir::new("adeline-agents");
+        let mut catalog = open_catalog(&root, false);
         let josh = agent("Josh");
         assert_eq!(
             catalog.save(None, josh.clone(), None, false).unwrap(),
@@ -736,16 +663,16 @@ mod tests {
         );
         assert_eq!(
             serde_yaml_ng::from_str::<AgentDefinition>(
-                &fs::read_to_string(root.file("josh")).unwrap()
+                &fs::read_to_string(file(&root, "josh")).unwrap()
             )
             .unwrap(),
             josh
         );
-        assert_eq!(root.catalog(false).entries[0].definition, josh);
+        assert_eq!(open_catalog(&root, false).entries[0].definition, josh);
         let external = agent("Outside");
-        fs::create_dir(root.file("outside").parent().unwrap()).unwrap();
+        fs::create_dir(file(&root, "outside").parent().unwrap()).unwrap();
         fs::write(
-            root.file("outside"),
+            file(&root, "outside"),
             serde_yaml_ng::to_string(&external).unwrap(),
         )
         .unwrap();
@@ -755,7 +682,7 @@ mod tests {
         edited.arguments = vec!["acp".into(), "--verbose".into()];
         edited.name = "Renamed externally".into();
         fs::write(
-            root.file("josh"),
+            file(&root, "josh"),
             serde_yaml_ng::to_string(&edited).unwrap(),
         )
         .unwrap();
@@ -769,7 +696,7 @@ mod tests {
                 .definition,
             edited
         );
-        fs::remove_dir_all(root.file("josh").parent().unwrap()).unwrap();
+        fs::remove_dir_all(file(&root, "josh").parent().unwrap()).unwrap();
         assert!(catalog.refresh());
         assert_eq!(catalog.entries.len(), 1);
         assert_eq!(catalog.entries[0].definition, external);
@@ -777,17 +704,17 @@ mod tests {
 
     #[test]
     fn normalizes_names_but_never_overwrites_collisions() {
-        let root = TestRoot::new();
-        let mut catalog = root.catalog(false);
+        let root = TempDir::new("adeline-agents");
+        let mut catalog = open_catalog(&root, false);
         assert_eq!(
             catalog
                 .save(None, agent(" -- Josh...  Smith !! "), None, false)
                 .unwrap(),
             "josh-smith"
         );
-        let before = fs::read(root.file("josh-smith")).unwrap();
+        let before = fs::read(file(&root, "josh-smith")).unwrap();
         assert!(catalog.save(None, agent("Josh Smith"), None, true).is_err());
-        assert_eq!(fs::read(root.file("josh-smith")).unwrap(), before);
+        assert_eq!(fs::read(file(&root, "josh-smith")).unwrap(), before);
         for invalid in [" -- !!! ", "CON", "com1", "COM¹", "LPT9"] {
             assert!(
                 catalog.save(None, agent(invalid), None, false).is_err(),
@@ -799,14 +726,14 @@ mod tests {
                 .save(None, agent(&"a".repeat(256)), None, false)
                 .is_err()
         );
-        fs::create_dir(root.0.join("agents").join("JOSH")).unwrap();
+        fs::create_dir(root.join("agents").join("JOSH")).unwrap();
         assert!(catalog.save(None, agent("Josh"), None, true).is_err());
     }
 
     #[test]
     fn validates_fields_and_reports_bad_neighbors_without_hiding_valid_agents() {
-        let root = TestRoot::new();
-        let mut catalog = root.catalog(false);
+        let root = TempDir::new("adeline-agents");
+        let mut catalog = open_catalog(&root, false);
         for change in [
             ("name", ""),
             ("command", "  "),
@@ -834,12 +761,12 @@ mod tests {
         good.system_instructions.clear();
         good.arguments.clear();
         catalog.save(None, good.clone(), None, false).unwrap();
-        fs::write(root.file("good"), "name: Good\nharness: OMP\ndriver: ACP\ncommand: omp.exe\narguments: []\nmodel: openai-codex/gpt-6-luna\neffort: Max\n").unwrap();
-        fs::create_dir(root.0.join("agents/bad")).unwrap();
+        fs::write(file(&root, "good"), "name: Good\nharness: OMP\ndriver: ACP\ncommand: omp.exe\narguments: []\nmodel: openai-codex/gpt-6-luna\neffort: Max\n").unwrap();
+        fs::create_dir(root.join("agents/bad")).unwrap();
         let mut bad = agent("Bad");
         bad.effort = "Ultra".into();
-        fs::write(root.file("bad"), serde_yaml_ng::to_string(&bad).unwrap()).unwrap();
-        fs::create_dir(root.0.join("agents/missing")).unwrap();
+        fs::write(file(&root, "bad"), serde_yaml_ng::to_string(&bad).unwrap()).unwrap();
+        fs::create_dir(root.join("agents/missing")).unwrap();
         assert!(catalog.refresh());
         assert_eq!(catalog.entries[0].definition, good);
         assert_eq!(catalog.errors.len(), 2);
@@ -856,8 +783,8 @@ mod tests {
 
     #[test]
     fn external_edit_or_invalid_or_deleted_file_conflicts_until_overwrite() {
-        let root = TestRoot::new();
-        let mut catalog = root.catalog(false);
+        let root = TempDir::new("adeline-agents");
+        let mut catalog = open_catalog(&root, false);
         let original = agent("Josh");
         catalog.save(None, original.clone(), None, false).unwrap();
         let mut mine = original.clone();
@@ -865,7 +792,7 @@ mod tests {
         let mut theirs = original.clone();
         theirs.arguments = vec!["acp".into(), "--external".into()];
         fs::write(
-            root.file("josh"),
+            file(&root, "josh"),
             serde_yaml_ng::to_string(&theirs).unwrap(),
         )
         .unwrap();
@@ -876,16 +803,16 @@ mod tests {
                 .contains("agent.yml")
         );
         assert_eq!(
-            fs::read_to_string(root.file("josh")).unwrap(),
+            fs::read_to_string(file(&root, "josh")).unwrap(),
             serde_yaml_ng::to_string(&theirs).unwrap()
         );
-        fs::write(root.file("josh"), "name: Broken\n").unwrap();
+        fs::write(file(&root, "josh"), "name: Broken\n").unwrap();
         assert!(
             catalog
                 .save(Some("josh"), mine.clone(), Some(&original), false)
                 .is_err()
         );
-        fs::remove_file(root.file("josh")).unwrap();
+        fs::remove_file(file(&root, "josh")).unwrap();
         assert!(
             catalog
                 .save(Some("josh"), mine.clone(), Some(&original), false)
@@ -894,13 +821,13 @@ mod tests {
         catalog
             .save(Some("josh"), mine.clone(), Some(&original), true)
             .unwrap();
-        assert_eq!(root.catalog(false).entries[0].definition, mine);
+        assert_eq!(open_catalog(&root, false).entries[0].definition, mine);
     }
 
     #[test]
     fn renames_and_deletes_without_damaging_existing_destinations() {
-        let root = TestRoot::new();
-        let mut catalog = root.catalog(false);
+        let root = TempDir::new("adeline-agents");
+        let mut catalog = open_catalog(&root, false);
         let josh = agent("Josh");
         let alice = agent("Alice");
         catalog.save(None, josh.clone(), None, false).unwrap();
@@ -911,12 +838,12 @@ mod tests {
                 .is_err()
         );
         assert_eq!(
-            fs::read_to_string(root.file("alice")).unwrap(),
+            fs::read_to_string(file(&root, "alice")).unwrap(),
             serde_yaml_ng::to_string(&alice).unwrap()
         );
         let mut renamed = josh.clone();
         renamed.name = "Josh Smith".into();
-        let extra = root.file("josh").parent().unwrap().join("notes.txt");
+        let extra = file(&root, "josh").parent().unwrap().join("notes.txt");
         fs::write(&extra, "keep this").unwrap();
         assert!(
             catalog
@@ -924,14 +851,14 @@ mod tests {
                 .is_err()
         );
         assert_eq!(fs::read_to_string(&extra).unwrap(), "keep this");
-        assert!(!root.file("josh-smith").exists());
+        assert!(!file(&root, "josh-smith").exists());
         fs::remove_file(extra).unwrap();
         catalog
             .save(Some("josh"), renamed.clone(), Some(&josh), false)
             .unwrap();
-        assert!(!root.file("josh").exists());
+        assert!(!file(&root, "josh").exists());
         assert_eq!(
-            root.catalog(false)
+            open_catalog(&root, false)
                 .entries
                 .iter()
                 .find(|entry| entry.id == "josh-smith")
@@ -942,25 +869,25 @@ mod tests {
         let mut changed = renamed;
         changed.arguments = vec!["acp".into(), "--external".into()];
         fs::write(
-            root.file("josh-smith"),
+            file(&root, "josh-smith"),
             serde_yaml_ng::to_string(&changed).unwrap(),
         )
         .unwrap();
         assert!(catalog.delete("josh-smith").is_err());
-        assert!(root.file("josh-smith").exists());
+        assert!(file(&root, "josh-smith").exists());
         catalog.refresh();
         catalog.delete("josh-smith").unwrap();
-        assert!(!root.file("josh-smith").parent().unwrap().exists());
+        assert!(!file(&root, "josh-smith").parent().unwrap().exists());
         assert_eq!(catalog.entries.len(), 1);
         assert_eq!(catalog.entries[0].definition, alice);
     }
 
     #[test]
     fn demo_store_never_reads_or_writes_real_definitions() {
-        let root = TestRoot::new();
-        let mut real = root.catalog(false);
+        let root = TempDir::new("adeline-agents");
+        let mut real = open_catalog(&root, false);
         real.save(None, agent("Personal"), None, false).unwrap();
-        let mut demo = root.catalog(true);
+        let mut demo = open_catalog(&root, true);
         assert_eq!(demo.entries.len(), 4);
         assert!(!demo.entries.iter().any(|entry| entry.id == "personal"));
         let first = demo.entries[0].clone();
@@ -971,8 +898,11 @@ mod tests {
         demo.delete(&first.id).unwrap();
         demo.save(None, agent("Session"), None, false).unwrap();
         assert!(demo.entries.iter().any(|entry| entry.id == "session"));
-        assert_eq!(root.catalog(true).entries.len(), 4);
-        assert_eq!(root.catalog(false).entries[0].definition.name, "Personal");
-        assert!(!root.file("session").exists());
+        assert_eq!(open_catalog(&root, true).entries.len(), 4);
+        assert_eq!(
+            open_catalog(&root, false).entries[0].definition.name,
+            "Personal"
+        );
+        assert!(!file(&root, "session").exists());
     }
 }

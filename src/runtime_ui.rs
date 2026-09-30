@@ -220,7 +220,6 @@ impl Adeline {
             )
         {
             self.projects[p].threads[t].status = "blocked".into();
-            self.projects[p].rebuild_counts();
         }
     }
 
@@ -272,7 +271,6 @@ impl Adeline {
         }
         if let Some((p, t)) = self.locate_conversation(id) {
             status.clone_into(&mut self.projects[p].threads[t].status);
-            self.projects[p].rebuild_counts();
         }
         true
     }
@@ -810,9 +808,6 @@ impl Adeline {
                 .is_some_and(|live| !live.processing && !live.storage_failed)
         {
             self.mark_conversation_read(cx);
-            if let Some((project, _)) = self.locate_conversation(&id) {
-                self.projects[project].rebuild_counts();
-            }
         }
         self.refresh_runtime_views(cx);
     }
@@ -1054,7 +1049,6 @@ impl Adeline {
                         thread.mark_read();
                     }
                     self.projects[p].threads[t] = thread;
-                    self.projects[p].rebuild_counts();
                 }
                 let live = self.runtime.conversations.entry(id.clone()).or_default();
                 live.storage_failed = false;

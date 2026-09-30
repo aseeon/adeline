@@ -5,9 +5,6 @@ edition = "2024"
 description = "A native GPUI desktop workspace"
 license = "MIT"
 
-[features]
-ui-profiling = []
-
 [dependencies]
 gpui-kit = "=0.6.6"
 chrono = "0.4"

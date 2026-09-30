@@ -220,23 +220,13 @@ impl ChatList {
         }
     }
 
-    fn record(thread: &Thread) -> prepared::SearchRecord {
-        prepared::SearchRecord {
-            id: Arc::from(thread.id.as_str()),
-            text: thread.search_text.clone(),
-            completed: thread.status == "completed",
-            archived: thread.status == "archived",
-            blocked: thread.status == "blocked",
-            processing: thread.status == "processing",
-            unread: thread.unread(),
-            agent: Arc::from(thread.provider.as_str()),
-            activity: thread.last_activity(),
-        }
-    }
-
     pub fn sync(&mut self, app: &Adeline, criteria: Criteria, cx: &mut Context<Self>) {
-        let records: prepared::SearchCatalog =
-            app.workspace().threads.iter().map(Self::record).collect();
+        let records: prepared::SearchCatalog = app
+            .workspace()
+            .threads
+            .iter()
+            .map(Thread::search_record)
+            .collect();
         if self.project != app.project
             || self.records.len() != records.len()
             || self
@@ -270,8 +260,8 @@ impl ChatList {
                 return;
             }
             let old = &self.records[index];
-            let record = Self::record(thread);
-            let unchanged = old.text.same_snapshot(&record.text)
+            let record = thread.search_record();
+            let unchanged = Arc::ptr_eq(&old.text, &record.text)
                 && old.completed == record.completed
                 && old.archived == record.archived
                 && old.blocked == record.blocked
@@ -280,7 +270,7 @@ impl ChatList {
                 && old.activity == record.activity;
             if !unchanged {
                 self.search_bytes = self.search_bytes - old.text.len() + record.text.len();
-                self.records.replace(index, record);
+                self.records[index] = record;
                 // Status and activity move chats between sections, so the
                 // sections are rebuilt. Explicit actions skip the typing delay.
                 self.search(self.criteria.clone(), false, cx);
@@ -603,7 +593,6 @@ impl Render for ChatList {
             self.state.splice(0..count, count);
             self.state.scroll_to(top);
         }
-        ui_metrics::record(ui_metrics::Region::Sidebar);
         if self
             .owner
             .upgrade()
@@ -722,12 +711,9 @@ impl Render for ChatList {
                 let section_view = section_view.clone();
                 list(self.state.clone(), move |ix, _, cx| match items[ix] {
                     Item::Section(slot) => section_view(slot, LabelPlacement::Inline, cx),
-                    Item::Chat(row) => {
-                        ui_metrics::record(ui_metrics::Region::ChatRow);
-                        owner
-                            .update(cx, |app, cx| app.chat_card(row, cx))
-                            .unwrap_or_else(|_| div().into_any_element())
-                    }
+                    Item::Chat(row) => owner
+                        .update(cx, |app, cx| app.chat_card(row, cx))
+                        .unwrap_or_else(|_| div().into_any_element()),
                     Item::End => div().h(rems(END_HEIGHT)).into_any_element(),
                     Item::Tail => div().h(tail).into_any_element(),
                 })
@@ -909,7 +895,6 @@ impl Render for Transcript {
             self.state.splice(0..count, count);
             self.state.scroll_to(top);
         }
-        ui_metrics::record(ui_metrics::Region::Transcript);
         // The header and composer float over the transcript so its scrollbar runs
         // the full height; the messages start and end clear of both.
         let gap = window.rem_size() * 0.5;
@@ -925,7 +910,6 @@ impl Render for Transcript {
         let messages = self.messages;
         let footer_focus = self.footer_focus.clone();
         let rows = list(self.state.clone(), move |row, _, cx| {
-            ui_metrics::record(ui_metrics::Region::MessageRow);
             owner
                 .update(cx, |app, cx| {
                     if row < messages {
@@ -989,7 +973,6 @@ impl Composer {
 
 impl Render for Composer {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        ui_metrics::record(ui_metrics::Region::Composer);
         self.owner
             .update(cx, |app, cx| app.composer_view(cx).into_any_element())
             .unwrap_or_else(|_| div().into_any_element())
@@ -999,7 +982,6 @@ impl Render for Composer {
 pub(super) struct Header(pub WeakEntity<Adeline>);
 impl Render for Header {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        ui_metrics::record(ui_metrics::Region::Header);
         self.0
             .update(cx, |app, cx| {
                 app.header(window, cx).w_full().into_any_element()
@@ -1044,8 +1026,6 @@ impl Adeline {
                 | ShowCompleted
                 | ShowArchived
                 | HideToolCalls
-                | LeftPanel(_)
-                | RightPanel(_)
                 | ToggleLeftPanel
                 | ToggleSidePanel
         ) {

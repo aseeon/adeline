@@ -1,29 +1,14 @@
 use super::*;
 
-struct TestRoot(PathBuf);
-impl TestRoot {
-    fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "adeline-storage-{}-{}",
-            std::process::id(),
-            NEXT_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        fs::create_dir(&path).unwrap();
-        Self(path)
-    }
-    fn working(&self, name: &str) -> PathBuf {
-        let path = self.0.join(name);
-        fs::create_dir(&path).unwrap();
-        path
-    }
-    fn store(&self) -> ProjectStore {
-        ProjectStore::with_root(self.0.join("projects"))
-    }
+use crate::files::TempDir;
+
+fn working(root: &Path, name: &str) -> PathBuf {
+    let path = root.join(name);
+    fs::create_dir(&path).unwrap();
+    path
 }
-impl Drop for TestRoot {
-    fn drop(&mut self) {
-        fs::remove_dir_all(&self.0).unwrap();
-    }
+fn open_store(root: &Path) -> ProjectStore {
+    ProjectStore::with_root(root.join("projects"))
 }
 
 fn agent() -> AgentDefinition {
@@ -42,9 +27,9 @@ fn agent() -> AgentDefinition {
 
 #[test]
 fn conversations_snapshot_effort_parameter_and_restore_legacy_defaults() {
-    let test = TestRoot::new();
-    let work = test.working("work");
-    let mut store = test.store();
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let mut store = open_store(&test);
     let project = store.save_project(None, "Project", &work).unwrap();
     for parameter in agents::EffortParameterName::ALL {
         let mut definition = agent();
@@ -52,7 +37,7 @@ fn conversations_snapshot_effort_parameter_and_restore_legacy_defaults() {
         let id = store
             .create_conversation(&project, &definition, "Hello")
             .unwrap();
-        let restored = test.store();
+        let restored = open_store(&test);
         let execution = &restored.conversation(&id).unwrap().settings.execution;
         assert_eq!(execution.effort_parameter_name, parameter);
         let mut legacy = serde_yaml_ng::to_value(execution).unwrap();
@@ -70,9 +55,9 @@ fn conversations_snapshot_effort_parameter_and_restore_legacy_defaults() {
 
 #[test]
 fn non_omp_conversation_restores_its_harness_and_legacy_snapshots_use_omp() {
-    let test = TestRoot::new();
-    let work = test.working("work");
-    let mut store = test.store();
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let mut store = open_store(&test);
     let project = store.save_project(None, "Project", &work).unwrap();
     let mut definition = agent();
     definition.harness = "Other".into();
@@ -86,7 +71,7 @@ fn non_omp_conversation_restores_its_harness_and_legacy_snapshots_use_omp() {
     );
     drop(store);
     assert_eq!(
-        test.store()
+        open_store(&test)
             .conversation(&id)
             .unwrap()
             .settings
@@ -95,9 +80,14 @@ fn non_omp_conversation_restores_its_harness_and_legacy_snapshots_use_omp() {
         "Other"
     );
 
-    let mut snapshot =
-        serde_yaml_ng::to_value(&test.store().conversation(&id).unwrap().settings.execution)
-            .unwrap();
+    let mut snapshot = serde_yaml_ng::to_value(
+        &open_store(&test)
+            .conversation(&id)
+            .unwrap()
+            .settings
+            .execution,
+    )
+    .unwrap();
     snapshot.as_mapping_mut().unwrap().remove("harness");
     let restored: ExecutionConfig = serde_yaml_ng::from_value(snapshot).unwrap();
     assert_eq!(restored.harness, "OMP");
@@ -105,10 +95,10 @@ fn non_omp_conversation_restores_its_harness_and_legacy_snapshots_use_omp() {
 
 #[test]
 fn project_rename_preserves_history_and_directory_snapshot() {
-    let test = TestRoot::new();
-    let work = test.working("work");
-    let next = test.working("next");
-    let mut store = test.store();
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let next = working(&test, "next");
+    let mut store = open_store(&test);
     assert!(
         store
             .save_project(None, "Bad", Path::new("relative"))
@@ -116,7 +106,7 @@ fn project_rename_preserves_history_and_directory_snapshot() {
     );
     assert!(
         store
-            .save_project(None, "Bad", &test.0.join("missing"))
+            .save_project(None, "Bad", &test.join("missing"))
             .is_err()
     );
     let id = store
@@ -124,7 +114,7 @@ fn project_rename_preserves_history_and_directory_snapshot() {
         .unwrap();
     assert_eq!(id, "example-project");
     assert!(store.save_project(None, "Example Project", &work).is_err());
-    let project_file = test.0.join("projects/example-project/project.yml");
+    let project_file = test.join("projects/example-project/project.yml");
     let yaml = fs::read_to_string(&project_file).unwrap();
     let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
     assert_eq!(document.as_mapping().unwrap().len(), 2);
@@ -170,12 +160,8 @@ fn project_rename_preserves_history_and_directory_snapshot() {
         .save_project(Some(&id), "Changed Project", &next)
         .unwrap();
     assert_eq!(renamed, "changed-project");
-    assert!(
-        test.0
-            .join("projects/changed-project/conversations")
-            .is_dir()
-    );
-    assert!(!test.0.join("projects/example-project").exists());
+    assert!(test.join("projects/changed-project/conversations").is_dir());
+    assert!(!test.join("projects/example-project").exists());
     assert!(
         store
             .create_conversation(&renamed, &agent(), "New")
@@ -185,7 +171,7 @@ fn project_rename_preserves_history_and_directory_snapshot() {
     );
     drop(store);
 
-    let mut reloaded = test.store();
+    let mut reloaded = open_store(&test);
     assert!(reloaded.errors.is_empty(), "{:?}", reloaded.errors);
     assert_eq!(reloaded.projects[0].name, "Changed Project");
     assert_eq!(
@@ -214,12 +200,12 @@ fn project_rename_preserves_history_and_directory_snapshot() {
         PermissionMode::AllowEverything
     );
     fs::write(
-        test.0.join("projects/changed-project/foreign.txt"),
+        test.join("projects/changed-project/foreign.txt"),
         b"leave alone",
     )
     .unwrap();
     assert!(reloaded.delete_project(&renamed).is_err());
-    fs::remove_file(test.0.join("projects/changed-project/foreign.txt")).unwrap();
+    fs::remove_file(test.join("projects/changed-project/foreign.txt")).unwrap();
     reloaded.delete_project(&renamed).unwrap();
     assert!(work.is_dir());
     assert!(next.is_dir());
@@ -227,18 +213,18 @@ fn project_rename_preserves_history_and_directory_snapshot() {
 
 #[test]
 fn opened_time_persists_and_survives_a_rename() {
-    let test = TestRoot::new();
-    let work = test.working("work");
-    let mut store = test.store();
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let mut store = open_store(&test);
     let id = store.save_project(None, "Opened", &work).unwrap();
     assert_eq!(store.projects[0].opened_at, None);
     assert!(store.mark_opened("missing", 1).is_err());
     store.mark_opened(&id, 1_700_000_000).unwrap();
-    assert_eq!(test.store().projects[0].opened_at, Some(1_700_000_000));
+    assert_eq!(open_store(&test).projects[0].opened_at, Some(1_700_000_000));
     let renamed = store
         .save_project(Some(&id), "Opened Again", &work)
         .unwrap();
-    let reloaded = test.store();
+    let reloaded = open_store(&test);
     let project = reloaded.projects.iter().find(|p| p.id == renamed).unwrap();
     assert_eq!(project.opened_at, Some(1_700_000_000));
     assert_eq!(project.to_workspace().config.opened_at, Some(1_700_000_000));
@@ -246,9 +232,9 @@ fn opened_time_persists_and_survives_a_rename() {
 
 #[test]
 fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
-    let test = TestRoot::new();
-    let work = test.working("work");
-    let mut store = test.store();
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
     let conversation = store.create_conversation(&id, &agent(), "Hello").unwrap();
     store
@@ -383,7 +369,6 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
         )
         .unwrap();
     let transcript = test
-        .0
         .join("projects/project/conversations")
         .join(&conversation)
         .join("transcript.jsonl");
@@ -397,7 +382,7 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
     }));
     drop(store);
 
-    let reloaded = test.store();
+    let reloaded = open_store(&test);
     assert!(reloaded.errors.is_empty(), "{:?}", reloaded.errors);
     let thread = reloaded.conversation(&conversation).unwrap().to_thread();
     assert_eq!(
@@ -427,7 +412,7 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
     assert_eq!(thread.context, Some((38_000, 200_000)));
     assert_eq!(thread.activity[1].title, "provider unavailable");
     fs::remove_dir(&work).unwrap();
-    let mut reloaded = test.store();
+    let mut reloaded = open_store(&test);
     assert_eq!(
         reloaded
             .conversation(&conversation)
@@ -446,15 +431,14 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
 
 #[test]
 fn write_failure_retains_events_and_explicit_retry_appends_once() {
-    let test = TestRoot::new();
-    let work = test.working("work");
-    let mut store = test.store();
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
     let conversation = store.create_conversation(&id, &agent(), "Hello").unwrap();
     let saved = TranscriptEvent::new("message", serde_json::json!({"role":"user","text":"saved"}));
     store.record_event(&conversation, &saved).unwrap();
     let transcript = test
-        .0
         .join("projects/project/conversations")
         .join(&conversation)
         .join("transcript.jsonl");
@@ -517,7 +501,7 @@ fn write_failure_retains_events_and_explicit_retry_appends_once() {
         saved
     );
     assert_eq!(
-        test.store()
+        open_store(&test)
             .conversation(&conversation)
             .unwrap()
             .to_thread()
@@ -529,13 +513,12 @@ fn write_failure_retains_events_and_explicit_retry_appends_once() {
 
 #[test]
 fn failed_settings_write_preserves_pending_state_until_retry() {
-    let test = TestRoot::new();
-    let work = test.working("work");
-    let mut store = test.store();
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
     let conversation = store.create_conversation(&id, &agent(), "Hello").unwrap();
     let settings_path = test
-        .0
         .join("projects/project/conversations")
         .join(&conversation)
         .join("conversation.yml");
@@ -576,7 +559,7 @@ fn failed_settings_write_preserves_pending_state_until_retry() {
             .is_none()
     );
     assert_eq!(
-        test.store()
+        open_store(&test)
             .conversation(&conversation)
             .unwrap()
             .settings
@@ -588,9 +571,9 @@ fn failed_settings_write_preserves_pending_state_until_retry() {
 
 #[test]
 fn bad_transcript_keeps_prior_history_and_exposes_error() {
-    let test = TestRoot::new();
-    let work = test.working("work");
-    let mut store = test.store();
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
     let conversation = store.create_conversation(&id, &agent(), "Hello").unwrap();
     store
@@ -608,7 +591,6 @@ fn bad_transcript_keeps_prior_history_and_exposes_error() {
         .update_conversation(&id, &conversation, settings)
         .unwrap();
     let path = test
-        .0
         .join("projects/project/conversations")
         .join(&conversation)
         .join("transcript.jsonl");
@@ -620,7 +602,7 @@ fn bad_transcript_keeps_prior_history_and_exposes_error() {
         .unwrap();
     drop(store);
 
-    let mut reloaded = test.store();
+    let mut reloaded = open_store(&test);
     assert!(
         reloaded
             .errors
@@ -686,13 +668,13 @@ fn bad_transcript_keeps_prior_history_and_exposes_error() {
 
 #[test]
 fn unsafe_config_contents_block_delete_without_touching_workdir() {
-    let test = TestRoot::new();
-    let work = test.working("work");
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
     let sentinel = work.join("never-delete.txt");
     fs::write(&sentinel, b"important").unwrap();
-    let mut store = test.store();
+    let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
-    let project_folder = test.0.join("projects/project");
+    let project_folder = test.join("projects/project");
     assert!(
         store
             .save_project(Some(&id), "Project", &project_folder)
@@ -707,7 +689,7 @@ fn unsafe_config_contents_block_delete_without_touching_workdir() {
     })
     .unwrap();
     fs::write(&config_file, malicious_yaml).unwrap();
-    let mut loaded = test.store();
+    let mut loaded = open_store(&test);
     assert!(
         loaded
             .errors
@@ -717,7 +699,7 @@ fn unsafe_config_contents_block_delete_without_touching_workdir() {
     assert!(loaded.delete_project(&id).is_err());
     assert!(store.delete_project(&id).is_err());
     fs::write(&config_file, original_yaml).unwrap();
-    let folder = test.0.join("projects/project/conversations");
+    let folder = test.join("projects/project/conversations");
     fs::write(folder.join("extra-file"), b"keep").unwrap();
     assert!(store.delete_project(&id).is_err());
     assert_eq!(fs::read(&sentinel).unwrap(), b"important");

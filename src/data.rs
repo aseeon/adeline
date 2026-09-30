@@ -4,8 +4,6 @@ use std::path::PathBuf;
 #[derive(Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Workspace {
-    #[serde(skip)]
-    pub counts: [usize; 4],
     pub config: Config,
     pub threads: Vec<Thread>,
     pub decisions: Vec<Decision>,
@@ -118,7 +116,6 @@ pub fn load() -> Vec<Workspace> {
             }
             thread.prepare_search();
         }
-        project.rebuild_counts();
     }
     projects
 }
@@ -152,12 +149,13 @@ fn shift_to(projects: &mut [Workspace], now: i64) {
 
 impl Thread {
     pub fn push_message(&mut self, message: Message) {
-        if self.search_text.len() == 0 {
+        if self.search_text.is_empty() {
             self.prepare_search();
         }
         let separator = if self.messages.is_empty() { "" } else { " " };
-        self.search_text
-            .append(&format!("{separator}{}", message.text).to_lowercase());
+        self.search_text = format!("{}{separator}{}", self.search_text, message.text)
+            .to_lowercase()
+            .into();
         if message.role == "assistant" && !message.read {
             self.unread_messages.push(self.messages.len());
         }
@@ -224,13 +222,19 @@ impl Thread {
             self.messages[index].read = true;
         }
     }
-    pub fn flags(&self) -> [usize; 4] {
-        [
-            1,
-            usize::from(self.status == "blocked"),
-            usize::from(self.status == "processing"),
-            usize::from(self.unread()),
-        ]
+    /// What the chat list searches and sorts by.
+    pub fn search_record(&self) -> crate::prepared::SearchRecord {
+        crate::prepared::SearchRecord {
+            id: std::sync::Arc::from(self.id.as_str()),
+            text: self.search_text.clone(),
+            completed: self.status == "completed",
+            archived: self.status == "archived",
+            blocked: self.status == "blocked",
+            processing: self.status == "processing",
+            unread: self.unread(),
+            agent: std::sync::Arc::from(self.provider.as_str()),
+            activity: self.last_activity(),
+        }
     }
     pub fn prepare_search(&mut self) {
         self.unread_messages = self
@@ -252,20 +256,6 @@ impl Thread {
         .to_lowercase()
         .into();
     }
-    /// Whether the chat shows for a search and tab (0 all, 1 needs input,
-    /// 2 processing), with completed and archived chats each shown only when
-    /// asked for.
-    #[cfg(test)]
-    pub fn matches(&self, query: &str, filter: usize, completed: bool, archived: bool) -> bool {
-        (completed || self.status != "completed")
-            && (archived || self.status != "archived")
-            && match filter {
-                1 => self.status == "blocked",
-                2 => self.status == "processing",
-                _ => true,
-            }
-            && (query.is_empty() || self.search_text.contains(&query.to_lowercase()))
-    }
 }
 impl Workspace {
     pub fn attention_count(&self) -> usize {
@@ -273,19 +263,6 @@ impl Workspace {
             .iter()
             .filter(|thread| thread.status == "blocked" || thread.unread())
             .count()
-    }
-    pub fn rebuild_counts(&mut self) {
-        self.counts = [0; 4];
-        for thread in &self.threads {
-            for (count, value) in self.counts.iter_mut().zip(thread.flags()) {
-                *count += value;
-            }
-        }
-    }
-    pub fn update_counts(&mut self, before: [usize; 4], after: [usize; 4]) {
-        for ((count, before), after) in self.counts.iter_mut().zip(before).zip(after) {
-            *count = *count - before + after;
-        }
     }
 }
 
@@ -302,17 +279,33 @@ pub fn image_asset(path: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::prepared::{Criteria, search};
+
+    /// Whether the chat list shows a chat for a search and tab (0 all, 1 needs
+    /// input, 2 processing), with completed and archived chats each shown only
+    /// when asked for.
+    fn shows(thread: &Thread, query: &str, filter: usize, completed: bool, archived: bool) -> bool {
+        let criteria = Criteria {
+            query: query.to_lowercase(),
+            filter,
+            completed,
+            archived,
+            agent: None,
+        };
+        search([thread.search_record()].iter(), &criteria, 0).matches() == 1
+    }
+
     #[test]
     fn completed_and_archived_conversations_show_only_when_asked_for() {
         let mut thread = Thread {
             status: "completed".into(),
             ..Default::default()
         };
-        assert!(!thread.matches("", 0, false, true));
-        assert!(thread.matches("", 0, true, false));
+        assert!(!shows(&thread, "", 0, false, true));
+        assert!(shows(&thread, "", 0, true, false));
         thread.status = "archived".into();
-        assert!(!thread.matches("", 0, true, false));
-        assert!(thread.matches("", 0, false, true));
+        assert!(!shows(&thread, "", 0, true, false));
+        assert!(shows(&thread, "", 0, false, true));
     }
 
     #[test]
@@ -370,8 +363,7 @@ mod tests {
     }
     #[test]
     fn demo_chats_fill_every_section_whenever_the_demo_runs() {
-        use crate::prepared::{Criteria, Group, SearchRecord, search};
-        use std::sync::Arc;
+        use crate::prepared::Group;
         // Noon UTC on two dates far apart; sections follow UTC days.
         for now in [1_790_510_400, 4_102_488_000] {
             let mut projects = load();
@@ -381,17 +373,7 @@ mod tests {
             let records: Vec<_> = projects[0]
                 .threads
                 .iter()
-                .map(|t| SearchRecord {
-                    id: Arc::from(t.id.as_str()),
-                    text: t.search_text.clone(),
-                    completed: t.status == "completed",
-                    archived: t.status == "archived",
-                    blocked: t.status == "blocked",
-                    processing: t.status == "processing",
-                    unread: t.unread(),
-                    agent: Arc::from(t.provider.as_str()),
-                    activity: t.last_activity(),
-                })
+                .map(Thread::search_record)
                 .collect();
             let criteria = Criteria {
                 completed: true,
@@ -423,20 +405,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn cached_badges_follow_one_thread_mutation() {
-        let mut projects = load();
-        let workspace = &mut projects[0];
-        for index in 0..workspace.threads.len() {
-            let before = workspace.threads[index].flags();
-            workspace.threads[index].mark_read();
-            workspace.threads[index].status = "processing".into();
-            workspace.update_counts(before, workspace.threads[index].flags());
-            let mut expected = workspace.clone();
-            expected.rebuild_counts();
-            assert_eq!(workspace.counts, expected.counts);
-        }
-    }
     #[test]
     fn prepared_search_matches_original_full_text_semantics_and_edits() {
         let mut thread = Thread {
@@ -475,7 +443,7 @@ mod tests {
             )
             .to_lowercase();
             assert_eq!(
-                thread.matches(query, 0, true, true),
+                shows(&thread, query, 0, true, true),
                 original.contains(&query.to_lowercase())
             );
         }
@@ -484,8 +452,8 @@ mod tests {
             ..Default::default()
         });
         thread.prepare_search();
-        assert!(thread.matches("newly APPENDED", 0, true, true));
-        assert!(!thread.matches("anything", 1, true, true));
+        assert!(shows(&thread, "newly APPENDED", 0, true, true));
+        assert!(!shows(&thread, "anything", 1, true, true));
     }
     #[test]
     fn fixture_keeps_chat_activity_and_decisions_with_their_projects() {
@@ -572,14 +540,14 @@ mod tests {
             .iter()
             .find(|t| t.id == "adeline-session")
             .unwrap();
-        assert!(t.matches("SESSION", 1, false, false));
-        assert!(!t.matches("session", 2, true, true));
-        assert!(!t.matches("no matching text", 0, true, true));
+        assert!(shows(t, "SESSION", 1, false, false));
+        assert!(!shows(t, "session", 2, true, true));
+        assert!(!shows(t, "no matching text", 0, true, true));
         let done = p[0]
             .threads
             .iter()
             .find(|t| t.status == "completed")
             .unwrap();
-        assert!(!done.matches("", 0, false, false));
+        assert!(!shows(done, "", 0, false, false));
     }
 }

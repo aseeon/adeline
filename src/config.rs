@@ -19,11 +19,9 @@ pub struct General {
     pub keymap: Keymap,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
+// Not `deny_unknown_fields`: old files carry flags that no longer exist.
+#[serde(default)]
 pub struct Features {
-    // Accept old settings files; picker selections now always close the popup.
-    #[serde(skip_serializing)]
-    pub close_picker_after_selection: bool,
     pub machine_selector: bool,
     pub docs: bool,
     pub workflows: bool,
@@ -35,7 +33,6 @@ pub struct Features {
 impl Default for Features {
     fn default() -> Self {
         Self {
-            close_picker_after_selection: true,
             machine_selector: false,
             docs: false,
             workflows: false,
@@ -304,22 +301,11 @@ pub fn bind_keys(cx: &mut gpui_kit::App) {
 }
 pub fn write_yaml(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let text = serde_yaml_ng::to_string(value).map_err(|e| e.to_string())?;
-    let temporary = path.with_extension("yml.tmp");
-    std::fs::write(&temporary, text).map_err(|e| format!("{}: {e}", temporary.display()))?;
-    std::fs::rename(&temporary, path).map_err(|e| format!("{}: {e}", path.display()))
+    crate::files::replace(path, text.as_bytes())
 }
 pub fn seed_yaml(path: &Path, value: &impl Serialize) -> Result<(), String> {
-    use std::io::Write;
     let text = serde_yaml_ng::to_string(value).map_err(|e| e.to_string())?;
-    match std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-    {
-        Ok(mut file) => file.write_all(text.as_bytes()).map_err(|e| e.to_string()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
-        Err(e) => Err(format!("{}: {e}", path.display())),
-    }
+    crate::files::seed(path, text.as_bytes())
 }
 fn read(path: &Path) -> Result<Settings, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
@@ -385,30 +371,13 @@ impl super::Adeline {
     }
     pub(super) fn save_settings(&self, action: &super::Action) -> Result<(), String> {
         use super::{Action, Section};
-        if !(matches!(
-            action,
-            Action::ShowCompleted
-                | Action::ShowArchived
-                | Action::LeftPanel(Section::Chats)
-                | Action::RightPanel(Section::Chats)
-        ) || (self.section == Section::Chats
-            && matches!(action, Action::ToggleLeftPanel | Action::ToggleSidePanel)))
-        {
-            return Ok(());
-        }
         update(|s| match action {
             Action::ShowCompleted => s.modes.chats.show_completed_chats = self.show_completed,
             Action::ShowArchived => s.modes.chats.show_archived_chats = self.show_archived,
-            Action::LeftPanel(Section::Chats) => {
+            Action::ToggleLeftPanel => {
                 s.modes.chats.show_left_panel = self.left_panel_open[Section::Chats as usize];
             }
-            Action::RightPanel(Section::Chats) => {
-                s.modes.chats.show_agent_activity = self.side_panel_open[Section::Chats as usize];
-            }
-            Action::ToggleLeftPanel if self.section == Section::Chats => {
-                s.modes.chats.show_left_panel = self.left_panel_open[Section::Chats as usize];
-            }
-            Action::ToggleSidePanel if self.section == Section::Chats => {
+            Action::ToggleSidePanel => {
                 s.modes.chats.show_agent_activity = self.side_panel_open[Section::Chats as usize];
             }
             _ => (),

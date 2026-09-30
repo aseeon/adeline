@@ -1,4 +1,5 @@
 //! Durable project definitions, conversation snapshots and ordered transcript events.
+use crate::files::{self, checked_id, error as file_error};
 use crate::{
     agents::{self, AgentDefinition, PermissionMode},
     data,
@@ -9,11 +10,8 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
 };
-
-static NEXT_ID: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -279,7 +277,7 @@ pub struct ProjectRecord {
 
 impl ProjectRecord {
     pub fn to_workspace(&self) -> data::Workspace {
-        let mut workspace = data::Workspace {
+        data::Workspace {
             config: data::Config {
                 id: self.id.clone(),
                 name: self.name.clone(),
@@ -293,9 +291,7 @@ impl ProjectRecord {
                 .map(StoredConversation::to_thread)
                 .collect(),
             ..Default::default()
-        };
-        workspace.rebuild_counts();
-        workspace
+        }
     }
 }
 
@@ -517,7 +513,7 @@ impl ProjectStore {
             if id != old {
                 fs::rename(&old_path, &destination).map_err(|e| file_error(&old_path, e))?;
             }
-            let write = replace_file(&destination.join("project.yml"), text.as_bytes());
+            let write = files::replace(&destination.join("project.yml"), text.as_bytes());
             if let Err(error) = write {
                 if id != old {
                     let _ = fs::rename(&destination, &old_path);
@@ -536,7 +532,7 @@ impl ProjectStore {
             fs::create_dir(&destination).map_err(|e| file_error(&destination, e))?;
             let result = fs::create_dir(destination.join("conversations"))
                 .map_err(|e| file_error(&destination, e))
-                .and_then(|()| write_new_file(&destination.join("project.yml"), text.as_bytes()));
+                .and_then(|()| files::write_new(&destination.join("project.yml"), text.as_bytes()));
             if let Err(error) = result {
                 let _ = fs::remove_dir(destination.join("conversations"));
                 let _ = fs::remove_dir(&destination);
@@ -570,7 +566,7 @@ impl ProjectStore {
             opened_at: Some(at),
         };
         let text = serde_yaml_ng::to_string(&definition).map_err(|e| e.to_string())?;
-        replace_file(&folder.join("project.yml"), text.as_bytes())?;
+        files::replace(&folder.join("project.yml"), text.as_bytes())?;
         project.opened_at = Some(at);
         Ok(())
     }
@@ -659,12 +655,7 @@ impl ProjectStore {
             previous_session_ids: Vec::new(),
         };
         let id = loop {
-            let id = format!(
-                "{:x}-{:x}-{:x}",
-                now_nanos(),
-                std::process::id(),
-                NEXT_ID.fetch_add(1, Ordering::Relaxed)
-            );
+            let id = files::unique(&format!("{:x}", now_nanos()));
             match fs::create_dir(base.join(&id)) {
                 Ok(()) => break id,
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
@@ -673,8 +664,8 @@ impl ProjectStore {
         };
         let folder = base.join(&id);
         let text = serde_yaml_ng::to_string(&settings).map_err(|e| e.to_string())?;
-        let result = write_new_file(&folder.join("conversation.yml"), text.as_bytes())
-            .and_then(|()| write_new_file(&folder.join("transcript.jsonl"), b""));
+        let result = files::write_new(&folder.join("conversation.yml"), text.as_bytes())
+            .and_then(|()| files::write_new(&folder.join("transcript.jsonl"), b""));
         if let Err(error) = result {
             let _ = fs::remove_file(folder.join("conversation.yml"));
             let _ = fs::remove_dir(&folder);
@@ -836,7 +827,7 @@ fn flush_settings(conversation: &mut StoredConversation, path: &Path) -> Result<
             .as_ref()
             .expect("pending settings");
         let text = serde_yaml_ng::to_string(settings).map_err(|e| file_error(path, e))?;
-        replace_file(path, text.as_bytes())
+        files::replace(path, text.as_bytes())
     })();
     match result {
         Ok(()) => {
@@ -996,16 +987,6 @@ fn now_nanos() -> u128 {
 fn now_millis() -> u64 {
     u64::try_from(now_nanos() / 1_000_000).unwrap_or(u64::MAX)
 }
-fn file_error(path: &Path, error: impl std::fmt::Display) -> String {
-    format!("{}: {error}", path.display())
-}
-fn checked_id(id: &str) -> Result<(), String> {
-    if agents::normalize_name(id).as_deref() == Ok(id) {
-        Ok(())
-    } else {
-        Err(format!("Invalid storage folder: {id}"))
-    }
-}
 fn outside_project_storage(directory: &Path, root: &Path) -> Result<(), String> {
     let root_path = fs::canonicalize(root).map_err(|e| file_error(root, e))?;
     if directory.starts_with(root)
@@ -1103,39 +1084,6 @@ fn check_contents(folder: &Path, allowed: &[&str]) -> Result<(), String> {
     }
     Ok(())
 }
-fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|e| file_error(path, e))?;
-    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-        drop(file);
-        let _ = fs::remove_file(path);
-        return Err(file_error(path, error));
-    }
-    Ok(())
-}
-fn replace_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let suffix = NEXT_ID.fetch_add(1, Ordering::Relaxed);
-    let temp = path.with_extension(format!("tmp-{}-{suffix}", std::process::id()));
-    write_new_file(&temp, bytes)?;
-    // Windows rename does not replace an existing file. Keep the original until
-    // the new file is fully synced, and restore it if installing the new one fails.
-    let backup = path.with_extension(format!("bak-{}-{suffix}", std::process::id()));
-    if let Err(error) = fs::rename(path, &backup) {
-        let _ = fs::remove_file(&temp);
-        return Err(file_error(path, error));
-    }
-    if let Err(error) = fs::rename(&temp, path) {
-        let _ = fs::rename(&backup, path);
-        let _ = fs::remove_file(&temp);
-        return Err(file_error(path, error));
-    }
-    let _ = fs::remove_file(&backup);
-    Ok(())
-}
-
 #[cfg(test)]
 #[path = "storage_tests.rs"]
 mod tests;

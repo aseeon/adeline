@@ -6,6 +6,7 @@ mod chat;
 mod chat_render;
 mod config;
 mod data;
+mod files;
 mod fonts;
 mod interaction;
 mod panes;
@@ -18,7 +19,6 @@ mod settings;
 mod storage;
 mod themed_icon;
 mod titlebar;
-mod ui_metrics;
 mod views;
 use data::*;
 use gpui_kit::base::actions::Cancel;
@@ -160,8 +160,6 @@ enum Action {
     QuitApp,
     Settings,
     AppSettings,
-    LeftPanel(Section),
-    RightPanel(Section),
     ModeSettings,
     ConfigureModeSettings,
     Close,
@@ -294,16 +292,6 @@ impl Adeline {
         } else {
             store.to_workspaces()
         };
-        #[cfg(feature = "ui-profiling")]
-        let projects = if demo_mode {
-            ui_metrics::stress_fixture(projects)
-        } else {
-            projects
-        };
-        let mut projects = projects;
-        for project in &mut projects {
-            project.rebuild_counts();
-        }
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats"));
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -600,7 +588,6 @@ impl Adeline {
 }
 impl Render for Adeline {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        ui_metrics::record(ui_metrics::Region::Shell);
         let body = if !self.has_open_project() {
             col()
                 .size_full()

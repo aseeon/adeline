@@ -11,7 +11,6 @@ use std::{cell::RefCell, collections::BTreeMap, path::Path};
 include!(concat!(env!("OUT_DIR"), "/themes.rs"));
 
 fn seed_bundled_themes(directory: &Path) -> Result<(), String> {
-    use std::io::Write;
     std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
     for &(name, contents) in BUNDLED_THEMES {
         let theme: ThemeFile =
@@ -19,18 +18,7 @@ fn seed_bundled_themes(directory: &Path) -> Result<(), String> {
         theme
             .validate()
             .map_err(|e| format!("Bundled theme {name}: {e}"))?;
-        let path = directory.join(name);
-        match std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
-        {
-            Ok(mut file) => file
-                .write_all(contents.as_bytes())
-                .map_err(|e| format!("{}: {e}", path.display()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => (),
-            Err(e) => return Err(format!("{}: {e}", path.display())),
-        }
+        crate::files::seed(&directory.join(name), contents.as_bytes())?;
     }
     Ok(())
 }

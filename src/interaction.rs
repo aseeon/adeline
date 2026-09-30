@@ -47,13 +47,6 @@ impl Adeline {
         }
         let changed = action.clone();
         let previous_modal = self.modal;
-        let previous_count = self.workspace().threads.len();
-        let changed_thread = match &action {
-            Action::Chat(ix) => Some(*ix),
-            Action::Complete | Action::Decision(_) | Action::Send => self.selected,
-            _ => None,
-        };
-        let previous_flags = changed_thread.map(|ix| self.workspace().threads[ix].flags());
         match action {
             Action::AppSettings => settings::open(
                 window.window_handle().downcast::<Root>().unwrap(),
@@ -221,26 +214,8 @@ impl Adeline {
                 self.transcript
                     .update(cx, |view, cx| view.sync(self, false, cx));
             }
-            Action::LeftPanel(section) => {
-                if section == Section::Chats {
-                    self.left_panel_open[0] = !self.left_panel_open[0];
-                }
-            }
-            Action::RightPanel(section) => {
-                if section == Section::Chats {
-                    self.side_panel_open[0] = !self.side_panel_open[0];
-                }
-            }
-            Action::ToggleLeftPanel => {
-                if self.section == Section::Chats {
-                    self.left_panel_open[0] = !self.left_panel_open[0];
-                }
-            }
-            Action::ToggleSidePanel => {
-                if self.section == Section::Chats {
-                    self.side_panel_open[0] = !self.side_panel_open[0];
-                }
-            }
+            Action::ToggleLeftPanel => self.left_panel_open[0] = !self.left_panel_open[0],
+            Action::ToggleSidePanel => self.side_panel_open[0] = !self.side_panel_open[0],
             Action::Event(ix) => {
                 self.expanded_event = (self.expanded_event != Some(ix)).then_some(ix);
             }
@@ -419,33 +394,10 @@ impl Adeline {
             | Action::AgentMenu
             | Action::InsertFiles => unreachable!("command surfaces handled above"),
         }
-        if !self.demo_mode
-            && matches!(
-                changed,
-                Action::Chat(_) | Action::Complete | Action::Send | Action::ArchiveChat(_)
-            )
-        {
-            if let Some(project) = self.projects.get_mut(self.project) {
-                project.rebuild_counts();
-            }
-        } else if matches!(
-            changed,
-            Action::Chat(_) | Action::Complete | Action::Decision(_) | Action::Send
-        ) {
-            if self.workspace().threads.len() > previous_count {
-                let flags = self.workspace().threads[0].flags();
-                self.projects[self.project].update_counts([0; 4], flags);
-            } else if let (Some(ix), Some(before)) = (changed_thread, previous_flags) {
-                let after = self.workspace().threads[ix].flags();
-                self.projects[self.project].update_counts(before, after);
-            }
-        }
         if matches!(
             changed,
             Action::ShowCompleted
                 | Action::ShowArchived
-                | Action::LeftPanel(_)
-                | Action::RightPanel(_)
                 | Action::ToggleLeftPanel
                 | Action::ToggleSidePanel
         ) && let Err(error) = self.save_settings(&changed)
