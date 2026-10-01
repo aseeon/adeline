@@ -23,7 +23,7 @@ impl Render for ControlPane {
                     .gap_2()
                     .border_t_1()
                     .border_color(cx.theme().border)
-                    .bg(cx.theme().status_bar)
+                    .bg(cx.theme().status_bar.alpha(titlebar::GLASS))
                     .when(
                         app.has_open_project() && app.section == Section::Chats,
                         |row| {

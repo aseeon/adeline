@@ -9,9 +9,18 @@ use gpui_kit::component::TitleBar;
 /// Height of the main window's title bar: 4px of headroom over the 32px project tabs.
 pub(super) const MAIN_HEIGHT: Pixels = px(36.);
 
+/// Opacity of the main window's chrome over the system blur (Acrylic on Windows, vibrancy on
+/// macOS). Linux has no dependable blur, so its chrome stays opaque.
+pub(super) const GLASS: f32 = if cfg!(target_os = "linux") { 1. } else { 0.7 };
+
 /// Options for a window that draws the unified title bar, so the title bar owns dragging.
 pub(super) fn main_window_options() -> WindowOptions {
     WindowOptions {
+        window_background: if cfg!(target_os = "linux") {
+            WindowBackgroundAppearance::Opaque
+        } else {
+            WindowBackgroundAppearance::Blurred
+        },
         titlebar: Some(TitlebarOptions {
             title: Some("Adeline".into()),
             appears_transparent: true,

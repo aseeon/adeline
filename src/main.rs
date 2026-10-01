@@ -629,7 +629,6 @@ impl Render for Adeline {
             .flex_1()
             .min_h_0()
             .w_full()
-            .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .track_focus(&self.focus)
             .key_context("Adeline")
@@ -665,13 +664,20 @@ impl Render for Adeline {
                         col()
                             .flex_1()
                             .min_w_0()
-                            .child(div().flex_1().min_h_0().child(body))
+                            // The title bar, mode rail and control bar show the window blur;
+                            // the content between them stays opaque.
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_h_0()
+                                    .bg(cx.theme().background)
+                                    .child(body),
+                            )
                             .child(self.control_pane.clone()),
                     ),
             );
         col()
             .size_full()
-            .bg(cx.theme().background)
             .child(content)
             .children(window_layers(window, cx).into_iter().flatten())
     }
@@ -727,7 +733,8 @@ fn main() {
                 })
                 .detach();
                 view.update(cx, |app, cx| window.focus(&app.focus, cx));
-                cx.new(|cx| Root::new(view, window, cx))
+                // Kit's root paints the background, which would hide the window blur.
+                cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
             },
         )
         .expect("open Adeline window");

@@ -179,7 +179,7 @@ impl Adeline {
             .h(titlebar::MAIN_HEIGHT)
             .when(!cfg!(target_os = "macos"), |bar| bar.pl_0())
             .border_b_0()
-            .bg(theme.title_bar)
+            .bg(theme.title_bar.alpha(titlebar::GLASS))
             .child(toolbar);
         // Windows and Linux: the line under the project tabs runs on under Kit's
         // window controls. It is drawn after the title bar so their hover fill
@@ -462,7 +462,7 @@ impl Adeline {
             .flex_shrink_0()
             .items_center()
             .p_2()
-            .bg(theme.title_bar)
+            .bg(theme.title_bar.alpha(titlebar::GLASS))
             .border_r_1()
             .border_color(bar.divider)
             .child(modes)
