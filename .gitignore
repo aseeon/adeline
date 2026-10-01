@@ -50,3 +50,6 @@ Desktop.ini
 
 # Local research material
 /.research/
+
+# Claude Code worktrees
+/.claude/worktrees/
