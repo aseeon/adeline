@@ -111,7 +111,7 @@ impl Adeline {
         cx.notify();
     }
 
-    fn current_id(&self) -> Option<String> {
+    pub(super) fn current_id(&self) -> Option<String> {
         self.selected
             .and_then(|i| self.workspace().threads.get(i))
             .map(|t| t.id.clone())
@@ -127,7 +127,7 @@ impl Adeline {
         })
     }
 
-    fn conversation_settings(&self, id: &str) -> Option<storage::ConversationSettings> {
+    pub(super) fn conversation_settings(&self, id: &str) -> Option<storage::ConversationSettings> {
         let store = self.project_store.lock().ok()?;
         store
             .projects
@@ -152,11 +152,7 @@ impl Adeline {
             });
         }
         if self.demo_mode {
-            return Some(if self.permission == 0 {
-                agents::PermissionMode::Ask
-            } else {
-                agents::PermissionMode::AllowEverything
-            });
+            return Some(agents::PermissionMode::ALL[self.permission]);
         }
         self.current_id()
             .and_then(|id| self.runtime.conversations.get(&id))
@@ -1256,11 +1252,7 @@ impl Adeline {
         let Some(mut settings) = self.conversation_settings(&id) else {
             return;
         };
-        let permission = if mode == 0 {
-            agents::PermissionMode::Ask
-        } else {
-            agents::PermissionMode::AllowEverything
-        };
+        let permission = agents::PermissionMode::ALL[mode];
         settings.permission_mode = permission;
         if self.save_conversation_settings(&id, settings) {
             if let Some(live) = self.runtime.conversations.get_mut(&id) {

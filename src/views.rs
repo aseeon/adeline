@@ -205,7 +205,7 @@ impl Adeline {
                     )
                 }));
                 entries.push(("Add an agent…".into(), Action::AddAgent));
-                entries.push(("Agent settings…".into(), Action::AppSettings));
+                entries.push(("Agent settings…".into(), Action::AgentSettings));
                 if menu == "agent" && self.demo_mode {
                     entries.extend([
                         ("Standard speed".into(), Action::Speed(0)),
@@ -497,7 +497,11 @@ impl Adeline {
                 _subscription: subscription,
             }
         });
-        let width = px(if self.modal == Some("about") { 320. } else { 400. });
+        let width = px(if self.modal == Some("about") {
+            320.
+        } else {
+            400.
+        });
         window.open_dialog(cx, move |dialog, _, cx| {
             let owner = weak.clone();
             let confirm_owner = weak.clone();
@@ -544,14 +548,28 @@ impl Render for ModalContent {
             .update(cx, |app, cx| match app.modal {
                 Some("about") => col()
                     .text_sm()
-                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child("About"))
-                    .child(div().text_base().font_weight(FontWeight::MEDIUM).child("Adeline"))
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("About"),
+                    )
+                    .child(
+                        div()
+                            .text_base()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child("Adeline"),
+                    )
                     .child(
                         div()
                             .text_color(cx.theme().muted_foreground)
                             .child(concat!("Version ", env!("CARGO_PKG_VERSION"))),
                     )
-                    .child(div().pt_3().child("A native workspace for projects and agent conversations."))
+                    .child(
+                        div()
+                            .pt_3()
+                            .child("A native workspace for projects and agent conversations."),
+                    )
                     .when(app.demo_mode, |column| {
                         column.child(
                             div()
@@ -570,10 +588,16 @@ impl Render for ModalContent {
 /// Adeline's dialog surface: popover-colored like the app's menus, and closed
 /// with Escape or Cancel rather than a corner button.
 pub(super) fn styled_dialog(dialog: Dialog, cx: &App) -> Dialog {
-    dialog.w(px(400.)).close_button(false).bg(cx.theme().popover)
+    dialog
+        .w(px(400.))
+        .close_button(false)
+        .bg(cx.theme().popover)
 }
 
 /// A dialog heading sized to the app chrome rather than Kit's large title.
 pub(super) fn dialog_title(title: impl Into<SharedString>) -> Div {
-    div().text_sm().font_weight(FontWeight::MEDIUM).child(title.into())
+    div()
+        .text_sm()
+        .font_weight(FontWeight::MEDIUM)
+        .child(title.into())
 }

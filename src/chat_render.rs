@@ -1101,13 +1101,7 @@ impl Adeline {
                 .accessibility_label(format!("Permissions: {label}"))
                 .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
                     let mut menu = menu.check_side(Side::Right).label("Permissions");
-                    for (ix, choice) in [
-                        agents::PermissionMode::Ask,
-                        agents::PermissionMode::AllowEverything,
-                    ]
-                    .into_iter()
-                    .enumerate()
-                    {
+                    for (ix, choice) in agents::PermissionMode::ALL.into_iter().enumerate() {
                         let owner = owner.clone();
                         menu = menu.item(
                             PopupMenuItem::new(permission_label(choice))
@@ -1690,7 +1684,7 @@ fn execution_setting(
                 .item(
                     PopupMenuItem::new("Agent settings…").on_click(move |_, window, cx| {
                         let _ = owner.update(cx, |app, cx| {
-                            app.act(Action::AppSettings, window, cx);
+                            app.act(Action::AgentSettings, window, cx);
                         });
                     }),
                 )
@@ -1716,6 +1710,7 @@ fn count(number: usize, noun: &str) -> String {
 fn permission_label(mode: agents::PermissionMode) -> &'static str {
     match mode {
         agents::PermissionMode::Ask => "Ask for approval",
+        agents::PermissionMode::AllowReads => "Allow reads",
         agents::PermissionMode::AllowEverything => "Allow everything",
     }
 }

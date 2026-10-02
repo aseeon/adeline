@@ -1151,7 +1151,10 @@ impl Worker {
                 })
             })
             .collect();
-        if self.permission_mode == PermissionMode::AllowEverything {
+        let read_only = matches!(params["toolCall"]["kind"].as_str(), Some("read" | "search"));
+        if self.permission_mode == PermissionMode::AllowEverything
+            || (self.permission_mode == PermissionMode::AllowReads && read_only)
+        {
             if let Some(option) = options
                 .iter()
                 .find(|option| option.kind == "allow_once")
@@ -2063,6 +2066,25 @@ mod tests {
         assert!(title.contains("src/main.rs"));
         assert_eq!(options.len(), 1);
         assert_eq!(options[0].kind, "allow_once");
+    }
+
+    #[test]
+    fn allow_reads_approves_reads_and_asks_for_edits() {
+        let (mut worker, events) = worker(Arc::new(|_, _, _| Ok(())));
+        worker.active = Some(turn(0));
+        worker.permission_mode = PermissionMode::AllowReads;
+        let request = |id, kind| {
+            json!({"id":id,"params":{"sessionId":"session-1",
+            "toolCall":{"toolCallId":"tool-1","title":"Tool","kind":kind},
+            "options":[{"optionId":"allow","name":"Allow once","kind":"allow_once"}]}})
+        };
+        worker.permission_request(&request(7, "read"));
+        assert!(events.try_recv().is_err());
+        worker.permission_request(&request(8, "edit"));
+        assert!(matches!(
+            events.try_recv().unwrap().kind,
+            EventKind::Permission { request_id: 8, .. }
+        ));
     }
 
     #[test]

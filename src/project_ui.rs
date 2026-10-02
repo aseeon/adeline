@@ -322,11 +322,14 @@ impl Adeline {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default()
         };
-        let previous = folder_name(Path::new(self.project_directory_input.read(cx).value().as_ref()));
+        let previous = folder_name(Path::new(
+            self.project_directory_input.read(cx).value().as_ref(),
+        ));
         let name = self.name_input.read(cx).value().trim().to_owned();
         if self.modal == Some("add-project") && (name.is_empty() || name == previous) {
-            self.name_input
-                .update(cx, |state, cx| state.set_value(folder_name(directory), window, cx));
+            self.name_input.update(cx, |state, cx| {
+                state.set_value(folder_name(directory), window, cx);
+            });
         }
         self.project_directory_input.update(cx, |state, cx| {
             state.set_value(directory.to_string_lossy().into_owned(), window, cx);
@@ -379,11 +382,16 @@ impl Adeline {
                 }
             }))
             .child(icon("folder").size_5().text_color(accent))
-            .child(row().gap_2().child("Drop a folder or").child(
-                Button::new("browse-folder").label("Browse").small().on_click(
-                    cx.listener(|app, _, window, cx| app.browse_project_folder(window, cx)),
+            .child(
+                row().gap_2().child("Drop a folder or").child(
+                    Button::new("browse-folder")
+                        .label("Browse")
+                        .small()
+                        .on_click(
+                            cx.listener(|app, _, window, cx| app.browse_project_folder(window, cx)),
+                        ),
                 ),
-            ))
+            )
             .child(
                 div()
                     .w_full()
@@ -439,11 +447,22 @@ impl Adeline {
             Some("rename-project") => {
                 content = content
                     .child(views::dialog_title("Rename project"))
-                    .child(Form::new().child(Field::new().label("Name").child(Input::new(&self.name_input).aria_label("Project name"))))
+                    .child(
+                        Form::new().child(
+                            Field::new()
+                                .label("Name")
+                                .child(Input::new(&self.name_input).aria_label("Project name")),
+                        ),
+                    )
                     .children(error)
-                    .child(footer()
-                        .child(self.button("cancel-rename", "Cancel", Action::Close, cx))
-                        .child(self.button("save-rename", "Rename", Action::SaveRename, cx).primary()));
+                    .child(
+                        footer()
+                            .child(self.button("cancel-rename", "Cancel", Action::Close, cx))
+                            .child(
+                                self.button("save-rename", "Rename", Action::SaveRename, cx)
+                                    .primary(),
+                            ),
+                    );
             }
             Some("delete-project" | "delete-project-shutdown") => {
                 let stopping = self.modal == Some("delete-project-shutdown");

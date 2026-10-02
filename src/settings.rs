@@ -136,15 +136,28 @@ pub(super) fn open(
 ) {
     open_at(Owner::new(owner, entity), None, cx);
 }
+/// Settings on an agent's page, or where they were if it no longer exists.
+pub(super) fn open_agent_page(
+    owner: WindowHandle<Root>,
+    entity: WeakEntity<Adeline>,
+    id: Option<String>,
+    cx: &mut Context<Adeline>,
+) {
+    open_at(Owner::new(owner, entity), id.map(AfterAgent::Agent), cx);
+}
 pub(super) fn open_mode(
     owner: WindowHandle<Root>,
     entity: WeakEntity<Adeline>,
     mode: Section,
     cx: &mut Context<Adeline>,
 ) {
-    open_at(Owner::new(owner, entity), Some(mode), cx);
+    open_at(
+        Owner::new(owner, entity),
+        Some(AfterAgent::OpenMode(mode)),
+        cx,
+    );
 }
-fn open_at(owner: Owner, mode: Option<Section>, cx: &mut Context<Adeline>) {
+fn open_at(owner: Owner, target: Option<AfterAgent>, cx: &mut Context<Adeline>) {
     cx.defer(move |cx| {
         if let Some((root, settings)) = windows_of::<SettingsWindow>(cx)
             .into_iter()
@@ -152,8 +165,10 @@ fn open_at(owner: Owner, mode: Option<Section>, cx: &mut Context<Adeline>) {
         {
             let _ = cx.update_window(root.into(), |_, window, cx| {
                 settings.update(cx, |settings, cx| {
-                    if let Some(mode) = mode {
-                        settings.leave(AfterAgent::OpenMode(mode), window, cx);
+                    let shown = matches!(&target, Some(AfterAgent::Agent(id))
+                        if settings.agent_page.as_ref() == Some(id));
+                    if let Some(target) = target.filter(|_| !shown) {
+                        settings.leave(target, window, cx);
                     }
                 });
                 window.activate_window();
@@ -169,7 +184,14 @@ fn open_at(owner: Owner, mode: Option<Section>, cx: &mut Context<Adeline>) {
             },
             |window, cx| {
                 window.set_window_title("Settings · Adeline");
+                let mode = match target {
+                    Some(AfterAgent::OpenMode(mode)) => Some(mode),
+                    _ => None,
+                };
                 let view = cx.new(|cx| SettingsWindow::new(owner, mode, window, cx));
+                if let Some(AfterAgent::Agent(id)) = target {
+                    view.update(cx, |view, cx| view.show_agent(id, window, cx));
+                }
                 // Kit's root paints the background, which would hide the window blur.
                 cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
             },
@@ -339,7 +361,12 @@ fn choose(
         let close_decided = decided.clone();
         views::styled_dialog(dialog, cx)
             .title(views::dialog_title(title.clone()))
-            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(description))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(description),
+            )
             .footer(footer)
             .overlay_closable(false)
             .close_button(false)

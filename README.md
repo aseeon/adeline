@@ -63,7 +63,7 @@ Each conversation has a generated folder under the project's `conversations/`, c
 
 Responses stream with formatted text and expandable tool results. Settings → Modes → Chats controls tool visibility and the automatic retry limit (five additional attempts by default; zero disables retries). Thinking is shown instead of reasoning text. Stop cancels the current turn and retries while preserving partial output and normally keeping the process available for another turn. Switching chats or closing a project tab leaves its agents running.
 
-Each conversation has its own mutable Ask / Allow everything permission mode. Ask shows only the choices and remembered-grant scope offered by the harness, including one-time denial, never permanent denial. Grants are not broadened or re-created by replaying the transcript.
+Each conversation has its own mutable Ask / Allow reads / Allow everything permission mode. Allow reads approves read and search tool calls automatically and asks for everything else. Ask shows only the choices and remembered-grant scope offered by the harness, including one-time denial, never permanent denial. Grants are not broadened or re-created by replaying the transcript.
 
 Complete and Archive preserve history and gracefully close that conversation's process. Sending again restores the saved session when supported. Application exit and confirmed project deletion also stop agents gracefully. If shutdown stalls, Force Stop is an explicit choice. Deleting a project removes its saved Adeline data, never its working directory.
 

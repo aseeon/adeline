@@ -165,6 +165,8 @@ enum Action {
     QuitApp,
     Settings,
     AppSettings,
+    /// Settings, open on the current chat's agent.
+    AgentSettings,
     ModeSettings,
     ConfigureModeSettings,
     Close,

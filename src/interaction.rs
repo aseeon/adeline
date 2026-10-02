@@ -18,6 +18,7 @@ impl Adeline {
                     | Action::Machine(_)
                     | Action::AppMenu
                     | Action::AppSettings
+                    | Action::AgentSettings
                     | Action::About
                     | Action::QuitApp
                     | Action::Close
@@ -58,6 +59,25 @@ impl Adeline {
                 cx.weak_entity(),
                 cx,
             ),
+            Action::AgentSettings => {
+                let id = self
+                    .current_id()
+                    .and_then(|id| self.conversation_settings(&id))
+                    .map(|settings| settings.agent_id)
+                    .or_else(|| self.selected_agent.clone())
+                    .filter(|id| {
+                        self.agent_catalog
+                            .entries
+                            .iter()
+                            .any(|entry| &entry.id == id)
+                    });
+                settings::open_agent_page(
+                    window.window_handle().downcast::<Root>().unwrap(),
+                    cx.weak_entity(),
+                    id,
+                    cx,
+                );
+            }
             Action::AddAgent => settings::open_agent(
                 window.window_handle().downcast::<Root>().unwrap(),
                 cx.weak_entity(),
@@ -285,11 +305,7 @@ impl Adeline {
             Action::Speed(ix) => self.speed = ix,
             Action::Permission(ix) => {
                 if self.selected.is_none() {
-                    self.new_chat_permission = Some(if ix == 0 {
-                        agents::PermissionMode::Ask
-                    } else {
-                        agents::PermissionMode::AllowEverything
-                    });
+                    self.new_chat_permission = Some(agents::PermissionMode::ALL[ix]);
                 } else if self.demo_mode {
                     self.permission = ix;
                 } else {

@@ -943,21 +943,17 @@ impl Render for AgentForm {
                 );
             }
         }
-        let permission = match self.permission_mode {
-            PermissionMode::Ask => 0,
-            PermissionMode::AllowEverything => 1,
-        };
+        let permission = PermissionMode::ALL
+            .iter()
+            .position(|mode| *mode == self.permission_mode)
+            .unwrap_or(0);
         form = form.child(
             Field::new().label("Default permission mode").child(
                 RadioGroup::horizontal("agent-permission")
-                    .children(["Ask", "Allow everything"])
+                    .children(["Ask", "Allow reads", "Allow everything"])
                     .selected_index(Some(permission))
                     .on_change(cx.listener(|this, index: &usize, _, cx| {
-                        this.permission_mode = if *index == 0 {
-                            PermissionMode::Ask
-                        } else {
-                            PermissionMode::AllowEverything
-                        };
+                        this.permission_mode = PermissionMode::ALL[*index];
                         cx.notify();
                     })),
             ),

@@ -13,7 +13,14 @@ pub const VERSION: u32 = 1;
 pub enum PermissionMode {
     #[default]
     Ask,
+    /// Approve read-only tool calls automatically; ask for everything else.
+    AllowReads,
     AllowEverything,
+}
+
+impl PermissionMode {
+    /// Menu order; UI indices refer to this.
+    pub const ALL: [Self; 3] = [Self::Ask, Self::AllowReads, Self::AllowEverything];
 }
 
 /// Whether system instructions add to or replace the harness's own guidance.
