@@ -1,0 +1,493 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Many open projects: twelve proposals</title>
+<link href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3/dist/tabler-icons.min.css" rel="stylesheet">
+<style>
+body{background:#141414;color:#ddd;font-family:Inter,"Segoe UI",system-ui,sans-serif;margin:0;padding:32px 40px 80px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;font-size:13px}
+h1{font-weight:500;font-size:20px;margin:0 0 4px}
+h1+p{color:#8f8d87;margin:0 0 12px;max-width:820px;line-height:1.5}
+h2{font-weight:500;font-size:16px;margin:44px 0 2px}
+h2+p{color:#8f8d87;margin:0 0 10px;max-width:820px;line-height:1.5}
+.cap{color:#7d7b76;font-size:12px;margin:12px 0 4px}
+ul.pros{color:#a9a7a1;margin:6px 0 0;padding-left:18px;max-width:820px;line-height:1.55}
+ul.pros b{color:#d8d6d0;font-weight:500}
+
+.win{background:#1f1f1f;border:1px solid #333;border-radius:8px;overflow:hidden;box-shadow:0 20px 50px #0008;position:relative}
+.tb{height:36px;display:flex;align-items:stretch;background:#232323;border-bottom:1px solid #353535;color:#a3a19b;white-space:nowrap}
+.app{width:44px;flex:none;display:flex;align-items:center;justify-content:center}
+.app div{width:22px;height:22px;border-radius:5px;background:linear-gradient(160deg,#f3eee6 0 40%,#1b1b1b 40%);border:1px solid #444}
+.strip{flex:1;min-width:0;display:flex;align-items:stretch;overflow:hidden;position:relative}
+.tab{display:flex;align-items:center;gap:8px;padding:0 12px;border-right:1px solid #333;flex:none;color:#b9b7b1}
+.tab.on{background:#2d2d2d;color:#f0eee9}
+.tab .c{color:#77756f;font-size:12px}
+.tab .c.hot{color:#e3a27f}
+.tab.fold{padding:0 9px;gap:5px}
+.mark{width:18px;height:18px;border-radius:4px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;color:#f6f4ef;flex:none}
+.m1{background:#c0613d}.m2{background:#3b3b3b}.m3{background:#4b4569}.m4{background:#3e4a66}.m5{background:#3f5e4c}.m6{background:#6b5532}
+.m7{background:#5a3d55}.m8{background:#355b63}.m9{background:#5f4040}.m10{background:#45503a}.m11{background:#3d4f5f}.m12{background:#59506b}
+.plus{display:flex;align-items:center;padding:0 10px;color:#8f8d87;border-right:1px solid #333;flex:none}
+.side{display:flex;align-items:center;gap:7px;padding:0 13px;border-left:1px solid #333;color:#a3a19b;flex:none}
+.wc{display:flex;flex:none}.wc span{width:46px;display:flex;align-items:center;justify-content:center;color:#c9c7c1;font-size:14px}
+.body{display:flex;height:150px}
+.rail{width:44px;flex:none;border-right:1px solid #2e2e2e;background:#212121;display:flex;flex-direction:column;align-items:center;gap:14px;padding-top:12px;color:#8f8d87;font-size:16px}
+.rail .on{color:#f0eee9}
+.main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#77756f;gap:4px}
+.main b{color:#e6e4df;font-weight:500;font-size:15px}
+
+.fade-r{position:absolute;top:0;bottom:0;right:0;width:40px;background:linear-gradient(90deg,#23232300,#232323);pointer-events:none}
+.fade-l{position:absolute;top:0;bottom:0;left:0;width:40px;background:linear-gradient(270deg,#23232300,#232323);pointer-events:none}
+.more{display:flex;align-items:center;gap:6px;padding:0 11px;border-left:1px solid #333;color:#d8d6d0;flex:none;background:#262626}
+.more .n{background:#3a3a3a;border-radius:9px;padding:1px 7px;font-size:11.5px}
+.dot{width:6px;height:6px;border-radius:50%;background:#e3a27f;flex:none}
+.arrow{display:flex;align-items:center;justify-content:center;width:26px;color:#a3a19b;flex:none;background:#262626}
+.arrow.l{border-right:1px solid #333}.arrow.r{border-left:1px solid #333}
+.arrow.off{color:#4a4a4a}
+
+.pop{position:absolute;background:#262626;border:1px solid #3a3a3a;border-radius:8px;box-shadow:0 14px 40px #000a;padding:4px;min-width:230px;z-index:2}
+.pop .h{color:#7d7b76;font-size:12px;padding:6px 8px 4px}
+.pop .r{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:5px;color:#d8d6d0}
+.pop .r.sel{background:#333}
+.pop .r .c{margin-left:auto;color:#77756f;font-size:12px}
+.pop .r .c.hot{color:#e3a27f}
+.pop .sep{height:1px;background:#353535;margin:4px 2px}
+.search{display:flex;align-items:center;gap:7px;background:#1f1f1f;border:1px solid #363636;border-radius:6px;padding:5px 8px;color:#77756f;margin:2px 2px 4px}
+.kbd{font-size:11px;padding:0 5px;border:1px solid #3d3d3d;border-radius:4px;color:#8f8d87;margin-left:auto}
+
+.stack{display:flex;align-items:center;padding:0 10px 0 12px;border-left:1px solid #333;gap:0;flex:none;background:#262626}
+.stack .mark{border:2px solid #262626;margin-left:-6px;width:20px;height:20px}
+.stack .mark:first-child{margin-left:0}
+.stack .n{margin-left:6px;color:#a3a19b;font-size:12px}
+
+.prail{width:52px;flex:none;border-right:1px solid #2e2e2e;background:#1d1d1d;display:flex;flex-direction:column;align-items:center;gap:8px;padding-top:10px;position:relative}
+.prail .mark{width:30px;height:30px;border-radius:8px;font-size:14px;position:relative}
+.prail .mark.on{outline:2px solid #e6e4df;outline-offset:2px}
+.prail .mark .b{position:absolute;right:-5px;top:-5px;background:#c0613d;color:#fff;font-size:10px;border-radius:7px;padding:0 4px;border:2px solid #1d1d1d;line-height:12px}
+.prail .add{width:30px;height:30px;border-radius:8px;border:1px dashed #444;color:#77756f;display:flex;align-items:center;justify-content:center}
+.crumb{display:flex;align-items:center;gap:8px;padding:0 12px;color:#f0eee9;flex:none}
+.crumb i{color:#77756f}
+.anno{position:absolute;color:#e3a27f;font-size:11.5px;white-space:nowrap}
+
+.tb2{height:auto;flex-direction:column}
+.tb2 .row1{height:36px;display:flex;align-items:stretch}
+.tb2 .row2{height:32px;display:flex;align-items:stretch;border-top:1px solid #2e2e2e;padding-left:44px;background:#202020}
+.pin{display:flex;align-items:center;justify-content:center;width:40px;border-right:1px solid #333;flex:none;position:relative}
+.pin.on{background:#2d2d2d}
+.pin .d{position:absolute;right:7px;top:7px;width:6px;height:6px;border-radius:50%;background:#e3a27f}
+.gap{width:1px;background:#4a4a4a;margin:8px 4px;flex:none}
+.sw{display:flex;align-items:center;gap:9px;padding:0 14px;color:#f0eee9;flex:none;border-right:1px solid #333;background:#2d2d2d}
+.sw .k{color:#77756f;font-size:12px}
+.recent{display:flex;align-items:center;gap:6px;padding:0 10px;flex:none}
+.overlay{position:absolute;inset:36px 0 0 0;background:#0007;display:flex;align-items:flex-start;justify-content:center;padding-top:26px}
+.grid{background:#262626;border:1px solid #3a3a3a;border-radius:10px;box-shadow:0 18px 50px #000b;padding:10px;width:560px}
+.grid .h{display:flex;align-items:center;gap:7px;color:#77756f;background:#1f1f1f;border:1px solid #363636;border-radius:6px;padding:6px 9px;margin-bottom:10px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.card{border-radius:7px;padding:9px;display:flex;flex-direction:column;gap:7px;color:#d8d6d0;border:1px solid transparent}
+.card.sel{background:#333;border-color:#4a4a4a}
+.card .mark{width:26px;height:26px;font-size:13px;border-radius:6px}
+.card .meta{color:#77756f;font-size:11.5px}
+.card .meta.hot{color:#e3a27f}
+.grp{display:flex;align-items:stretch;flex:none;border-right:1px solid #333}
+.chip{display:flex;align-items:center;gap:6px;padding:0 10px;font-size:12px;flex:none;position:relative;color:#d8d6d0}
+.chip:after{content:"";position:absolute;left:6px;right:6px;bottom:0;height:2px;border-radius:2px;background:var(--g)}
+.chip .n{color:#77756f}
+.chip.closed{background:#262626}
+.grp .tab{border-right:0;box-shadow:inset 0 -2px 0 var(--g)}
+
+.sb{height:30px;display:flex;align-items:stretch;border-top:1px solid #353535;background:#232323;color:#a3a19b;font-size:12px;white-space:nowrap}
+.sb .ic{width:44px;display:flex;align-items:center;justify-content:center;flex:none;color:#8f8d87}
+.sb .tab{padding:0 10px;gap:6px;font-size:12px}
+.sb .tab .mark{width:16px;height:16px;font-size:10px}
+.sb .tab.on{box-shadow:inset 0 2px 0 #c0613d}
+.dock{display:flex;align-items:center;gap:5px;padding:0 8px;flex:none}
+.dock .mark{position:relative}
+.dock .mark .d{position:absolute;right:-3px;top:-3px;width:7px;height:7px;border-radius:50%;background:#e3a27f;border:1.5px solid #232323}
+.dock .act{display:flex;align-items:center;gap:7px;background:#2d2d2d;border-radius:6px;padding:4px 9px 4px 5px;color:#f0eee9}
+.dock .big{width:26px;height:26px;font-size:13px;border-radius:6px}
+.tip{position:absolute;background:#333;border:1px solid #444;border-radius:5px;padding:3px 8px;color:#e6e4df;font-size:12px;white-space:nowrap;z-index:3}
+.tier3{display:flex;align-items:center;gap:6px;padding:0 10px;flex:none}
+.tier3 span{width:8px;height:8px;border-radius:2px}
+.panel{width:210px;flex:none;border-right:1px solid #2e2e2e;background:#212121;padding:8px 6px;font-size:12.5px;overflow:hidden}
+.panel .ph{display:flex;align-items:center;gap:8px;padding:5px 6px;border-radius:5px;color:#d8d6d0}
+.panel .ph .c{margin-left:auto;color:#77756f;font-size:12px}
+.panel .ph .c.hot{color:#e3a27f}
+.panel .ph.on{background:#2d2d2d;color:#f0eee9}
+.panel .ch{padding:4px 6px 4px 32px;color:#a3a19b;border-radius:5px}
+.panel .ch.sel{background:#2a2a2a;color:#e6e4df}
+.panel .ph i{color:#77756f;font-size:12px;width:10px}
+.crumb2{display:flex;align-items:center;gap:8px;padding:0 12px;color:#a3a19b;flex:1;min-width:0}
+.crumb2 b{color:#f0eee9;font-weight:400}
+</style></head><body>
+
+<h1>Many open projects in the title bar</h1>
+<p>Every proposal keeps the window controls fixed at the right edge, and the active project and the Projects menu always visible. The windows are 1200px with 12 open projects and 800px with the same 12, like the screenshot.</p>
+
+<!-- ============================ A ============================ -->
+<h2>A. Fold, then an overflow menu</h2>
+<p>This builds on today's behaviour. Names fold to letter marks first. When even the marks don't fit, the tabs that don't fit go into a "+N" menu at the end of the strip, VS Code style. The active tab is never moved into the menu. If a hidden project needs attention, a dot appears on the "+N" button.</p>
+
+<div class="cap">1200px: names fold to marks, everything fits</div>
+<div class="win" style="width:1200px">
+ <div class="tb"><div class="app"><div></div></div>
+  <div class="strip">
+   <div class="tab on"><span class="mark m1">A</span>adeline<span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m2">J</span><span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m3">T</span><span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m4">U</span><span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m5">P</span><span class="c hot">2</span></div>
+   <div class="tab fold"><span class="mark m6">G</span><span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m7">R</span><span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m8">H</span><span class="c hot">1</span></div>
+   <div class="tab fold"><span class="mark m9">S</span><span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m10">D</span><span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m11">I</span><span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m12">F</span><span class="c">0</span></div>
+   <div class="plus"><i class="ti ti-plus"></i></div>
+  </div>
+  <div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div>
+  <div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div>
+ </div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+
+<div class="cap">800px: six tabs fit, and "+6" opens the rest</div>
+<div class="win" style="width:800px;overflow:visible">
+ <div class="tb" style="border-radius:8px 8px 0 0"><div class="app"><div></div></div>
+  <div class="strip">
+   <div class="tab on"><span class="mark m1">A</span>adeline<span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m2">J</span><span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m3">T</span><span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m4">U</span><span class="c">0</span></div>
+   <div class="tab fold"><span class="mark m5">P</span><span class="c hot">2</span></div>
+   <div class="tab fold"><span class="mark m6">G</span><span class="c">0</span></div>
+  </div>
+  <div class="more"><span class="dot"></span><span class="n">+6</span><i class="ti ti-chevron-down"></i></div>
+  <div class="side"><i class="ti ti-folder"></i><i class="ti ti-chevron-down"></i></div>
+  <div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div>
+ </div>
+ <div class="pop" style="top:38px;left:396px">
+  <div class="r"><span class="mark m7">R</span>resolve-luts<span class="c">0</span></div>
+  <div class="r sel"><span class="mark m8">H</span>homelab<span class="c hot">1</span></div>
+  <div class="r"><span class="mark m9">S</span>the5-search<span class="c">0</span></div>
+  <div class="r"><span class="mark m10">D</span>dotfiles<span class="c">0</span></div>
+  <div class="r"><span class="mark m11">I</span>invoice-bot<span class="c">0</span></div>
+  <div class="r"><span class="mark m12">F</span>portfolio<span class="c">0</span></div>
+  <div class="sep"></div>
+  <div class="r" style="color:#a3a19b"><i class="ti ti-plus"></i>New project</div>
+ </div>
+ <div class="body" style="border-radius:0 0 8px 8px;overflow:hidden"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<ul class="pros">
+ <li><b>Good:</b> the smallest change from what ships today, and the pattern is familiar from editors.</li>
+ <li><b>Cost:</b> "+N" and Projects are two menus that overlap. At 800px, Projects shrinks to its icon.</li>
+</ul>
+
+<!-- ============================ B ============================ -->
+<h2>B. Shared width, then scroll arrows</h2>
+<p>Browser style. All tabs shrink evenly, and names truncate down to the mark plus a few letters. Below that, the strip scrolls. Arrows at both ends show there's more, and edge fades show which way. The arrows mark hidden projects that need attention with an accent colour. Ctrl+Tab and Ctrl+1–9 still reach every project.</p>
+
+<div class="cap">1200px: twelve tabs share the width, names truncate</div>
+<div class="win" style="width:1200px">
+ <div class="tb"><div class="app"><div></div></div>
+  <div class="strip">
+   <div class="tab on" style="width:118px;flex:none"><span class="mark m1">A</span>adeline<span class="c" style="margin-left:auto">0</span></div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m2">J</span>Just…</div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m3">T</span>tech…</div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m4">U</span>Usa…</div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m5">P</span>pon…<span class="c hot">2</span></div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m6">G</span>gpu…</div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m7">R</span>reso…</div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m8">H</span>home…<span class="c hot">1</span></div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m9">S</span>the5…</div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m10">D</span>dotf…</div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m11">I</span>invo…</div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m12">F</span>port…</div>
+   <div class="plus"><i class="ti ti-plus"></i></div>
+  </div>
+  <div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div>
+  <div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div>
+ </div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+
+<div class="cap">800px: at minimum width, the strip scrolls and arrows appear</div>
+<div class="win" style="width:800px">
+ <div class="tb"><div class="app"><div></div></div>
+  <div class="arrow l"><i class="ti ti-chevron-left"></i></div>
+  <div class="strip">
+   <div class="tab" style="width:62px;overflow:hidden;margin-left:-30px"><span class="mark m2">J</span>Just…</div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m3">T</span>tech…</div>
+   <div class="tab on" style="width:118px"><span class="mark m1">A</span>adeline<span class="c" style="margin-left:auto">0</span></div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m4">U</span>Usa…</div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m5">P</span>pon…<span class="c hot">2</span></div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m6">G</span>gpu…</div>
+   <div class="tab" style="width:62px;overflow:hidden"><span class="mark m7">R</span>reso…</div>
+   <div class="fade-l" style="width:28px"></div><div class="fade-r"></div>
+  </div>
+  <div class="arrow r" style="color:#e3a27f"><i class="ti ti-chevron-right"></i></div>
+  <div class="side"><i class="ti ti-folder"></i><i class="ti ti-chevron-down"></i></div>
+  <div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div>
+ </div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<ul class="pros">
+ <li><b>Good:</b> every tab keeps a fixed place, so muscle memory survives. Nothing hides inside a menu.</li>
+ <li><b>Cost:</b> truncated names like "reso…" are hard to tell apart, and scrolling a title bar with a mouse wheel is awkward.</li>
+</ul>
+
+<!-- ============================ C ============================ -->
+<h2>C. Busy projects stay, quiet ones stack</h2>
+<p>When space runs out, the strip shows the active project and any project with something waiting, with full names. Quiet projects collapse into a stack of marks at the end of the strip. Clicking the stack opens the Projects menu, already filtered to open projects. Your attention goes where the work is.</p>
+
+<div class="cap">1200px: room for all names, so nothing stacks</div>
+<div class="win" style="width:1200px">
+ <div class="tb"><div class="app"><div></div></div>
+  <div class="strip">
+   <div class="tab on"><span class="mark m1">A</span>adeline<span class="c">0</span></div>
+   <div class="tab"><span class="mark m5">P</span>ponytail<span class="c hot">2</span></div>
+   <div class="tab"><span class="mark m8">H</span>homelab<span class="c hot">1</span></div>
+   <div class="tab"><span class="mark m2">J</span>Just Skills</div>
+   <div class="tab"><span class="mark m3">T</span>techdemos</div>
+   <div class="tab"><span class="mark m4">U</span>Usage Tool</div>
+   <div class="tab"><span class="mark m6">G</span>gpui-kit</div>
+   <div class="tab"><span class="mark m7">R</span>resolve-luts</div>
+   <div class="fade-r"></div>
+  </div>
+  <div class="stack"><span class="mark m9">S</span><span class="mark m10">D</span><span class="mark m11">I</span><span class="n">+4</span></div>
+  <div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div>
+  <div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div>
+ </div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+
+<div class="cap">800px: active project plus two that need attention, with nine quiet projects stacked and the stack's menu open</div>
+<div class="win" style="width:800px;overflow:visible">
+ <div class="tb" style="border-radius:8px 8px 0 0"><div class="app"><div></div></div>
+  <div class="strip">
+   <div class="tab on"><span class="mark m1">A</span>adeline<span class="c">0</span></div>
+   <div class="tab"><span class="mark m5">P</span>ponytail<span class="c hot">2</span></div>
+   <div class="tab"><span class="mark m8">H</span>homelab<span class="c hot">1</span></div>
+   <div class="plus"><i class="ti ti-plus"></i></div>
+  </div>
+  <div class="stack" style="background:#2d2d2d"><span class="mark m2">J</span><span class="mark m3">T</span><span class="mark m4">U</span><span class="n">+6</span></div>
+  <div class="side"><i class="ti ti-folder"></i><i class="ti ti-chevron-down"></i></div>
+  <div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div>
+ </div>
+ <div class="pop" style="top:38px;left:388px;min-width:250px">
+  <div class="search"><i class="ti ti-search"></i>Switch to…<span class="kbd">Ctrl P</span></div>
+  <div class="r sel"><span class="mark m2">J</span>Just Skills<span class="c">2h</span></div>
+  <div class="r"><span class="mark m3">T</span>techdemos<span class="c">5h</span></div>
+  <div class="r"><span class="mark m4">U</span>Usage Tool<span class="c">1d</span></div>
+  <div class="r"><span class="mark m6">G</span>gpui-kit<span class="c">2d</span></div>
+  <div class="r"><span class="mark m7">R</span>resolve-luts<span class="c">3d</span></div>
+  <div class="r" style="color:#77756f">+4 more</div>
+ </div>
+ <div class="body" style="border-radius:0 0 8px 8px;overflow:hidden"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<ul class="pros">
+ <li><b>Good:</b> names never truncate. The tabs you see are the ones that matter now, and the stack reuses the existing searchable menu.</li>
+ <li><b>Cost:</b> tabs move as attention changes, so positions aren't stable. That would need a short delay or a pin to feel calm.</li>
+</ul>
+
+<!-- ============================ D ============================ -->
+<h2>D. Projects move to a vertical rail</h2>
+<p>Projects leave the title bar and become a column of large marks on the far left, like Slack workspaces or Discord servers. Badges show attention. The title bar keeps one breadcrumb for the active project and has plenty of drag area. A column holds about 15 projects at 800px height, then scrolls. Optionally this switches on only when the tabs overflow, or as a setting.</p>
+
+<div class="cap">1200px</div>
+<div class="win" style="width:1200px">
+ <div class="tb"><div class="app" style="width:52px"><div></div></div>
+  <div class="crumb" style="border-left:1px solid #333"><span class="mark m1">A</span>adeline<i class="ti ti-chevron-down"></i></div>
+  <div class="strip"></div>
+  <div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div>
+  <div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div>
+ </div>
+ <div class="body" style="height:330px">
+  <div class="prail">
+   <span class="mark m1 on">A</span><span class="mark m2">J</span><span class="mark m3">T</span><span class="mark m4">U</span>
+   <span class="mark m5">P<span class="b">2</span></span><span class="mark m6">G</span><span class="mark m7">R</span><span class="mark m8">H<span class="b">1</span></span>
+   <span class="add"><i class="ti ti-plus"></i></span>
+  </div>
+  <div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i><i class="ti ti-users"></i><i class="ti ti-flag"></i></div>
+  <div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div>
+ </div>
+</div>
+
+<div class="cap">800px: the title bar barely changes, and the rail scrolls if it needs to</div>
+<div class="win" style="width:800px">
+ <div class="tb"><div class="app" style="width:52px"><div></div></div>
+  <div class="crumb" style="border-left:1px solid #333"><span class="mark m1">A</span>adeline<i class="ti ti-chevron-down"></i></div>
+  <div class="strip"></div>
+  <div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div>
+  <div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div>
+ </div>
+ <div class="body" style="height:330px">
+  <div class="prail">
+   <span class="mark m1 on">A</span><span class="mark m2">J</span><span class="mark m3">T</span><span class="mark m4">U</span>
+   <span class="mark m5">P<span class="b">2</span></span><span class="mark m6">G</span><span class="mark m7">R</span><span class="mark m8">H<span class="b">1</span></span>
+   <span class="add"><i class="ti ti-plus"></i></span>
+  </div>
+  <div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i><i class="ti ti-users"></i><i class="ti ti-flag"></i></div>
+  <div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div>
+ </div>
+</div>
+<ul class="pros">
+ <li><b>Good:</b> scales to dozens of projects, and the window width doesn't matter at all. The title bar becomes calm chrome with a large drag area.</li>
+ <li><b>Cost:</b> it uses 52px of horizontal space everywhere, and names show only on hover. It's the biggest change: two rails side by side need care so they don't read as one.</li>
+</ul>
+
+
+<h1 style="margin-top:64px">Four more</h1>
+<p>These take different angles from A to D: give the bar more height, let you choose what stays, swap the strip for a switcher, or group the projects.</p>
+
+<h2>E. A second row of tabs</h2>
+<p>When one row is full, the title bar grows a second row that spans the whole width, under the window controls. Names stay readable. If two rows still aren't enough, the second row folds to marks. The bar never grows past two rows, and it goes back to one as soon as one row fits.</p>
+<div class="cap">1200px: two rows, every name shown</div>
+<div class="win" style="width:1200px">
+ <div class="tb tb2"><div class="row1"><div class="app"><div></div></div><div class="strip"><div class="tab on"><span class="mark m1">A</span>adeline<span class="c">0</span></div><div class="tab"><span class="mark m2">J</span>Just Skills<span class="c">0</span></div><div class="tab"><span class="mark m3">T</span>techdemos<span class="c">0</span></div><div class="tab"><span class="mark m4">U</span>Usage Tool<span class="c">0</span></div><div class="tab"><span class="mark m5">P</span>ponytail<span class="c hot">2</span></div><div class="tab"><span class="mark m6">G</span>gpui-kit<span class="c">0</span></div></div><div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+  <div class="row2"><div class="tab"><span class="mark m7">R</span>resolve-luts<span class="c">0</span></div><div class="tab"><span class="mark m8">H</span>homelab<span class="c hot">1</span></div><div class="tab"><span class="mark m9">S</span>the5-search<span class="c">0</span></div><div class="tab"><span class="mark m10">D</span>dotfiles<span class="c">0</span></div><div class="tab"><span class="mark m11">I</span>invoice-bot<span class="c">0</span></div><div class="tab"><span class="mark m12">F</span>portfolio<span class="c">0</span></div><div class="plus"><i class="ti ti-plus"></i></div></div></div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<div class="cap">800px: the second row folds the projects that still don't fit</div>
+<div class="win" style="width:800px">
+ <div class="tb tb2"><div class="row1"><div class="app"><div></div></div><div class="strip"><div class="tab on"><span class="mark m1">A</span>adeline<span class="c">0</span></div><div class="tab"><span class="mark m2">J</span>Just Skills<span class="c">0</span></div><div class="tab"><span class="mark m3">T</span>techdemos<span class="c">0</span></div><div class="tab"><span class="mark m4">U</span>Usage Tool<span class="c">0</span></div></div><div class="side"><i class="ti ti-folder"></i><i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+  <div class="row2"><div class="tab"><span class="mark m5">P</span>ponytail<span class="c hot">2</span></div><div class="tab"><span class="mark m6">G</span>gpui-kit<span class="c">0</span></div><div class="tab"><span class="mark m7">R</span>resolve-luts<span class="c">0</span></div><div class="tab"><span class="mark m8">H</span>homelab<span class="c hot">1</span></div><div class="tab"><span class="mark m9">S</span>the5-search<span class="c">0</span></div><div class="tab fold"><span class="mark m10">D</span><span class="c">0</span></div><div class="tab fold"><span class="mark m11">I</span><span class="c">0</span></div><div class="tab fold"><span class="mark m12">F</span><span class="c">0</span></div><div class="plus"><i class="ti ti-plus"></i></div></div></div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<ul class="pros">
+ <li><b>Good:</b> nothing is hidden or truncated until the window is really narrow, and tabs keep a stable order.</li>
+ <li><b>Cost:</b> it uses 32px of height whenever the row overflows. A row that comes and goes during a resize can feel jumpy, so it needs some hysteresis.</li>
+</ul>
+
+<h2>F. Pinned marks, then recent names</h2>
+<p>Browser-style pinned tabs. Projects you pin sit at the left as square marks that never fold or move, and a dot shows attention. After a divider come the most recently used unpinned projects, with names, as many as fit. Older ones live in the Projects menu. You choose what stays, so the bar is predictable.</p>
+<div class="cap">1200px: five pinned, then recent projects with names</div>
+<div class="win" style="width:1200px">
+ <div class="tb"><div class="app"><div></div></div><div class="strip"><div class="pin on"><span class="mark m1">A</span></div><div class="pin"><span class="mark m5">P</span><span class=d></span></div><div class="pin"><span class="mark m6">G</span></div><div class="pin"><span class="mark m8">H</span><span class=d></span></div><div class="pin"><span class="mark m2">J</span></div><div class="gap"></div><div class="tab"><span class="mark m3">T</span>techdemos<span class="c">0</span></div><div class="tab"><span class="mark m4">U</span>Usage Tool<span class="c">0</span></div><div class="tab"><span class="mark m7">R</span>resolve-luts<span class="c">0</span></div><div class="tab"><span class="mark m9">S</span>the5-search<span class="c">0</span></div><div class="tab"><span class="mark m10">D</span>dotfiles<span class="c">0</span></div><div class="plus"><i class="ti ti-plus"></i></div></div><div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<div class="cap">800px: the pinned marks stay, and only the two most recent projects keep their names</div>
+<div class="win" style="width:800px">
+ <div class="tb"><div class="app"><div></div></div><div class="strip"><div class="pin"><span class="mark m1">A</span></div><div class="pin"><span class="mark m5">P</span><span class=d></span></div><div class="pin"><span class="mark m6">G</span></div><div class="pin"><span class="mark m8">H</span><span class=d></span></div><div class="pin"><span class="mark m2">J</span></div><div class="gap"></div><div class="tab on"><span class="mark m3">T</span>techdemos<span class="c">0</span></div><div class="tab"><span class="mark m4">U</span>Usage Tool<span class="c">0</span></div></div><div class="side"><i class="ti ti-folder"></i><i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<ul class="pros">
+ <li><b>Good:</b> a calm, predictable bar. Pinned projects are one click away at any width, and the recent list handles the rest without any setup.</li>
+ <li><b>Cost:</b> it needs a pin command, in the tab's right-click menu and the Projects menu. Pinned projects show only a letter, so two projects starting with the same letter rely on colour.</li>
+</ul>
+
+<h2>G. A switcher instead of a strip</h2>
+<p>No tab strip at all. The title bar shows the active project as a switcher button, plus marks for the last three projects you used. Ctrl+Tab, or clicking the switcher, opens a grid of every open project with its attention and last activity, like Alt+Tab. Hold Ctrl and keep pressing Tab to move through it, or type to filter.</p>
+<div class="cap">1200px: the bar looks the same at any width</div>
+<div class="win" style="width:1200px">
+ <div class="tb"><div class="app"><div></div></div><div class="sw"><span class="mark m1">A</span>adeline<i class="ti ti-selector k"></i></div><div class="recent"><span class="mark m5">P</span><span class="mark m2">J</span><span class="mark m8">H</span></div><div class="strip"></div><div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<div class="cap">800px, Ctrl+Tab held: every open project in a grid</div>
+<div class="win" style="width:800px">
+ <div class="tb"><div class="app"><div></div></div><div class="sw"><span class="mark m1">A</span>adeline<i class="ti ti-selector k"></i></div><div class="recent"><span class="mark m5">P</span><span class="mark m2">J</span><span class="mark m8">H</span></div><div class="strip"></div><div class="side"><i class="ti ti-folder"></i><i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body" style="height:340px"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+ <div class="overlay"><div class="grid">
+  <div class="h"><i class="ti ti-search"></i>Switch project<span class="kbd">Ctrl Tab</span></div>
+  <div class="cards"><div class="card"><span class="mark m1">A</span>adeline<span class="meta">Now</span></div><div class="card sel"><span class="mark m5">P</span>ponytail<span class="meta hot">2 waiting</span></div><div class="card"><span class="mark m2">J</span>Just Skills<span class="meta">12m</span></div><div class="card"><span class="mark m8">H</span>homelab<span class="meta hot">1 waiting</span></div><div class="card"><span class="mark m3">T</span>techdemos<span class="meta">1h</span></div><div class="card"><span class="mark m4">U</span>Usage Tool<span class="meta">3h</span></div><div class="card"><span class="mark m6">G</span>gpui-kit<span class="meta">1d</span></div><div class="card"><span class="mark m7">R</span>resolve-luts<span class="meta">2d</span></div></div></div></div>
+</div>
+<ul class="pros">
+ <li><b>Good:</b> the title bar never overflows, and most of it is drag area. The grid shows more about each project than a tab can.</li>
+ <li><b>Cost:</b> you can't see every project at a glance, and anything older than the last three takes two steps. It suits keyboard users more than mouse users.</li>
+</ul>
+
+<h2>H. Project groups that collapse</h2>
+<p>Like Chrome's tab groups. You put projects into named, coloured groups. The group with the active project stays open. When space runs out, the other groups collapse to a chip with their name and count, plus a dot if a project inside needs attention. Clicking a chip opens that group in place.</p>
+<div class="cap">1200px: Work and Side are open (Side shows ponytail and homelab), Tools is collapsed</div>
+<div class="win" style="width:1200px">
+ <div class="tb"><div class="app"><div></div></div><div class="strip">
+  <div class="grp" style="--g:#c0613d"><div class="chip">Work</div><div class="tab on"><span class="mark m1">A</span>adeline<span class="c">0</span></div><div class="tab"><span class="mark m2">J</span>Just Skills<span class="c">0</span></div><div class="tab"><span class="mark m3">T</span>techdemos<span class="c">0</span></div><div class="tab"><span class="mark m4">U</span>Usage Tool<span class="c">0</span></div></div>
+  <div class="grp" style="--g:#4f8a68"><div class="chip">Side</div><div class="tab"><span class="mark m5">P</span>ponytail<span class="c hot">2</span></div><div class="tab"><span class="mark m8">H</span>homelab<span class="c hot">1</span></div></div><div class="grp" style="--g:#6a78a8"><div class="chip closed">Tools<span class="n">5</span></div></div><div class="plus"><i class="ti ti-plus"></i></div></div><div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<div class="cap">800px: only the active group stays open, and its inactive names fold</div>
+<div class="win" style="width:800px">
+ <div class="tb"><div class="app"><div></div></div><div class="strip">
+  <div class="grp" style="--g:#c0613d"><div class="chip">Work</div><div class="tab on"><span class="mark m1">A</span>adeline<span class="c">0</span></div><div class="tab fold"><span class="mark m2">J</span><span class="c">0</span></div><div class="tab fold"><span class="mark m3">T</span><span class="c">0</span></div><div class="tab fold"><span class="mark m4">U</span><span class="c">0</span></div></div>
+  <div class="grp" style="--g:#4f8a68"><div class="chip closed">Side<span class="n">3</span><span class="dot"></span></div></div>
+  <div class="grp" style="--g:#6a78a8"><div class="chip closed">Tools<span class="n">5</span></div></div></div><div class="side"><i class="ti ti-folder"></i><i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<ul class="pros">
+ <li><b>Good:</b> it scales to many projects without losing structure, and it matches how people already sort work: clients, personal projects, experiments.</li>
+ <li><b>Cost:</b> you have to set up groups, and projects outside any group need a fallback such as A's folding. An open group still folds its names when it runs out of room.</li>
+</ul>
+
+
+<h1 style="margin-top:64px">Four more again</h1>
+<p>These move projects out of the title bar, make the marks the main way to switch, or show less detail for projects you haven't used in a while.</p>
+
+<h2>I. Project tabs in the status bar</h2>
+<p>The bottom bar is mostly empty, so the project tabs move there, like a taskbar or tmux's window list. The title bar keeps only the active project and the current mode as a breadcrumb, so it never overflows and stays draggable. The bottom strip folds and scrolls the same way the title bar does today.</p>
+<div class="cap">1200px</div>
+<div class="win" style="width:1200px">
+ <div class="tb"><div class="app"><div></div></div><div class="crumb2"><span class="mark m1">A</span><b>adeline</b><i class="ti ti-chevron-right"></i>Chats</div><div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+ <div class="sb"><div class="ic"><i class="ti ti-menu-2"></i></div><div class="tab on"><span class="mark m1">A</span>adeline<span class="c">0</span></div><div class="tab"><span class="mark m2">J</span>Just Skills<span class="c">0</span></div><div class="tab"><span class="mark m3">T</span>techdemos<span class="c">0</span></div><div class="tab"><span class="mark m4">U</span>Usage Tool<span class="c">0</span></div><div class="tab"><span class="mark m5">P</span>ponytail<span class="c hot">2</span></div><div class="tab"><span class="mark m6">G</span>gpui-kit<span class="c">0</span></div><div class="tab"><span class="mark m7">R</span>resolve-luts<span class="c">0</span></div><div class="tab"><span class="mark m8">H</span>homelab<span class="c hot">1</span></div><div class="tab fold"><span class="mark m9">S</span><span class="c">0</span></div><div class="tab fold"><span class="mark m10">D</span><span class="c">0</span></div><div class="tab fold"><span class="mark m11">I</span><span class="c">0</span></div><div class="tab fold"><span class="mark m12">F</span><span class="c">0</span></div><div style="flex:1"></div><div class="ic"><i class="ti ti-layout-sidebar-right"></i></div></div>
+</div>
+<div class="cap">800px: the bottom strip folds to marks</div>
+<div class="win" style="width:800px">
+ <div class="tb"><div class="app"><div></div></div><div class="crumb2"><span class="mark m1">A</span><b>adeline</b><i class="ti ti-chevron-right"></i>Chats</div><div class="side"><i class="ti ti-folder"></i><i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+ <div class="sb"><div class="ic"><i class="ti ti-menu-2"></i></div><div class="tab on"><span class="mark m1">A</span>adeline<span class="c">0</span></div><div class="tab fold"><span class="mark m2">J</span><span class="c">0</span></div><div class="tab fold"><span class="mark m3">T</span><span class="c">0</span></div><div class="tab fold"><span class="mark m4">U</span><span class="c">0</span></div><div class="tab fold"><span class="mark m5">P</span><span class="c hot">2</span></div><div class="tab fold"><span class="mark m6">G</span><span class="c">0</span></div><div class="tab fold"><span class="mark m7">R</span><span class="c">0</span></div><div class="tab fold"><span class="mark m8">H</span><span class="c hot">1</span></div><div class="tab fold"><span class="mark m9">S</span><span class="c">0</span></div><div class="tab fold"><span class="mark m10">D</span><span class="c">0</span></div><div class="tab fold"><span class="mark m11">I</span><span class="c">0</span></div><div class="tab fold"><span class="mark m12">F</span><span class="c">0</span></div><div style="flex:1"></div><div class="ic"><i class="ti ti-layout-sidebar-right"></i></div></div>
+</div>
+<ul class="pros">
+ <li><b>Good:</b> the window chrome is tidy and the title bar is fixed. A full-width bottom bar has about 140px more room than the title bar.</li>
+ <li><b>Cost:</b> tabs at the bottom are unusual for a desktop app, and your eye has to travel further to switch. The bottom bar's existing buttons, the menu and the panel toggle, have to share the space.</li>
+</ul>
+
+<h2>J. A dock of marks</h2>
+<p>Every project is always a mark. Only the active one shows its name, in a pill. Hovering a mark shows its name in a tooltip, and a dot shows attention. Marks are about 30px, so 12 projects fit at 800px and around 25 at 1200px before the strip starts to scroll. It works like a dock: you learn it by colour and position.</p>
+<div class="cap">1200px</div>
+<div class="win" style="width:1200px;overflow:visible">
+ <div class="tb" style="border-radius:8px 8px 0 0"><div class="app"><div></div></div><div class="strip"><div class="dock"><div class="act"><span class="mark big m1">A</span>adeline</div><span class="mark big m2">J</span><span class="mark big m3">T</span><span class="mark big m4">U</span><span class="mark big m5">P<span class="d"></span></span><span class="mark big m6">G</span><span class="mark big m7">R</span><span class="mark big m8">H<span class="d"></span></span><span class="mark big m9">S</span><span class="mark big m10">D</span><span class="mark big m11">I</span><span class="mark big m12">F</span></div><div class="plus"><i class="ti ti-plus"></i></div></div><div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="tip" style="top:40px;left:313px">homelab · 1 waiting</div>
+ <div class="body" style="border-radius:0 0 8px 8px;overflow:hidden"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<div class="cap">800px: the same bar, with less empty space</div>
+<div class="win" style="width:800px">
+ <div class="tb"><div class="app"><div></div></div><div class="strip"><div class="dock"><div class="act"><span class="mark big m1">A</span>adeline</div><span class="mark big m2">J</span><span class="mark big m3">T</span><span class="mark big m4">U</span><span class="mark big m5">P<span class="d"></span></span><span class="mark big m6">G</span><span class="mark big m7">R</span><span class="mark big m8">H<span class="d"></span></span><span class="mark big m9">S</span><span class="mark big m10">D</span><span class="mark big m11">I</span><span class="mark big m12">F</span></div></div><div class="side"><i class="ti ti-folder"></i><i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<ul class="pros">
+ <li><b>Good:</b> the bar looks the same at any width, and it fits twice as many projects as folded tabs do.</li>
+ <li><b>Cost:</b> names show only for the active project and on hover. Telling projects apart by letter and colour gets harder past ten or so.</li>
+</ul>
+
+<h2>K. Less detail for older projects</h2>
+<p>Tabs are sorted by most recent use, and the detail each tab shows depends on how recently you used it. Recent projects keep full names. Older ones become marks. The oldest become small coloured squares at the end, which open the Projects menu. A project that needs attention moves up to at least a mark. Nothing disappears until there are 30 or more projects.</p>
+<div class="cap">1200px: five named, five marks, two squares</div>
+<div class="win" style="width:1200px">
+ <div class="tb"><div class="app"><div></div></div><div class="strip"><div class="tab on"><span class="mark m1">A</span>adeline<span class="c">0</span></div><div class="tab"><span class="mark m5">P</span>ponytail<span class="c hot">2</span></div><div class="tab"><span class="mark m8">H</span>homelab<span class="c hot">1</span></div><div class="tab"><span class="mark m2">J</span>Just Skills<span class="c">0</span></div><div class="tab"><span class="mark m3">T</span>techdemos<span class="c">0</span></div><div class="tab fold"><span class="mark m4">U</span><span class="c">0</span></div><div class="tab fold"><span class="mark m6">G</span><span class="c">0</span></div><div class="tab fold"><span class="mark m7">R</span><span class="c">0</span></div><div class="tab fold"><span class="mark m9">S</span><span class="c">0</span></div><div class="tab fold"><span class="mark m10">D</span><span class="c">0</span></div><div class="tier3"><span class="m11"></span><span class="m12"></span></div><div class="plus"><i class="ti ti-plus"></i></div></div><div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<div class="cap">800px: two named, five marks, five squares</div>
+<div class="win" style="width:800px">
+ <div class="tb"><div class="app"><div></div></div><div class="strip"><div class="tab on"><span class="mark m1">A</span>adeline<span class="c">0</span></div><div class="tab"><span class="mark m5">P</span>ponytail<span class="c hot">2</span></div><div class="tab fold"><span class="mark m8">H</span><span class="c hot">1</span></div><div class="tab fold"><span class="mark m2">J</span><span class="c">0</span></div><div class="tab fold"><span class="mark m3">T</span><span class="c">0</span></div><div class="tab fold"><span class="mark m4">U</span><span class="c">0</span></div><div class="tab fold"><span class="mark m6">G</span><span class="c">0</span></div><div class="tier3"><span class="m7"></span><span class="m9"></span><span class="m10"></span><span class="m11"></span><span class="m12"></span></div></div><div class="side"><i class="ti ti-folder"></i><i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<ul class="pros">
+ <li><b>Good:</b> space goes to the projects you're actually using, and it degrades gradually instead of switching modes at one width.</li>
+ <li><b>Cost:</b> sorting by recency means tabs reorder every time you switch, which breaks muscle memory and Ctrl+1 to 9. A variant keeps the order fixed and only changes the detail.</li>
+</ul>
+
+<h2>L. Projects in the side panel</h2>
+<p>Projects become the top level of the side panel, with each project's chats nested under it. The title bar shows a breadcrumb, so it never overflows. Switching projects and switching chats happen in one place, and the panel scrolls like any list. Other modes, such as Docs or Workflows, nest their items under the projects in the same way.</p>
+<div class="cap">1200px</div>
+<div class="win" style="width:1200px">
+ <div class="tb"><div class="app"><div></div></div><div class="crumb2"><span class="mark m1">A</span><b>adeline</b><i class="ti ti-chevron-right"></i>Chats</div><div class="side"><i class="ti ti-folder"></i>Projects<i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body" style="height:330px"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="panel"><div class="ph on"><i class="ti ti-chevron-down"></i><span class="mark m1">A</span>adeline<span class="c">0</span></div><div class="ch sel">Fix narrow title bar</div><div class="ch">Agent registry onboarding</div><div class="ch">Selection wash colour</div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m2">J</span>Just Skills<span class="c">0</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m3">T</span>techdemos<span class="c">0</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m4">U</span>Usage Tool<span class="c">0</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m5">P</span>ponytail<span class="c hot">2</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m6">G</span>gpui-kit<span class="c">0</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m7">R</span>resolve-luts<span class="c">0</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m8">H</span>homelab<span class="c hot">1</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m9">S</span>the5-search<span class="c">0</span></div></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<div class="cap">800px: same layout, and the panel can be hidden</div>
+<div class="win" style="width:800px">
+ <div class="tb"><div class="app"><div></div></div><div class="crumb2"><span class="mark m1">A</span><b>adeline</b><i class="ti ti-chevron-right"></i>Chats</div><div class="side"><i class="ti ti-folder"></i><i class="ti ti-chevron-down"></i></div><div class="wc"><span><i class="ti ti-minus"></i></span><span><i class="ti ti-square"></i></span><span><i class="ti ti-x"></i></span></div></div>
+ <div class="body" style="height:330px"><div class="rail"><i class="ti ti-message on"></i><i class="ti ti-file-text"></i><i class="ti ti-route"></i><i class="ti ti-stack-2"></i></div><div class="panel"><div class="ph on"><i class="ti ti-chevron-down"></i><span class="mark m1">A</span>adeline<span class="c">0</span></div><div class="ch sel">Fix narrow title bar</div><div class="ch">Agent registry onboarding</div><div class="ch">Selection wash colour</div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m2">J</span>Just Skills<span class="c">0</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m3">T</span>techdemos<span class="c">0</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m4">U</span>Usage Tool<span class="c">0</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m5">P</span>ponytail<span class="c hot">2</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m6">G</span>gpui-kit<span class="c">0</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m7">R</span>resolve-luts<span class="c">0</span></div><div class="ph"><i class="ti ti-chevron-right"></i><span class="mark m8">H</span>homelab<span class="c hot">1</span></div></div><div class="main"><b>Start a chat</b>Choose an agent, then write a message.</div></div>
+</div>
+<ul class="pros">
+ <li><b>Good:</b> scales to any number of projects with names always visible, and you can see what's in another project without switching to it.</li>
+ <li><b>Cost:</b> the side panel has to be open to switch projects, so it needs a shortcut when the panel is hidden. It changes the app's structure: today a project is a whole workspace, and here it becomes a folder in a list.</li>
+</ul>
+
+</body></html>

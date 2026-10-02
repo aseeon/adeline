@@ -3,18 +3,21 @@
 //! Open projects are full-height cells separated by quiet dividers. Each cell
 //! shows the project's letter mark, its name and its attention count; the
 //! count gives way to a close button while the pointer is over the cell.
-//! Inactive names fold away, leaving the mark and count, only when the strip
-//! cannot fit them. The Projects cell opens a searchable menu of every
+//! The active tab always shows its full name. When the strip runs out of room,
+//! inactive names shorten to three letters, then to the mark alone, and the
+//! tabs that still don't fit move into a "+N" menu. Projects that need the user
+//! or are still working are the last to shrink. The Projects cell opens a searchable menu of every
 //! project, where open projects can be closed and closed ones deleted, with a
 //! short window to undo the delete.
 //!
 //! The mode rail continues the title bar's app-icon cell down to the bottom of
 //! the window: one icon per enabled mode, and the main menu at the foot.
 use super::*;
+use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
-use std::cell::Cell;
-use std::hash::{DefaultHasher, Hash, Hasher};
+use gpui_kit::component::tooltip::Tooltip;
+use std::cell::RefCell;
 use std::time::Duration;
 
 /// How long a deleted project can be restored before its data is removed.
@@ -60,69 +63,159 @@ pub(super) struct PendingRemoval {
     generation: u64,
 }
 
-/// Whether inactive tabs fold to their letter mark, measured each frame from
-/// the strip's scroll bounds. The width at full names is remembered so the
-/// strip unfolds once the window has room again.
+/// How much of a project tab shows. As the strip runs out of room, inactive
+/// tabs step down one at a time: full name, three letters, the mark alone,
+/// then into the overflow menu.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(super) enum TabSize {
+    Full,
+    Short,
+    Letter,
+    Hidden,
+}
+
+/// A tab's fixed parts in rem, matching `project_cell`: padding, mark, gap
+/// and count slot. A name adds its own gap and is capped in width.
+const TAB_CHROME: f32 = 0.625 + 1.125 + 0.5 + 1.5 + 0.375;
+const TAB_NAME_GAP: f32 = 0.5;
+const TAB_NAME_MAX: f32 = 11.25;
+/// Widths of the new-project and overflow cells, in rem.
+const NEW_TAB_WIDTH: f32 = 2.25;
+const OVERFLOW_WIDTH: f32 = 4.25;
+
+/// An open tab, as the fit sees it.
+pub(super) struct FitTab {
+    id: String,
+    name: String,
+    active: bool,
+    busy: bool,
+}
+
+/// A tab's width at full, short and letter size.
+struct Measured {
+    widths: [Pixels; 3],
+    active: bool,
+    busy: bool,
+}
+
+/// The size of each open tab, measured each frame from the strip's width and
+/// applied on the next.
 #[derive(Default)]
 pub(super) struct TabFit {
-    compact: Cell<bool>,
-    full_width: Cell<Pixels>,
-    /// The tab contents `full_width` was measured for.
-    signature: Cell<u64>,
+    sizes: RefCell<Vec<(String, TabSize)>>,
 }
 
 impl TabFit {
-    pub(super) fn compact(&self) -> bool {
-        self.compact.get()
+    fn size(&self, id: &str) -> TabSize {
+        self.sizes
+            .borrow()
+            .iter()
+            .find(|(tab, _)| tab == id)
+            .map_or(TabSize::Full, |(_, size)| *size)
     }
 
-    fn measure(&self, strip: &ScrollHandle, signature: u64, window: &mut Window) {
-        let available = strip.bounds().size.width;
+    fn measure(&self, tabs: &[FitTab], available: Pixels, window: &mut Window) {
         if available <= Pixels::ZERO {
             return;
         }
-        if self.compact.get() {
-            // New tabs or counts invalidate the remembered width: unfold for a
-            // frame to measure again.
-            if self.signature.get() != signature || self.full_width.get() <= available {
-                self.compact.set(false);
-                window.refresh();
-            }
-        } else {
-            let overflow = strip.max_offset().x;
-            self.full_width.set(available + overflow);
-            self.signature.set(signature);
-            // Rounding can leave a sub-pixel overflow at an exact fit.
-            if overflow > px(1.) {
-                self.compact.set(true);
-                window.refresh();
+        let rem = window.rem_size();
+        let font_size = rems(0.875).to_pixels(rem);
+        let style = window.text_style();
+        let chrome = rems(TAB_CHROME).to_pixels(rem) + px(1.);
+        let named = |label: String| {
+            let run = style.to_run(label.len());
+            let text = window
+                .text_system()
+                .shape_line(label.into(), font_size, &[run], None)
+                .width;
+            chrome + rems(TAB_NAME_GAP).to_pixels(rem) + text.min(rems(TAB_NAME_MAX).to_pixels(rem))
+        };
+        let measured: Vec<Measured> = tabs
+            .iter()
+            .map(|tab| Measured {
+                widths: [
+                    named(tab.name.clone()),
+                    named(short_name(&tab.name)),
+                    chrome,
+                ],
+                active: tab.active,
+                busy: tab.busy,
+            })
+            .collect();
+        let room = available - rems(NEW_TAB_WIDTH).to_pixels(rem) - px(1.);
+        let more = rems(OVERFLOW_WIDTH).to_pixels(rem) + px(1.);
+        let sizes: Vec<_> = tabs
+            .iter()
+            .map(|tab| tab.id.clone())
+            .zip(fit_tabs(&measured, room, more))
+            .collect();
+        if *self.sizes.borrow() != sizes {
+            *self.sizes.borrow_mut() = sizes;
+            window.refresh();
+        }
+    }
+}
+
+/// Steps tabs down until they fit `room`. Each step reaches every quiet tab
+/// before any busy one, rightmost first, and never the active tab. `more` is
+/// the overflow cell, counted once a tab is hidden.
+fn fit_tabs(tabs: &[Measured], room: Pixels, more: Pixels) -> Vec<TabSize> {
+    let fits = |sizes: &[TabSize]| {
+        let mut total = Pixels::ZERO;
+        for (tab, size) in tabs.iter().zip(sizes) {
+            total += match size {
+                TabSize::Hidden => continue,
+                size => tab.widths[*size as usize],
+            };
+        }
+        if sizes.contains(&TabSize::Hidden) {
+            total += more;
+        }
+        total <= room
+    };
+    let mut sizes = vec![TabSize::Full; tabs.len()];
+    for step in [TabSize::Short, TabSize::Letter, TabSize::Hidden] {
+        for busy in [false, true] {
+            for ix in (0..tabs.len()).rev() {
+                if fits(&sizes) {
+                    return sizes;
+                }
+                if !tabs[ix].active && tabs[ix].busy == busy {
+                    sizes[ix] = step;
+                }
             }
         }
     }
+    sizes
+}
+
+/// The first three letters and an ellipsis, or the whole name when that
+/// would be no shorter.
+fn short_name(name: &str) -> String {
+    if name.chars().count() <= 4 {
+        return name.to_owned();
+    }
+    format!("{}…", name.chars().take(3).collect::<String>())
 }
 
 impl Adeline {
     pub(super) fn header(&self, window: &Window, cx: &Context<Self>) -> Div {
         let theme = cx.theme();
         let bar = theme::bar_colors(theme);
-        let compact = self.tab_fit.compact();
-        let mut signature = DefaultHasher::new();
-        f32::from(window.rem_size()).to_bits().hash(&mut signature);
+        let open: Vec<usize> = (0..self.projects.len())
+            .filter(|&ix| self.open_projects[ix])
+            .collect();
         let mut tabs = row().h_full().flex_shrink_0();
-        for (ix, project) in self
-            .projects
-            .iter()
-            .enumerate()
-            .filter(|(ix, _)| self.open_projects[*ix])
-        {
-            (
-                &project.config.id,
-                &project.config.name,
-                project.attention_count(),
-                ix == self.project,
-            )
-                .hash(&mut signature);
-            tabs = tabs.child(self.project_cell(ix, project, compact, &bar, cx));
+        let mut hidden = Vec::new();
+        for &ix in &open {
+            let project = &self.projects[ix];
+            match self.tab_fit.size(&project.config.id) {
+                TabSize::Hidden if ix != self.project => hidden.push(ix),
+                size => tabs = tabs.child(self.project_cell(ix, project, size, &bar, cx)),
+            }
+        }
+        if !hidden.is_empty() {
+            tabs = tabs.child(self.overflow_menu(&hidden, &bar, cx));
         }
         tabs = tabs.child(
             row()
@@ -130,7 +223,8 @@ impl Adeline {
                 .role(Role::Button)
                 .aria_label("New project…")
                 .h_full()
-                .px(rems(0.625))
+                .w(rems(NEW_TAB_WIDTH))
+                .justify_center()
                 .flex_shrink_0()
                 .occlude()
                 .border_r_1()
@@ -140,18 +234,27 @@ impl Adeline {
                 .on_click(cx.listener(|app, _, window, cx| app.act(Action::AddProject, window, cx)))
                 .child(Icon::default().path("plus.svg").small()),
         );
-        // The strip scrolls when even folded tabs overflow. The canvas after it
-        // prepaints once the strip's bounds are current and decides whether
-        // names fold.
-        let fit = self.tab_fit.clone();
-        let strip_handle = self.tab_scroll.clone();
-        let signature = signature.finish();
+        // Prepaints once the strip's bounds are current and sizes the tabs for
+        // the next frame.
+        let fit: Vec<FitTab> = open
+            .iter()
+            .map(|&ix| {
+                let project = &self.projects[ix];
+                FitTab {
+                    id: project.config.id.clone(),
+                    name: project.config.name.clone(),
+                    active: ix == self.project,
+                    busy: project.busy(),
+                }
+            })
+            .collect();
+        let tab_fit = self.tab_fit.clone();
         let measure = canvas(
-            move |_, window, _| fit.measure(&strip_handle, signature, window),
+            move |bounds, window, _| tab_fit.measure(&fit, bounds.size.width, window),
             |_, (), _, _| {},
         )
         .absolute()
-        .size_0();
+        .inset_0();
         let projects = Button::new("project-menu")
             .ghost()
             .icon(Icon::default().path("folder.svg"))
@@ -161,9 +264,13 @@ impl Adeline {
             .rounded_none()
             .px(rems(0.875))
             .text_color(theme.muted_foreground);
+        // Absolute, so the tabs add nothing to the min width of Kit's bar row,
+        // which never shrinks: in flow, many tabs pushed the window controls
+        // off-screen and the strip never folded or scrolled.
         let toolbar = row()
             .id("project-toolbar")
-            .size_full()
+            .absolute()
+            .inset_0()
             .child(
                 row()
                     .h_full()
@@ -229,14 +336,15 @@ impl Adeline {
                     .id("projects")
                     .role(Role::TabList)
                     .aria_label("Projects")
+                    .relative()
+                    .flex()
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .overflow_x_scroll()
-                    .track_scroll(&self.tab_scroll)
-                    .child(tabs),
+                    .overflow_hidden()
+                    .child(tabs)
+                    .child(measure),
             )
-            .child(measure)
             .when(
                 config::current().general.features.machine_selector,
                 |toolbar| {
@@ -275,7 +383,7 @@ impl Adeline {
         &self,
         ix: usize,
         project: &Workspace,
-        compact: bool,
+        size: TabSize,
         bar: &theme::BarColors,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
@@ -287,13 +395,18 @@ impl Adeline {
         let group = SharedString::from(format!("project-tab-{id}"));
         let (fill, letter) =
             theme::project_mark(theme::project_tint(self.project_tints[ix]), active, theme);
-        let show_name = !compact || active || self.hovered_tab.as_deref() == Some(id.as_str());
+        let shown = match size {
+            _ if active => Some(name.clone()),
+            TabSize::Full => Some(name.clone()),
+            TabSize::Short => Some(short_name(&name)),
+            TabSize::Letter | TabSize::Hidden => None,
+        };
+        let tooltip = (shown.as_ref() != Some(&name)).then(|| name.clone());
         let label = if attention == 0 {
             name.clone()
         } else {
             format!("{name} ({attention})")
         };
-        let hover_id = id.clone();
         row()
             .id(SharedString::from(format!("project-{id}")))
             .group(group.clone())
@@ -317,26 +430,15 @@ impl Adeline {
                         .hover(|style| style.bg(bar.hover).text_color(theme.foreground))
                 }
             })
-            // Folded names unfold under the pointer; unfolded ones need no tracking.
-            .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {
-                let next = if *hovered && app.tab_fit.compact() {
-                    Some(hover_id.clone())
-                } else if app.hovered_tab.as_ref() == Some(&hover_id) {
-                    None
-                } else {
-                    return;
-                };
-                if app.hovered_tab != next {
-                    app.hovered_tab = next;
-                    app.header_region.update(cx, |_, cx| cx.notify());
-                }
-            }))
+            .when_some(tooltip, |cell, name| {
+                cell.tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
+            })
             .on_click(cx.listener(move |app, _, window, cx| {
                 app.act(Action::Project(ix), window, cx);
             }))
             .child(letter_mark(&name, fill, letter, rems(1.125), cx))
-            .when(show_name, |cell| {
-                cell.child(div().max_w(rems(11.25)).truncate().child(name))
+            .when_some(shown, |cell, shown| {
+                cell.child(div().max_w(rems(TAB_NAME_MAX)).truncate().child(shown))
             })
             .child(
                 div()
@@ -368,6 +470,98 @@ impl Adeline {
                             )),
                     ),
             )
+    }
+
+    /// The "+N" cell holding the tabs that don't fit, and its menu. A dot on
+    /// it means a hidden project needs the user.
+    fn overflow_menu(&self, hidden: &[usize], bar: &theme::BarColors, cx: &Context<Self>) -> Div {
+        let theme = cx.theme();
+        let now = recency::now();
+        let rows: Vec<_> = hidden
+            .iter()
+            .map(|&ix| {
+                let project = &self.projects[ix];
+                let (fill, letter) =
+                    theme::project_mark(theme::project_tint(self.project_tints[ix]), false, theme);
+                let opened = project
+                    .config
+                    .opened_at
+                    .map(|at| recency::label(at, now))
+                    .unwrap_or_default();
+                (
+                    ix,
+                    project.config.name.clone(),
+                    fill,
+                    letter,
+                    project.attention_count(),
+                    opened,
+                )
+            })
+            .collect();
+        let waiting = rows.iter().any(|row| row.4 > 0);
+        let count = rows.len();
+        let owner = cx.weak_entity();
+        let trigger = Button::new("project-overflow")
+            .ghost()
+            .label(format!("+{count}"))
+            .dropdown_caret(true)
+            .accessibility_label(format!("{count} more projects"))
+            .tooltip("More projects")
+            .h_full()
+            .w(rems(OVERFLOW_WIDTH))
+            .px_2()
+            .rounded_none()
+            .text_color(theme.muted_foreground)
+            .dropdown_menu_with_anchor(Anchor::TopLeft, move |mut menu, _, _| {
+                for (ix, name, fill, letter, attention, opened) in rows.iter().cloned() {
+                    let owner = owner.clone();
+                    let item = PopupMenuItem::element(move |_, cx| {
+                        let theme = cx.theme();
+                        row()
+                            .w_full()
+                            .gap_3()
+                            .child(letter_mark(&name, fill, letter, rems(1.5), cx))
+                            .child(div().flex_1().min_w_0().truncate().child(name.clone()))
+                            .child(div().text_xs().map(|status| {
+                                if attention > 0 {
+                                    status
+                                        .text_color(theme.primary)
+                                        .child(attention.to_string())
+                                } else {
+                                    status
+                                        .text_color(theme.muted_foreground)
+                                        .child(opened.clone())
+                                }
+                            }))
+                    })
+                    .on_click(move |_, window, cx| {
+                        let _ =
+                            owner.update(cx, |app, cx| app.act(Action::Project(ix), window, cx));
+                    });
+                    menu = menu.item(item);
+                }
+                menu.min_w(px(240.))
+            });
+        div()
+            .relative()
+            .flex()
+            .h_full()
+            .flex_shrink_0()
+            .occlude()
+            .border_r_1()
+            .border_color(bar.divider)
+            .child(trigger)
+            .when(waiting, |cell| {
+                cell.child(
+                    div()
+                        .absolute()
+                        .top(rems(0.5))
+                        .right(rems(0.5))
+                        .size(rems(0.375))
+                        .rounded_full()
+                        .bg(theme.primary),
+                )
+            })
     }
 
     /// The mode rail: the width and color of the app-icon cell above it, from
@@ -1045,4 +1239,49 @@ fn count_badge(count: usize, bar: &theme::BarColors, cx: &App) -> Div {
             }
         })
         .child(count.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Measured, TabSize, fit_tabs, short_name};
+    use gpui_kit::px;
+
+    fn tab(full: f32, short: f32, active: bool, busy: bool) -> Measured {
+        Measured {
+            widths: [px(full), px(short), px(40.)],
+            active,
+            busy,
+        }
+    }
+
+    #[test]
+    fn tabs_step_down_quiet_first_and_never_the_active_one() {
+        use TabSize::*;
+        // Active, busy, quiet, quiet.
+        let tabs = [
+            tab(120., 70., true, false),
+            tab(120., 70., false, true),
+            tab(120., 70., false, false),
+            tab(120., 70., false, false),
+        ];
+        let fit = |room: f32| fit_tabs(&tabs, px(room), px(50.));
+        assert_eq!(fit(480.), [Full, Full, Full, Full]);
+        assert_eq!(fit(430.), [Full, Full, Full, Short]);
+        assert_eq!(fit(380.), [Full, Full, Short, Short]);
+        assert_eq!(fit(330.), [Full, Short, Short, Short]);
+        assert_eq!(fit(300.), [Full, Short, Short, Letter]);
+        assert_eq!(fit(270.), [Full, Short, Letter, Letter]);
+        assert_eq!(fit(240.), [Full, Letter, Letter, Letter]);
+        // The overflow cell is wider than one letter tab, so two go at once.
+        assert_eq!(fit(230.), [Full, Letter, Hidden, Hidden]);
+        assert_eq!(fit(210.), [Full, Letter, Hidden, Hidden]);
+        assert_eq!(fit(10.), [Full, Hidden, Hidden, Hidden]);
+    }
+
+    #[test]
+    fn short_names_keep_three_letters() {
+        assert_eq!(short_name("techdemos"), "tec…");
+        assert_eq!(short_name("Usage Tool"), "Usa…");
+        assert_eq!(short_name("docs"), "docs");
+    }
 }

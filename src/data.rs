@@ -264,6 +264,10 @@ impl Workspace {
             .filter(|thread| thread.status == "blocked" || thread.unread())
             .count()
     }
+    /// Whether something here needs the user or is still working.
+    pub fn busy(&self) -> bool {
+        self.attention_count() > 0 || self.threads.iter().any(|t| t.status == "processing")
+    }
 }
 
 pub fn image_asset(path: &str) -> &'static str {
