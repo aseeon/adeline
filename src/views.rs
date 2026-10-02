@@ -98,10 +98,9 @@ impl Adeline {
             .relative()
             .size_full()
             .min_w_0()
-            .child(
-                AnyView::from(self.transcript.clone())
-                    .cached(StyleRefinement::default().size_full()),
-            )
+            // Not cached: a replayed transcript skips registering its text for
+            // selection, and Kit then drops the selection for a frame.
+            .child(self.transcript.clone())
             .child(fade)
             .child(
                 div()
