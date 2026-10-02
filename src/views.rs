@@ -1,6 +1,7 @@
 use super::*;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::command::{Command, CommandItem, CommandState};
+use gpui_kit::component::dialog::Dialog;
 use gpui_kit::component::switch::Switch;
 
 impl Adeline {
@@ -305,6 +306,7 @@ impl Adeline {
                             "agent" => Action::AgentMenu,
                             "projects" => Action::Projects,
                             "mode-settings" => Action::ModeSettings,
+                            "files" => Action::InsertFiles,
                             _ => Action::AppMenu,
                         };
                         app.act(action, window, cx);
@@ -339,6 +341,7 @@ impl Adeline {
                         column.child(
                             Command::new(state)
                                 .bordered(false)
+                                .searchable(menu != "files")
                                 .placeholder("Search")
                                 .items(entries.iter().map(|(label, _)| {
                                     let item = CommandItem::new().label(label.clone());
@@ -404,7 +407,7 @@ impl Adeline {
         }
         if matches!(
             menu,
-            "agent" | "agents" | "app" | "mode-settings" | "model" | "effort"
+            "agent" | "agents" | "app" | "mode-settings" | "model" | "effort" | "files"
         ) {
             let state = cx.new(|cx| CommandState::new(window, cx));
             window.focus(&state.focus_handle(cx), cx);
@@ -428,12 +431,12 @@ impl Adeline {
         } else {
             String::new()
         };
-        window.open_dialog(cx, move |dialog, _, _| {
+        window.open_dialog(cx, move |dialog, _, cx| {
             let owner = owner.clone();
             let entries_for_action = entries.clone();
             let cancel_owner = closing_owner.clone();
-            dialog
-                .title(title)
+            styled_dialog(dialog, cx)
+                .title(dialog_title(title))
                 .on_ok(|_, _, _| false)
                 .child(
                     col()
@@ -494,16 +497,19 @@ impl Adeline {
                 _subscription: subscription,
             }
         });
-        window.open_dialog(cx, move |dialog, _, _| {
+        let width = px(if self.modal == Some("about") { 320. } else { 400. });
+        window.open_dialog(cx, move |dialog, _, cx| {
             let owner = weak.clone();
             let confirm_owner = weak.clone();
-            dialog
+            styled_dialog(dialog, cx)
+                .w(width)
                 .child(content.clone())
                 .on_ok(move |_, window, cx| {
                     let _ = confirm_owner.update(cx, |app, cx| {
                         let action = match app.modal {
                             Some("add-project") => Some(Action::SaveProject),
                             Some("settings") => Some(Action::SaveSettings),
+                            Some("rename-project") => Some(Action::SaveRename),
                             _ => None,
                         };
                         if let Some(action) = action {
@@ -519,7 +525,10 @@ impl Adeline {
                     });
                 })
         });
-        if matches!(self.modal, Some("add-project" | "settings")) {
+        if matches!(
+            self.modal,
+            Some("add-project" | "settings" | "rename-project")
+        ) {
             window.focus(&self.name_input.focus_handle(cx), cx);
         }
     }
@@ -534,16 +543,37 @@ impl Render for ModalContent {
         self.owner
             .update(cx, |app, cx| match app.modal {
                 Some("about") => col()
-                    .gap_3()
-                    .child(div().text_lg().child("About Adeline"))
-                    .child(concat!("Adeline ", env!("CARGO_PKG_VERSION")))
-                    .child("A native workspace for projects and agent conversations.")
+                    .text_sm()
+                    .child(div().text_xs().text_color(cx.theme().muted_foreground).child("About"))
+                    .child(div().text_base().font_weight(FontWeight::MEDIUM).child("Adeline"))
+                    .child(
+                        div()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(concat!("Version ", env!("CARGO_PKG_VERSION"))),
+                    )
+                    .child(div().pt_3().child("A native workspace for projects and agent conversations."))
                     .when(app.demo_mode, |column| {
-                        column.child("Demo changes reset when Adeline restarts.")
+                        column.child(
+                            div()
+                                .pt_2()
+                                .text_color(cx.theme().muted_foreground)
+                                .child("Demo changes reset when Adeline restarts."),
+                        )
                     })
                     .into_any_element(),
                 _ => app.project_modal(cx),
             })
             .unwrap_or_else(|_| div().into_any_element())
     }
+}
+
+/// Adeline's dialog surface: popover-colored like the app's menus, and closed
+/// with Escape or Cancel rather than a corner button.
+pub(super) fn styled_dialog(dialog: Dialog, cx: &App) -> Dialog {
+    dialog.w(px(400.)).close_button(false).bg(cx.theme().popover)
+}
+
+/// A dialog heading sized to the app chrome rather than Kit's large title.
+pub(super) fn dialog_title(title: impl Into<SharedString>) -> Div {
+    div().text_sm().font_weight(FontWeight::MEDIUM).child(title.into())
 }

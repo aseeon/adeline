@@ -293,7 +293,8 @@ pub fn apply(cx: &mut App) {
         theme.status_bar = c("sidebar");
         theme.status_bar_border = c("sidebar_border");
         theme.window_border = c("border");
-        theme.overlay = c("foreground").alpha(0.55);
+        // Dim with black: a foreground scrim turns milky in dark themes.
+        theme.overlay = gpui_kit::black().alpha(0.5);
         theme.group_box_foreground = c("card_foreground");
         theme.popover = c("popover");
         theme.popover_foreground = c("popover_foreground");

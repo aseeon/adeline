@@ -8,12 +8,13 @@
 //! tabs that still don't fit move into a "+N" menu. Projects that need the user
 //! or are still working are the last to shrink. The Projects cell opens a searchable menu of every
 //! project, where open projects can be closed and closed ones deleted, with a
-//! short window to undo the delete.
+//! short window to undo the delete. Right-clicking a tab or a menu row offers
+//! the same: rename, and close or delete.
 //!
 //! The mode rail continues the title bar's app-icon cell down to the bottom of
 //! the window: one icon per enabled mode, and the main menu at the foot.
 use super::*;
-use gpui_kit::component::menu::{DropdownMenu as _, PopupMenuItem};
+use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
 use gpui_kit::component::tooltip::Tooltip;
@@ -386,7 +387,7 @@ impl Adeline {
         size: TabSize,
         bar: &theme::BarColors,
         cx: &Context<Self>,
-    ) -> Stateful<Div> {
+    ) -> impl IntoElement {
         let theme = cx.theme();
         let id = project.config.id.clone();
         let name = project.config.name.clone();
@@ -407,6 +408,7 @@ impl Adeline {
         } else {
             format!("{name} ({attention})")
         };
+        let owner = cx.weak_entity();
         row()
             .id(SharedString::from(format!("project-{id}")))
             .group(group.clone())
@@ -470,6 +472,7 @@ impl Adeline {
                             )),
                     ),
             )
+            .context_menu(move |menu, _, _| project_actions(menu, &owner, ix, true, &id))
     }
 
     /// The "+N" cell holding the tabs that don't fit, and its menu. A dot on
@@ -887,6 +890,8 @@ impl Adeline {
                 .on_click(owner_action(owner, Action::RemoveClosedProject(id.clone())))
         };
         let select_owner = owner.clone();
+        let menu_owner = owner.clone();
+        let menu_id = id.clone();
         row()
             .id(SharedString::from(format!("project-menu-{id}")))
             .group(group.clone())
@@ -964,6 +969,7 @@ impl Adeline {
                             .child(action),
                     ),
             )
+            .context_menu(move |menu, _, _| project_actions(menu, &menu_owner, ix, open, &menu_id))
             .into_any_element()
     }
 
@@ -1192,6 +1198,27 @@ fn owner_action(
         cx.stop_propagation();
         let _ = owner.update(cx, |app, cx| app.act(action.clone(), window, cx));
     }
+}
+
+/// The right-click menu of a project tab or projects-menu row.
+fn project_actions(
+    menu: PopupMenu,
+    owner: &WeakEntity<Adeline>,
+    ix: usize,
+    open: bool,
+    id: &str,
+) -> PopupMenu {
+    let rename = PopupMenuItem::new("Rename project…")
+        .on_click(owner_action(owner, Action::RenameProject(ix)));
+    let last = if open {
+        PopupMenuItem::new("Close project").on_click(owner_action(owner, Action::CloseProject(ix)))
+    } else {
+        PopupMenuItem::new("Delete project").on_click(owner_action(
+            owner,
+            Action::RemoveClosedProject(id.to_owned()),
+        ))
+    };
+    menu.item(rename).item(last)
 }
 
 fn letter_mark(name: &str, fill: Hsla, letter: Hsla, size: Rems, cx: &App) -> Div {

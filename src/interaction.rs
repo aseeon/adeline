@@ -28,6 +28,8 @@ impl Adeline {
                     | Action::ToggleMachineSelector
                     | Action::RemoveClosedProject(_)
                     | Action::UndoProjectRemoval(_)
+                    | Action::RenameProject(_)
+                    | Action::SaveRename
                     | Action::ToggleProjectSort
                     | Action::OpenFolder
             )
@@ -102,6 +104,16 @@ impl Adeline {
                 self.modal = Some("settings");
             }
             Action::SaveSettings => self.save_project_settings(window, cx),
+            Action::RenameProject(ix) => {
+                self.menu = None;
+                self.name_input.update(cx, |state, cx| {
+                    state.set_value(self.projects[ix].config.name.clone(), window, cx);
+                });
+                self.rename_project = Some(ix);
+                self.project_error = None;
+                self.modal = Some("rename-project");
+            }
+            Action::SaveRename => self.save_project_name(window, cx),
             Action::DeleteProject => self.begin_project_delete(cx),
             Action::ConfirmDeleteProject => self.confirm_project_delete(cx),
             Action::ForceDeleteProject => self.force_project_delete(cx),

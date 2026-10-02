@@ -312,13 +312,14 @@ fn choose(
 ) {
     let selected: Rc<dyn Fn(usize, &mut Window, &mut App)> = Rc::new(selected);
     let decided = Rc::new(Cell::new(false));
-    window.open_dialog(cx, move |dialog, _, _| {
+    window.open_dialog(cx, move |dialog, _, cx| {
         let mut footer = div().flex().justify_end().gap_2();
         for (index, &label) in labels.iter().enumerate() {
             let selected = selected.clone();
             let decided = decided.clone();
             let button = Button::new(format!("choice-{index}"))
                 .label(label)
+                .small()
                 .on_click(move |_, window, cx| {
                     decided.set(true);
                     window.close_dialog(cx);
@@ -336,9 +337,9 @@ fn choose(
         let ok_decided = decided.clone();
         let on_close = selected.clone();
         let close_decided = decided.clone();
-        dialog
-            .title(title.clone())
-            .child(description)
+        views::styled_dialog(dialog, cx)
+            .title(views::dialog_title(title.clone()))
+            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(description))
             .footer(footer)
             .overlay_closable(false)
             .close_button(false)

@@ -131,6 +131,9 @@ enum Action {
     /// Delete a closed project after a short undo window.
     RemoveClosedProject(String),
     UndoProjectRemoval(String),
+    /// Open the rename dialog for a project, open or closed.
+    RenameProject(usize),
+    SaveRename,
     ToggleProjectSort,
     OpenFolder,
     AddProject,
@@ -233,6 +236,8 @@ struct Adeline {
     project_directory_input: Entity<InputState>,
     project_error: Option<String>,
     delete_project: Option<usize>,
+    /// The project the rename dialog is for.
+    rename_project: Option<usize>,
     project_search: Entity<InputState>,
     project_sort: project_bar::ProjectSort,
     /// The projects-menu row the arrow keys have reached, by project id.
@@ -375,6 +380,7 @@ impl Adeline {
                 .new(|cx| InputState::new(window, cx).placeholder("Existing working directory")),
             project_error: None,
             delete_project: None,
+            rename_project: None,
             project_search,
             project_sort: project_bar::ProjectSort::default(),
             project_highlight: None,

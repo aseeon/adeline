@@ -1190,16 +1190,18 @@ impl Adeline {
                     .mt_2()
                     .gap(rems(0.125))
                     .child(
-                        Button::new("attach-chat-files")
-                            .ghost()
-                            .small()
-                            .flex_shrink_0()
-                            .icon(Icon::default().path("plus.svg"))
-                            .accessibility_label("Attach files…")
-                            .tooltip("Attach files…")
-                            .on_click(cx.listener(|app, _, window, cx| {
-                                app.act(Action::InsertFiles, window, cx);
-                            })),
+                        self.command_popover(
+                            "files",
+                            Button::new("attach-chat-files")
+                                .ghost()
+                                .small()
+                                .flex_shrink_0()
+                                .icon(Icon::default().path("plus.svg"))
+                                .accessibility_label("Attach files…")
+                                .tooltip("Attach files…"),
+                            Anchor::BottomLeft,
+                            cx,
+                        ),
                     )
                     .child(div().w_px().h_4().mx_1p5().flex_shrink_0().bg(theme.border))
                     .child(
