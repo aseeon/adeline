@@ -3,6 +3,10 @@ use gpui_kit::base::ResizeHandleContext;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel};
 use std::rc::Rc;
 
+/// The narrowest the main panel (the chat, in Chats) gets, whatever the
+/// interface text size.
+const MAIN_PANEL_MIN: Pixels = px(360.);
+
 pub(super) struct ControlPane {
     owner: WeakEntity<Adeline>,
 }
@@ -115,8 +119,10 @@ impl Adeline {
                     ),
             )
             .child(
+                // The side panels shrink first: they give way down to their own
+                // minimum before the main panel drops below this one.
                 resizable_panel()
-                    .size_range(config::text_pixels(168.)..Pixels::MAX)
+                    .size_range(MAIN_PANEL_MIN..Pixels::MAX)
                     .child(self.chats(cx)),
             )
             .child(
