@@ -1,6 +1,7 @@
 use super::*;
 use crate::chat::{self, LABEL_GAP, ROW_HEIGHT, SECTION_HEIGHT};
 use crate::prepared::{Group, Outcome};
+use gpui_kit::base::SelectableText;
 use gpui_kit::component::plot::shape::{Arc as ArcShape, ArcData};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Selectable as _, Side, Sizable as _,
@@ -775,8 +776,13 @@ impl Adeline {
         let time = message_time(&message.created_at);
         let mut body = col().w_full().min_w_0().gap_2();
         if user || self.demo_mode {
-            for paragraph in message.text.split("\n\n") {
-                body = body.child(div().min_w_0().text_sm().child(paragraph.to_owned()));
+            for (n, paragraph) in message.text.split("\n\n").enumerate() {
+                body = body.child(
+                    div()
+                        .min_w_0()
+                        .text_sm()
+                        .child(SelectableText::new(("paragraph", n), paragraph.to_owned())),
+                );
             }
         } else {
             // Compact text with inline code in the accent on the muted fill; the
