@@ -1,7 +1,7 @@
 use super::*;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, FocusableExt as _, IndexPath, Root, Selectable as _,
-    Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, FocusableExt as _, Icon, IndexPath, Root, Selectable as _,
+    Sizable as _, TitleBar, WindowExt as _,
     button::{Button, ButtonVariants},
     form::{Field, Form},
     input::{Input, InputEvent, InputState},
@@ -165,16 +165,13 @@ fn open_at(owner: Owner, mode: Option<Section>, cx: &mut Context<Adeline>) {
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(760.), px(500.))),
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Settings · Adeline".into()),
-                    appears_transparent: cfg!(target_os = "windows"),
-                    ..Default::default()
-                }),
-                ..Default::default()
+                ..titlebar::main_window_options()
             },
             |window, cx| {
+                window.set_window_title("Settings · Adeline");
                 let view = cx.new(|cx| SettingsWindow::new(owner, mode, window, cx));
-                cx.new(|cx| Root::new(view, window, cx))
+                // Kit's root paints the background, which would hide the window blur.
+                cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
             },
         );
         if let Err(error) = result {
@@ -549,7 +546,6 @@ impl Render for AgentWindow {
 enum AfterAgent {
     CloseSettings,
     CloseOwner,
-    Group(usize),
     Child(usize, usize),
     OpenMode(Section),
     Agent(String),
@@ -577,6 +573,8 @@ struct SettingsWindow {
     group: usize,
     subgroup: Option<usize>,
     search_page: Option<(usize, Option<usize>)>,
+    /// Sidebar groups folded to their header.
+    folded: [bool; 4],
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -865,6 +863,7 @@ impl SettingsWindow {
             group: usize::from(mode == Some(Section::Chats)),
             subgroup: Some(0),
             search_page: None,
+            folded: std::array::from_fn(|group| group != usize::from(mode == Some(Section::Chats))),
             focus,
             _subscriptions: subscriptions,
         }
@@ -886,6 +885,7 @@ impl SettingsWindow {
         self.agent_page = Some(id.clone());
         self.group = 3;
         self.subgroup = None;
+        self.folded[3] = false;
         self.agent_status = None;
         self.search_page = Some((3, None));
         self.agent_subscriptions.clear();
@@ -958,16 +958,9 @@ impl SettingsWindow {
                 self.agent_subscriptions.clear();
                 request_close(self.owner.window, self.owner.entity.clone(), cx);
             }
-            AfterAgent::Group(group) => {
-                self.group = group;
-                self.agent_page = None;
-                self.agent_form = None;
-                self.agent_subscriptions.clear();
-                self.subgroup = None;
-                self.search_page = Some((group, None));
-            }
             AfterAgent::Child(group, child) => {
                 self.group = group;
+                self.folded[group] = false;
                 self.subgroup = Some(child);
                 self.agent_page = None;
                 self.agent_form = None;
@@ -1290,9 +1283,8 @@ impl SettingsWindow {
             .items_center()
             .justify_between()
             .gap_4()
-            .py_4()
-            .border_b_1()
-            .border_color(cx.theme().border)
+            .px_4()
+            .py_3()
             .child(
                 div()
                     .flex_1()
@@ -1301,12 +1293,14 @@ impl SettingsWindow {
                     .flex_col()
                     .gap_1()
                     .child(label)
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(description),
-                    ),
+                    .when(!description.is_empty(), |text| {
+                        text.child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(description),
+                        )
+                    }),
             )
             .child(
                 Switch::new(id)
@@ -1316,7 +1310,7 @@ impl SettingsWindow {
             )
     }
     fn retry_limit_row(&self, cx: &Context<Self>) -> Div {
-        div().w_full().py_4().flex().flex_col().gap_2().border_b_1().border_color(cx.theme().border)
+        div().w_full().px_4().py_3().flex().flex_col().gap_2()
             .child(Field::new().label("Automatic retry limit")
                 .description("Additional attempts after a temporary failure. Zero disables automatic retries.")
                 .child(div().w_24().child(Input::new(&self.retry_limit).aria_label("Automatic retry limit"))))
@@ -1325,12 +1319,11 @@ impl SettingsWindow {
     fn thinking_animation_row(&self, cx: &Context<Self>) -> Div {
         div()
             .w_full()
-            .py_4()
+            .px_4()
+            .py_3()
             .flex()
             .flex_col()
             .gap_2()
-            .border_b_1()
-            .border_color(cx.theme().border)
             .child(
                 Field::new()
                     .label(THINKING_LABEL)
@@ -1509,9 +1502,71 @@ fn general_matches(child: usize, query: &str) -> bool {
         _ => false,
     }
 }
+/// Small capitals in the code font, like the chat list's section labels.
+fn caps(text: &str, cx: &App) -> Div {
+    div()
+        .font_family(cx.theme().mono_font_family.clone())
+        .text_xs()
+        .text_color(cx.theme().muted_foreground)
+        .child(text.to_uppercase())
+}
+/// Rows on one rounded surface, split by hairlines. Empty when no rows match a search.
+fn card(rows: Vec<Div>, cx: &App) -> Option<Div> {
+    (!rows.is_empty()).then(|| {
+        let theme = cx.theme();
+        col()
+            .w_full()
+            .rounded_lg()
+            .border_1()
+            .border_color(theme.border)
+            .bg(theme.foreground.alpha(0.025))
+            .children(rows.into_iter().enumerate().map(|(ix, row)| {
+                row.when(ix > 0, |row| row.border_t_1().border_color(theme.border))
+            }))
+    })
+}
+/// A sidebar group: chevron, name in capitals and its page count. Clicking folds it.
+fn group_header(
+    group: usize,
+    count: usize,
+    folded: bool,
+    cx: &mut Context<SettingsWindow>,
+) -> Stateful<Div> {
+    let theme = cx.theme();
+    let name = GROUPS[group];
+    row()
+        .id(SharedString::from(format!("settings-group-{group}")))
+        .role(Role::Button)
+        .aria_label(format!("{} {name}", if folded { "Show" } else { "Hide" }))
+        .mt_3()
+        .mb_1()
+        .h(rems(1.5))
+        .px_2()
+        .gap_1p5()
+        .rounded(theme.radius)
+        .font_family(theme.mono_font_family.clone())
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .hover(|style| style.text_color(theme.foreground))
+        .child(
+            Icon::default()
+                .path("chevron.svg")
+                .size(rems(0.625))
+                .when(folded, |chevron| {
+                    chevron.rotate(Radians(-std::f32::consts::FRAC_PI_2))
+                }),
+        )
+        .child(div().flex_1().child(name.to_uppercase()))
+        .child(count.to_string())
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.folded[group] = !this.folded[group];
+            cx.notify();
+        }))
+}
 fn navigation_button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
+    icon: &'static str,
     selected: bool,
     cx: &App,
 ) -> Button {
@@ -1519,6 +1574,7 @@ fn navigation_button(
     Button::new(id)
         .ghost()
         .accessibility_label(label.clone())
+        .icon(Icon::default().path(icon))
         .child(div().w_full().truncate().text_left().child(label))
         .selected(selected)
         .focus_ring(false)
@@ -1578,59 +1634,67 @@ impl Render for SettingsWindow {
             {
                 continue;
             }
-            navigation = navigation.child(
-                navigation_button(
-                    format!("settings-group-{group}"),
-                    name,
-                    !searching && self.group == group && self.subgroup.is_none(),
-                    cx,
-                )
-                .on_click(cx.listener(move |this, _, window, cx| {
-                    this.leave(AfterAgent::Group(group), window, cx);
-                })),
-            );
+            // Searching shows every match, whatever is folded.
+            let folded = self.folded[group] && !searching;
+            navigation = navigation.child(group_header(
+                group,
+                matching.len() + matching_agents.len(),
+                folded,
+                cx,
+            ));
+            if folded {
+                continue;
+            }
+            let icon = match group {
+                1 => "chat.svg",
+                2 => "file.svg",
+                _ => "robot.svg",
+            };
             for (child, title) in matching {
+                let icon = if group == 0 {
+                    ["settings.svg", "pen.svg", "code.svg"][child]
+                } else {
+                    icon
+                };
                 navigation = navigation.child(
-                    div().pl_4().child(
-                        navigation_button(
-                            format!("settings-{group}-{child}"),
-                            *title,
-                            self.group == group && self.subgroup == Some(child),
-                            cx,
-                        )
-                        .on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.leave(AfterAgent::Child(group, child), window, cx);
-                            },
-                        )),
-                    ),
+                    navigation_button(
+                        format!("settings-{group}-{child}"),
+                        *title,
+                        icon,
+                        self.group == group && self.subgroup == Some(child),
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.leave(AfterAgent::Child(group, child), window, cx);
+                    })),
                 );
             }
             for (id, title) in matching_agents {
                 let selected = self.agent_page.as_ref() == Some(&id);
                 navigation = navigation.child(
-                    div().pl_4().child(
-                        navigation_button(format!("settings-agent-{id}"), title, selected, cx)
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                if this.agent_page.as_deref() != Some(&id) {
-                                    this.leave(AfterAgent::Agent(id.clone()), window, cx);
-                                }
-                            })),
-                    ),
+                    navigation_button(format!("settings-agent-{id}"), title, icon, selected, cx)
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if this.agent_page.as_deref() != Some(&id) {
+                                this.leave(AfterAgent::Agent(id.clone()), window, cx);
+                            }
+                        })),
                 );
             }
         }
+        let sidebar_width = window.rem_size() * 15.;
+        // The sidebar shows the window blur, like the main window's mode rail, and runs up
+        // under the title bar.
         let sidebar = div()
-            .w_64()
+            .w(sidebar_width)
             .h_full()
             .flex_shrink_0()
             .flex()
             .flex_col()
-            .gap_3()
-            .p_3()
-            .bg(cx.theme().sidebar)
-            .border_r_1()
-            .border_color(cx.theme().sidebar_border)
+            .gap_2()
+            .px_2()
+            .pb_2()
+            .pt(titlebar::MAIN_HEIGHT + px(4.))
+            .bg(cx.theme().title_bar.alpha(titlebar::GLASS))
             .child(search_field(
                 Input::new(&self.query).aria_label("Search settings"),
                 &self.query,
@@ -1665,13 +1729,13 @@ impl Render for SettingsWindow {
                 .map_or(GROUPS[self.group], |child| SUBGROUPS[self.group][child])
                 .to_string()
         };
-        let mut content = div()
-            .w_full()
-            .p_6()
-            .flex()
-            .flex_col()
-            .gap_4()
-            .child(div().text_xl().child(heading));
+        // The title bar names the page, so the content starts with its settings.
+        let crumbs = if searching || heading == GROUPS[self.group] {
+            vec![heading]
+        } else {
+            vec![GROUPS[self.group].to_string(), heading]
+        };
+        let mut content = div().w_full().p_6().pt_4().flex().flex_col().gap_3();
         let mut found = false;
         if let Some(owner) = self.owner.entity.upgrade() {
             let app = owner.read(cx);
@@ -1683,11 +1747,12 @@ impl Render for SettingsWindow {
                 content = content.child(div().text_sm().text_color(cx.theme().muted_foreground)
                     .child("Choose which features are available in the main view. Chats is always enabled."));
                 let features = config::current().general.features;
+                let mut top_bar = Vec::new();
                 if matches_query(
                     &query,
                     &["General", "Features", "Machine selector", "top bar"],
                 ) {
-                    content = content.child(self.setting_row(
+                    top_bar.push(self.setting_row(
                         "machine-selector",
                         "Machine selector",
                         "Show the machine selector in the top bar.",
@@ -1696,19 +1761,25 @@ impl Render for SettingsWindow {
                         cx,
                     ));
                 }
+                let mut modes = Vec::new();
                 for (section, name) in MODES.into_iter().skip(1) {
                     if matches_query(
                         &query,
                         &["General", "Features", name, "Enable mode in the main view"],
                     ) {
-                        content = content.child(self.setting_row(
+                        modes.push(self.setting_row(
                             format!("feature-{name}"),
                             name,
-                            "Enable this mode in the main view.",
+                            "",
                             features.enabled(section),
                             Action::ToggleMode(section),
                             cx,
                         ));
+                    }
+                }
+                for (label, rows) in [("Top bar", top_bar), ("Modes", modes)] {
+                    if let Some(card) = card(rows, cx) {
+                        content = content.child(caps(label, cx).mt_2()).child(card);
                     }
                 }
             }
@@ -1723,27 +1794,29 @@ impl Render for SettingsWindow {
                 }
                 content = content.child(div().text_sm().text_color(cx.theme().muted_foreground)
                     .child("Edit shortcuts in settings.yml, then restart Adeline. Enter and Space activate focused controls."));
+                let mut keys = Vec::new();
                 for (label, value) in KEYMAP.into_iter().zip(keymap_rows()) {
                     if !matches_query(&query, &["General", "Keymap", label, &value]) {
                         continue;
                     }
-                    content = content.child(
+                    keys.push(
                         div()
                             .flex()
                             .justify_between()
                             .gap_4()
+                            .px_4()
                             .py_3()
-                            .border_b_1()
-                            .border_color(cx.theme().border)
                             .child(label)
                             .child(
                                 div()
                                     .text_sm()
+                                    .font_family(cx.theme().mono_font_family.clone())
                                     .text_color(cx.theme().muted_foreground)
                                     .child(value),
                             ),
                     );
                 }
+                content = content.children(card(keys, cx));
             }
             if show(1, 0) {
                 let options: Vec<_> = app
@@ -1772,22 +1845,26 @@ impl Render for SettingsWindow {
                     if searching || self.subgroup.is_none() {
                         content = content.child(div().text_lg().child("Chats"));
                     }
-                    for (index, (label, description, checked, action)) in options {
-                        content = content.child(self.setting_row(
-                            format!("chats-setting-{index}"),
-                            label,
-                            description,
-                            checked,
-                            action,
-                            cx,
-                        ));
-                    }
+                    let mut rows: Vec<Div> = options
+                        .into_iter()
+                        .map(|(index, (label, description, checked, action))| {
+                            self.setting_row(
+                                format!("chats-setting-{index}"),
+                                label,
+                                description,
+                                checked,
+                                action,
+                                cx,
+                            )
+                        })
+                        .collect();
                     if thinking_matches {
-                        content = content.child(self.thinking_animation_row(cx));
+                        rows.push(self.thinking_animation_row(cx));
                     }
                     if retry_matches {
-                        content = content.child(self.retry_limit_row(cx));
+                        rows.push(self.retry_limit_row(cx));
                     }
+                    content = content.children(card(rows, cx));
                 }
             }
         }
@@ -1925,36 +2002,91 @@ impl Render for SettingsWindow {
                     .child("Changes apply immediately and are saved to settings.yml."),
             );
         }
-        let shell = div()
+        let theme = cx.theme();
+        let mut breadcrumb = row().h_full().px_6().gap_1p5().text_sm().min_w_0();
+        let last = crumbs.len() - 1;
+        for (ix, crumb) in crumbs.into_iter().enumerate() {
+            if ix > 0 {
+                breadcrumb = breadcrumb.child(
+                    Icon::default()
+                        .path("caret-right.svg")
+                        .size(rems(0.625))
+                        .text_color(theme.muted_foreground),
+                );
+            }
+            breadcrumb = breadcrumb.child(
+                div()
+                    .truncate()
+                    .text_color(if ix == last {
+                        theme.foreground
+                    } else {
+                        theme.muted_foreground
+                    })
+                    .child(crumb),
+            );
+        }
+        // One bar across the window, drawn over both panes without a line under it: the
+        // sidebar's glass shows through on the left, the content's surface on the right.
+        // macOS keeps Kit's left padding for the traffic lights.
+        let lead = if cfg!(target_os = "macos") {
+            sidebar_width - px(80.)
+        } else {
+            sidebar_width
+        };
+        // Kit wraps the bar in an unstyled div, and absolute boxes sit in their parent, so the
+        // overlay is this wrapper rather than the bar itself.
+        let title_bar = TitleBar::new()
+            .h(titlebar::MAIN_HEIGHT)
+            .when(!cfg!(target_os = "macos"), |bar| bar.pl_0())
+            .border_b_0()
+            .bg(transparent_black())
+            .child(
+                row()
+                    .size_full()
+                    .child(
+                        row()
+                            .h_full()
+                            .w(lead)
+                            .flex_shrink_0()
+                            .gap_2()
+                            .when(!cfg!(target_os = "macos"), |cell| {
+                                cell.pl(rems(0.375)).child(titlebar::app_icon(window))
+                            })
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .child("Settings"),
+                    )
+                    .child(breadcrumb),
+            );
+        div()
+            .relative()
             .size_full()
             .flex()
-            .flex_col()
-            .bg(cx.theme().background)
-            .text_color(cx.theme().foreground);
-        #[cfg(target_os = "windows")]
-        let shell = shell.child(titlebar::render("Settings · Adeline".into(), window));
-        shell
+            .items_stretch()
+            .text_color(theme.foreground)
+            .track_focus(&self.focus)
+            .on_action(cx.listener(|this, _: &Cancel, window, cx| {
+                this.leave(AfterAgent::CloseSettings, window, cx);
+            }))
+            .child(sidebar)
             .child(
                 div()
                     .flex_1()
-                    .min_h_0()
-                    .flex()
-                    .items_stretch()
-                    .track_focus(&self.focus)
-                    .on_action(cx.listener(|this, _: &Cancel, window, cx| {
-                        this.leave(AfterAgent::CloseSettings, window, cx);
-                    }))
-                    .child(sidebar)
+                    .min_w_0()
+                    .h_full()
+                    .pt(titlebar::MAIN_HEIGHT)
+                    .bg(theme.background)
+                    .border_l_1()
+                    .border_color(theme::bar_colors(theme).divider)
                     .child(
                         div()
-                            .flex_1()
-                            .min_w_0()
-                            .h_full()
+                            .size_full()
                             .overflow_y_scrollbar()
                             .id("settings-content")
                             .child(content),
                     ),
             )
+            .child(div().absolute().top_0().left_0().right_0().child(title_bar))
             .children(window_layers(window, cx).into_iter().flatten())
     }
 }
