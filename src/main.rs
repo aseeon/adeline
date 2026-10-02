@@ -671,6 +671,10 @@ impl Render for Adeline {
                                     .flex_1()
                                     .min_h_0()
                                     .bg(cx.theme().background)
+                                    // The divider beside the rail stops at the content,
+                                    // so the rail runs into the title and control bars.
+                                    .border_l_1()
+                                    .border_color(theme::bar_colors(cx.theme()).divider)
                                     .child(body),
                             )
                             .child(self.control_pane.clone()),

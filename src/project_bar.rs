@@ -170,8 +170,6 @@ impl Adeline {
                     .w(rems(2.75))
                     .flex_shrink_0()
                     .justify_center()
-                    .border_r_1()
-                    .border_color(bar.divider)
                     .child(titlebar::app_icon(window)),
             )
             .child(self.project_strip(tabs, projects, measure, cx));
@@ -374,7 +372,6 @@ impl Adeline {
     /// edge, and Chats carries a dot while a chat waits on the user.
     pub(super) fn mode_rail(&self, cx: &Context<Self>) -> Div {
         let theme = cx.theme();
-        let bar = theme::bar_colors(theme);
         let waiting = self
             .workspace()
             .threads
@@ -463,8 +460,6 @@ impl Adeline {
             .items_center()
             .p_2()
             .bg(theme.title_bar.alpha(titlebar::GLASS))
-            .border_r_1()
-            .border_color(bar.divider)
             .child(modes)
             .child(div().flex_1())
             .child(
