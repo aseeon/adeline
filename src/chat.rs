@@ -816,6 +816,8 @@ pub(super) struct Transcript {
     footer_focus: FocusHandle,
     /// Height of the composer floating over the end of the transcript.
     composer_height: std::rc::Rc<std::cell::Cell<Pixels>>,
+    /// Distance from the end at the last wheel scroll.
+    left_to_end: Pixels,
 }
 
 impl Transcript {
@@ -825,6 +827,21 @@ impl Transcript {
         cx: &mut Context<Self>,
     ) -> Self {
         let state = ListState::new(0, ListAlignment::Top, px(250.));
+        // Stick to the end while the reader is at the bottom; scrolling up
+        // pauses this and scrolling back down resumes it.
+        state.set_follow_mode(FollowMode::Tail);
+        // Gpui only resumes within 1px of the end; resume once a downward wheel
+        // scroll brings the last line close to the composer. Deferred because
+        // the list is still borrowed while its handler runs.
+        let view = cx.weak_entity();
+        state.set_scroll_handler(move |_, window, cx| {
+            let view = view.clone();
+            let near = window.rem_size() * 3.;
+            cx.defer(move |cx| {
+                view.update(cx, |transcript, _| transcript.resume_near_end(near))
+                    .ok();
+            });
+        });
         Self {
             owner,
             state,
@@ -834,7 +851,18 @@ impl Transcript {
             messages: 0,
             footer_focus: cx.focus_handle(),
             composer_height,
+            left_to_end: px(0.),
         }
+    }
+
+    fn resume_near_end(&mut self, near: Pixels) {
+        let left =
+            self.state.max_offset_for_scrollbar().y + self.state.scroll_px_offset_for_scrollbar().y;
+        // Only while moving down, so a small scroll up near the end can leave it.
+        if !self.state.is_following_tail() && left <= near && left < self.left_to_end {
+            self.state.set_follow_mode(FollowMode::Tail);
+        }
+        self.left_to_end = left;
     }
 
     pub fn sync(&mut self, app: &Adeline, scroll_to_end: bool, cx: &mut Context<Self>) {
@@ -870,12 +898,9 @@ impl Transcript {
                 (start..count).map(|i| (i == messages).then(|| self.footer_focus.clone())),
             );
         }
-        if scroll_to_end {
-            self.state.scroll_to(ListOffset {
-                item_ix: count,
-                offset_in_item: px(0.),
-            });
-        } else if !changed_thread {
+        if scroll_to_end || changed_thread {
+            self.state.set_follow_mode(FollowMode::Tail);
+        } else if !self.state.is_following_tail() {
             self.state.scroll_to(previous_top);
         }
         self.thread = key;
@@ -890,10 +915,7 @@ impl Render for Transcript {
         let typography = config::typography();
         if self.typography != typography {
             self.typography = typography;
-            let top = self.state.logical_scroll_top();
-            let count = self.state.item_count();
-            self.state.splice(0..count, count);
-            self.state.scroll_to(top);
+            self.state.remeasure();
         }
         // The header and composer float over the transcript so its scrollbar runs
         // the full height; the messages start and end clear of both.
