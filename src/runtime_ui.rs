@@ -1362,7 +1362,7 @@ impl Adeline {
                     13.,
                     theme::muted_foreground(),
                 ));
-            } else if live.processing && live.permission.is_empty() {
+            } else if live.processing && live.permission.is_empty() && live.assistant.is_none() {
                 content = content.child(
                     chat_render::agent_header(&thread.provider, thread.provider.clone(), cx)
                         .child(chat_render::thinking_label(live.progress.clone(), cx)),
