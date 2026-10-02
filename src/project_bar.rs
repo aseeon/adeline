@@ -192,7 +192,11 @@ impl Adeline {
                 .h(px(1.))
                 .bg(theme.border)
         });
-        col().relative().flex_shrink_0().child(top).children(line)
+        col()
+            .relative()
+            .flex_shrink_0()
+            .child(titlebar::without_text_selection(top))
+            .children(line)
     }
 
     /// The project tabs, the machine selector and the Projects menu. On macOS,

@@ -2086,7 +2086,13 @@ impl Render for SettingsWindow {
                             .child(content),
                     ),
             )
-            .child(div().absolute().top_0().left_0().right_0().child(title_bar))
+            .child(
+                titlebar::without_text_selection(title_bar)
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .right_0(),
+            )
             .children(window_layers(window, cx).into_iter().flatten())
     }
 }
