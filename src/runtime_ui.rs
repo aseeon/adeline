@@ -22,6 +22,8 @@ struct LiveConversation {
     progress: Option<String>,
     permission: VecDeque<PendingPermission>,
     execution: Option<storage::ExecutionConfig>,
+    /// The ACP config options the agent offers now, or offered in its last session.
+    options: Vec<serde_json::Value>,
     permission_mode: Option<agents::PermissionMode>,
     last_read_through: Option<usize>,
     assistant: Option<usize>,
@@ -92,6 +94,7 @@ impl Adeline {
                     LiveConversation {
                         storage_failed: conversation.storage_error.is_some(),
                         execution,
+                        options: conversation.settings.config_options.clone(),
                         permission_mode,
                         last_read_through,
                         error,
@@ -385,6 +388,17 @@ impl Adeline {
                 self.open_commands("agent", window, cx);
                 return;
             };
+            let launch = match cx.global::<harness::Catalog>().launch(
+                &agent.harness,
+                &agent.command,
+                &agent.arguments,
+            ) {
+                Ok(launch) => launch,
+                Err(error) => {
+                    self.notify_toast(&error, cx);
+                    return;
+                }
+            };
             if let Some(mode) = self.new_chat_permission.take() {
                 agent.permission_mode = mode;
             }
@@ -394,8 +408,12 @@ impl Adeline {
                 .lock()
                 .map_err(|e| e.to_string())
                 .and_then(|mut store| {
-                    let id =
-                        store.create_conversation(&project_id, &agent, &short(&prompt, 100))?;
+                    let id = store.create_conversation(
+                        &project_id,
+                        &agent,
+                        launch,
+                        &short(&prompt, 100),
+                    )?;
                     let saved = store
                         .projects
                         .iter()
@@ -429,6 +447,10 @@ impl Adeline {
                 }
             }
         };
+        if let Some(error) = self.cannot_start(&id, cx) {
+            self.notify_toast(&error, cx);
+            return;
+        }
         let live = self.runtime.conversations.entry(id.clone()).or_default();
         if live.processing
             || live.shutting_down
@@ -467,7 +489,77 @@ impl Adeline {
         self.refresh_runtime_views(cx);
     }
 
+    /// Why this conversation's agent cannot start: an old snapshot, or a
+    /// harness that is no longer installed.
+    fn cannot_start(&self, id: &str, cx: &App) -> Option<String> {
+        let execution = self.runtime.conversations.get(id)?.execution.as_ref()?;
+        if execution.legacy() {
+            return Some(
+                "This conversation was created by an older Adeline version; start a new chat."
+                    .into(),
+            );
+        }
+        let command = std::path::Path::new(&execution.command);
+        (command.is_absolute() && !command.is_file()).then(|| {
+            format!(
+                "The {} harness is not installed.",
+                cx.global::<harness::Catalog>()
+                    .label(&execution.harness, &execution.identity)
+            )
+        })
+    }
+
+    /// The open conversation's offered options, live or from its last session.
+    pub(super) fn conversation_options(&self) -> Vec<serde_json::Value> {
+        self.current_id()
+            .and_then(|id| self.runtime.conversations.get(&id))
+            .map(|live| live.options.clone())
+            .unwrap_or_default()
+    }
+
+    /// Switches the open conversation's model or effort. It never changes the agent.
+    pub(super) fn switch_setting(
+        &mut self,
+        kind: harness::Kind,
+        value: String,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.current_id() else {
+            return;
+        };
+        if self.conversation_processing() {
+            return;
+        }
+        let Some(mut settings) = self.conversation_settings(&id) else {
+            return;
+        };
+        match kind {
+            harness::Kind::Model => settings.execution.model.clone_from(&value),
+            harness::Kind::Effort => settings.execution.effort.clone_from(&value),
+        }
+        let execution = settings.execution.clone();
+        if !self.save_conversation_settings(&id, settings) {
+            self.refresh_runtime_views(cx);
+            return;
+        }
+        self.record_visible(
+            &id,
+            "lifecycle",
+            json!({"event":"setting_switched","kind":format!("{kind:?}"),"value":value}),
+        );
+        let live = self.runtime.conversations.entry(id).or_default();
+        live.execution = Some(execution);
+        if let Some(driver) = &live.driver {
+            let _ = driver.send(acp::Command::SetOption { kind, value });
+        }
+        self.refresh_runtime_views(cx);
+    }
+
     fn start_prompt(&mut self, id: &str, prompt: String, retry: bool, cx: &mut Context<Self>) {
+        if let Some(error) = self.cannot_start(id, cx) {
+            self.notify_toast(&error, cx);
+            return;
+        }
         if !self.set_runtime_status(id, "processing") {
             return;
         }
@@ -548,6 +640,16 @@ impl Adeline {
                     "lifecycle",
                     json!({"event":"session_ready","session_id":session_id,"replacement":replaced}),
                 );
+            }
+            acp::EventKind::Options(options) => {
+                let live = self.runtime.conversations.entry(id.clone()).or_default();
+                if live.options != options {
+                    live.options.clone_from(&options);
+                    if let Some(mut settings) = self.conversation_settings(&id) {
+                        settings.config_options = options;
+                        self.save_conversation_settings(&id, settings);
+                    }
+                }
             }
             acp::EventKind::Text(delta) => {
                 let index = self

@@ -953,6 +953,8 @@ fn invalidate_range(state: &ListState, range: std::ops::Range<usize>) {
 
 pub(super) struct Composer {
     owner: WeakEntity<Adeline>,
+    /// Width at the last paint; a narrow composer shortens its labels.
+    width: Pixels,
     _content_subscription: Subscription,
 }
 
@@ -969,15 +971,42 @@ impl Composer {
         });
         Self {
             owner,
+            width: px(0.),
             _content_subscription: subscription,
         }
     }
 }
 
 impl Render for Composer {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // Unmeasured counts as wide, so the first frame shows full labels.
+        let width = if self.width > px(0.) {
+            self.width / window.rem_size()
+        } else {
+            f32::MAX
+        };
+        let measured = cx.entity();
         self.owner
-            .update(cx, |app, cx| app.composer_view(cx).into_any_element())
+            .update(cx, |app, cx| {
+                app.composer_view(width, cx)
+                    .relative()
+                    .child(
+                        canvas(
+                            move |bounds, _, cx| {
+                                measured.update(cx, |composer, cx| {
+                                    if (composer.width - bounds.size.width).abs() > px(0.5) {
+                                        composer.width = bounds.size.width;
+                                        cx.notify();
+                                    }
+                                });
+                            },
+                            |_, (), _, _| {},
+                        )
+                        .absolute()
+                        .size_full(),
+                    )
+                    .into_any_element()
+            })
             .unwrap_or_else(|_| div().into_any_element())
     }
 }

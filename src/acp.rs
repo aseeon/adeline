@@ -1,5 +1,9 @@
 //! One ACP stdio process per conversation. Protocol I/O runs off the GPUI thread.
-use crate::{agents::PermissionMode, storage::ExecutionConfig};
+use crate::{
+    agents::{InstructionsMode, PermissionMode},
+    harness::{self, Kind},
+    storage::ExecutionConfig,
+};
 use async_channel::Sender;
 use serde_json::{Value, json};
 use std::{
@@ -19,11 +23,24 @@ pub struct Driver {
 
 #[derive(Debug)]
 pub enum Command {
-    Prompt { text: String, retries: u32 },
+    Prompt {
+        text: String,
+        retries: u32,
+    },
     Cancel,
-    Permission { request_id: u64, option_id: String },
+    Permission {
+        request_id: u64,
+        option_id: String,
+    },
     SetPermissionMode(PermissionMode),
-    ReplaceSession { context: String },
+    /// Switches the model or effort; applied now when idle, else at next setup.
+    SetOption {
+        kind: Kind,
+        value: String,
+    },
+    ReplaceSession {
+        context: String,
+    },
     Shutdown,
     ForceStop,
     ResumeStorage,
@@ -53,6 +70,8 @@ pub enum EventKind {
         /// Files the call reads or changes.
         paths: Vec<String>,
     },
+    /// The config options the session now offers.
+    Options(Vec<Value>),
     /// How much of the agent's context window the session uses, in tokens.
     Usage {
         used: u64,
@@ -172,6 +191,7 @@ enum Request {
     Setup,
     Model,
     Effort,
+    Switch,
     Prompt,
     Close,
 }
@@ -328,7 +348,7 @@ impl Worker {
                             let kind = classify_error(&error, None);
                             if missing_initialize
                                 && kind == FailureKind::Temporary
-                                && self.config.harness == "OMP"
+                                && self.config.harness == harness::OMP
                             {
                                 self.fail(
                                     format!(
@@ -435,7 +455,7 @@ impl Worker {
                         if self.capabilities.is_null() {
                             self.initialize();
                         } else {
-                            self.configure("model", &self.config.model.clone(), Request::Model);
+                            self.configure(Request::Model);
                         }
                     }
                 }
@@ -446,6 +466,7 @@ impl Worker {
                 option_id,
             } => self.permission(request_id, &option_id),
             Command::SetPermissionMode(mode) => self.permission_mode = mode,
+            Command::SetOption { kind, value } => self.switch(kind, &value),
             Command::ReplaceSession { context } => {
                 if !self.blocked && !self.closing && self.stdin.is_none() && self.child.is_some() {
                     self.emit(EventKind::Error {
@@ -536,7 +557,9 @@ impl Worker {
             self.fail("Agent command must name one executable; edit the agent definition for new conversations.".into(), FailureKind::Configuration);
             return;
         }
-        if self.config.harness == "OMP"
+        let instructions =
+            harness::supports_instructions(&self.config.harness, &self.config.identity);
+        if instructions
             && self.config.arguments.iter().any(|arg| {
                 arg == "--system-prompt"
                     || arg.starts_with("--system-prompt=")
@@ -551,13 +574,16 @@ impl Worker {
         process
             .args(&self.config.arguments)
             .current_dir(&self.config.directory);
-        if self.config.harness == "OMP" {
+        if instructions {
+            let flag = match self.config.instructions_mode {
+                InstructionsMode::Append => "--append-system-prompt",
+                InstructionsMode::Overwrite => "--system-prompt",
+            };
             // A trailing newline forces OMP's literal-text route, not its single-line file lookup.
-            let instructions = format!(
-                "--append-system-prompt=You are an agent named {}\n{}\n",
-                self.config.name, self.config.system_instructions
-            );
-            process.arg(instructions);
+            process.arg(format!(
+                "{flag}={}\n",
+                harness::guidance(&self.config.name, &self.config.system_instructions)
+            ));
         }
         process
             .stdin(Stdio::piped())
@@ -858,65 +884,26 @@ impl Worker {
                     session_id,
                     replaced: was_replacement,
                 });
+                self.emit(EventKind::Options(self.options.clone()));
                 if self.closing {
                     self.close_session();
                     return;
                 }
-                self.configure("model", &self.config.model.clone(), Request::Model);
+                self.configure(Request::Model);
             }
-            Request::Model => {
+            Request::Model | Request::Effort | Request::Switch => {
                 if let Some(options) = result.get("configOptions").and_then(Value::as_array) {
                     self.options.clone_from(options);
+                    self.emit(EventKind::Options(self.options.clone()));
                 }
                 if self.closing {
                     self.close_session();
                     return;
                 }
-                let effort = match self.config.effort.as_str() {
-                    "Low" => "low",
-                    "Medium" => "medium",
-                    "High" => "high",
-                    "Extra High" => "xhigh",
-                    "Max" => "max",
-                    _ => {
-                        self.fail(
-                            "Invalid saved effort level.".into(),
-                            FailureKind::Configuration,
-                        );
-                        return;
-                    }
-                };
-                self.configure(
-                    self.config.effort_parameter_name.as_str(),
-                    effort,
-                    Request::Effort,
-                );
-            }
-            Request::Effort => {
-                self.configured = true;
-                if let Some(options) = result.get("configOptions").and_then(Value::as_array) {
-                    self.options.clone_from(options);
-                }
-                if self.closing {
-                    self.close_session();
-                    return;
-                }
-                if self.replacing {
-                    self.replacing = false;
-                    let context = self.replacement.take().unwrap_or_default();
-                    if !context.trim().is_empty() {
-                        if let Some(turn) = &mut self.active {
-                            turn.text = format!(
-                                "Saved conversation context follows. Treat it as history, not a new user request. Do not repeat completed tool actions.\n\n{context}\n\nContinue the interrupted turn from where it stopped; do not repeat completed work."
-                            );
-                            turn.attempt = 0;
-                        } else {
-                            self.pending_context = Some(context);
-                        }
-                    }
-                }
-                if self.active.is_some() {
-                    self.send_prompt();
+                match request {
+                    Request::Model => self.configure(Request::Effort),
+                    Request::Effort => self.configured(),
+                    _ => {}
                 }
             }
             Request::Prompt => self.prompt_result(result),
@@ -928,25 +915,57 @@ impl Worker {
         }
     }
 
-    fn configure(&mut self, id: &str, value: &str, request: Request) {
-        let Some(option) = self
-            .options
-            .iter()
-            .find(|option| option.get("id").and_then(Value::as_str) == Some(id))
-        else {
-            self.fail(format!("Agent does not expose required {id} configuration; saved settings cannot be honored. Authenticate with the configured harness or choose one that offers this option."), FailureKind::Configuration);
+    fn configured(&mut self) {
+        self.configured = true;
+        if self.replacing {
+            self.replacing = false;
+            let context = self.replacement.take().unwrap_or_default();
+            if !context.trim().is_empty() {
+                if let Some(turn) = &mut self.active {
+                    turn.text = format!(
+                        "Saved conversation context follows. Treat it as history, not a new user request. Do not repeat completed tool actions.\n\n{context}\n\nContinue the interrupted turn from where it stopped; do not repeat completed work."
+                    );
+                    turn.attempt = 0;
+                } else {
+                    self.pending_context = Some(context);
+                }
+            }
+        }
+        if self.active.is_some() {
+            self.send_prompt();
+        }
+    }
+
+    /// Applies the saved model (`Request::Model`) or effort (`Request::Effort`),
+    /// then moves on. An empty value keeps the harness's default. The model is
+    /// always set, because some harnesses (Codex) offer effort only after that.
+    fn configure(&mut self, request: Request) {
+        let (kind, value, label) = if request == Request::Model {
+            (Kind::Model, self.config.model.clone(), "model")
+        } else {
+            (Kind::Effort, self.config.effort.clone(), "effort")
+        };
+        let next = |worker: &mut Self| {
+            if request == Request::Model {
+                worker.configure(Request::Effort);
+            } else {
+                worker.configured();
+            }
+        };
+        if value.is_empty() {
+            next(self);
+            return;
+        }
+        let Some(setting) = harness::setting(&self.options, kind) else {
+            self.fail(format!("Agent does not expose required {label} configuration; saved settings cannot be honored. Authenticate with the configured harness or choose one that offers this option."), FailureKind::Configuration);
             return;
         };
-        let supported = option
-            .get("options")
-            .and_then(Value::as_array)
-            .is_some_and(|options| {
-                options
-                    .iter()
-                    .any(|item| item.get("value").and_then(Value::as_str) == Some(value))
-            });
-        if !supported {
-            self.fail(format!("Agent does not offer saved {id} value '{value}'. Choose a supported setting in the agent definition for a new conversation."), FailureKind::Configuration);
+        if !setting.offers(&value) {
+            self.fail(format!("Agent does not offer saved {label} value '{value}'. Choose a supported setting for this conversation or in the agent definition."), FailureKind::Configuration);
+            return;
+        }
+        if request == Request::Effort && setting.current == value {
+            next(self);
             return;
         }
         let Some(session_id) = &self.session_id else {
@@ -954,9 +973,32 @@ impl Worker {
         };
         self.request(
             "session/set_config_option",
-            json!({"sessionId":session_id,"configId":id,"value":value}),
+            json!({"sessionId":session_id,"configId":setting.id,"value":value}),
             request,
         );
+    }
+
+    fn switch(&mut self, kind: Kind, value: &str) {
+        match kind {
+            Kind::Model => value.clone_into(&mut self.config.model),
+            Kind::Effort => value.clone_into(&mut self.config.effort),
+        }
+        // Without a ready, idle session the next setup applies the new value.
+        if !self.configured || self.active.is_some() || self.stdin.is_none() {
+            return;
+        }
+        let Some(setting) = harness::setting(&self.options, kind) else {
+            return;
+        };
+        if let Some(session_id) = &self.session_id
+            && setting.offers(value)
+        {
+            self.request(
+                "session/set_config_option",
+                json!({"sessionId":session_id,"configId":setting.id,"value":value}),
+                Request::Switch,
+            );
+        }
     }
 
     fn send_prompt(&mut self) {
@@ -1259,9 +1301,7 @@ impl Worker {
 
     fn fail(&mut self, message: String, kind: FailureKind) {
         let message = if kind == FailureKind::Authentication {
-            format!(
-                "{message} Authenticate through `omp login` in a terminal, then retry manually."
-            )
+            format!("{message} Authenticate through the harness outside Adeline, then retry.")
         } else {
             message
         };
@@ -1355,7 +1395,7 @@ impl Worker {
         self.lost_at = Some(Instant::now());
         self.shutdown_deadline
             .get_or_insert_with(|| Instant::now() + Duration::from_secs(5));
-        if invalid_initialize && self.config.harness == "OMP" {
+        if invalid_initialize && self.config.harness == harness::OMP {
             self.timeout_reported = true;
             self.fail(
                 format!("{message} The configured OMP Arguments must include `acp`."),
@@ -1455,6 +1495,11 @@ fn contains_ascii(text: &str, needle: &str) -> bool {
         .any(|bytes| bytes.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
+/// Whether an ACP error message means the harness needs a login.
+pub fn needs_login(message: &str) -> bool {
+    classify_error(message, None) == FailureKind::Authentication
+}
+
 fn classify_error(message: &str, code: Option<i64>) -> FailureKind {
     if code == Some(401)
         || ["auth", "api key", "login", "unauthorized"]
@@ -1516,14 +1561,16 @@ mod tests {
             Worker {
                 id: "conversation-1".into(),
                 config: ExecutionConfig {
+                    version: crate::agents::VERSION,
                     name: "Josh".into(),
-                    harness: "OMP".into(),
+                    harness: harness::OMP.into(),
+                    identity: String::new(),
                     command: "omp.exe".into(),
                     arguments: vec!["acp".into()],
                     model: "openai-codex/gpt-6-sol".into(),
-                    effort: "High".into(),
-                    effort_parameter_name: crate::agents::EffortParameterName::default(),
+                    effort: "high".into(),
                     system_instructions: String::new(),
+                    instructions_mode: InstructionsMode::Append,
                     directory: std::env::current_dir().expect("cwd"),
                 },
                 session_id: Some("session-1".into()),
@@ -1567,57 +1614,111 @@ mod tests {
         )
     }
 
-    #[test]
     #[expect(
         clippy::disallowed_methods,
         reason = "The protocol test runs on a test thread, not the UI thread."
     )]
-    fn model_configuration_sends_the_saved_effort_parameter() {
-        for parameter in crate::agents::EffortParameterName::ALL {
-            let (sent, received) = mpsc::channel();
-            let (mut worker, _) = worker(Arc::new(move |_, direction, message| {
-                if direction == "outgoing" {
-                    sent.send(message.clone()).unwrap();
-                }
-                Ok(())
-            }));
-            #[cfg(windows)]
-            let mut process = {
-                use std::os::windows::process::CommandExt as _;
-                let mut process = ProcessCommand::new("powershell.exe");
-                process.args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    "$null = [Console]::ReadLine()",
-                ]);
-                process.creation_flags(0x0800_0000);
-                process
-            };
-            #[cfg(not(windows))]
-            let mut process = {
-                let mut process = ProcessCommand::new("sh");
-                process.args(["-c", "read -r line"]);
-                process
-            };
-            let mut child = process.stdin(Stdio::piped()).spawn().unwrap();
-            worker.stdin = child.stdin.take();
-            worker.config.effort_parameter_name = parameter;
-            worker.pending.insert(1, Request::Model);
-            worker.incoming(&json!({"id":1,"result":{"configOptions":[
-                {"id":parameter.as_str(),"options":[{"value":"high"}]}
+    /// Runs `step` with a live stdin, so requests are written and recorded.
+    fn sent_requests(worker: &mut Worker, step: impl FnOnce(&mut Worker)) {
+        #[cfg(windows)]
+        let mut process = {
+            use std::os::windows::process::CommandExt as _;
+            let mut process = ProcessCommand::new("powershell.exe");
+            process.args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                "$null = [Console]::In.ReadToEnd()",
+            ]);
+            process.creation_flags(0x0800_0000);
+            process
+        };
+        #[cfg(not(windows))]
+        let mut process = {
+            let mut process = ProcessCommand::new("sh");
+            process.args(["-c", "cat >/dev/null"]);
+            process
+        };
+        let mut child = process.stdin(Stdio::piped()).spawn().unwrap();
+        worker.stdin = child.stdin.take();
+        step(worker);
+        worker.stdin = None;
+        assert!(child.wait().unwrap().success());
+    }
+
+    #[test]
+    fn effort_offered_only_after_the_model_is_set_is_still_applied() {
+        let (sent, received) = mpsc::channel();
+        let (mut worker, events) = worker(Arc::new(move |_, direction, message| {
+            if direction == "outgoing" {
+                sent.send(message.clone()).unwrap();
+            }
+            Ok(())
+        }));
+        worker.configured = false;
+        worker.config.model = "gpt-6-astra".into();
+        // Codex: the model is already current and effort is not offered yet.
+        worker.options = vec![json!({"id":"model","category":"model","type":"select",
+            "currentValue":"gpt-6-astra","options":[{"value":"gpt-6-astra"}]})];
+        sent_requests(&mut worker, |worker| {
+            worker.configure(Request::Model);
+            let id = *worker.pending.keys().next().expect("model request");
+            worker.incoming(&json!({"id":id,"result":{"configOptions":[
+                {"id":"model","category":"model","type":"select","currentValue":"gpt-6-astra",
+                 "options":[{"value":"gpt-6-astra"}]},
+                {"id":"reasoning_effort","category":"thought_level","type":"select",
+                 "currentValue":"medium","options":[{"value":"medium"},{"value":"high"}]}
             ]}}));
-            worker.stdin = None;
-            assert!(child.wait().unwrap().success());
-            let message = received.try_recv().expect("effort request sent");
-            assert_eq!(message["method"], "session/set_config_option");
-            assert_eq!(
-                message["params"],
-                json!({
-                    "sessionId":"session-1", "configId":parameter.as_str(), "value":"high"
-                })
-            );
-        }
+        });
+        let requests: Vec<_> = received.try_iter().collect();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0]["params"]["configId"], "model");
+        assert_eq!(
+            requests[1]["params"],
+            json!({"sessionId":"session-1","configId":"reasoning_effort","value":"high"})
+        );
+        assert!(std::iter::from_fn(|| events.try_recv().ok()).any(
+            |event| matches!(event.kind, EventKind::Options(ref options) if options.len() == 2)
+        ));
+    }
+
+    #[test]
+    fn harness_without_model_or_effort_options_keeps_its_defaults() {
+        let (mut worker, events) = worker(Arc::new(|_, _, _| Ok(())));
+        worker.configured = false;
+        worker.config.model.clear();
+        worker.config.effort.clear();
+        worker.configure(Request::Model);
+        assert!(worker.configured);
+        assert!(worker.pending.is_empty());
+        assert!(events.try_recv().is_err());
+    }
+
+    #[test]
+    fn switching_while_idle_sets_the_option_and_while_stopped_waits_for_setup() {
+        let (sent, received) = mpsc::channel();
+        let (mut worker, _) = worker(Arc::new(move |_, direction, message| {
+            if direction == "outgoing" {
+                sent.send(message.clone()).unwrap();
+            }
+            Ok(())
+        }));
+        worker.options = vec![json!({"id":"thinking","category":"thought_level",
+            "options":[{"value":"low"},{"value":"high"}]})];
+        sent_requests(&mut worker, |worker| {
+            worker.command(Command::SetOption {
+                kind: Kind::Effort,
+                value: "low".into(),
+            });
+        });
+        assert_eq!(worker.config.effort, "low");
+        assert_eq!(received.try_recv().unwrap()["params"]["value"], "low");
+        worker.command(Command::SetOption {
+            kind: Kind::Model,
+            value: "xai/grok".into(),
+        });
+        assert_eq!(worker.config.model, "xai/grok");
+        assert!(received.try_recv().is_err());
     }
 
     #[test]
@@ -1748,10 +1849,11 @@ mod tests {
         let (mut worker, events) = worker(Arc::new(|_, _, _| Ok(())));
         worker.configured = false;
         worker.active = Some(turn(0));
-        worker.options = vec![json!({"id":"model","options":[{"value":"other/model"}]})];
+        worker.options =
+            vec![json!({"id":"model","category":"model","options":[{"value":"other/model"}]})];
         worker.send_prompt();
         assert!(worker.pending.is_empty());
-        worker.configure("model", "openai-codex/gpt-6-sol", Request::Model);
+        worker.configure(Request::Model);
         assert!(worker.active.is_none());
         assert!(matches!(
             events.try_recv().unwrap().kind,
@@ -1942,7 +2044,7 @@ mod tests {
         assert!(worker.active.is_none());
         assert!(matches!(events.try_recv().unwrap().kind, EventKind::Error {
             kind: FailureKind::Authentication, message
-        } if message.contains("omp login")));
+        } if message.contains("outside Adeline")));
     }
 
     #[test]

@@ -220,7 +220,7 @@ pub(super) fn can_close_for(
                 .read(cx)
                 .agent_form
                 .as_ref()
-                .is_some_and(|form| form.dirty(cx))
+                .is_some_and(|form| form.read(cx).dirty(cx))
         {
             let _ = cx.update_window(root.into(), |_, window, cx| {
                 settings.update(cx, |view, cx| {
@@ -232,7 +232,7 @@ pub(super) fn can_close_for(
     }
     for (root, creation) in windows_of::<AgentWindow>(cx) {
         if creation.read(cx).owner.window.window_id() == owner.window_id()
-            && creation.read(cx).form.dirty(cx)
+            && creation.read(cx).form.read(cx).dirty(cx)
         {
             let _ = cx.update_window(root.into(), |_, window, cx| {
                 creation.update(cx, |view, cx| view.confirm_close(true, window, cx))
@@ -276,10 +276,12 @@ pub(super) fn close_for(owner: WindowHandle<Root>, cx: &mut App) {
 
 fn persist_form(
     owner: &Owner,
-    form: &agent_form::AgentForm,
+    form: &Entity<agent_form::AgentForm>,
     overwrite: bool,
     cx: &mut App,
 ) -> Result<String, String> {
+    let form = form.read(cx);
+    form.check(cx)?;
     let definition = form.values(cx);
     let original = form.id.clone();
     let expected = original.as_ref().map(|_| form.original.clone());
@@ -357,43 +359,21 @@ fn choose(
 
 struct AgentWindow {
     owner: Owner,
-    form: agent_form::AgentForm,
+    form: Entity<agent_form::AgentForm>,
     focus: FocusHandle,
     pending: bool,
     _subscriptions: Vec<Subscription>,
 }
 impl AgentWindow {
     fn new(owner: Owner, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let form = agent_form::AgentForm::new(
-            None,
-            agents::AgentDefinition {
-                harness: "OMP".into(),
-                driver: "ACP".into(),
-                effort: "Medium".into(),
-                ..Default::default()
-            },
-            window,
-            cx,
-        );
+        harness::refresh(true, cx);
+        let form = cx.new(|cx| {
+            agent_form::AgentForm::new(None, agents::AgentDefinition::default(), window, cx)
+        });
         let focus = cx.focus_handle().tab_stop(true);
-        window.focus(&form.inputs[0].read(cx).focus_handle(cx), cx);
-        let mut subscriptions = Vec::new();
-        for input in &form.inputs {
-            subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.form.status = None;
-                    cx.notify();
-                }
-            }));
-        }
-        subscriptions.push(
-            cx.subscribe(&form.instructions, |this, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.form.status = None;
-                    cx.notify();
-                }
-            }),
-        );
+        let name = form.read(cx).name_focus(cx);
+        window.focus(&name, cx);
+        let subscriptions = vec![cx.observe(&form, |_, _, cx| cx.notify())];
         let view = cx.entity();
         window.on_window_should_close(cx, move |window, cx| {
             view.update(cx, |view, cx| view.confirm_close(false, window, cx))
@@ -414,8 +394,10 @@ impl AgentWindow {
                 true
             }
             Err(error) => {
-                self.form.status = Some(error);
-                cx.notify();
+                self.form.update(cx, |form, cx| {
+                    form.status = Some(error);
+                    cx.notify();
+                });
                 false
             }
         }
@@ -426,7 +408,7 @@ impl AgentWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !self.form.dirty(cx) {
+        if !self.form.read(cx).dirty(cx) {
             if close_owner {
                 window.remove_window();
             }
@@ -484,7 +466,7 @@ impl Render for AgentWindow {
                         "Configure an agent for this workspace. Saving does not start the command.",
                     ),
             )
-            .child(self.form.fields())
+            .child(self.form.clone())
             .child(diagnostics(self.owner.diagnostics(cx), cx));
         let shell = div()
             .size_full()
@@ -512,7 +494,7 @@ impl Render for AgentWindow {
                     .p_4()
                     .border_t_1()
                     .border_color(cx.theme().border)
-                    .when_some(self.form.status.clone(), |row, status| {
+                    .when_some(self.form.read(cx).status.clone(), |row, status| {
                         row.child(error(status, cx).flex_1().min_w_0())
                     })
                     .child(Button::new("agent-create-cancel").label("Cancel").on_click(
@@ -526,7 +508,7 @@ impl Render for AgentWindow {
                         Button::new("agent-create-save")
                             .primary()
                             .label("Save")
-                            .disabled(self.pending)
+                            .disabled(self.pending || self.form.read(cx).blocked(cx))
                             .on_click(cx.listener(|view, _, window, cx| {
                                 view.save(window, cx);
                             })),
@@ -557,7 +539,7 @@ struct SettingsWindow {
     query: Entity<InputState>,
     last_query: String,
     agent_page: Option<String>,
-    agent_form: Option<agent_form::AgentForm>,
+    agent_form: Option<Entity<agent_form::AgentForm>>,
     agent_subscriptions: Vec<Subscription>,
     agent_status: Option<String>,
     pending: bool,
@@ -777,7 +759,11 @@ impl SettingsWindow {
                 if requested == this.last_query {
                     return;
                 }
-                if this.agent_form.as_ref().is_some_and(|form| form.dirty(cx)) {
+                if this
+                    .agent_form
+                    .as_ref()
+                    .is_some_and(|form| form.read(cx).dirty(cx))
+                {
                     input.update(cx, |input, cx| {
                         input.set_value(this.last_query.clone(), window, cx);
                     });
@@ -828,7 +814,11 @@ impl SettingsWindow {
         let view = cx.entity();
         window.on_window_should_close(cx, move |window, cx| {
             view.update(cx, |view, cx| {
-                if view.agent_form.as_ref().is_some_and(|form| form.dirty(cx)) {
+                if view
+                    .agent_form
+                    .as_ref()
+                    .is_some_and(|form| form.read(cx).dirty(cx))
+                {
                     view.leave(AfterAgent::CloseSettings, window, cx);
                     false
                 } else {
@@ -889,41 +879,22 @@ impl SettingsWindow {
         self.agent_status = None;
         self.search_page = Some((3, None));
         self.agent_subscriptions.clear();
-        self.agent_form = definition
-            .map(|definition| agent_form::AgentForm::new(Some(id), definition, window, cx));
+        harness::refresh(false, cx);
+        self.agent_form = definition.map(|definition| {
+            cx.new(|cx| agent_form::AgentForm::new(Some(id), definition, window, cx))
+        });
         if let Some(form) = &self.agent_form {
-            for input in &form.inputs {
-                self.agent_subscriptions.push(cx.subscribe(
-                    input,
-                    |this, _, event: &InputEvent, cx| {
-                        if matches!(event, InputEvent::Change) {
-                            if let Some(form) = this.agent_form.as_mut() {
-                                form.status = None;
-                            }
-                            cx.notify();
-                        }
-                    },
-                ));
-            }
-            self.agent_subscriptions.push(cx.subscribe(
-                &form.instructions,
-                |this, _, event: &InputEvent, cx| {
-                    if matches!(event, InputEvent::Change) {
-                        if let Some(form) = this.agent_form.as_mut() {
-                            form.status = None;
-                        }
-                        cx.notify();
-                    }
-                },
-            ));
+            self.agent_subscriptions
+                .push(cx.observe(form, |_, _, cx| cx.notify()));
         }
         cx.notify();
     }
 
     fn sync_agent(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(form) = self.agent_form.as_mut() else {
+        let Some(form) = self.agent_form.clone() else {
             return;
         };
+        let form_id = form.read(cx).id.clone();
         let current = self
             .owner
             .entity
@@ -931,17 +902,17 @@ impl SettingsWindow {
                 app.agent_catalog
                     .entries
                     .iter()
-                    .find(|entry| Some(&entry.id) == form.id.as_ref())
+                    .find(|entry| Some(&entry.id) == form_id.as_ref())
                     .map(|entry| entry.definition.clone())
             })
             .ok()
             .flatten();
-        if current.as_ref() == Some(&form.original) {
-            form.external_changed = false;
-        } else if form.dirty(cx) {
-            form.external_changed = true;
+        if current.as_ref() == Some(&form.read(cx).original) {
+            form.update(cx, |form, _| form.external_changed = false);
+        } else if form.read(cx).dirty(cx) {
+            form.update(cx, |form, _| form.external_changed = true);
         } else if let Some(definition) = current {
-            form.reload(definition, window, cx);
+            form.update(cx, |form, cx| form.reload(definition, window, cx));
         } else {
             self.agent_form = None;
             self.agent_subscriptions.clear();
@@ -999,9 +970,10 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(form) = self.agent_form.as_ref() else {
+        let Some(form) = self.agent_form.clone() else {
             return;
         };
+        let form_id = form.read(cx).id.clone();
         let current = self
             .owner
             .entity
@@ -1009,12 +981,14 @@ impl SettingsWindow {
                 app.agent_catalog
                     .entries
                     .iter()
-                    .find(|entry| Some(&entry.id) == form.id.as_ref())
+                    .find(|entry| Some(&entry.id) == form_id.as_ref())
                     .map(|entry| entry.definition.clone())
             })
             .ok()
             .flatten();
-        if !overwrite && (form.external_changed || current.as_ref() != Some(&form.original)) {
+        if !overwrite
+            && (form.read(cx).external_changed || current.as_ref() != Some(&form.read(cx).original))
+        {
             if self.pending {
                 return;
             }
@@ -1036,7 +1010,8 @@ impl SettingsWindow {
                                     .owner
                                     .entity
                                     .update(cx, |app, cx| app.refresh_agents(cx));
-                                if let Some(form) = view.agent_form.as_mut() {
+                                if let Some(form) = view.agent_form.clone() {
+                                    let form_id = form.read(cx).id.clone();
                                     let definition = view
                                         .owner
                                         .entity
@@ -1044,13 +1019,15 @@ impl SettingsWindow {
                                             app.agent_catalog
                                                 .entries
                                                 .iter()
-                                                .find(|entry| Some(&entry.id) == form.id.as_ref())
+                                                .find(|entry| Some(&entry.id) == form_id.as_ref())
                                                 .map(|entry| entry.definition.clone())
                                         })
                                         .ok()
                                         .flatten();
                                     if let Some(definition) = definition {
-                                        form.reload(definition, window, cx);
+                                        form.update(cx, |form, cx| {
+                                            form.reload(definition, window, cx);
+                                        });
                                     } else {
                                         view.agent_form = None;
                                         view.agent_page = None;
@@ -1069,13 +1046,13 @@ impl SettingsWindow {
             );
             return;
         }
-        match persist_form(&self.owner, form, overwrite, cx) {
+        match persist_form(&self.owner, &form, overwrite, cx) {
             Ok(saved) => {
-                if let Some(form) = &mut self.agent_form {
+                form.update(cx, |form, cx| {
                     let definition = form.values(cx);
                     form.id = Some(saved.clone());
                     form.reload(definition, window, cx);
-                }
+                });
                 let after = after.map(|next| match next {
                     AfterAgent::Delete(_) => AfterAgent::Delete(saved.clone()),
                     other => other,
@@ -1094,10 +1071,11 @@ impl SettingsWindow {
                         .entity
                         .update(cx, |app, cx| app.refresh_agents(cx));
                 }
-                if let Some(form) = self.agent_form.as_mut() {
+                form.update(cx, |form, cx| {
                     form.external_changed = conflict;
                     form.status = Some(message);
-                }
+                    cx.notify();
+                });
                 cx.notify();
             }
         }
@@ -1107,7 +1085,11 @@ impl SettingsWindow {
         if self.pending {
             return;
         }
-        if !self.agent_form.as_ref().is_some_and(|form| form.dirty(cx)) {
+        if !self
+            .agent_form
+            .as_ref()
+            .is_some_and(|form| form.read(cx).dirty(cx))
+        {
             self.after_agent(after, window, cx);
             return;
         }
@@ -1137,7 +1119,11 @@ impl SettingsWindow {
         if self.pending {
             return;
         }
-        if self.agent_form.as_ref().is_some_and(|form| form.dirty(cx)) {
+        if self
+            .agent_form
+            .as_ref()
+            .is_some_and(|form| form.read(cx).dirty(cx))
+        {
             self.leave(AfterAgent::Delete(id), window, cx);
         } else {
             self.confirm_delete_after_leaving(id, window, cx);
@@ -1156,7 +1142,7 @@ impl SettingsWindow {
         let name = self
             .agent_form
             .as_ref()
-            .map_or_else(|| id.clone(), |form| form.original.name.clone());
+            .map_or_else(|| id.clone(), |form| form.read(cx).original.name.clone());
         let view = cx.entity().downgrade();
         choose(
             window,
@@ -1620,7 +1606,13 @@ impl Render for SettingsWindow {
                                     ],
                                 )
                             })
-                            .map(|entry| (entry.id.clone(), entry.definition.name.clone()))
+                            .map(|entry| {
+                                (
+                                    entry.id.clone(),
+                                    entry.definition.name.clone(),
+                                    entry.definition.harness.clone(),
+                                )
+                            })
                             .collect()
                     })
                     .unwrap_or_default()
@@ -1669,10 +1661,12 @@ impl Render for SettingsWindow {
                     })),
                 );
             }
-            for (id, title) in matching_agents {
+            for (id, title, harness) in matching_agents {
                 let selected = self.agent_page.as_ref() == Some(&id);
+                let installed = cx.global::<harness::Catalog>().is_installed(&harness);
                 navigation = navigation.child(
                     navigation_button(format!("settings-agent-{id}"), title, icon, selected, cx)
+                        .children(installed.map(agent_form::installed_dot))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             if this.agent_page.as_deref() != Some(&id) {
                                 this.leave(AfterAgent::Agent(id.clone()), window, cx);
@@ -1720,10 +1714,7 @@ impl Render for SettingsWindow {
         let heading = if searching {
             "Search results".to_string()
         } else if self.group == 3 && self.agent_form.is_some() {
-            self.agent_form.as_ref().unwrap().inputs[0]
-                .read(cx)
-                .value()
-                .to_string()
+            self.agent_form.as_ref().unwrap().read(cx).name(cx)
         } else {
             self.subgroup
                 .map_or(GROUPS[self.group], |child| SUBGROUPS[self.group][child])
@@ -1934,9 +1925,11 @@ impl Render for SettingsWindow {
                 .unwrap_or(false);
             if !searching || matching_agent || matches_query(&query, &["Agents"]) {
                 found = true;
-                if let Some(form) = &self.agent_form {
+                if let Some(form) = self.agent_form.clone() {
                     if self.group == 3 && (!searching || self.search_page.is_some()) {
-                        content = content.child(form.fields());
+                        let blocked = form.read(cx).blocked(cx);
+                        content = content.child(form.clone());
+                        let form = form.read(cx);
                         if form.external_changed {
                             content = content.child(error("This agent changed outside Adeline. Your edits are kept. Save to choose Reload or Overwrite.", cx));
                         }
@@ -1965,7 +1958,7 @@ impl Render for SettingsWindow {
                                     Button::new("settings-save-agent")
                                         .primary()
                                         .label("Save")
-                                        .disabled(self.pending)
+                                        .disabled(self.pending || blocked)
                                         .on_click(cx.listener(|this, _, window, cx| {
                                             this.save_agent(None, false, window, cx);
                                         })),

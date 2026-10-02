@@ -402,7 +402,10 @@ impl Adeline {
             self.open_projects_menu(window, cx);
             return;
         }
-        if matches!(menu, "agent" | "agents" | "app" | "mode-settings") {
+        if matches!(
+            menu,
+            "agent" | "agents" | "app" | "mode-settings" | "model" | "effort"
+        ) {
             let state = cx.new(|cx| CommandState::new(window, cx));
             window.focus(&state.focus_handle(cx), cx);
             self.command_popup = Some(state);

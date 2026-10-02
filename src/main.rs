@@ -8,6 +8,7 @@ mod config;
 mod data;
 mod files;
 mod fonts;
+mod harness;
 mod interaction;
 mod panes;
 mod prepared;
@@ -55,7 +56,10 @@ impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         match embedded(path) {
             Some(bytes) => Ok(Some(Cow::Borrowed(bytes))),
-            None => assets::Assets.load(path),
+            None => match harness::icon(path) {
+                Some(bytes) => Ok(Some(Cow::Owned(bytes))),
+                None => assets::Assets.load(path),
+            },
         }
     }
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
@@ -695,6 +699,7 @@ fn main() {
         config::init();
         theme::init();
         theme::apply(cx);
+        harness::init(demo_mode, cx);
         config::bind_keys(cx);
         cx.on_action(|_: &NextFocus, cx| {
             if let Some(handle) = cx.active_window() {

@@ -8,33 +8,52 @@ A native workspace for projects and agent conversations, built with GPUI Kit.
 
 ## Agents
 
-Normal startup loads saved agents, projects, and conversation history without starting an agent. **Agents → Add an Agent** opens a separate creation window. Edit, rename, or delete saved agents under **Settings → Agents**.
+Normal startup loads saved agents, projects, and conversation history without starting an agent. **Agents → Add an Agent**, or **Add an agent…** in the composer's agent picker, opens a separate creation window. With no agents, the composer offers adding one in place of Send. Edit, rename, or delete saved agents under **Settings → Agents**.
+
+### Harnesses
+
+The harness list is the [ACP registry](https://github.com/agentclientprotocol/registry) plus OMP, which Adeline supports as a built-in entry, and Custom, which is always last. Opening Add Agent refreshes the registry in the background. Without network access, Adeline uses the last copy cached under `~/.config/adeline/cache/`, then the copy shipped with Adeline.
+
+Adeline only runs harnesses that are already installed. A harness counts as installed when its executable is on `PATH` or in a known default location such as `%LOCALAPPDATA%\omp`. Adeline starts it with the arguments the registry gives, so Gemini CLI runs as `gemini --acp` and OpenCode as `opencode acp`. It never uses `npx`, `uvx`, or another on-demand runner, and never downloads or installs a harness. Detection runs in the background at startup and when the agent form or the composer's agent picker opens. A green dot marks installed harnesses and a red dot marks the rest, in the form, the composer's agent picker, and Settings → Agents.
+
+### The agent form
+
+The form has Name, Harness, Model, Effort, Default permission mode (Ask or Allow everything), and, where supported, System instructions. Choosing an installed harness starts it in the background in a temporary folder. Adeline runs the ACP handshake and opens a session to read its model and effort options without sending a prompt, then stops the process. The Model picker is searchable and grouped by the harness's groups, or by the `provider/` prefix of model IDs. Changing the model refreshes Effort, because some harnesses, such as Codex, offer effort only per model. A harness without a model or effort option hides that field and uses its own default.
+
+If probing fails, the form shows the error and a Retry button. When the harness needs a login, it lists the harness's login methods; sign in through the harness outside Adeline. You can also type the model and effort as free text and save; the values are checked when a conversation starts. Editing an agent probes again and marks a saved model or effort the harness no longer offers as "not offered by harness". Save stays blocked until you choose an offered value.
+
+Custom shows Command (one executable name or path) and an ordered Arguments list of literal values. Adeline identifies the harness by the name it reports in the handshake, so a Custom `omp.exe acp` gets OMP's instruction support and appears as "Custom: omp".
+
+System instructions appear only for harnesses with a known way to receive them; today that is OMP. Append adds them to the harness's default guidance; Overwrite replaces it. Either way the guidance begins with `You are an agent named <name>, running inside Adeline ADE (Agentic Development Environment)`, followed by your instructions. Other harnesses receive no instructions and no name sentence. The field shows its Markdown rendered until you click it.
+
+### Definition files
 
 Each agent has one definition at `~/.config/adeline/agents/<normalized-name>/agent.yml`, including on Windows. For example, Josh is stored as:
 
 ```yaml
+version: 1
 name: Josh
-harness: OMP
-driver: ACP
-command: omp.exe
-arguments:
-  - acp
+harness: omp
 model: openai-codex/gpt-6-luna
-effort: Max
-effort_parameter_name: thinking
+effort: high
 permission_mode: Ask
 system_instructions: You are a helpful coding assistant.
+instructions_mode: Append
 ```
 
-Any harness that speaks ACP over stdio can be configured. Command names one executable; Arguments is an ordered list of literal values, including spaces. The forms let you add, remove, and reorder arguments. Omitted arguments means an empty list; Adeline never inserts `acp`. Existing unambiguous combined commands such as `omp.exe acp` migrate automatically. Ambiguous commands report their definition path for correction.
+`harness` is a registry ID, `omp`, or `custom`. Registry and OMP agents store no executable path; Adeline locates the installed executable each time a conversation starts. Only Custom agents store `command`, `arguments`, and the handshake `identity`. `model` and `effort` are the harness's own values and are omitted when it offers no such option. Names become lowercase folder names with punctuation and spaces collapsed into hyphens; invalid names and existing destinations are rejected.
 
-Name, harness, driver, command, provider/model, and effort are required. Effort is Low, Medium, High, Extra High, or Max, and the harness must offer the saved model and effort. System instructions are optional. Permission mode defaults to `Ask`; `AllowEverything` approves requests automatically. Names become lowercase folder names with punctuation and spaces collapsed into hyphens; invalid names and existing destinations are rejected.
-
-New Chat opens a draft. First Send creates the conversation and starts its agent. One available agent is selected automatically; with several, choose one. Each conversation keeps its initial agent, harness, command, arguments, model, effort, instructions, and working directory. Editing a definition affects new conversations. For OMP, Adeline appends `You are an agent named <name>` and then any custom instructions to OMP's default system guidance. Other ACP harnesses receive only their configured command and arguments; ACP has no standard way to pass system instructions. Model and effort must be offered by the harness.
+The format is not backward compatible. Files without `version`, or with an older version, are silently ignored: they are not listed, reported, changed, or deleted.
 
 Filesystem changes are watched automatically. Invalid definitions report their filename and error while valid agents remain available. Unsaved forms offer Save, Discard, and Cancel when leaving or closing. If an external edit conflicts with a dirty Settings form, Save offers Reload, Overwrite, or Cancel.
 
-The Effort parameter name dropdown offers `thinking` (OMP), `effort` (Claude), `reasoning_effort` (Codex), and `thought_level`. It defaults to `thinking` for new agents and older saved definitions or conversations. Each new conversation saves this choice with its execution settings; changing the agent affects only new conversations.
+### Conversations and switching
+
+New Chat opens a draft. First Send creates the conversation and starts its agent. One available agent is selected automatically; with several, choose one. Each conversation saves the resolved command, arguments, model, effort, instructions, and working directory it started with, so later agent edits affect only new conversations. If the harness was uninstalled, Send reports that it is not installed and starts nothing.
+
+When the harness offers model or effort options, the composer's Model and Effort menus list them with search and grouping, plus a note that switching may invalidate the prompt cache and cost more on the next turn. A switch applies to the running session and is saved to that conversation only; it never changes the agent's default. Switching is disabled while a turn is processing. For a stopped agent, the menus offer the options from its last session and apply the choice when the agent next starts. Harnesses without these options show the current value read-only.
+
+Conversations from older Adeline versions stay readable and can be completed or archived. Sending in them is blocked with "This conversation was created by an older Adeline version; start a new chat."
 
 ### Projects and conversations
 
@@ -50,7 +69,7 @@ Complete and Archive preserve history and gracefully close that conversation's p
 
 Temporary failures retry within the configured limit. Recovery after partial work restores the session and asks for continuation rather than replaying the original request. If restoration fails, starting a replacement session with saved messages requires your choice. Missing configuration, authentication, and denied permissions do not automatically retry. For authentication errors, authenticate using the harness outside Adeline, then use Retry. Transcript write failures cancel processing and block new prompts until Retry storage succeeds.
 
-OMP 18.3.2 was exercised with real responses, appended name/custom guidance, model and effort selection, follow-up context, process restart and session restoration, cancellation with partial text, and graceful shutdown.
+OMP 18.3.2 was exercised with real responses, appended name/custom guidance, model and effort selection, follow-up context, process restart and session restoration, cancellation with partial text, and graceful shutdown. Harness probing was checked against OMP 18.4.8, Codex ACP 1.13.1, OpenCode 1.18.32, and Gemini CLI 0.42.0.
 
 ### Demo mode
 

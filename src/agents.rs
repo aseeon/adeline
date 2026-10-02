@@ -6,35 +6,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
-pub const EFFORTS: [&str; 5] = ["Low", "Medium", "High", "Extra High", "Max"];
+/// The agent file format this version writes. Older files are ignored.
+pub const VERSION: u32 = 1;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EffortParameterName {
-    #[default]
-    Thinking,
-    Effort,
-    ReasoningEffort,
-    ThoughtLevel,
-}
-
-impl EffortParameterName {
-    pub const ALL: [Self; 4] = [
-        Self::Thinking,
-        Self::Effort,
-        Self::ReasoningEffort,
-        Self::ThoughtLevel,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Thinking => "thinking",
-            Self::Effort => "effort",
-            Self::ReasoningEffort => "reasoning_effort",
-            Self::ThoughtLevel => "thought_level",
-        }
-    }
-}
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PermissionMode {
     #[default]
@@ -42,55 +16,88 @@ pub enum PermissionMode {
     AllowEverything,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+/// Whether system instructions add to or replace the harness's own guidance.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum InstructionsMode {
+    #[default]
+    Append,
+    Overwrite,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct AgentDefinition {
+    pub version: u32,
     pub name: String,
+    /// A registry ID, `omp`, or `custom`.
     pub harness: String,
-    pub driver: String,
+    /// The name a Custom harness reported in its ACP handshake.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub identity: String,
+    /// Custom harnesses only; others are located when a conversation starts.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub command: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub arguments: Vec<String>,
-    #[serde(default)]
-    pub permission_mode: PermissionMode,
+    /// Empty when the harness offers no model option.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub model: String,
+    /// Empty when the harness offers no effort option.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub effort: String,
     #[serde(default)]
-    pub effort_parameter_name: EffortParameterName,
+    pub permission_mode: PermissionMode,
     #[serde(default)]
     pub system_instructions: String,
+    #[serde(default)]
+    pub instructions_mode: InstructionsMode,
+}
+
+impl Default for AgentDefinition {
+    fn default() -> Self {
+        Self {
+            version: VERSION,
+            name: String::new(),
+            harness: String::new(),
+            identity: String::new(),
+            command: String::new(),
+            arguments: Vec::new(),
+            model: String::new(),
+            effort: String::new(),
+            permission_mode: PermissionMode::Ask,
+            system_instructions: String::new(),
+            instructions_mode: InstructionsMode::Append,
+        }
+    }
 }
 
 impl AgentDefinition {
     pub(crate) fn validate(&self) -> Result<String, String> {
-        for (field, value) in [
-            ("Name", &self.name),
-            ("Harness", &self.harness),
-            ("Driver", &self.driver),
-            ("Command", &self.command),
-            ("Provider/model", &self.model),
-            ("Effort", &self.effort),
-        ] {
+        if self.version != VERSION {
+            return Err(format!("Agent file version must be {VERSION}."));
+        }
+        for (field, value) in [("Name", &self.name), ("Harness", &self.harness)] {
             if value.trim().is_empty() {
                 return Err(format!("{field} is required."));
             }
         }
-        if self.command != self.command.trim()
-            || (self.command.chars().any(char::is_whitespace)
-                && !Path::new(&self.command).is_file()
-                && !looks_like_executable_path(&self.command))
-        {
-            return Err(
-                "Command must be one executable name or path; enter each argument separately."
-                    .into(),
-            );
-        }
-        if self.driver != "ACP" {
-            return Err("Only the ACP driver is supported.".into());
-        }
-        if !EFFORTS.contains(&self.effort.as_str()) {
-            return Err(format!("Effort must be one of: {}.", EFFORTS.join(", ")));
+        if self.harness == crate::harness::CUSTOM {
+            if self.command.trim().is_empty() {
+                return Err("Command is required.".into());
+            }
+            if self.command != self.command.trim()
+                || (self.command.chars().any(char::is_whitespace)
+                    && !Path::new(&self.command).is_file()
+                    && !looks_like_executable_path(&self.command))
+            {
+                return Err(
+                    "Command must be one executable name or path; enter each argument separately."
+                        .into(),
+                );
+            }
+        } else if !self.command.is_empty() || !self.arguments.is_empty() {
+            return Err("Only Custom agents store a command and arguments.".into());
         }
         normalize_name(&self.name)
     }
@@ -177,15 +184,10 @@ impl AgentCatalog {
                     id: normalize_name(name).expect("valid demo agent name"),
                     definition: AgentDefinition {
                         name: name.into(),
-                        harness: "OMP".into(),
-                        driver: "ACP".into(),
-                        command: "omp.exe".into(),
-                        arguments: vec!["acp".into()],
-                        permission_mode: PermissionMode::Ask,
+                        harness: crate::harness::OMP.into(),
                         model: model.into(),
-                        effort: "High".into(),
-                        effort_parameter_name: EffortParameterName::default(),
-                        system_instructions: String::new(),
+                        effort: "high".into(),
+                        ..Default::default()
                     },
                 });
             }
@@ -277,8 +279,8 @@ impl AgentCatalog {
             }
         }
         if let Some(path) = old.as_deref() {
-            let disk = load(path);
-            if !overwrite && (expected.is_none() || disk.as_ref().ok() != expected) {
+            let disk = load(path).ok().flatten();
+            if !overwrite && (expected.is_none() || disk.as_ref() != expected) {
                 return Err(format!(
                     "{}: definition changed outside this form. Reload or overwrite it.",
                     path.join("agent.yml").display()
@@ -343,7 +345,7 @@ impl AgentCatalog {
             .find(|entry| entry.id == id)
             .ok_or_else(|| format!("Agent {id} no longer exists."))?;
         let path = root.join(id);
-        if load(&path).as_ref().ok() != Some(&old.definition) {
+        if load(&path).ok().flatten().as_ref() != Some(&old.definition) {
             return Err(format!(
                 "{}: definition changed outside this form. Reload before deleting it.",
                 path.join("agent.yml").display()
@@ -355,7 +357,8 @@ impl AgentCatalog {
     }
 }
 
-fn load(folder: &Path) -> Result<AgentDefinition, String> {
+/// `None` for a file older than [`VERSION`]: it is left alone and not listed.
+fn load(folder: &Path) -> Result<Option<AgentDefinition>, String> {
     let path = folder.join("agent.yml");
     if !fs::symlink_metadata(folder)
         .map_err(|e| file_error(&path, e))?
@@ -370,45 +373,17 @@ fn load(folder: &Path) -> Result<AgentDefinition, String> {
     let text = fs::read_to_string(&path).map_err(|e| file_error(&path, e))?;
     let yaml: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&text).map_err(|e| file_error(&path, e))?;
-    let has_arguments = yaml
-        .as_mapping()
-        .is_some_and(|fields| fields.contains_key("arguments"));
-    let mut definition: AgentDefinition =
+    if yaml
+        .get("version")
+        .and_then(serde_yaml_ng::Value::as_u64)
+        .is_none_or(|version| version < u64::from(VERSION))
+    {
+        return Ok(None);
+    }
+    let definition: AgentDefinition =
         serde_yaml_ng::from_value(yaml).map_err(|e| file_error(&path, e))?;
-    let migrated = !has_arguments && definition.command.chars().any(char::is_whitespace);
-    if migrated {
-        if Path::new(&definition.command).is_file() {
-            // A real executable path may contain spaces; leave it intact.
-        } else {
-            let parts: Vec<_> = definition.command.split_ascii_whitespace().collect();
-            let executable = parts.first().copied().unwrap_or_default();
-            if parts.len() < 2
-                || ((executable.contains('/')
-                    || executable.contains('\\')
-                    || executable.contains(':'))
-                    && !Path::new(executable).is_file()
-                    && !looks_like_executable_path(executable))
-                || parts.iter().any(|part| {
-                    part.chars()
-                        .any(|c| c.is_whitespace() || "\"'`|&;<>^%$".contains(c))
-                })
-                || parts.iter().any(|part| part.ends_with('\\'))
-            {
-                return Err(file_error(
-                    &path,
-                    "Ambiguous legacy command. Edit agent.yml: set command to the executable and arguments to a list of literal strings.",
-                ));
-            }
-            let command = parts[0].to_owned();
-            definition.arguments = parts[1..].iter().map(|part| (*part).to_owned()).collect();
-            definition.command = command;
-        }
-    }
     definition.validate().map_err(|e| file_error(&path, e))?;
-    if migrated && !definition.arguments.is_empty() {
-        replace(&path, &definition)?;
-    }
-    Ok(definition)
+    Ok(Some(definition))
 }
 
 fn discover(root: &Path) -> (Vec<AgentEntry>, Vec<String>) {
@@ -440,7 +415,8 @@ fn discover(root: &Path) -> (Vec<AgentEntry>, Vec<String>) {
             .map_err(|e| file_error(&path.join("agent.yml"), e))
             .and_then(|()| load(&path));
         match result {
-            Ok(definition) => entries.push(AgentEntry { id, definition }),
+            Ok(Some(definition)) => entries.push(AgentEntry { id, definition }),
+            Ok(None) => {}
             Err(error) => errors.push(error),
         }
     }
@@ -500,132 +476,84 @@ mod tests {
     fn agent(name: &str) -> AgentDefinition {
         AgentDefinition {
             name: name.into(),
-            harness: "OMP".into(),
-            driver: "ACP".into(),
+            harness: crate::harness::CUSTOM.into(),
+            identity: "omp".into(),
             command: "omp.exe".into(),
             arguments: vec!["acp".into()],
-            permission_mode: PermissionMode::Ask,
             model: "openai-codex/gpt-6-luna".into(),
-            effort: "Max".into(),
-            effort_parameter_name: EffortParameterName::default(),
+            effort: "max".into(),
             system_instructions: "Answer plainly.".into(),
+            ..Default::default()
         }
     }
 
     #[test]
-    fn effort_parameter_names_persist_and_legacy_agents_default_to_thinking() {
+    fn registry_agents_store_identity_and_defaults_but_no_command() {
         let root = TempDir::new("adeline-agents");
         let mut catalog = open_catalog(&root, false);
-        for parameter in EffortParameterName::ALL {
-            let mut definition = agent(parameter.as_str());
-            definition.effort_parameter_name = parameter;
-            let id = catalog.save(None, definition.clone(), None, false).unwrap();
-            let yaml = fs::read_to_string(file(&root, &id)).unwrap();
-            assert!(yaml.contains(&format!("effort_parameter_name: {}", parameter.as_str())));
-            assert_eq!(
-                serde_yaml_ng::from_str::<AgentDefinition>(&yaml).unwrap(),
-                definition
-            );
+        let gemini = AgentDefinition {
+            name: "Gem".into(),
+            harness: "gemini".into(),
+            model: "gemini-3-pro".into(),
+            effort: "high".into(),
+            instructions_mode: InstructionsMode::Overwrite,
+            ..Default::default()
+        };
+        catalog.save(None, gemini.clone(), None, false).unwrap();
+        let yaml = fs::read_to_string(file(&root, "gem")).unwrap();
+        assert!(yaml.starts_with("version: 1\n"), "{yaml}");
+        for field in [
+            "name: Gem",
+            "harness: gemini",
+            "model: gemini-3-pro",
+            "effort: high",
+            "permission_mode: Ask",
+            "system_instructions:",
+            "instructions_mode: Overwrite",
+        ] {
+            assert!(yaml.contains(field), "{field} in {yaml}");
         }
-        let mut legacy = serde_yaml_ng::to_value(agent("Legacy")).unwrap();
-        legacy
-            .as_mapping_mut()
-            .unwrap()
-            .remove("effort_parameter_name");
-        let restored: AgentDefinition = serde_yaml_ng::from_value(legacy.clone()).unwrap();
-        assert_eq!(
-            restored.effort_parameter_name,
-            EffortParameterName::Thinking
-        );
-        legacy["effort_parameter_name"] = "unknown".into();
-        assert!(serde_yaml_ng::from_value::<AgentDefinition>(legacy).is_err());
-    }
-
-    #[test]
-    fn migrates_unambiguous_legacy_commands_and_preserves_literal_arguments() {
-        let root = TempDir::new("adeline-agents");
-        let mut catalog = open_catalog(&root, false);
-        let path = file(&root, "josh");
-        fs::create_dir(path.parent().unwrap()).unwrap();
-        fs::write(
-            &path,
-            "name: Josh\nharness: OMP\ndriver: ACP\ncommand: omp.exe acp\nmodel: openai-codex/gpt-6-luna\neffort: Max\n",
-        )
-        .unwrap();
-        assert!(catalog.refresh());
-        let loaded = catalog.entries[0].definition.clone();
-        assert_eq!(loaded.command, "omp.exe");
-        assert_eq!(loaded.arguments, ["acp"]);
-        assert_eq!(loaded.permission_mode, PermissionMode::Ask);
-        let migrated = fs::read_to_string(&path).unwrap();
-        assert_eq!(
-            serde_yaml_ng::from_str::<AgentDefinition>(&migrated).unwrap(),
-            loaded
-        );
-        assert_eq!(open_catalog(&root, false).entries[0].definition, loaded);
-
-        let mut updated = loaded.clone();
-        updated.arguments = vec![
-            "acp".into(),
-            "--arg1".into(),
-            "value with spaces".into(),
-            String::new(),
-        ];
-        updated.permission_mode = PermissionMode::AllowEverything;
-        catalog
-            .save(Some("josh"), updated.clone(), Some(&loaded), false)
-            .unwrap();
-        assert_eq!(open_catalog(&root, false).entries[0].definition, updated);
-    }
-
-    #[test]
-    fn rejects_ambiguous_legacy_without_changing_disk_and_respects_explicit_empty_arguments() {
-        let root = TempDir::new("adeline-agents");
-        let mut catalog = open_catalog(&root, false);
-        let path = file(&root, "josh");
-        fs::create_dir(path.parent().unwrap()).unwrap();
-        let original = "name: Josh\nharness: OMP\ndriver: ACP\ncommand: '\"C:/Program Files/omp.exe\" acp'\nmodel: openai-codex/gpt-6-luna\neffort: Max\n";
-        fs::write(&path, original).unwrap();
-        assert!(catalog.refresh());
-        assert!(catalog.errors[0].contains("Ambiguous legacy command"));
-        assert_eq!(fs::read_to_string(&path).unwrap(), original);
-        let explicit = "name: Josh\nharness: OMP\ndriver: ACP\ncommand: omp.exe acp\narguments: []\nmodel: openai-codex/gpt-6-luna\neffort: Max\n";
-        fs::write(&path, explicit).unwrap();
-        catalog.refresh();
-        assert!(catalog.errors[0].contains("Command must be one executable"));
-        assert_eq!(fs::read_to_string(&path).unwrap(), explicit);
-        let omitted = "name: Josh\nharness: OMP\ndriver: ACP\ncommand: omp.exe\nmodel: openai-codex/gpt-6-luna\neffort: Max\n";
-        fs::write(&path, omitted).unwrap();
-        assert!(catalog.refresh());
-        assert!(catalog.entries[0].definition.arguments.is_empty());
-        assert_eq!(fs::read_to_string(&path).unwrap(), omitted);
-    }
-
-    #[test]
-    fn existing_executable_path_with_spaces_is_not_split_during_legacy_load() {
-        let root = TempDir::new("adeline-agents");
-        let executable = root.join("Program Files").join("omp.exe");
-        fs::create_dir(executable.parent().unwrap()).unwrap();
-        fs::write(&executable, "").unwrap();
-        let mut definition = agent("Josh");
-        definition.command = executable.to_string_lossy().into_owned();
-        definition.arguments.clear();
-        let mut document = serde_yaml_ng::to_value(&definition).unwrap();
+        assert!(!yaml.contains("command"));
+        assert_eq!(open_catalog(&root, false).entries[0].definition, gemini);
+        let mut with_command = gemini;
+        with_command.name = "Other".into();
+        with_command.command = "gemini".into();
+        assert!(catalog.save(None, with_command, None, false).is_err());
+        let custom = agent("Custom one");
+        catalog.save(None, custom.clone(), None, false).unwrap();
+        let yaml = fs::read_to_string(file(&root, "custom-one")).unwrap();
+        assert!(yaml.contains("command: omp.exe") && yaml.contains("- acp"));
+        let mut no_model = custom;
+        no_model.name = "Defaults".into();
+        no_model.model.clear();
+        no_model.effort.clear();
+        catalog.save(None, no_model.clone(), None, false).unwrap();
         assert!(
-            document
-                .as_mapping_mut()
-                .unwrap()
-                .remove("arguments")
-                .is_some()
+            open_catalog(&root, false)
+                .entries
+                .iter()
+                .any(|entry| entry.definition == no_model)
         );
-        let source = serde_yaml_ng::to_string(&document).unwrap();
-        let path = file(&root, "josh");
-        fs::create_dir_all(path.parent().unwrap()).unwrap();
-        fs::write(&path, &source).unwrap();
-        let catalog = open_catalog(&root, false);
-        assert_eq!(catalog.entries[0].definition, definition);
-        assert_eq!(fs::read_to_string(path).unwrap(), source);
     }
+
+    #[test]
+    fn old_format_files_are_silently_ignored_and_left_unchanged() {
+        let root = TempDir::new("adeline-agents");
+        let old = "name: Josh\nharness: OMP\ndriver: ACP\ncommand: omp.exe acp\nmodel: openai-codex/gpt-6-luna\neffort: Max\n";
+        let older = "version: 0\nname: Old\nharness: omp\n";
+        for (id, text) in [("josh", old), ("old", older)] {
+            fs::create_dir_all(file(&root, id).parent().unwrap()).unwrap();
+            fs::write(file(&root, id), text).unwrap();
+        }
+        let mut catalog = open_catalog(&root, false);
+        assert!(catalog.entries.is_empty());
+        assert!(catalog.errors.is_empty());
+        assert_eq!(fs::read_to_string(file(&root, "josh")).unwrap(), old);
+        assert_eq!(fs::read_to_string(file(&root, "old")).unwrap(), older);
+        assert!(catalog.save(None, agent("Josh"), None, false).is_err());
+        assert_eq!(fs::read_to_string(file(&root, "josh")).unwrap(), old);
+    }
+
     #[test]
     fn accepts_explicit_command_path_with_spaces_before_installation() {
         let root = TempDir::new("adeline-agents");
@@ -636,18 +564,6 @@ mod tests {
             .join("omp.exe")
             .to_string_lossy()
             .into_owned();
-        catalog.save(None, definition.clone(), None, false).unwrap();
-        assert_eq!(open_catalog(&root, false).entries[0].definition, definition);
-    }
-
-    #[test]
-    fn saves_non_omp_acp_agent() {
-        let root = TempDir::new("adeline-agents");
-        let mut catalog = open_catalog(&root, false);
-        let mut definition = agent("Other harness");
-        definition.harness = "Other".into();
-        definition.command = "other-agent.exe".into();
-        definition.arguments = vec!["--stdio".into()];
         catalog.save(None, definition.clone(), None, false).unwrap();
         assert_eq!(open_catalog(&root, false).entries[0].definition, definition);
     }
@@ -737,19 +653,14 @@ mod tests {
         for change in [
             ("name", ""),
             ("command", "  "),
-            ("model", ""),
+            ("command", "omp.exe acp"),
             ("harness", ""),
-            ("driver", "Unknown"),
-            ("effort", "Ultra"),
         ] {
             let mut bad = agent("Bad");
             match change.0 {
                 "name" => bad.name = change.1.into(),
                 "command" => bad.command = change.1.into(),
-                "model" => bad.model = change.1.into(),
-                "harness" => bad.harness = change.1.into(),
-                "driver" => bad.driver = change.1.into(),
-                _ => bad.effort = change.1.into(),
+                _ => bad.harness = change.1.into(),
             }
             assert!(
                 catalog.save(None, bad, None, false).is_err(),
@@ -761,10 +672,9 @@ mod tests {
         good.system_instructions.clear();
         good.arguments.clear();
         catalog.save(None, good.clone(), None, false).unwrap();
-        fs::write(file(&root, "good"), "name: Good\nharness: OMP\ndriver: ACP\ncommand: omp.exe\narguments: []\nmodel: openai-codex/gpt-6-luna\neffort: Max\n").unwrap();
         fs::create_dir(root.join("agents/bad")).unwrap();
         let mut bad = agent("Bad");
-        bad.effort = "Ultra".into();
+        bad.command = "omp.exe acp".into();
         fs::write(file(&root, "bad"), serde_yaml_ng::to_string(&bad).unwrap()).unwrap();
         fs::create_dir(root.join("agents/missing")).unwrap();
         assert!(catalog.refresh());
@@ -772,7 +682,7 @@ mod tests {
         assert_eq!(catalog.errors.len(), 2);
         assert!(catalog.errors.iter().any(|error| error.contains("bad")
             && error.contains("agent.yml")
-            && error.contains("Effort")));
+            && error.contains("Command")));
         assert!(
             catalog
                 .errors
@@ -892,7 +802,7 @@ mod tests {
         assert!(!demo.entries.iter().any(|entry| entry.id == "personal"));
         let first = demo.entries[0].clone();
         let mut edited = first.definition.clone();
-        edited.command = "demo-only".into();
+        edited.model = "demo-only".into();
         demo.save(Some(&first.id), edited, Some(&first.definition), false)
             .unwrap();
         demo.delete(&first.id).unwrap();

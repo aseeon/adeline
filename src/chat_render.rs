@@ -6,6 +6,7 @@ use gpui_kit::component::plot::shape::{Arc as ArcShape, ArcData};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Selectable as _, Side, Sizable as _,
     button::{Button, ButtonVariants as _},
+    command::{Command, CommandGroup, CommandItem},
     input::Textarea,
     menu::{DropdownMenu as _, PopupMenuItem},
     spinner::Spinner,
@@ -1048,7 +1049,10 @@ impl Adeline {
             div().into_any_element()
         }
     }
-    pub(super) fn composer_view(&self, cx: &Context<Self>) -> Div {
+    /// `width` is the composer's width in rems; narrower composers shorten labels.
+    pub(super) fn composer_view(&self, width: f32, cx: &Context<Self>) -> Div {
+        // The controls sit in the chat column, inside its side padding.
+        let fit = Fit::for_width(width.min(CHAT_COLUMN) - 4.);
         let theme = cx.theme();
         let bound = self.bound_definition();
         let selected = self.selected_definition();
@@ -1065,6 +1069,12 @@ impl Adeline {
             .or_else(|| {
                 selected.map(|definition| (definition.model.clone(), definition.effort.clone()))
             });
+        let options = if bound.is_some() {
+            self.conversation_options()
+        } else {
+            Vec::new()
+        };
+        let no_agents = bound.is_none() && self.agent_catalog.entries.is_empty() && !self.demo_mode;
         let (agent_asset, agent_color) = agent_icon(&agent_name, cx);
         let processing = self.conversation_processing();
         let can_send = self
@@ -1076,12 +1086,18 @@ impl Adeline {
         let permission = self.current_permission_mode().map(|mode| {
             let label = permission_label(mode);
             let owner = cx.weak_entity();
+            let shown = if fit.short_permission && mode == agents::PermissionMode::Ask {
+                "Approval"
+            } else {
+                label
+            };
             Button::new("chat-permission-mode")
                 .ghost()
                 .small()
                 .flex_shrink_0()
-                .label(label)
+                .label(shown)
                 .dropdown_caret(true)
+                .tooltip(format!("Permissions: {label}"))
                 .accessibility_label(format!("Permissions: {label}"))
                 .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
                     let mut menu = menu.check_side(Side::Right).label("Permissions");
@@ -1106,7 +1122,14 @@ impl Adeline {
                     menu
                 })
         });
-        let send = if processing {
+        let send = if no_agents {
+            // Sending needs an agent, so adding one is the main action.
+            Button::new("send-chat-message")
+                .small()
+                .primary()
+                .label("Add an agent…")
+                .on_click(cx.listener(|app, _, window, cx| app.act(Action::AddAgent, window, cx)))
+        } else if processing {
             Button::new("send-chat-message")
                 .small()
                 .ghost()
@@ -1186,6 +1209,8 @@ impl Adeline {
                             .aria_label("Agent selection")
                             .flex_1()
                             .min_w_0()
+                            // Clip rather than draw under the permission button.
+                            .overflow_hidden()
                             .gap_1()
                             .child(
                                 self.command_popover(
@@ -1198,7 +1223,7 @@ impl Adeline {
                                                 .path(format!("{agent_asset}.svg"))
                                                 .text_color(agent_color),
                                         )
-                                        .label(agent_name.clone())
+                                        .label(shorten(&agent_name, fit.agent))
                                         .tooltip(agent_name)
                                         .dropdown_caret(true),
                                     Anchor::BottomLeft,
@@ -1207,16 +1232,20 @@ impl Adeline {
                             )
                             .when_some(execution, |selection, (model, effort)| {
                                 selection
-                                    .child(execution_setting(
-                                        "chat-model",
-                                        "Model",
-                                        model_label(&model),
+                                    .children(self.setting_menu(
+                                        harness::Kind::Model,
+                                        model,
+                                        &options,
+                                        processing,
+                                        fit.model,
                                         cx,
                                     ))
-                                    .child(execution_setting(
-                                        "chat-effort",
-                                        "Effort",
-                                        effort_label(&effort),
+                                    .children(self.setting_menu(
+                                        harness::Kind::Effort,
+                                        effort,
+                                        &options,
+                                        processing,
+                                        fit.effort,
                                         cx,
                                     ))
                             }),
@@ -1230,6 +1259,139 @@ impl Adeline {
             .bg(theme.background)
             .pb_4()
             .child(chat_column().child(island))
+    }
+}
+
+impl Adeline {
+    /// The composer's Model or Effort menu. With the harness's options it
+    /// switches this conversation; without them it shows the value read-only.
+    fn setting_menu(
+        &self,
+        kind: harness::Kind,
+        value: String,
+        options: &[serde_json::Value],
+        processing: bool,
+        max_chars: usize,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let (menu, id, heading) = match kind {
+            harness::Kind::Model => ("model", "chat-model", "Model"),
+            harness::Kind::Effort => ("effort", "chat-effort", "Effort"),
+        };
+        let Some(setting) = harness::setting(options, kind) else {
+            if value.is_empty() {
+                return None;
+            }
+            let label = match kind {
+                harness::Kind::Model => model_label(&value),
+                harness::Kind::Effort => effort_label(&value),
+            };
+            return Some(execution_setting(id, heading, label, max_chars, cx).into_any_element());
+        };
+        let current = if value.is_empty() {
+            setting.current.clone()
+        } else {
+            value
+        };
+        let label: SharedString = setting.name_of(&current).to_owned().into();
+        let trigger = Button::new(id)
+            .ghost()
+            .small()
+            .flex_shrink_0()
+            .label(shorten(&label, max_chars))
+            .dropdown_caret(true)
+            .disabled(processing)
+            .tooltip(if processing {
+                format!("{heading}: {label}. Switch after this turn finishes.")
+            } else {
+                format!("{heading}: {label}")
+            })
+            .accessibility_label(format!("{heading}: {label}"));
+        if processing {
+            return Some(trigger.into_any_element());
+        }
+        let mut groups: Vec<(String, Vec<harness::Choice>)> = Vec::new();
+        for choice in setting.choices {
+            match groups.last_mut() {
+                Some((group, items)) if *group == choice.group => items.push(choice),
+                _ => groups.push((choice.group.clone(), vec![choice])),
+            }
+        }
+        let owner = cx.weak_entity();
+        let content_owner = owner.clone();
+        let state = self.command_popup.clone();
+        Some(
+            component::popover::Popover::new(menu)
+                .anchor(Anchor::BottomLeft)
+                .trigger(trigger)
+                .open(self.menu == Some(menu))
+                .p_0()
+                .shadow(project_bar::menu_shadow(cx))
+                .when_some(state.as_ref(), |popover, state| {
+                    popover.track_focus(&state.focus_handle(cx))
+                })
+                .on_open_change(move |open, window, cx| {
+                    let _ = owner.update(cx, |app, cx| {
+                        if *open {
+                            app.open_commands(menu, window, cx);
+                        } else if app.menu == Some(menu) {
+                            app.menu = None;
+                            app.composer_region.update(cx, |_, cx| cx.notify());
+                            cx.notify();
+                        }
+                    });
+                })
+                .content(move |_, _, cx| {
+                    let popover = cx.entity();
+                    let owner = content_owner.clone();
+                    let values: Vec<Vec<String>> = groups
+                        .iter()
+                        .map(|(_, items)| items.iter().map(|c| c.value.clone()).collect())
+                        .collect();
+                    col().w(rems(24.)).when_some(state.as_ref(), |column, state| {
+                        let mut command = Command::new(state)
+                            .bordered(false)
+                            .placeholder(format!("Search {}", heading.to_lowercase()))
+                            .header(|_, _, cx| {
+                                div()
+                                    .px_3()
+                                    .py_2()
+                                    .text_xs()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(
+                                        "Switching may invalidate the prompt cache and cost more on the next turn.",
+                                    )
+                            });
+                        for (group, items) in &groups {
+                            let mut entry = CommandGroup::new();
+                            if !group.is_empty() {
+                                entry = entry.label(group.clone());
+                            }
+                            command = command.group(entry.items(items.iter().map(|choice| {
+                                CommandItem::new()
+                                    .label(choice.name.clone())
+                                    .keywords([choice.value.clone()])
+                                    .checked(choice.value == current)
+                            })));
+                        }
+                        column.child(command.on_confirm(move |path, window, cx| {
+                            let Some(value) = values
+                                .get(path.section)
+                                .and_then(|items| items.get(path.row))
+                                .cloned()
+                            else {
+                                return;
+                            };
+                            popover.update(cx, |state, cx| state.dismiss(window, cx));
+                            let _ = owner.update(cx, |app, cx| {
+                                app.menu = None;
+                                app.switch_setting(kind, value, cx);
+                            });
+                        }))
+                    })
+                })
+                .into_any_element(),
+        )
     }
 }
 
@@ -1456,12 +1618,55 @@ fn effort_label(effort: &str) -> String {
     })
 }
 
+/// How much of each composer label fits, by composer width.
+struct Fit {
+    short_permission: bool,
+    /// Most characters of the agent, model and effort labels.
+    agent: usize,
+    model: usize,
+    effort: usize,
+}
+
+impl Fit {
+    fn for_width(rems: f32) -> Self {
+        let (short_permission, agent, model, effort) = if rems >= 40. {
+            (false, usize::MAX, usize::MAX, usize::MAX)
+        } else if rems >= 36. {
+            (true, usize::MAX, usize::MAX, usize::MAX)
+        } else if rems >= 33. {
+            (true, usize::MAX, 16, usize::MAX)
+        } else if rems >= 30. {
+            (true, 12, 10, 6)
+        } else {
+            // The narrowest window.
+            (true, 8, 7, 5)
+        };
+        Self {
+            short_permission,
+            agent,
+            model,
+            effort,
+        }
+    }
+}
+
+/// `text` cut to `max` characters, ending in an ellipsis when cut.
+fn shorten(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        text.to_owned()
+    } else {
+        let kept: String = text.chars().take(max.saturating_sub(1)).collect();
+        format!("{}\u{2026}", kept.trim_end())
+    }
+}
+
 /// A composer selector for a setting the agent owns. Its menu shows the
 /// current value and where to change it.
 fn execution_setting(
     id: &'static str,
     heading: &'static str,
     value: String,
+    max_chars: usize,
     cx: &Context<Adeline>,
 ) -> impl IntoElement {
     let owner = cx.weak_entity();
@@ -1470,7 +1675,8 @@ fn execution_setting(
         .ghost()
         .small()
         .flex_shrink_0()
-        .label(current.clone())
+        .label(shorten(&current, max_chars))
+        .tooltip(format!("{heading}: {current}"))
         .dropdown_caret(true)
         .accessibility_label(format!("{heading}: {current}"))
         .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {

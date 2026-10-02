@@ -1,7 +1,7 @@
 //! Durable project definitions, conversation snapshots and ordered transcript events.
 use crate::files::{self, checked_id, error as file_error};
 use crate::{
-    agents::{self, AgentDefinition, PermissionMode},
+    agents::{self, AgentDefinition, InstructionsMode, PermissionMode},
     data,
 };
 use serde::{Deserialize, Serialize};
@@ -13,22 +13,46 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+/// What a conversation started with. Snapshots older than
+/// [`agents::VERSION`] stay readable but cannot send.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct ExecutionConfig {
+    #[serde(default)]
+    pub version: u32,
     pub name: String,
     #[serde(default = "default_harness")]
     pub harness: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub identity: String,
+    /// The resolved executable.
     pub command: String,
     #[serde(default)]
     pub arguments: Vec<String>,
+    /// Switching changes these two; nothing else changes after creation.
+    #[serde(default)]
     pub model: String,
+    #[serde(default)]
     pub effort: String,
     #[serde(default)]
-    pub effort_parameter_name: agents::EffortParameterName,
     pub system_instructions: String,
+    #[serde(default)]
+    pub instructions_mode: InstructionsMode,
     pub directory: PathBuf,
+}
+
+impl ExecutionConfig {
+    pub fn legacy(&self) -> bool {
+        self.version < agents::VERSION
+    }
+
+    fn fixed(&self) -> Self {
+        Self {
+            model: String::new(),
+            effort: String::new(),
+            ..self.clone()
+        }
+    }
 }
 
 fn default_harness() -> String {
@@ -48,6 +72,9 @@ pub struct ConversationSettings {
     pub session_id: Option<String>,
     #[serde(default)]
     pub previous_session_ids: Vec<String>,
+    /// The ACP config options the agent last offered, for switching while it is stopped.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub config_options: Vec<Value>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -618,6 +645,7 @@ impl ProjectStore {
         &mut self,
         project_id: &str,
         agent: &AgentDefinition,
+        launch: (String, Vec<String>),
         title: &str,
     ) -> Result<String, String> {
         checked_id(project_id)?;
@@ -640,19 +668,22 @@ impl ProjectStore {
             status: "idle".into(),
             created_at: now_millis().to_string(),
             execution: ExecutionConfig {
+                version: agents::VERSION,
                 name: agent.name.clone(),
                 harness: agent.harness.clone(),
-                command: agent.command.clone(),
-                arguments: agent.arguments.clone(),
+                identity: agent.identity.clone(),
+                command: launch.0,
+                arguments: launch.1,
                 model: agent.model.clone(),
                 effort: agent.effort.clone(),
-                effort_parameter_name: agent.effort_parameter_name,
                 system_instructions: agent.system_instructions.clone(),
+                instructions_mode: agent.instructions_mode,
                 directory: project.directory.clone(),
             },
             permission_mode: agent.permission_mode,
             session_id: None,
             previous_session_ids: Vec::new(),
+            config_options: Vec::new(),
         };
         let id = loop {
             let id = files::unique(&format!("{:x}", now_nanos()));
@@ -707,10 +738,10 @@ impl ProjectStore {
             .ok_or_else(|| format!("Conversation {id} no longer exists."))?;
         if conversation.settings.agent_id != settings.agent_id
             || conversation.settings.created_at != settings.created_at
-            || conversation.settings.execution != settings.execution
+            || conversation.settings.execution.fixed() != settings.execution.fixed()
         {
             return Err(
-                "An existing conversation's agent and execution settings cannot change.".into(),
+                "An existing conversation's agent and launch settings cannot change.".into(),
             );
         }
         conversation.pending_settings = Some(settings.clone());

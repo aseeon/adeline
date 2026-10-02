@@ -35,6 +35,9 @@ impl Adeline {
             return;
         }
         if let Some(menu) = action.menu_target() {
+            if matches!(action, Action::AgentMenu | Action::Agents) {
+                harness::refresh(false, cx);
+            }
             if matches!(action, Action::AgentMenu) && !self.demo_mode && self.selected.is_some() {
                 window.push_notification(
                     "This conversation's agent and execution settings are fixed.",

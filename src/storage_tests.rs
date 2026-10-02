@@ -14,82 +14,57 @@ fn open_store(root: &Path) -> ProjectStore {
 fn agent() -> AgentDefinition {
     AgentDefinition {
         name: "Josh".into(),
-        harness: "OMP".into(),
-        driver: "ACP".into(),
-        command: "omp.exe".into(),
-        arguments: vec!["acp".into()],
+        harness: crate::harness::OMP.into(),
         model: "openai-codex/gpt-6-sol".into(),
-        effort: "High".into(),
+        effort: "high".into(),
         system_instructions: "Keep edits small".into(),
         ..Default::default()
     }
 }
 
-#[test]
-fn conversations_snapshot_effort_parameter_and_restore_legacy_defaults() {
-    let test = TempDir::new("adeline-storage");
-    let work = working(&test, "work");
-    let mut store = open_store(&test);
-    let project = store.save_project(None, "Project", &work).unwrap();
-    for parameter in agents::EffortParameterName::ALL {
-        let mut definition = agent();
-        definition.effort_parameter_name = parameter;
-        let id = store
-            .create_conversation(&project, &definition, "Hello")
-            .unwrap();
-        let restored = open_store(&test);
-        let execution = &restored.conversation(&id).unwrap().settings.execution;
-        assert_eq!(execution.effort_parameter_name, parameter);
-        let mut legacy = serde_yaml_ng::to_value(execution).unwrap();
-        legacy
-            .as_mapping_mut()
-            .unwrap()
-            .remove("effort_parameter_name");
-        let restored: ExecutionConfig = serde_yaml_ng::from_value(legacy).unwrap();
-        assert_eq!(
-            restored.effort_parameter_name,
-            agents::EffortParameterName::Thinking
-        );
-    }
+fn launch() -> (String, Vec<String>) {
+    ("C:/tools/omp.exe".into(), vec!["acp".into()])
 }
 
 #[test]
-fn non_omp_conversation_restores_its_harness_and_legacy_snapshots_use_omp() {
+fn conversations_snapshot_resolved_launch_and_switch_only_model_and_effort() {
     let test = TempDir::new("adeline-storage");
     let work = working(&test, "work");
     let mut store = open_store(&test);
     let project = store.save_project(None, "Project", &work).unwrap();
-    let mut definition = agent();
-    definition.harness = "Other".into();
-    definition.command = "other-agent.exe".into();
     let id = store
-        .create_conversation(&project, &definition, "Hello")
+        .create_conversation(&project, &agent(), launch(), "Hello")
         .unwrap();
-    assert_eq!(
-        store.conversation(&id).unwrap().settings.execution.harness,
-        "Other"
-    );
-    drop(store);
-    assert_eq!(
-        open_store(&test)
-            .conversation(&id)
-            .unwrap()
-            .settings
-            .execution
-            .harness,
-        "Other"
-    );
+    let restored = open_store(&test);
+    let settings = restored.conversation(&id).unwrap().settings.clone();
+    assert!(!settings.execution.legacy());
+    assert_eq!(settings.execution.command, "C:/tools/omp.exe");
+    assert_eq!(settings.execution.arguments, ["acp"]);
+    assert_eq!(settings.execution.harness, "omp");
+    let mut switched = settings;
+    switched.execution.model = "xai/grok".into();
+    switched.execution.effort = "low".into();
+    switched.config_options = vec![serde_json::json!({"id":"model"})];
+    store.update_conversation(&project, &id, switched).unwrap();
+    let saved = open_store(&test)
+        .conversation(&id)
+        .unwrap()
+        .settings
+        .clone();
+    assert_eq!(saved.execution.model, "xai/grok");
+    assert_eq!(saved.config_options.len(), 1);
+    let mut moved = saved;
+    moved.execution.command = "elsewhere.exe".into();
+    assert!(store.update_conversation(&project, &id, moved).is_err());
+}
 
-    let mut snapshot = serde_yaml_ng::to_value(
-        &open_store(&test)
-            .conversation(&id)
-            .unwrap()
-            .settings
-            .execution,
+#[test]
+fn old_snapshots_stay_readable_but_are_marked_legacy() {
+    let restored: ExecutionConfig = serde_yaml_ng::from_str(
+        "name: Josh\ncommand: omp.exe\narguments: [acp]\nmodel: openai-codex/gpt-6-sol\neffort: High\neffort_parameter_name: thinking\nsystem_instructions: ''\ndirectory: C:/work\n",
     )
     .unwrap();
-    snapshot.as_mapping_mut().unwrap().remove("harness");
-    let restored: ExecutionConfig = serde_yaml_ng::from_value(snapshot).unwrap();
+    assert!(restored.legacy());
     assert_eq!(restored.harness, "OMP");
 }
 
@@ -121,7 +96,9 @@ fn project_rename_preserves_history_and_directory_snapshot() {
     assert_eq!(document["name"], "Example--Project!");
     assert_eq!(document["directory"], work.to_string_lossy().as_ref());
 
-    let conversation = store.create_conversation(&id, &agent(), "Hello").unwrap();
+    let conversation = store
+        .create_conversation(&id, &agent(), launch(), "Hello")
+        .unwrap();
     for status in ["active", "idle", "processing", "blocked"] {
         let mut settings = store.conversation(&conversation).unwrap().settings.clone();
         settings.status = status.into();
@@ -144,7 +121,7 @@ fn project_rename_preserves_history_and_directory_snapshot() {
     assert_eq!(snapshot.arguments, vec!["acp"]);
     let mut settings = store.conversation(&conversation).unwrap().settings.clone();
     let mut changed_execution = settings.clone();
-    changed_execution.execution.model = "someone-else".into();
+    changed_execution.execution.command = "someone-else".into();
     assert!(
         store
             .update_conversation(&id, &conversation, changed_execution)
@@ -164,7 +141,7 @@ fn project_rename_preserves_history_and_directory_snapshot() {
     assert!(!test.join("projects/example-project").exists());
     assert!(
         store
-            .create_conversation(&renamed, &agent(), "New")
+            .create_conversation(&renamed, &agent(), launch(), "New")
             .unwrap()
             .len()
             > 8
@@ -236,7 +213,9 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
     let work = working(&test, "work");
     let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
-    let conversation = store.create_conversation(&id, &agent(), "Hello").unwrap();
+    let conversation = store
+        .create_conversation(&id, &agent(), launch(), "Hello")
+        .unwrap();
     store
         .record_event(
             &conversation,
@@ -424,7 +403,7 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
     );
     assert!(
         reloaded
-            .create_conversation(&id, &agent(), "No start")
+            .create_conversation(&id, &agent(), launch(), "No start")
             .is_err()
     );
 }
@@ -435,7 +414,9 @@ fn write_failure_retains_events_and_explicit_retry_appends_once() {
     let work = working(&test, "work");
     let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
-    let conversation = store.create_conversation(&id, &agent(), "Hello").unwrap();
+    let conversation = store
+        .create_conversation(&id, &agent(), launch(), "Hello")
+        .unwrap();
     let saved = TranscriptEvent::new("message", serde_json::json!({"role":"user","text":"saved"}));
     store.record_event(&conversation, &saved).unwrap();
     let transcript = test
@@ -517,7 +498,9 @@ fn failed_settings_write_preserves_pending_state_until_retry() {
     let work = working(&test, "work");
     let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
-    let conversation = store.create_conversation(&id, &agent(), "Hello").unwrap();
+    let conversation = store
+        .create_conversation(&id, &agent(), launch(), "Hello")
+        .unwrap();
     let settings_path = test
         .join("projects/project/conversations")
         .join(&conversation)
@@ -575,7 +558,9 @@ fn bad_transcript_keeps_prior_history_and_exposes_error() {
     let work = working(&test, "work");
     let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
-    let conversation = store.create_conversation(&id, &agent(), "Hello").unwrap();
+    let conversation = store
+        .create_conversation(&id, &agent(), launch(), "Hello")
+        .unwrap();
     store
         .record_event(
             &conversation,
