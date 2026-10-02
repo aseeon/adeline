@@ -319,7 +319,9 @@ pub fn apply(cx: &mut App) {
         theme.input = c("input");
         theme.ring = c("ring");
         theme.caret = c("foreground");
-        theme.selection = c("sidebar_accent");
+        // Text paints over the selection fill, so it must stay see-through; dark
+        // themes' near-black `sidebar_accent` hid the selection and its text.
+        theme.selection = c("primary").alpha(0.3);
         theme.chart_1 = c("chart_1");
         theme.chart_2 = c("chart_2");
         theme.chart_3 = c("chart_3");
