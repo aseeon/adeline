@@ -528,6 +528,7 @@ impl AgentWindow {
     }
 }
 impl Render for AgentWindow {
+    #[cfg_attr(not(target_os = "windows"), expect(unused_variables))]
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = div()
             .w_full()
