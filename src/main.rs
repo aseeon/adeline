@@ -56,7 +56,7 @@ impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         match embedded(path) {
             Some(bytes) => Ok(Some(Cow::Borrowed(bytes))),
-            None => match harness::icon(path) {
+            None => match harness::icon(path).or_else(|| agents::avatar(path)) {
                 Some(bytes) => Ok(Some(Cow::Owned(bytes))),
                 None => assets::Assets.load(path),
             },

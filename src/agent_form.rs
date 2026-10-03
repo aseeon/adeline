@@ -103,17 +103,12 @@ fn harness_row(
     path: Option<SharedString>,
     cx: &App,
 ) -> Div {
-    let icon = if harness::has_icon(id) {
-        format!("registry-icons/{id}.svg")
-    } else {
-        "robot.svg".into()
-    };
     row()
         .gap_2()
         .min_w_0()
         .child(
             Icon::default()
-                .path(icon)
+                .path(harness::icon_path(id))
                 .size_4()
                 .text_color(cx.theme().foreground),
         )

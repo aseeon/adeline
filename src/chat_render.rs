@@ -30,29 +30,6 @@ pub(super) enum LabelPlacement {
     Top { last: bool },
 }
 
-/// The icon asset for an agent, by the name stored on the chat.
-fn agent_icon_asset(agent: &str) -> &'static str {
-    let agent = agent.to_lowercase();
-    if agent.contains("claude") {
-        "claude"
-    } else if agent.contains("codex") || agent.contains("openai") {
-        "codex"
-    } else {
-        "robot"
-    }
-}
-
-/// The agent's icon and its color: Claude in the accent, others in text colors.
-fn agent_icon(agent: &str, cx: &App) -> (&'static str, Hsla) {
-    let asset = agent_icon_asset(agent);
-    let color = match asset {
-        "claude" => cx.theme().primary,
-        "codex" => cx.theme().sidebar_primary_foreground,
-        _ => cx.theme().muted_foreground,
-    };
-    (asset, color)
-}
-
 /// Width of the collapsed list in rems: the width of the mode rail beside it.
 pub(super) const COLLAPSED_WIDTH: f32 = 2.75;
 
@@ -256,12 +233,35 @@ fn status_name(thread: &Thread) -> &'static str {
 }
 
 /// A list row's agent icon, also the whole of a chat in the collapsed list.
-fn agent_mark(agent: &str, cx: &App) -> themed_icon::ThemedIcon {
-    let (asset, color) = agent_icon(agent, cx);
-    icon(asset).size(rems(0.8125)).text_color(color)
+fn agent_mark((path, color): (String, Hsla)) -> themed_icon::ThemedIcon {
+    themed_icon::ThemedIcon::path(&path)
+        .flex_shrink_0()
+        .size(rems(0.8125))
+        .text_color(color)
 }
 
 impl Adeline {
+    /// The icon path and color of the agent named `agent`: its avatar in text
+    /// colors, else the muted robot.
+    pub(super) fn agent_icon(&self, agent: &str, cx: &App) -> (String, Hsla) {
+        // ponytail: checks the avatar file on each render; cache per agent if lists get slow.
+        let path = self
+            .agent_catalog
+            .entries
+            .iter()
+            .find(|entry| entry.definition.name == agent)
+            .map_or_else(
+                || "robot.svg".into(),
+                |entry| agents::avatar_path(&entry.id, &entry.definition.harness),
+            );
+        let color = if path == "robot.svg" {
+            cx.theme().muted_foreground
+        } else {
+            cx.theme().sidebar_primary_foreground
+        };
+        (path, color)
+    }
+
     fn agent_name(&self, agent: &str) -> String {
         if self.demo_mode {
             provider(agent).to_owned()
@@ -299,7 +299,7 @@ impl Adeline {
             .gap_2p5()
             .rounded(theme.radius)
             .text_sm()
-            .child(agent_mark(&thread.provider, cx))
+            .child(agent_mark(self.agent_icon(&thread.provider, cx)))
             .child(
                 div()
                     .flex_1()
@@ -541,7 +541,7 @@ impl Adeline {
                     cx.stop_propagation();
                 }
             }))
-            .child(agent_mark(&thread.provider, cx));
+            .child(agent_mark(self.agent_icon(&thread.provider, cx)));
         // The flyout is the list row, laid exactly over the icon so the icon
         // does not move, and drawn above the chats beside the rail.
         let flyout = self
@@ -584,7 +584,7 @@ impl Adeline {
                 .p_0()
         };
         if let Some(agent) = &self.agent_filter {
-            let (asset, color) = agent_icon(agent, cx);
+            let (path, color) = self.agent_icon(agent, cx);
             let name = self.agent_name(agent);
             return button("chat-agent-filter-clear")
                 .bg(theme.sidebar_primary)
@@ -592,19 +592,26 @@ impl Adeline {
                 .border_color(theme.input)
                 .accessibility_label(format!("Showing {name} only. Show all agents"))
                 .tooltip(format!("Showing {name} only. Click to show all agents"))
-                .child(icon(asset).size(rems(1.)).text_color(color))
+                .child(
+                    themed_icon::ThemedIcon::path(&path)
+                        .size(rems(1.))
+                        .text_color(color),
+                )
                 .on_click(cx.listener(|app, _, window, cx| {
                     app.act(Action::AgentFilter(None), window, cx);
                 }))
                 .into_any_element();
         }
         let owner = cx.weak_entity();
-        let agents: Arc<[(Arc<str>, String, usize)]> = outcome
+        let agents: Arc<[(Arc<str>, String, String, usize)]> = outcome
             .agents
             .iter()
-            .map(|(agent, count)| (agent.clone(), self.agent_name(agent), *count))
+            .map(|(agent, count)| {
+                let (path, _) = self.agent_icon(agent, cx);
+                (agent.clone(), self.agent_name(agent), path, *count)
+            })
             .collect();
-        let total: usize = agents.iter().map(|(_, _, count)| count).sum();
+        let total: usize = agents.iter().map(|(_, _, _, count)| count).sum();
         button("chat-agent-filter")
             .accessibility_label("Filter by agent")
             .tooltip("Filter by agent")
@@ -631,13 +638,12 @@ impl Adeline {
                 let mut menu = menu.check_side(Side::Right).label("Agent").item(
                     PopupMenuItem::element(counted("All agents".into(), total)).checked(true),
                 );
-                for (agent, name, count) in agents.iter() {
+                for (agent, name, path, count) in agents.iter() {
                     let owner = owner.clone();
                     let agent = agent.clone();
-                    let asset = agent_icon_asset(&agent);
                     menu = menu.item(
                         PopupMenuItem::element(counted(name.clone(), *count))
-                            .icon(Icon::default().path(format!("{asset}.svg")))
+                            .icon(Icon::default().path(path.clone()))
                             .on_click(move |_, window, cx| {
                                 let _ = owner.update(cx, |app, cx| {
                                     app.act(Action::AgentFilter(Some(agent.clone())), window, cx);
@@ -875,12 +881,14 @@ impl Adeline {
                 .w_full()
                 .min_w_0()
                 .child(
-                    agent_header(&thread.provider, name, cx).children(time.map(|time| {
-                        div()
-                            .text_xs()
-                            .text_color(theme.muted_foreground)
-                            .child(time)
-                    })),
+                    agent_header(self.agent_icon(&thread.provider, cx), name, cx).children(
+                        time.map(|time| {
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(time)
+                        }),
+                    ),
                 )
                 .child(div().mt_1().child(body))
                 .when(thread.ends_turn(i) && !writing, |content| {
@@ -1075,7 +1083,7 @@ impl Adeline {
             Vec::new()
         };
         let no_agents = bound.is_none() && self.agent_catalog.entries.is_empty() && !self.demo_mode;
-        let (agent_asset, agent_color) = agent_icon(&agent_name, cx);
+        let (agent_path, agent_color) = self.agent_icon(&agent_name, cx);
         let processing = self.conversation_processing();
         let can_send = self
             .composer
@@ -1216,7 +1224,7 @@ impl Adeline {
                                         .small()
                                         .icon(
                                             Icon::default()
-                                                .path(format!("{agent_asset}.svg"))
+                                                .path(agent_path)
                                                 .text_color(agent_color),
                                         )
                                         .label(shorten(&agent_name, fit.agent))
@@ -1400,9 +1408,12 @@ pub(super) const HEADER_FADE: f32 = 1.75;
 pub(super) const CHAT_COLUMN: f32 = 46.;
 
 /// The agent's icon and name that head its replies and its live progress.
-pub(super) fn agent_header(provider: &str, name: impl Into<SharedString>, cx: &App) -> Div {
+pub(super) fn agent_header(
+    agent_icon: (String, Hsla),
+    name: impl Into<SharedString>,
+    cx: &App,
+) -> Div {
     let theme = cx.theme();
-    let (asset, color) = agent_icon(provider, cx);
     row()
         .h_7()
         .gap_2()
@@ -1415,7 +1426,7 @@ pub(super) fn agent_header(provider: &str, name: impl Into<SharedString>, cx: &A
                 .justify_center()
                 .rounded(theme.radius)
                 .bg(theme.secondary)
-                .child(icon(asset).size(rems(0.75)).text_color(color)),
+                .child(agent_mark(agent_icon).size(rems(0.75))),
         )
         .child(
             div()

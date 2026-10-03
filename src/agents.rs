@@ -9,6 +9,9 @@ use std::{
 /// The agent file format this version writes. Older files are ignored.
 pub const VERSION: u32 = 1;
 
+/// The agent's icon, copied from its harness when the agent is added.
+const AVATAR: &str = "avatar.svg";
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PermissionMode {
     #[default]
@@ -320,6 +323,14 @@ impl AgentCatalog {
                 let _ = fs::remove_dir(&destination);
                 return Err(error);
             }
+            // The avatar is decoration: a missing one falls back to the robot.
+            let avatar = match old.as_deref() {
+                Some(old) => fs::read(old.join(AVATAR)).ok(),
+                None => crate::harness::icon_svg(&definition.harness),
+            };
+            if let Some(avatar) = avatar {
+                let _ = files::write_new(&destination.join(AVATAR), &avatar);
+            }
             if let Some(old) = old.as_deref()
                 && old.exists()
                 && let Err(error) = fs::remove_dir_all(old)
@@ -362,6 +373,31 @@ impl AgentCatalog {
         self.refresh();
         Ok(())
     }
+}
+
+/// An agent's avatar asset path, else its harness icon.
+pub fn avatar_path(id: &str, harness: &str) -> String {
+    let saved = crate::config::directory()
+        .is_ok_and(|path| path.join("agents").join(id).join(AVATAR).is_file());
+    if saved {
+        format!("agent-avatars/{id}.svg")
+    } else {
+        crate::harness::icon_path(harness)
+    }
+}
+
+/// A saved avatar, served to the asset loader as `agent-avatars/<id>.svg`.
+pub fn avatar(path: &str) -> Option<Vec<u8>> {
+    let id = path.strip_prefix("agent-avatars/")?.strip_suffix(".svg")?;
+    checked_id(id).ok()?;
+    fs::read(
+        crate::config::directory()
+            .ok()?
+            .join("agents")
+            .join(id)
+            .join(AVATAR),
+    )
+    .ok()
 }
 
 /// `None` for a file older than [`VERSION`]: it is left alone and not listed.
@@ -433,7 +469,7 @@ fn discover(root: &Path) -> (Vec<AgentEntry>, Vec<String>) {
 fn ensure_only_definition(folder: &Path) -> Result<(), String> {
     for entry in fs::read_dir(folder).map_err(|e| file_error(folder, e))? {
         let entry = entry.map_err(|e| file_error(folder, e))?;
-        if entry.file_name() != "agent.yml" {
+        if entry.file_name() != "agent.yml" && entry.file_name() != AVATAR {
             return Err(format!(
                 "{}: cannot rename a folder containing other files.",
                 entry.path().display()
@@ -739,6 +775,27 @@ mod tests {
             .save(Some("josh"), mine.clone(), Some(&original), true)
             .unwrap();
         assert_eq!(open_catalog(&root, false).entries[0].definition, mine);
+    }
+
+    #[test]
+    fn adding_copies_the_harness_icon_and_renaming_keeps_it() {
+        let root = TempDir::new("adeline-agents");
+        let mut catalog = open_catalog(&root, false);
+        let josh = AgentDefinition {
+            name: "Josh".into(),
+            harness: crate::harness::OMP.into(),
+            ..Default::default()
+        };
+        catalog.save(None, josh.clone(), None, false).unwrap();
+        let avatar = |id: &str| fs::read(file(&root, id).parent().unwrap().join(AVATAR)).unwrap();
+        assert_eq!(avatar("josh"), crate::embedded("omp.svg").unwrap());
+        let mut renamed = josh.clone();
+        renamed.name = "Josh Smith".into();
+        catalog
+            .save(Some("josh"), renamed, Some(&josh), false)
+            .unwrap();
+        assert_eq!(avatar("josh-smith"), crate::embedded("omp.svg").unwrap());
+        assert!(!file(&root, "josh").exists());
     }
 
     #[test]

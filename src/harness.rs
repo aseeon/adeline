@@ -178,13 +178,30 @@ pub fn icon(path: &str) -> Option<Vec<u8>> {
     fs::read(cache()?.join("registry-icons").join(name)).ok()
 }
 
-pub fn has_icon(id: &str) -> bool {
-    cache().is_some_and(|cache| {
+/// A harness's icon: bundled for OMP, else the cached registry icon.
+pub fn icon_svg(id: &str) -> Option<Vec<u8>> {
+    if id == OMP {
+        crate::embedded("omp.svg").map(<[u8]>::to_vec)
+    } else {
+        icon(&format!("registry-icons/{id}.svg"))
+    }
+}
+
+/// A harness's icon asset path: bundled for OMP, the cached registry icon
+/// otherwise, else the generic robot.
+pub fn icon_path(id: &str) -> String {
+    if id == OMP {
+        "omp.svg".into()
+    } else if cache().is_some_and(|cache| {
         cache
             .join("registry-icons")
             .join(format!("{id}.svg"))
             .is_file()
-    })
+    }) {
+        format!("registry-icons/{id}.svg")
+    } else {
+        "robot.svg".into()
+    }
 }
 
 /// The cached registry, else the bundled copy, else OMP alone.

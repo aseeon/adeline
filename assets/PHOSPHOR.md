@@ -1,8 +1,9 @@
 # Phosphor assets
 
 Regular-weight SVGs from [Phosphor Icons](https://phosphoricons.com/).
-Application aliases retain the names used by the UI. Codex currently uses a generic
-Phosphor code symbol. Branded provider SVGs are documented separately in `LOBE.md`.
+Application aliases retain the names used by the UI. Agent avatars are copied from
+their harness icon when the agent is added: `omp.svg` for OMP, otherwise the ACP
+registry icon.
 See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 
 | Asset | Phosphor source |
@@ -23,7 +24,6 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `clock.svg` | `clock.svg` |
 | `close.svg` | `x.svg` |
 | `code.svg` | `code.svg` |
-| `codex.svg` | `code.svg` |
 | `copy.svg` | `copy.svg` |
 | `devices.svg` | `devices.svg` |
 | `edit.svg` | `pencil-simple.svg` |

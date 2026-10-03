@@ -1364,8 +1364,12 @@ impl Adeline {
                 ));
             } else if live.processing && live.permission.is_empty() && live.assistant.is_none() {
                 content = content.child(
-                    chat_render::agent_header(&thread.provider, thread.provider.clone(), cx)
-                        .child(chat_render::thinking_label(live.progress.clone(), cx)),
+                    chat_render::agent_header(
+                        self.agent_icon(&thread.provider, cx),
+                        thread.provider.clone(),
+                        cx,
+                    )
+                    .child(chat_render::thinking_label(live.progress.clone(), cx)),
                 );
             }
             if let Some(request) = live.permission.front() {

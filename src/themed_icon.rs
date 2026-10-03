@@ -12,6 +12,11 @@ impl ThemedIcon {
         Self(svg().path(format!("{name}.svg")))
     }
 
+    /// An icon by its full asset path.
+    pub(crate) fn path(path: &str) -> Self {
+        Self(svg().path(path.to_owned()))
+    }
+
     fn resolve_color(&mut self, inherited: Hsla) -> Option<Hsla> {
         let color = &mut self.0.style().text.color;
         let explicit = *color;

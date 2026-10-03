@@ -17,12 +17,7 @@ const GROUPS: [&str; 4] = ["General", "Modes", "Licenses", "Agents"];
 const SUBGROUPS: [&[&str]; 4] = [
     &["Features", "Appearance", "Keymap"],
     &["Chats"],
-    &[
-        "Phosphor Icons",
-        "Lobe Icons · Mono",
-        "GPUI",
-        "Chivo & Chivo Mono",
-    ],
+    &["Phosphor Icons", "GPUI", "Chivo & Chivo Mono"],
     &[],
 ];
 const MODES: [(Section, &str); 7] = [
@@ -1580,7 +1575,7 @@ fn group_header(
 fn navigation_button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
-    icon: &'static str,
+    icon: impl Into<SharedString>,
     selected: bool,
     cx: &App,
 ) -> Button {
@@ -1693,13 +1688,19 @@ impl Render for SettingsWindow {
                 let selected = self.agent_page.as_ref() == Some(&id);
                 let installed = cx.global::<harness::Catalog>().is_installed(&harness);
                 navigation = navigation.child(
-                    navigation_button(format!("settings-agent-{id}"), title, icon, selected, cx)
-                        .children(installed.map(agent_form::installed_dot))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            if this.agent_page.as_deref() != Some(&id) {
-                                this.leave(AfterAgent::Agent(id.clone()), window, cx);
-                            }
-                        })),
+                    navigation_button(
+                        format!("settings-agent-{id}"),
+                        title,
+                        agents::avatar_path(&id, &harness),
+                        selected,
+                        cx,
+                    )
+                    .children(installed.map(agent_form::installed_dot))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if this.agent_page.as_deref() != Some(&id) {
+                            this.leave(AfterAgent::Agent(id.clone()), window, cx);
+                        }
+                    })),
                 );
             }
         }
@@ -1893,11 +1894,6 @@ impl Render for SettingsWindow {
                     "Phosphor Icons",
                     "Primary interface icons · MIT · Copyright (c) 2020-2024 Phosphor Icons",
                     include_str!("../assets/PHOSPHOR-LICENSE.txt"),
-                ),
-                (
-                    "Lobe Icons · Mono",
-                    "Provider and tool brand icons · MIT · Copyright (c) 2023 LobeHub",
-                    include_str!("../assets/LOBE-LICENSE.txt"),
                 ),
                 (
                     "GPUI",
