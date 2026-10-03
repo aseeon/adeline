@@ -216,7 +216,7 @@ impl Adeline {
             }
             Action::Chat(ix) => {
                 self.selected = Some(ix);
-                self.expanded_event = None;
+                self.activity.reset();
                 self.projects[self.project].threads[ix].mark_read();
                 if !self.demo_mode {
                     self.mark_conversation_read(cx);
@@ -268,9 +268,6 @@ impl Adeline {
             }
             Action::ToggleLeftPanel => self.left_panel_open[0] = !self.left_panel_open[0],
             Action::ToggleSidePanel => self.side_panel_open[0] = !self.side_panel_open[0],
-            Action::Event(ix) => {
-                self.expanded_event = (self.expanded_event != Some(ix)).then_some(ix);
-            }
             Action::Complete => {
                 if !self.demo_mode {
                     self.complete_conversation(false, cx);

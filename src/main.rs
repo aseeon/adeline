@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod acp;
+mod activity;
 mod agent_form;
 mod agents;
 mod chat;
@@ -160,7 +161,6 @@ enum Action {
     ShowArchived,
     ToggleSidePanel,
     ToggleLeftPanel,
-    Event(usize),
     Complete,
     Projects,
     AppMenu,
@@ -280,7 +280,7 @@ struct Adeline {
     side_panel_open: [bool; 7],
     right_panel_width: f32,
     panel_state: Entity<component::ResizableState>,
-    expanded_event: Option<usize>,
+    activity: activity::ActivityPanel,
     query: Entity<InputState>,
     composer: Entity<TextareaState>,
     name_input: Entity<InputState>,
@@ -433,7 +433,7 @@ impl Adeline {
             show_completed: true,
             show_archived: false,
             side_panel_open: [false, false, false, false, true, true, true],
-            expanded_event: None,
+            activity: activity::ActivityPanel::default(),
             query,
             composer,
             name_input,

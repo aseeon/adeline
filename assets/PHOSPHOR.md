@@ -14,6 +14,7 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `arrow-elbow-down-left.svg` | `arrow-elbow-down-left.svg` |
 | `arrow.svg` | `arrow-right.svg` |
 | `at.svg` | `at.svg` |
+| `caret-double-down.svg` | `caret-double-down.svg` |
 | `caret-right.svg` | `caret-right.svg` |
 | `chat-fill.svg` | `chat-circle-fill.svg` |
 | `chat-illustration.svg` | `chats-circle.svg` |

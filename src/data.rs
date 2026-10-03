@@ -34,6 +34,58 @@ pub struct Thread {
     pub created_at: String,
     /// Tokens in the agent's context and the size of its window, once the agent reports them.
     pub context: Option<(u64, u64)>,
+    pub timing: Timing,
+}
+/// When a chat's turns ran and how fast its replies streamed. Times are
+/// milliseconds since the epoch.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Timing {
+    /// Each turn: when its prompt was sent and when the agent last answered.
+    pub turns: Vec<(u64, u64)>,
+    /// Reply text that arrived in a steady stream, and the time it took.
+    pub streamed_chars: u64,
+    pub streamed_ms: u64,
+    /// When reply text last arrived, until a tool call breaks the stream.
+    pub last_text: Option<u64>,
+}
+/// Longer than this between two pieces of reply text, the agent was doing
+/// something other than writing.
+const STREAM_GAP_MS: u64 = 2_000;
+impl Timing {
+    pub fn prompt(&mut self, at: u64) {
+        self.turns.push((at, at));
+        self.last_text = None;
+    }
+    pub fn text(&mut self, chars: usize, at: u64) {
+        self.answer(at);
+        if let Some(previous) = self.last_text
+            && at >= previous
+            && at - previous <= STREAM_GAP_MS
+        {
+            self.streamed_chars += chars as u64;
+            self.streamed_ms += at - previous;
+        }
+        self.last_text = Some(at);
+    }
+    pub fn tool(&mut self, at: u64) {
+        self.answer(at);
+        self.last_text = None;
+    }
+    fn answer(&mut self, at: u64) {
+        if let Some(turn) = self.turns.last_mut() {
+            turn.1 = turn.1.max(at);
+        }
+    }
+    /// Time from each prompt to the agent's last answer to it.
+    pub fn active_ms(&self) -> u64 {
+        self.turns.iter().map(|(start, end)| end - start).sum()
+    }
+    /// Reply tokens per second, counting about four characters a token.
+    pub fn tokens_per_second(&self) -> Option<f64> {
+        (self.streamed_ms >= 500)
+            .then(|| self.streamed_chars as f64 / 4. / (self.streamed_ms as f64 / 1000.))
+    }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -57,6 +109,27 @@ pub struct Activity {
     pub paths: Vec<String>,
     /// The user message whose turn made this tool call.
     pub turn: Option<usize>,
+    /// For a tool call: `pending`, `in_progress`, `completed` or `failed`.
+    pub status: String,
+    /// When the tool call started and finished, in milliseconds since the
+    /// epoch; 0 when unknown or still running.
+    pub started: u64,
+    pub finished: u64,
+    /// How much of its turn's reply the agent had written when the call
+    /// started, in bytes. Places the call between parts of the reply.
+    pub after_text: usize,
+}
+impl Activity {
+    /// The title without the status the runtime appends to it.
+    pub fn name(&self) -> &str {
+        self.title
+            .strip_suffix(&format!(" ({})", self.status))
+            .unwrap_or(&self.title)
+    }
+    /// How long a finished tool call took, in milliseconds.
+    pub fn duration_ms(&self) -> Option<u64> {
+        (self.started > 0 && self.finished >= self.started).then(|| self.finished - self.started)
+    }
 }
 
 /// What one agent turn did with its tools.
@@ -177,6 +250,56 @@ impl Thread {
                 .messages
                 .get(message + 1)
                 .is_none_or(|next| next.role == "user")
+    }
+    /// Adds a tool call, or updates it from a later report, at `at` milliseconds.
+    #[expect(clippy::too_many_arguments, reason = "the fields of one tool report")]
+    pub fn apply_tool(
+        &mut self,
+        tool_id: &str,
+        title: &str,
+        status: &str,
+        detail: &str,
+        kind: &str,
+        paths: &[String],
+        at: u64,
+    ) {
+        let turn = self.messages.iter().rposition(|m| m.role == "user");
+        let key = format!("tool:{tool_id}");
+        let item = if let Some(index) = self.activity.iter().position(|a| a.kind == key) {
+            index
+        } else {
+            // The reply so far in this turn, which the call comes after.
+            let written = self
+                .messages
+                .last()
+                .filter(|m| m.role == "assistant")
+                .map_or(0, |m| m.text.len());
+            self.activity.push(Activity {
+                kind: key,
+                started: at,
+                after_text: written,
+                ..Default::default()
+            });
+            self.activity.len() - 1
+        };
+        let activity = &mut self.activity[item];
+        activity.title = format!("{title} ({status})");
+        detail.clone_into(&mut activity.detail);
+        status.clone_into(&mut activity.status);
+        activity.running = matches!(status, "pending" | "in_progress");
+        if activity.running {
+            activity.finished = 0;
+        } else if activity.finished == 0 {
+            activity.finished = at;
+        }
+        if !kind.is_empty() {
+            kind.clone_into(&mut activity.tool);
+        }
+        if !paths.is_empty() {
+            activity.paths = paths.to_vec();
+        }
+        activity.turn = activity.turn.or(turn);
+        self.timing.tool(at);
     }
     /// The tool calls made in the turn opened by a user message.
     pub fn turn_tools(&self, turn: usize) -> impl Iterator<Item = &Activity> {
@@ -534,6 +657,23 @@ mod tests {
             }
         );
         assert_eq!(thread.turn_summary(0).tools, 1);
+    }
+
+    #[test]
+    fn timing_counts_turns_to_their_last_answer_and_steady_streams_only() {
+        let mut timing = Timing::default();
+        timing.prompt(1_000);
+        timing.text(40, 2_000);
+        timing.text(40, 2_500);
+        timing.tool(3_000);
+        // After a tool call, the first text starts a new stream.
+        timing.text(400, 9_000);
+        timing.text(40, 9_500);
+        timing.prompt(20_000);
+        timing.text(4, 21_000);
+        assert_eq!(timing.active_ms(), 8_500 + 1_000);
+        assert_eq!((timing.streamed_chars, timing.streamed_ms), (80, 1_000));
+        assert_eq!(timing.tokens_per_second(), Some(20.));
     }
 
     #[test]

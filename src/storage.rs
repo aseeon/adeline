@@ -139,6 +139,9 @@ impl StoredConversation {
                         if message.created_at.is_empty() {
                             message.created_at = event.timestamp.to_string();
                         }
+                        if message.role == "user" {
+                            thread.timing.prompt(event.timestamp);
+                        }
                         current_assistant =
                             (message.role == "assistant").then_some(thread.messages.len());
                         thread.messages.push(message);
@@ -146,6 +149,7 @@ impl StoredConversation {
                 }
                 "assistant_chunk" => {
                     if let Some(text) = event.data.get("text").and_then(Value::as_str) {
+                        thread.timing.text(text.chars().count(), event.timestamp);
                         if let Some(index) = current_assistant {
                             if let Some(message) = thread.messages.get_mut(index) {
                                 message.text.push_str(text);
@@ -188,53 +192,27 @@ impl StoredConversation {
                     }
                 }
                 "tool" => {
-                    let id = event
+                    let text = |field: &str| event.data.get(field).and_then(Value::as_str);
+                    let paths: Vec<String> = event
                         .data
-                        .get("id")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown");
-                    let key = format!("tool:{id}");
-                    let title = event
-                        .data
-                        .get("title")
-                        .and_then(Value::as_str)
-                        .unwrap_or("Tool");
-                    let status = event
-                        .data
-                        .get("status")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown");
-                    let detail = event
-                        .data
-                        .get("detail")
-                        .and_then(Value::as_str)
-                        .unwrap_or("");
-                    let turn = thread.messages.iter().rposition(|m| m.role == "user");
-                    let activity =
-                        if let Some(index) = thread.activity.iter().position(|a| a.kind == key) {
-                            &mut thread.activity[index]
-                        } else {
-                            thread.activity.push(data::Activity {
-                                kind: key,
-                                ..Default::default()
-                            });
-                            thread.activity.last_mut().expect("just added")
-                        };
-                    activity.title = format!("{title} ({status})");
-                    detail.clone_into(&mut activity.detail);
-                    activity.running = matches!(status, "pending" | "in_progress");
-                    if let Some(tool) = event.data.get("kind").and_then(Value::as_str) {
-                        tool.clone_into(&mut activity.tool);
-                    }
-                    if let Some(paths) = event.data.get("paths").and_then(Value::as_array) {
-                        activity.paths = paths
-                            .iter()
-                            .filter_map(|path| path.as_str().map(str::to_owned))
-                            .collect();
-                    }
-                    if activity.turn.is_none() {
-                        activity.turn = turn;
-                    }
+                        .get("paths")
+                        .and_then(Value::as_array)
+                        .map(|paths| {
+                            paths
+                                .iter()
+                                .filter_map(|path| path.as_str().map(str::to_owned))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    thread.apply_tool(
+                        text("id").unwrap_or("unknown"),
+                        text("title").unwrap_or("Tool"),
+                        text("status").unwrap_or("unknown"),
+                        text("detail").unwrap_or(""),
+                        text("kind").unwrap_or(""),
+                        &paths,
+                        event.timestamp,
+                    );
                 }
                 "usage" => {
                     if let (Some(used), Some(size)) = (
@@ -253,8 +231,7 @@ impl StoredConversation {
                     thread.activity.push(data::Activity {
                         kind: "error".into(),
                         title: title.to_owned(),
-                        detail: String::new(),
-                        running: false,
+                        turn: thread.messages.iter().rposition(|m| m.role == "user"),
                         ..Default::default()
                     });
                 }

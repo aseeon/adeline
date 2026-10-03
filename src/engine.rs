@@ -1532,7 +1532,11 @@ impl Engine {
             }
             acp::EventKind::Text(text) => {
                 // Streamed text is durably recorded by the worker before dispatch.
-                self.broadcast(Delta::Text { id, text });
+                self.broadcast(Delta::Text {
+                    id,
+                    text,
+                    at: crate::recency::now_ms(),
+                });
                 return;
             }
             acp::EventKind::Tool {
@@ -1551,6 +1555,7 @@ impl Engine {
                     detail,
                     kind,
                     paths,
+                    at: crate::recency::now_ms(),
                 });
                 return;
             }

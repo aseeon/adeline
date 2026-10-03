@@ -20,6 +20,11 @@ pub fn now() -> i64 {
     Utc::now().timestamp()
 }
 
+/// Milliseconds since the Unix epoch, now.
+pub fn now_ms() -> u64 {
+    u64::try_from(Utc::now().timestamp_millis()).unwrap_or(0)
+}
+
 /// Stored chats record milliseconds since the epoch; bundled demo chats use
 /// RFC 3339 UTC timestamps such as `2026-09-24T10:00:00Z`.
 pub fn parse(stamp: &str) -> Option<i64> {

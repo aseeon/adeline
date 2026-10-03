@@ -69,11 +69,14 @@ impl Adeline {
         let scrollbar = theme::SCROLLBAR_TRACK;
         let composer_height = self.composer_height.clone();
         let transcript = self.transcript.clone();
+        // The activity panel's stats island matches the composer's height.
+        let owner = cx.weak_entity();
         let measure = canvas(
             move |bounds, _, cx| {
                 if (composer_height.get() - bounds.size.height).abs() > px(0.5) {
                     composer_height.set(bounds.size.height);
                     transcript.update(cx, |_, cx| cx.notify());
+                    owner.update(cx, |_, cx| cx.notify()).ok();
                 }
             },
             |_, (), _, _| {},
@@ -135,53 +138,27 @@ impl Adeline {
                                 linear_color_stop(theme.background.alpha(0.), 1.),
                             )),
                     )
+                    // Back to the latest message, 0.5rem above the composer.
+                    .when(
+                        thread.is_some() && !self.transcript.read(cx).following(),
+                        |region| {
+                            region.child(
+                                div()
+                                    .absolute()
+                                    .bottom_full()
+                                    .left_0()
+                                    .right_0()
+                                    .pb_2()
+                                    .flex()
+                                    .justify_center()
+                                    .child(activity::jump_to_latest("chat-jump", cx)),
+                            )
+                        },
+                    )
                     .child(self.composer_region.clone())
                     .child(measure),
             )
             .into_any_element()
-    }
-
-    pub(super) fn activity_content(&self, cx: &Context<Self>) -> Div {
-        let mut panel = col().p_3().gap_3();
-        if let Some(ix) = self.selected {
-            let thread = &self.workspace().threads[ix];
-            panel = panel.child(
-                div()
-                    .text_sm()
-                    .child(format!("{} events", thread.activity.len())),
-            );
-            for (ix, event) in thread.activity.iter().enumerate() {
-                panel = panel.child(
-                    col()
-                        .gap_2()
-                        .child(
-                            self.button(
-                                SharedString::from(format!("activity-{}-{ix}", thread.id)),
-                                event.title.clone(),
-                                Action::Event(ix),
-                                cx,
-                            )
-                            .ghost()
-                            .w_full(),
-                        )
-                        .when(self.expanded_event == Some(ix), |column| {
-                            column.child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(if event.detail.is_empty() {
-                                        "Completed in the sample workspace.".to_owned()
-                                    } else {
-                                        event.detail.clone()
-                                    }),
-                            )
-                        }),
-                );
-            }
-        } else {
-            panel = panel.child("Start a chat to see agent activity.");
-        }
-        panel
     }
 
     fn command_entries(&self, menu: &'static str) -> (&'static str, Vec<(String, Action)>) {

@@ -233,7 +233,7 @@ fn status_name(thread: &Thread) -> &'static str {
 }
 
 /// A list row's agent icon, also the whole of a chat in the collapsed list.
-fn agent_mark((path, color): (String, Hsla)) -> themed_icon::ThemedIcon {
+pub(super) fn agent_mark((path, color): (String, Hsla)) -> themed_icon::ThemedIcon {
     themed_icon::ThemedIcon::path(&path)
         .flex_shrink_0()
         .size(rems(0.8125))
@@ -904,6 +904,10 @@ impl Adeline {
             )))
             .w_full()
             .min_w_0()
+            // The message under the hovered row of the activity panel.
+            .when(self.activity.lit == Some(i), |row| {
+                row.bg(theme.primary.alpha(0.08))
+            })
             .child(
                 chat_column()
                     .pb(rems(if user { 1.5 } else { 2. }))
@@ -1703,7 +1707,7 @@ fn execution_setting(
 }
 
 /// A token count as the header shows it: `950`, `38k`, `1.5M`.
-fn tokens(count: u64) -> String {
+pub(super) fn tokens(count: u64) -> String {
     if count >= 1_000_000 {
         format!("{:.1}M", count as f64 / 1_000_000.).replace(".0M", "M")
     } else if count >= 1_000 {
@@ -1727,7 +1731,7 @@ fn permission_label(mode: agents::PermissionMode) -> &'static str {
 }
 
 /// When a message was sent, in local time: `2:43 PM` today, else with its date.
-fn message_time(stamp: &str) -> Option<String> {
+pub(super) fn message_time(stamp: &str) -> Option<String> {
     use chrono::Datelike as _;
     let at = recency::parse(stamp)?;
     let local = chrono::DateTime::from_timestamp(at, 0)?.with_timezone(&chrono::Local);
@@ -1743,7 +1747,7 @@ fn message_time(stamp: &str) -> Option<String> {
 }
 
 /// The icon for a tool call, by its protocol kind.
-fn tool_icon(tool: &str) -> &'static str {
+pub(super) fn tool_icon(tool: &str) -> &'static str {
     match tool {
         "read" => "file",
         "edit" | "delete" | "move" => "edit",

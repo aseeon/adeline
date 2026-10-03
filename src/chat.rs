@@ -818,6 +818,8 @@ pub(super) struct Transcript {
     composer_height: std::rc::Rc<std::cell::Cell<Pixels>>,
     /// Distance from the end at the last wheel scroll.
     left_to_end: Pixels,
+    /// Following the end at the last scroll; the activity panel follows with it.
+    following: bool,
 }
 
 impl Transcript {
@@ -838,8 +840,11 @@ impl Transcript {
             let view = view.clone();
             let near = window.rem_size() * 3.;
             cx.defer(move |cx| {
-                view.update(cx, |transcript, _| transcript.resume_near_end(near))
-                    .ok();
+                view.update(cx, |transcript, cx| {
+                    transcript.resume_near_end(near);
+                    transcript.note_following(cx);
+                })
+                .ok();
             });
         });
         Self {
@@ -852,6 +857,39 @@ impl Transcript {
             footer_focus: cx.focus_handle(),
             composer_height,
             left_to_end: px(0.),
+            following: true,
+        }
+    }
+
+    /// Whether the transcript sticks to its end as messages arrive.
+    pub fn following(&self) -> bool {
+        self.state.is_following_tail()
+    }
+
+    /// Scrolls to the end and follows it again. The caller redraws the panel.
+    pub fn follow(&mut self, cx: &mut Context<Self>) {
+        self.state.set_follow_mode(FollowMode::Tail);
+        self.following = true;
+        cx.notify();
+    }
+
+    /// Scrolls a message into view, which stops following the end. The caller
+    /// redraws the panel.
+    pub fn reveal(&mut self, message: usize, cx: &mut Context<Self>) {
+        self.state.scroll_to(ListOffset {
+            item_ix: message,
+            offset_in_item: px(0.),
+        });
+        self.following = self.state.is_following_tail();
+        cx.notify();
+    }
+
+    /// Tells the activity panel when scrolling starts or stops following.
+    fn note_following(&mut self, cx: &mut Context<Self>) {
+        let following = self.state.is_following_tail();
+        if following != self.following {
+            self.following = following;
+            self.owner.update(cx, |_, cx| cx.notify()).ok();
         }
     }
 

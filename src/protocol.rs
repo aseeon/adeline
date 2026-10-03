@@ -2,7 +2,7 @@
 //! per line. Nothing here assumes the client shares the engine's machine.
 use crate::{
     agents::{AgentDefinition, AgentEntry, PermissionMode},
-    data::{Activity, Message, Thread, Workspace},
+    data::{Message, Thread, Workspace},
     harness,
     storage::ExecutionConfig,
 };
@@ -248,9 +248,13 @@ pub enum Delta {
         id: String,
         live: Live,
     },
+    /// `at` is when the engine received it, in milliseconds since the epoch;
+    /// 0 from an engine that predates it.
     Text {
         id: String,
         text: String,
+        #[serde(default)]
+        at: u64,
     },
     Tool {
         id: String,
@@ -260,6 +264,8 @@ pub enum Delta {
         detail: String,
         kind: String,
         paths: Vec<String>,
+        #[serde(default)]
+        at: u64,
     },
     Usage {
         id: String,
@@ -305,6 +311,15 @@ pub enum Delta {
     },
 }
 
+/// When the engine received a delta, or now for an engine that doesn't say.
+fn received(at: u64) -> u64 {
+    if at == 0 {
+        crate::recency::now_ms()
+    } else {
+        at
+    }
+}
+
 fn locate<'a>(projects: &'a mut [Workspace], id: &str) -> Option<&'a mut Thread> {
     projects
         .iter_mut()
@@ -319,10 +334,11 @@ pub fn apply(projects: &mut [Workspace], live: &mut HashMap<String, Live>, delta
         Delta::Live { id, live: state } => {
             live.insert(id.clone(), state.clone());
         }
-        Delta::Text { id, text } => {
+        Delta::Text { id, text, at } => {
             let state = live.entry(id.clone()).or_default();
             state.worked = true;
             if let Some(thread) = locate(projects, id) {
+                thread.timing.text(text.chars().count(), received(*at));
                 if let Some(message) = state.assistant.and_then(|i| thread.messages.get_mut(i)) {
                     message.text.push_str(text);
                 } else {
@@ -345,31 +361,11 @@ pub fn apply(projects: &mut [Workspace], live: &mut HashMap<String, Live>, delta
             detail,
             kind,
             paths,
+            at,
         } => {
             live.entry(id.clone()).or_default().worked = true;
             if let Some(thread) = locate(projects, id) {
-                let turn = thread.messages.iter().rposition(|m| m.role == "user");
-                let key = format!("tool:{tool_id}");
-                let item = if let Some(index) = thread.activity.iter().position(|a| a.kind == key) {
-                    index
-                } else {
-                    thread.activity.push(Activity {
-                        kind: key,
-                        ..Default::default()
-                    });
-                    thread.activity.len() - 1
-                };
-                let activity = &mut thread.activity[item];
-                activity.title = format!("{title} ({status})");
-                activity.detail.clone_from(detail);
-                activity.running = matches!(status.as_str(), "pending" | "in_progress");
-                if !kind.is_empty() {
-                    activity.tool.clone_from(kind);
-                }
-                if !paths.is_empty() {
-                    activity.paths.clone_from(paths);
-                }
-                activity.turn = activity.turn.or(turn);
+                thread.apply_tool(tool_id, title, status, detail, kind, paths, received(*at));
             }
         }
         Delta::Usage { id, used, size } => {
@@ -384,6 +380,12 @@ pub fn apply(projects: &mut [Workspace], live: &mut HashMap<String, Live>, delta
         }
         Delta::Message { id, message } => {
             if let Some(thread) = locate(projects, id) {
+                if message.role == "user" {
+                    let sent = crate::recency::parse(&message.created_at)
+                        .and_then(|at| u64::try_from(at).ok())
+                        .map_or_else(crate::recency::now_ms, |at| at * 1000);
+                    thread.timing.prompt(sent);
+                }
                 thread.push_message(message.clone());
             }
         }
@@ -433,10 +435,12 @@ mod tests {
             Delta::Text {
                 id: "c".into(),
                 text: "Good ".into(),
+                at: 0,
             },
             Delta::Text {
                 id: "c".into(),
                 text: "morning".into(),
+                at: 0,
             },
         ] {
             // Deltas travel as JSON lines.

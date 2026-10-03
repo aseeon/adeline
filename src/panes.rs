@@ -132,24 +132,7 @@ impl Adeline {
                     .size_range(config::text_pixels(140.)..config::text_pixels(520.))
                     .flex_grow_0()
                     .flex_shrink_1()
-                    .child(
-                        col()
-                            .id("agent-activity-panel")
-                            .role(Role::Group)
-                            .aria_label("Agent activity panel")
-                            .size_full()
-                            .bg(cx.theme().sidebar)
-                            .text_color(cx.theme().sidebar_foreground)
-                            .child(div().p_3().text_lg().child("Agent activity"))
-                            .child(
-                                div()
-                                    .id("activity-scroll")
-                                    .flex_1()
-                                    .min_h_0()
-                                    .overflow_y_scroll()
-                                    .child(self.activity_content(cx)),
-                            ),
-                    ),
+                    .child(self.activity_panel(cx)),
             );
         row()
             .size_full()
