@@ -8,17 +8,21 @@ use async_channel::Sender;
 use serde_json::{Value, json};
 use std::{
     collections::{HashMap, VecDeque},
-    io::{BufRead, BufReader, Write},
-    process::{Child, ChildStdin, Command as ProcessCommand, Stdio},
-    sync::{Arc, mpsc},
-    thread,
+    io::Write,
+    process::{Child, ChildStdin, Command as ProcessCommand},
+    sync::Arc,
     time::{Duration, Instant},
+};
+use tokio::{
+    io::{AsyncBufReadExt as _, BufReader},
+    sync::mpsc::{self, UnboundedReceiver, UnboundedSender},
+    task::block_in_place,
 };
 
 pub type Recorder = Arc<dyn Fn(&str, &str, &Value) -> Result<(), String> + Send + Sync>;
 
 pub struct Driver {
-    sender: mpsc::Sender<Input>,
+    sender: UnboundedSender<Input>,
 }
 
 #[derive(Debug)]
@@ -33,6 +37,8 @@ pub enum Command {
         option_id: String,
     },
     SetPermissionMode(PermissionMode),
+    /// Changes the running turn's retry limit; later turns pass their own.
+    SetRetries(u32),
     /// Switches the model or effort; applied now when idle, else at next setup.
     SetOption {
         kind: Kind,
@@ -125,7 +131,7 @@ impl Driver {
         events: Sender<Event>,
         record: Recorder,
     ) -> Self {
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::unbounded_channel();
         let worker = Worker {
             id: conversation_id,
             config,
@@ -166,7 +172,7 @@ impl Driver {
             pending_context: None,
             replacing: false,
         };
-        thread::spawn(move || worker.run());
+        tokio::spawn(worker.run());
         Self { sender }
     }
 
@@ -225,8 +231,8 @@ struct Worker {
     permission_mode: PermissionMode,
     events: Sender<Event>,
     record: Recorder,
-    sender: mpsc::Sender<Input>,
-    receiver: mpsc::Receiver<Input>,
+    sender: UnboundedSender<Input>,
+    receiver: UnboundedReceiver<Input>,
     child: Option<Child>,
     stdin: Option<ChildStdin>,
     epoch: u64,
@@ -261,7 +267,7 @@ struct Worker {
 
 impl Worker {
     fn emit(&self, kind: EventKind) {
-        let _ = self.events.send_blocking(Event {
+        let _ = self.events.try_send(Event {
             conversation_id: self.id.clone(),
             turn: self.turn,
             kind,
@@ -269,7 +275,7 @@ impl Worker {
     }
 
     fn record(&mut self, direction: &str, message: &Value) -> bool {
-        match (self.record)(&self.id, direction, message) {
+        match block_in_place(|| (self.record)(&self.id, direction, message)) {
             Ok(()) => true,
             Err(error) => {
                 if !self.blocked {
@@ -284,11 +290,17 @@ impl Worker {
         }
     }
 
-    fn run(mut self) {
+    async fn run(mut self) {
+        let mut tick = tokio::time::interval(Duration::from_millis(100));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            match self.receiver.recv_timeout(Duration::from_millis(100)) {
-                Ok(Input::Command(command)) => self.command(command),
-                Ok(Input::Wire { epoch, message }) if epoch == self.epoch => {
+            let input = tokio::select! {
+                input = self.receiver.recv() => Some(input),
+                _ = tick.tick() => None,
+            };
+            match input {
+                Some(Some(Input::Command(command))) => self.command(command),
+                Some(Some(Input::Wire { epoch, message })) if epoch == self.epoch => {
                     if self.blocked {
                         self.unprocessed.push((message, false));
                     } else if self.record("incoming", &message) {
@@ -297,17 +309,17 @@ impl Worker {
                         self.unprocessed.push((message, true));
                     }
                 }
-                Ok(Input::Lost { epoch, error }) if epoch == self.epoch => {
+                Some(Some(Input::Lost { epoch, error })) if epoch == self.epoch => {
                     self.lost(error);
                 }
-                Ok(Input::Diagnostic { epoch, line }) if epoch == self.epoch => {
+                Some(Some(Input::Diagnostic { epoch, line })) if epoch == self.epoch => {
                     if self.diagnostics.len() == 8 {
                         self.diagnostics.pop_front();
                     }
                     self.diagnostics.push_back(line);
                 }
-                Ok(_) | Err(mpsc::RecvTimeoutError::Timeout) => (),
-                Err(mpsc::RecvTimeoutError::Disconnected) => self.shutdown(),
+                Some(None) => self.shutdown(),
+                _ => (),
             }
             if let Some(child) = &mut self.child {
                 match child.try_wait() {
@@ -466,6 +478,11 @@ impl Worker {
                 option_id,
             } => self.permission(request_id, &option_id),
             Command::SetPermissionMode(mode) => self.permission_mode = mode,
+            Command::SetRetries(retries) => {
+                if let Some(turn) = &mut self.active {
+                    turn.retries = retries;
+                }
+            }
             Command::SetOption { kind, value } => self.switch(kind, &value),
             Command::ReplaceSession { context } => {
                 if !self.blocked && !self.closing && self.stdin.is_none() && self.child.is_some() {
@@ -536,10 +553,6 @@ impl Worker {
         }
     }
 
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "This method runs exclusively on the dedicated ACP worker thread"
-    )]
     fn start(&mut self) {
         if self.blocked || self.closing {
             return;
@@ -585,17 +598,13 @@ impl Worker {
                 harness::guidance(&self.config.name, &self.config.system_instructions)
             ));
         }
-        process
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
             process.creation_flags(0x08000000); // CREATE_NO_WINDOW: ACP uses pipes.
         }
-        match process.spawn() {
-            Ok(mut child) => {
+        match block_in_place(|| crate::platform::spawn_piped(&mut process, true)) {
+            Ok((child, stdin, stdout, stderr)) => {
                 self.configured = false;
                 self.capabilities = Value::Null;
                 self.options.clear();
@@ -604,22 +613,19 @@ impl Worker {
                 self.lost_during_initialize = false;
                 self.epoch += 1;
                 let epoch = self.epoch;
-                let stdout = child.stdout.take().expect("piped stdout");
                 let sender = self.sender.clone();
-                thread::spawn(move || {
-                    let mut reader = BufReader::new(stdout);
-                    let mut line = String::new();
+                tokio::spawn(async move {
+                    let mut lines = BufReader::new(stdout).lines();
                     loop {
-                        line.clear();
-                        match reader.read_line(&mut line) {
-                            Ok(0) => {
+                        match lines.next_line().await {
+                            Ok(None) => {
                                 let _ = sender.send(Input::Lost {
                                     epoch,
                                     error: "Agent closed protocol output.".into(),
                                 });
                                 break;
                             }
-                            Ok(_) => match serde_json::from_str(&line) {
+                            Ok(Some(line)) => match serde_json::from_str(&line) {
                                 Ok(message) => {
                                     if sender.send(Input::Wire { epoch, message }).is_err() {
                                         break;
@@ -645,13 +651,11 @@ impl Worker {
                 });
                 // stderr is diagnostic output, never ACP traffic.
                 self.diagnostics.clear();
-                if let Some(stderr) = child.stderr.take() {
+                if let Some(stderr) = stderr {
                     let sender = self.sender.clone();
-                    thread::spawn(move || {
-                        for line in BufReader::new(stderr).lines() {
-                            let Ok(line) = line else {
-                                break;
-                            };
+                    tokio::spawn(async move {
+                        let mut lines = BufReader::new(stderr).lines();
+                        while let Ok(Some(line)) = lines.next_line().await {
                             let line = if line.len() > 1024 {
                                 line.chars().take(1024).collect()
                             } else {
@@ -663,7 +667,7 @@ impl Worker {
                         }
                     });
                 }
-                self.stdin = child.stdin.take();
+                self.stdin = Some(stdin);
                 self.child = Some(child);
                 self.initialize();
             }
@@ -712,7 +716,9 @@ impl Worker {
         let Some(stdin) = &mut self.stdin else {
             return false;
         };
-        if let Err(error) = writeln!(stdin, "{value}").and_then(|()| stdin.flush()) {
+        if let Err(error) =
+            block_in_place(|| writeln!(stdin, "{value}").and_then(|()| stdin.flush()))
+        {
             self.lost(format!("Writing ACP request failed: {error}"));
             return false;
         }
@@ -1563,7 +1569,7 @@ mod tests {
 
     fn worker(record: Recorder) -> (Worker, async_channel::Receiver<Event>) {
         let (events, received) = async_channel::unbounded();
-        let (sender, receiver) = mpsc::channel();
+        let (sender, receiver) = mpsc::unbounded_channel();
         (
             Worker {
                 id: "conversation-1".into(),
@@ -1646,7 +1652,7 @@ mod tests {
             process.args(["-c", "cat >/dev/null"]);
             process
         };
-        let mut child = process.stdin(Stdio::piped()).spawn().unwrap();
+        let mut child = process.stdin(std::process::Stdio::piped()).spawn().unwrap();
         worker.stdin = child.stdin.take();
         step(worker);
         worker.stdin = None;
@@ -1655,7 +1661,7 @@ mod tests {
 
     #[test]
     fn effort_offered_only_after_the_model_is_set_is_still_applied() {
-        let (sent, received) = mpsc::channel();
+        let (sent, received) = std::sync::mpsc::channel();
         let (mut worker, events) = worker(Arc::new(move |_, direction, message| {
             if direction == "outgoing" {
                 sent.send(message.clone()).unwrap();
@@ -1703,7 +1709,7 @@ mod tests {
 
     #[test]
     fn switching_while_idle_sets_the_option_and_while_stopped_waits_for_setup() {
-        let (sent, received) = mpsc::channel();
+        let (sent, received) = std::sync::mpsc::channel();
         let (mut worker, _) = worker(Arc::new(move |_, direction, message| {
             if direction == "outgoing" {
                 sent.send(message.clone()).unwrap();
@@ -1728,8 +1734,8 @@ mod tests {
         assert!(received.try_recv().is_err());
     }
 
-    #[test]
-    fn non_omp_start_passes_only_configured_arguments() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn non_omp_start_passes_only_configured_arguments() {
         let (mut worker, _) = worker(Arc::new(|_, _, _| Ok(())));
         worker.config.harness = "Other".into();
         #[cfg(windows)]
@@ -1749,9 +1755,46 @@ mod tests {
         }
         worker.start();
         assert!(matches!(
-            worker.receiver.recv_timeout(Duration::from_secs(5)),
-            Ok(Input::Wire { message, .. }) if message == json!(1)
+            tokio::time::timeout(Duration::from_secs(5), worker.receiver.recv()).await,
+            Ok(Some(Input::Wire { message, .. })) if message == json!(1)
         ));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn driver_reports_an_agent_that_exits_at_once() {
+        let (Worker { mut config, .. }, _) = worker(Arc::new(|_, _, _| Ok(())));
+        config.harness = "Other".into();
+        #[cfg(windows)]
+        let (command, arguments) = ("cmd.exe", ["/C", "exit 1"]);
+        #[cfg(not(windows))]
+        let (command, arguments) = ("sh", ["-c", "exit 1"]);
+        config.command = command.into();
+        config.arguments = arguments.map(Into::into).to_vec();
+        let (events, received) = async_channel::unbounded();
+        let driver = Driver::spawn(
+            "conversation-1".into(),
+            config,
+            None,
+            PermissionMode::Ask,
+            events,
+            Arc::new(|_, _, _| Ok(())),
+        );
+        driver
+            .send(Command::Prompt {
+                text: "hello".into(),
+                retries: 0,
+            })
+            .unwrap();
+        let error = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if let EventKind::Error { message, .. } = received.recv().await.unwrap().kind {
+                    break message;
+                }
+            }
+        })
+        .await
+        .unwrap();
+        assert!(error.contains("Agent exited"), "{error}");
     }
 
     fn turn(retries: u32) -> Turn {
@@ -1869,6 +1912,22 @@ mod tests {
     }
 
     #[test]
+    fn changing_retries_affects_the_running_turn() {
+        let (mut worker, events) = worker(Arc::new(|_, _, _| Ok(())));
+        worker.active = Some(turn(0));
+        worker.command(Command::SetRetries(2));
+        worker.fail("Provider timed out".into(), FailureKind::Temporary);
+        assert!(matches!(
+            events.try_recv().unwrap().kind,
+            EventKind::Retrying {
+                attempt: 1,
+                limit: 2,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn unavailable_saved_model_fails_before_prompt() {
         let (mut worker, events) = worker(Arc::new(|_, _, _| Ok(())));
         worker.configured = false;
@@ -1913,7 +1972,7 @@ mod tests {
 
     #[test]
     fn restored_history_is_recorded_without_replaying_visible_chunks() {
-        let (written, recorded) = mpsc::channel();
+        let (written, recorded) = std::sync::mpsc::channel();
         let (mut worker, events) = worker(Arc::new(move |_, direction, _| {
             written
                 .send(direction.to_owned())

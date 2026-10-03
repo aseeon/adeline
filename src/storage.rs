@@ -273,8 +273,8 @@ impl StoredConversation {
         if self.interrupted {
             thread.activity.push(data::Activity {
                 kind: "error".into(),
-                title: "Prompt interrupted by application exit".into(),
-                detail: "Send a new message to continue this conversation.".into(),
+                title: "Prompt interrupted when the conversation engine stopped".into(),
+                detail: "Retry continues from the saved session.".into(),
                 running: false,
                 ..Default::default()
             });
@@ -337,14 +337,6 @@ impl ProjectStore {
                 errors: vec![error.clone()],
                 root: Err(error),
             },
-        }
-    }
-
-    pub fn empty() -> Self {
-        Self {
-            projects: Vec::new(),
-            errors: Vec::new(),
-            root: Err("Demo projects are not saved.".into()),
         }
     }
 
@@ -574,28 +566,6 @@ impl ProjectStore {
             });
         }
         Ok(id)
-    }
-
-    /// Records that the project was opened at `at`, seconds since the Unix epoch.
-    pub fn mark_opened(&mut self, id: &str, at: i64) -> Result<(), String> {
-        checked_id(id)?;
-        let root = self.root.as_ref().map_err(Clone::clone)?;
-        let project = self
-            .projects
-            .iter_mut()
-            .find(|p| p.id == id)
-            .ok_or_else(|| format!("Project {id} no longer exists."))?;
-        let folder = root.join(id);
-        safe_directory(&folder)?;
-        let definition = ProjectDefinition {
-            name: project.name.clone(),
-            directory: project.directory.clone(),
-            opened_at: Some(at),
-        };
-        let text = serde_yaml_ng::to_string(&definition).map_err(|e| e.to_string())?;
-        files::replace(&folder.join("project.yml"), text.as_bytes())?;
-        project.opened_at = Some(at);
-        Ok(())
     }
 
     /// Call only after every live agent in this project has stopped successfully.
@@ -837,6 +807,96 @@ impl ProjectStore {
             return conversation.storage_error.clone().map_or(Ok(()), Err);
         }
         flush_events(conversation, &folder.join("transcript.jsonl"))
+    }
+}
+
+/// What changed on disk outside the engine, from [`ProjectStore::reconcile`].
+#[derive(Default)]
+pub struct Reconciled {
+    /// Added projects, and projects whose name or directory changed.
+    pub projects: Vec<data::Workspace>,
+    pub removed: Vec<String>,
+    /// Added or changed conversations.
+    pub conversations: Vec<String>,
+    /// Problems the fresh load found that weren't known before.
+    pub errors: Vec<String>,
+}
+
+impl ProjectStore {
+    /// Takes in a fresh load of the projects folder. Conversations in `busy`
+    /// and projects in `deleting` are the engine's own business and stay.
+    pub fn reconcile(
+        &mut self,
+        fresh: Self,
+        busy: &std::collections::HashSet<String>,
+        deleting: &std::collections::HashSet<String>,
+    ) -> Reconciled {
+        let mut changes = Reconciled {
+            errors: fresh
+                .errors
+                .iter()
+                .filter(|error| !self.errors.contains(error))
+                .cloned()
+                .collect(),
+            ..Default::default()
+        };
+        self.errors.clone_from(&fresh.errors);
+        for project in &self.projects {
+            if !deleting.contains(&project.id)
+                && !fresh.projects.iter().any(|p| p.id == project.id)
+                && project.conversations.iter().all(|c| !busy.contains(&c.id))
+                && self
+                    .root
+                    .as_ref()
+                    .is_ok_and(|root| !root.join(&project.id).exists())
+            {
+                changes.removed.push(project.id.clone());
+            }
+        }
+        self.projects.retain(|p| !changes.removed.contains(&p.id));
+        for fresh_project in fresh.projects {
+            if deleting.contains(&fresh_project.id) {
+                continue;
+            }
+            let Some(project) = self.projects.iter_mut().find(|p| p.id == fresh_project.id) else {
+                changes.projects.push(fresh_project.to_workspace());
+                self.projects.push(fresh_project);
+                continue;
+            };
+            if project.name != fresh_project.name || project.directory != fresh_project.directory {
+                project.name = fresh_project.name;
+                project.directory = fresh_project.directory;
+                changes.projects.push(project.to_workspace());
+            }
+            for conversation in fresh_project.conversations {
+                if busy.contains(&conversation.id) {
+                    continue;
+                }
+                match project
+                    .conversations
+                    .iter_mut()
+                    .find(|c| c.id == conversation.id)
+                {
+                    None => {
+                        changes.conversations.push(conversation.id.clone());
+                        project.conversations.push(conversation);
+                    }
+                    // Unsaved history stays in memory until storage is retried.
+                    Some(existing)
+                        if existing.unsaved_events.is_empty()
+                            && existing.pending_settings.is_none()
+                            && (existing.settings != conversation.settings
+                                || existing.persisted_len != conversation.persisted_len
+                                || existing.storage_error != conversation.storage_error) =>
+                    {
+                        changes.conversations.push(conversation.id.clone());
+                        *existing = conversation;
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        changes
     }
 }
 

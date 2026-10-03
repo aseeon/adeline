@@ -1,14 +1,14 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Workspace {
     pub config: Config,
     pub threads: Vec<Thread>,
     pub decisions: Vec<Decision>,
 }
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub id: String,
@@ -18,7 +18,7 @@ pub struct Config {
     /// When the project was last opened, in seconds since the Unix epoch.
     pub opened_at: Option<i64>,
 }
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Thread {
     #[serde(skip)]
@@ -35,7 +35,7 @@ pub struct Thread {
     /// Tokens in the agent's context and the size of its window, once the agent reports them.
     pub context: Option<(u64, u64)>,
 }
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Message {
     pub role: String,
@@ -44,7 +44,7 @@ pub struct Message {
     pub read: bool,
     pub images: Vec<String>,
 }
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Activity {
     pub kind: String,
@@ -70,7 +70,7 @@ pub struct TurnSummary {
     pub tools: usize,
 }
 
-#[derive(Clone, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Decision {
     pub title: String,

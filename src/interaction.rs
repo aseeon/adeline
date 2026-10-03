@@ -22,7 +22,13 @@ impl Adeline {
                     | Action::About
                     | Action::QuitApp
                     | Action::Close
-                    | Action::ForceStopAll
+                    | Action::StopAll
+                    | Action::QuitStopAll
+                    | Action::FinishInBackground
+                    | Action::StartEngine
+                    | Action::EngineRetry
+                    | Action::EngineWait
+                    | Action::EngineStopOld
                     | Action::HideToolCalls
                     | Action::SubmitOnEnter
                     | Action::ToggleMode(_)
@@ -39,7 +45,7 @@ impl Adeline {
         }
         if let Some(menu) = action.menu_target() {
             if matches!(action, Action::AgentMenu | Action::Agents) {
-                harness::refresh(false, cx);
+                client::refresh_harnesses(false, cx);
             }
             if matches!(action, Action::AgentMenu) && !self.demo_mode && self.selected.is_some() {
                 window.push_notification(
@@ -62,8 +68,7 @@ impl Adeline {
             Action::AgentSettings => {
                 let id = self
                     .current_id()
-                    .and_then(|id| self.conversation_settings(&id))
-                    .map(|settings| settings.agent_id)
+                    .and_then(|id| self.conversation_agent(&id))
                     .or_else(|| self.selected_agent.clone())
                     .filter(|id| {
                         self.agent_catalog
@@ -138,6 +143,7 @@ impl Adeline {
             Action::ConfirmDeleteProject => self.confirm_project_delete(cx),
             Action::ForceDeleteProject => self.force_project_delete(cx),
             Action::Close => {
+                self.cancel_project_delete(cx);
                 self.menu = None;
                 self.modal = None;
                 window.close_dialog(cx);
@@ -331,7 +337,12 @@ impl Adeline {
             Action::Send => self.send(window, cx),
             Action::Stop => self.stop_conversation(cx),
             Action::ForceStop => self.force_conversation(cx),
-            Action::ForceStopAll => self.force_all(cx),
+            Action::StopAll => self.stop_all(cx),
+            Action::QuitStopAll => self.quit_stopping_all(cx),
+            Action::FinishInBackground => self.quit_in_background(cx),
+            Action::StartEngine | Action::EngineRetry => client::connect(true, cx),
+            Action::EngineWait => client::replace_old(false, cx),
+            Action::EngineStopOld => client::replace_old(true, cx),
             Action::RetryPrompt => self.retry_prompt(cx),
             Action::RetryStorage => self.retry_storage(cx),
             Action::ReplaceSession => self.replace_session(cx),

@@ -1181,9 +1181,7 @@ impl Adeline {
             .file_name()
             .map(|name| name.to_string_lossy().into_owned())
             .unwrap_or_default();
-        if let Err(error) = self.add_project(name, &directory.to_string_lossy(), window, cx) {
-            window.push_notification(error, cx);
-        }
+        self.add_project(name, &directory.to_string_lossy(), false, window, cx);
     }
 }
 

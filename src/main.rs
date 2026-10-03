@@ -4,22 +4,28 @@ mod agent_form;
 mod agents;
 mod chat;
 mod chat_render;
+mod client;
 mod config;
 mod data;
+mod engine;
 mod files;
 mod fonts;
 mod harness;
 mod interaction;
+mod ipc;
 mod panes;
+mod platform;
 mod prepared;
 mod project_bar;
 mod project_ui;
+mod protocol;
 mod recency;
 mod runtime_ui;
 mod settings;
 mod storage;
 mod themed_icon;
 mod titlebar;
+mod ui_state;
 mod views;
 use data::*;
 use gpui_kit::base::actions::Cancel;
@@ -56,7 +62,7 @@ impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         match embedded(path) {
             Some(bytes) => Ok(Some(Cow::Borrowed(bytes))),
-            None => match harness::icon(path).or_else(|| agents::avatar(path)) {
+            None => match harness::icon(path) {
                 Some(bytes) => Ok(Some(Cow::Owned(bytes))),
                 None => assets::Assets.load(path),
             },
@@ -180,7 +186,17 @@ enum Action {
     Send,
     Stop,
     ForceStop,
-    ForceStopAll,
+    /// Stop every agent, from the app menu.
+    StopAll,
+    /// Quit dialog: stop every agent, then quit.
+    QuitStopAll,
+    /// Quit dialog: quit and let running turns finish.
+    FinishInBackground,
+    StartEngine,
+    EngineRetry,
+    EngineWait,
+    /// Stop an older engine's agents so this version's engine can start.
+    EngineStopOld,
     RetryPrompt,
     RetryStorage,
     ReplaceSession,
@@ -232,9 +248,9 @@ struct Adeline {
     demo_mode: bool,
     agent_catalog: agents::AgentCatalog,
     selected_agent: Option<String>,
-    agent_watcher: Option<notify::RecommendedWatcher>,
-    project_store: std::sync::Arc<std::sync::Mutex<storage::ProjectStore>>,
     runtime: runtime_ui::Runtime,
+    /// The engine's state has arrived at least once.
+    engine_loaded: bool,
     project_directory_input: Entity<InputState>,
     project_error: Option<String>,
     delete_project: Option<usize>,
@@ -288,17 +304,30 @@ struct Adeline {
     control_pane: Entity<panes::ControlPane>,
 }
 impl Adeline {
-    fn new(demo_mode: bool, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let store = if demo_mode {
-            storage::ProjectStore::empty()
-        } else {
-            storage::ProjectStore::new()
-        };
+    fn new(
+        demo_mode: bool,
+        snapshot: Option<protocol::Snapshot>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let engine_loaded = snapshot.is_some();
+        let snapshot = snapshot.unwrap_or_default();
         let projects = if demo_mode {
             load()
         } else {
-            store.to_workspaces()
+            let mut projects = snapshot.projects;
+            ui_state::apply(&mut projects);
+            projects
         };
+        let mut agent_catalog = if demo_mode {
+            agents::AgentCatalog::new(true)
+        } else {
+            agents::AgentCatalog::remote()
+        };
+        if !demo_mode {
+            agent_catalog.entries = snapshot.agents;
+            agent_catalog.errors = snapshot.agent_errors;
+        }
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats"));
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -373,11 +402,13 @@ impl Adeline {
             open_projects: vec![true; projects.len()],
             project_tints: (0..projects.len()).map(|i| [0, 2, 3][i.min(2)]).collect(),
             demo_mode,
-            agent_catalog: agents::AgentCatalog::new(demo_mode),
+            agent_catalog,
             selected_agent: None,
-            agent_watcher: None,
-            project_store: std::sync::Arc::new(std::sync::Mutex::new(store)),
-            runtime: runtime_ui::Runtime::default(),
+            runtime: runtime_ui::Runtime {
+                conversations: snapshot.live,
+                ..Default::default()
+            },
+            engine_loaded,
             project_directory_input: cx
                 .new(|cx| InputState::new(window, cx).placeholder("Existing working directory")),
             project_error: None,
@@ -431,8 +462,9 @@ impl Adeline {
                 .first()
                 .map(|entry| entry.id.clone());
         }
-        app.watch_agents(cx);
-        app.watch_runtime(cx);
+        if !snapshot.errors.is_empty() {
+            app.notify_toast(&snapshot.errors.join("\n"), cx);
+        }
         if let Some(error) = theme::load_error() {
             app.notify_toast(&error, cx);
         }
@@ -448,12 +480,6 @@ impl Adeline {
             .iter()
             .find(|entry| &entry.id == id)
             .map(|entry| &entry.definition)
-    }
-
-    fn refresh_agents(&mut self, cx: &mut Context<Self>) {
-        if self.agent_catalog.refresh() {
-            self.agents_changed(None, None, false, cx);
-        }
     }
 
     fn agents_changed(
@@ -477,65 +503,6 @@ impl Adeline {
         cx.refresh_windows();
     }
 
-    fn watch_agents(&mut self, cx: &mut Context<Self>) {
-        use notify::Watcher;
-        if self.demo_mode {
-            return;
-        }
-        let Ok(root) = config::directory() else {
-            return;
-        };
-        let (sender, receiver) = async_channel::unbounded();
-        let watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
-            let _ = sender.try_send(event);
-        })
-        .and_then(|mut watcher| {
-            watcher.watch(&root, notify::RecursiveMode::Recursive)?;
-            Ok(watcher)
-        });
-        match watcher {
-            Ok(watcher) => self.agent_watcher = Some(watcher),
-            Err(error) => {
-                self.agent_catalog.errors.push(format!(
-                    "{}: cannot watch agent definitions: {error}",
-                    root.display()
-                ));
-                return;
-            }
-        }
-        cx.spawn(async move |this, cx| {
-            while let Ok(event) = receiver.recv().await {
-                let relevant = match &event {
-                    Ok(event) => {
-                        !matches!(event.kind, notify::EventKind::Access(_))
-                            && event
-                                .paths
-                                .iter()
-                                .any(|path| path.starts_with(root.join("agents")))
-                    }
-                    Err(_) => true,
-                };
-                if !relevant {
-                    continue;
-                }
-                if this
-                    .update(cx, |app, cx| {
-                        app.refresh_agents(cx);
-                        if let Err(error) = event {
-                            app.agent_catalog
-                                .errors
-                                .push(format!("{}: agent watcher: {error}", root.display()));
-                            cx.notify();
-                        }
-                    })
-                    .is_err()
-                {
-                    break;
-                }
-            }
-        })
-        .detach();
-    }
     fn has_open_project(&self) -> bool {
         self.open_projects
             .get(self.project)
@@ -613,7 +580,9 @@ impl Adeline {
 }
 impl Render for Adeline {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = if !self.has_open_project() {
+        let body = if let Some(screen) = self.engine_screen(cx) {
+            screen
+        } else if !self.has_open_project() {
             col()
                 .size_full()
                 .items_center()
@@ -662,6 +631,7 @@ impl Render for Adeline {
             .on_action(cx.listener(|_, _: &NextFocus, window, cx| window.focus_next(cx)))
             .on_action(cx.listener(|_, _: &PreviousFocus, window, cx| window.focus_prev(cx)))
             .child(self.header_region.clone())
+            .children(self.engine_banner(cx))
             .child(
                 row()
                     .flex_1()
@@ -696,7 +666,11 @@ impl Render for Adeline {
 }
 
 fn main() {
-    let demo_mode = std::env::args().any(|arg| arg == "--demo");
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "engine") {
+        std::process::exit(engine::main(&args[1..]));
+    }
+    let demo_mode = args.iter().any(|arg| arg == "--demo");
     application().with_assets(Assets).run(move |cx: &mut App| {
         init(cx);
         fonts::init(cx);
@@ -704,6 +678,10 @@ fn main() {
         theme::init();
         theme::apply(cx);
         harness::init(demo_mode, cx);
+        // Demo mode never starts or connects to the engine.
+        let mut initial = (!demo_mode).then(client::connect_existing).flatten();
+        let snapshot = initial.as_mut().and_then(|initial| initial.snapshot.take());
+        client::init(demo_mode, initial, snapshot.as_ref(), cx);
         config::bind_keys(cx);
         cx.on_action(|_: &NextFocus, cx| {
             if let Some(handle) = cx.active_window() {
@@ -724,7 +702,8 @@ fn main() {
                 ..titlebar::main_window_options()
             },
             move |window, cx| {
-                let view = cx.new(|cx| Adeline::new(demo_mode, window, cx));
+                let view = cx.new(|cx| Adeline::new(demo_mode, snapshot, window, cx));
+                client::set_owner(view.downgrade(), cx);
                 let handle = window
                     .window_handle()
                     .downcast::<Root>()

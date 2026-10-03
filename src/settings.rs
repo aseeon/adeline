@@ -13,13 +13,20 @@ use gpui_kit::component::{
 use gpui_kit::{AppContext as _, base::actions::Cancel};
 use std::{cell::Cell, rc::Rc};
 
-const GROUPS: [&str; 4] = ["General", "Modes", "Licenses", "Agents"];
-const SUBGROUPS: [&[&str]; 4] = [
+const GROUPS: [&str; 5] = ["General", "Modes", "Licenses", "Agents", "Engine"];
+const SUBGROUPS: [&[&str]; 5] = [
     &["Features", "Appearance", "Keymap"],
     &["Chats"],
     &["Phosphor Icons", "GPUI", "Chivo & Chivo Mono"],
     &[],
+    &["Engine"],
 ];
+const KEEP_RUNNING: &str = "Keep conversation engine running";
+const KEEP_RUNNING_DESCRIPTION: &str =
+    "The engine never exits on its own, and idle agents keep running with no window open.";
+const RETRY_LABEL: &str = "Automatic retry limit";
+const RETRY_DESCRIPTION: &str =
+    "Additional attempts after a temporary failure. Zero disables automatic retries.";
 const MODES: [(Section, &str); 7] = [
     (Section::Chats, "Chats"),
     (Section::Docs, "Docs"),
@@ -260,9 +267,9 @@ pub(super) fn can_close_for(
     cx.update_window(owner.into(), |_, window, cx| {
         entity
             .update(cx, |app, cx| {
-                let opening_shutdown = app.modal != Some("shutdown");
-                let ready = app.request_runtime_exit(cx);
-                if !ready && opening_shutdown {
+                let opening = app.modal != Some("quit");
+                let ready = app.request_quit(cx);
+                if !ready && opening {
                     app.open_modal(window, cx);
                 }
                 ready
@@ -302,20 +309,67 @@ fn persist_form(
     let definition = form.values(cx);
     let original = form.id.clone();
     let expected = original.as_ref().map(|_| form.original.clone());
+    let (demo, select_first) = owner
+        .entity
+        .read_with(cx, |app, _| {
+            (
+                app.demo_mode,
+                original.is_none() && app.agent_catalog.entries.is_empty(),
+            )
+        })
+        .map_err(|error| error.to_string())?;
+    let saved = if demo {
+        let original = original.clone();
+        owner
+            .entity
+            .update(cx, move |app, _| {
+                app.agent_catalog.save(
+                    original.as_deref(),
+                    definition,
+                    expected.as_ref(),
+                    overwrite,
+                )
+            })
+            .map_err(|error| error.to_string())??
+    } else {
+        let command = protocol::Command::SaveAgent {
+            original: original.clone(),
+            definition,
+            expected,
+            overwrite,
+        };
+        client::request_blocking(command, cx)?
+            .as_str()
+            .map(str::to_owned)
+            .ok_or("The conversation engine returned no agent ID.")?
+    };
     owner
         .entity
-        .update(cx, move |app, cx| {
-            let select_first = original.is_none() && app.agent_catalog.entries.is_empty();
-            let saved = app.agent_catalog.save(
-                original.as_deref(),
-                definition,
-                expected.as_ref(),
-                overwrite,
-            )?;
+        .update(cx, |app, cx| {
             app.agents_changed(original.as_deref(), Some(&saved), select_first, cx);
-            Ok(saved)
         })
-        .map_err(|error| error.to_string())?
+        .map_err(|error| error.to_string())?;
+    Ok(saved)
+}
+
+/// Deletes an agent through the engine, or locally in demo mode.
+fn delete_agent(owner: &Owner, id: &str, cx: &mut App) -> Result<(), String> {
+    let demo = owner
+        .entity
+        .read_with(cx, |app, _| app.demo_mode)
+        .map_err(|error| error.to_string())?;
+    if demo {
+        owner
+            .entity
+            .update(cx, |app, _| app.agent_catalog.delete(id))
+            .map_err(|error| error.to_string())??;
+    } else {
+        client::request_blocking(protocol::Command::DeleteAgent { id: id.to_owned() }, cx)?;
+    }
+    owner
+        .entity
+        .update(cx, |app, cx| app.agents_changed(Some(id), None, false, cx))
+        .map_err(|error| error.to_string())
 }
 
 /// Multi-choice Kit Dialog, with Escape mapped to the last (Cancel) action.
@@ -389,7 +443,8 @@ struct AgentWindow {
 }
 impl AgentWindow {
     fn new(owner: Owner, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        harness::refresh(true, cx);
+        client::ensure(cx);
+        client::refresh_harnesses(true, cx);
         let form = cx.new(|cx| {
             agent_form::AgentForm::new(None, agents::AgentDefinition::default(), window, cx)
         });
@@ -570,6 +625,8 @@ struct SettingsWindow {
     font_size_errors: [Option<String>; 2],
     retry_limit: Entity<InputState>,
     retry_limit_error: Option<String>,
+    /// Stop engine is waiting for the engine's agents to exit.
+    engine_stopping: bool,
     thinking_picker: Entity<SelectState<SearchableVec<String>>>,
     thinking_error: Option<String>,
     theme_picker: Entity<SelectState<SearchableVec<theme::ThemeChoice>>>,
@@ -579,7 +636,7 @@ struct SettingsWindow {
     subgroup: Option<usize>,
     search_page: Option<(usize, Option<usize>)>,
     /// Sidebar groups folded to their header.
-    folded: [bool; 4],
+    folded: [bool; 5],
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
@@ -658,7 +715,7 @@ impl SettingsWindow {
             text_input(selected_font_size(which).to_string(), "14", window, cx)
         });
         let retry_limit = text_input(
-            config::current().modes.chats.retry_limit.to_string(),
+            client::connection(cx).settings.retry_limit.to_string(),
             "5",
             window,
             cx,
@@ -734,14 +791,21 @@ impl SettingsWindow {
                     return;
                 }
                 let value = input.read(cx).value().trim().parse::<usize>();
-                this.retry_limit_error = match value {
-                    Ok(limit) => {
-                        config::update(|settings| settings.modes.chats.retry_limit = limit).err()
+                match value {
+                    Ok(limit) if limit != client::connection(cx).settings.retry_limit => {
+                        let settings = protocol::EngineSettings {
+                            retry_limit: limit,
+                            ..client::connection(cx).settings.clone()
+                        };
+                        this.save_engine_settings(settings, cx);
                     }
+                    Ok(_) => this.retry_limit_error = None,
                     Err(_) => {
-                        Some("Enter a non-negative whole number. Zero disables retries.".into())
+                        this.retry_limit_error = Some(
+                            "Enter a non-negative whole number. Zero disables retries.".into(),
+                        );
                     }
-                };
+                }
                 cx.notify();
             }),
         );
@@ -868,6 +932,7 @@ impl SettingsWindow {
             font_size_errors: [None, None],
             retry_limit,
             retry_limit_error: None,
+            engine_stopping: false,
             thinking_picker,
             thinking_error: None,
             theme_picker,
@@ -902,7 +967,8 @@ impl SettingsWindow {
         self.agent_status = None;
         self.search_page = Some((3, None));
         self.agent_subscriptions.clear();
-        harness::refresh(false, cx);
+        client::ensure(cx);
+        client::refresh_harnesses(false, cx);
         self.agent_form = definition.map(|definition| {
             cx.new(|cx| agent_form::AgentForm::new(Some(id), definition, window, cx))
         });
@@ -1029,10 +1095,7 @@ impl SettingsWindow {
                         view.pending = false;
                         match choice {
                             0 => {
-                                let _ = view
-                                    .owner
-                                    .entity
-                                    .update(cx, |app, cx| app.refresh_agents(cx));
+                                // The engine watches agent files, so the list is current.
                                 if let Some(form) = view.agent_form.clone() {
                                     let form_id = form.read(cx).id.clone();
                                     let definition = view
@@ -1088,12 +1151,6 @@ impl SettingsWindow {
             }
             Err(message) => {
                 let conflict = message.contains("changed outside this form");
-                if conflict {
-                    let _ = self
-                        .owner
-                        .entity
-                        .update(cx, |app, cx| app.refresh_agents(cx));
-                }
                 form.update(cx, |form, cx| {
                     form.external_changed = conflict;
                     form.status = Some(message);
@@ -1179,16 +1236,8 @@ impl SettingsWindow {
                     if choice != 0 {
                         return;
                     }
-                    let result = view
-                        .owner
-                        .entity
-                        .update(cx, |app, cx| {
-                            app.agent_catalog.delete(&id)?;
-                            app.agents_changed(Some(&id), None, false, cx);
-                            Ok::<_, String>(())
-                        })
-                        .map_err(|error| error.to_string())
-                        .and_then(|result| result);
+                    let owner = view.owner.clone();
+                    let result = delete_agent(&owner, &id, cx);
                     match result {
                         Ok(()) => {
                             view.agent_page = None;
@@ -1319,12 +1368,223 @@ impl SettingsWindow {
             )
     }
     fn retry_limit_row(&self, cx: &Context<Self>) -> Div {
-        div().w_full().px_4().py_3().flex().flex_col().gap_2()
-            .child(Field::new().label("Automatic retry limit")
-                .description("Additional attempts after a temporary failure. Zero disables automatic retries.")
-                .child(div().w_24().child(Input::new(&self.retry_limit).aria_label("Automatic retry limit"))))
-            .when_some(self.retry_limit_error.clone(), |row, message| row.child(error(message, cx)))
+        div()
+            .w_full()
+            .px_4()
+            .py_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                Field::new()
+                    .label(RETRY_LABEL)
+                    .description(RETRY_DESCRIPTION)
+                    .child(
+                        div()
+                            .w_24()
+                            .child(Input::new(&self.retry_limit).aria_label(RETRY_LABEL)),
+                    ),
+            )
+            .when_some(self.retry_limit_error.clone(), |row, message| {
+                row.child(error(message, cx))
+            })
     }
+    fn save_engine_settings(&mut self, settings: protocol::EngineSettings, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
+        client::request(
+            protocol::Command::SetSettings { settings },
+            Box::new(move |result, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    this.retry_limit_error = result.err();
+                    cx.notify();
+                });
+            }),
+            cx,
+        );
+    }
+
+    fn stop_engine(&mut self, cx: &mut Context<Self>) {
+        self.engine_stopping = true;
+        let view = cx.entity().downgrade();
+        client::request(
+            protocol::Command::Shutdown,
+            Box::new(move |_, cx| {
+                let _ = view.update(cx, |this, cx| {
+                    this.engine_stopping = false;
+                    cx.notify();
+                });
+            }),
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// Settings › Engine: the engine's own settings, its status, and Stop or Start.
+    fn engine_settings(&self, query: &str, cx: &Context<Self>) -> Div {
+        let connection = client::connection(cx);
+        let connected = connection.state == client::State::Connected;
+        let mut page = div().w_full().flex().flex_col().gap_3();
+        page = page
+            .child(div().text_lg().child("Engine"))
+            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(
+                "The conversation engine runs agents in the background, so work can finish after Adeline closes. These settings apply immediately, including to work already running.",
+            ));
+        let mut rows = Vec::new();
+        if matches_query(
+            query,
+            &["Engine", KEEP_RUNNING, KEEP_RUNNING_DESCRIPTION, "daemon"],
+        ) {
+            let view = cx.entity().downgrade();
+            let checked = connection.settings.keep_running;
+            rows.push(
+                div()
+                    .w_full()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_4()
+                    .px_4()
+                    .py_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(KEEP_RUNNING)
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(KEEP_RUNNING_DESCRIPTION),
+                            ),
+                    )
+                    .child(
+                        Switch::new("engine-keep-running")
+                            .checked(checked)
+                            .disabled(!connected)
+                            .accessibility_label(KEEP_RUNNING)
+                            .on_change(move |_, _, cx| {
+                                let settings = protocol::EngineSettings {
+                                    keep_running: !checked,
+                                    ..client::connection(cx).settings.clone()
+                                };
+                                let _ = view
+                                    .update(cx, |this, cx| this.save_engine_settings(settings, cx));
+                            }),
+                    ),
+            );
+        }
+        if matches_query(query, &["Engine", RETRY_LABEL, RETRY_DESCRIPTION]) {
+            rows.push(self.retry_limit_row(cx));
+        }
+        if let Some(card) = card(rows, cx) {
+            page = page.child(card);
+        }
+        if matches_query(
+            query,
+            &[
+                "Engine",
+                "Status",
+                "PID",
+                "Version",
+                "Uptime",
+                "Clients",
+                "Stop engine",
+                "Start engine",
+            ],
+        ) {
+            let status = &connection.status;
+            let state = match &connection.state {
+                client::State::Connected => "Running".to_owned(),
+                client::State::Connecting | client::State::Starting => "Starting…".to_owned(),
+                client::State::Stopped { unexpected: true } => "Stopped unexpectedly".to_owned(),
+                client::State::Stopped { .. } => "Stopped".to_owned(),
+                client::State::Unavailable(reason) => format!("Unavailable: {reason}"),
+                client::State::Mismatch(_) | client::State::Waiting => {
+                    "An older engine is running".to_owned()
+                }
+                client::State::Demo => "Not used in demo mode".to_owned(),
+            };
+            let uptime = status.uptime_secs + connection.status_at.elapsed().as_secs();
+            let mut fields = vec![("Status", state)];
+            if connected {
+                fields.extend([
+                    ("PID", status.pid.to_string()),
+                    ("Version", status.version.clone()),
+                    ("Protocol", status.protocol.to_string()),
+                    (
+                        "Daemon mode",
+                        if status.daemon { "On" } else { "Off" }.to_owned(),
+                    ),
+                    (
+                        "Uptime",
+                        format!("{}h {}m {}s", uptime / 3600, uptime / 60 % 60, uptime % 60),
+                    ),
+                    ("Connected clients", status.clients.to_string()),
+                    (
+                        "Active conversations",
+                        status.conversations.len().to_string(),
+                    ),
+                ]);
+                for conversation in &status.conversations {
+                    fields.push((
+                        "",
+                        format!(
+                            "{} / {} · {}",
+                            conversation.project, conversation.title, conversation.state
+                        ),
+                    ));
+                }
+                fields.push(("Logs", status.log.clone()));
+            }
+            let rows = fields
+                .into_iter()
+                .map(|(label, value)| {
+                    div()
+                        .flex()
+                        .justify_between()
+                        .gap_4()
+                        .px_4()
+                        .py_2()
+                        .child(label)
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(value),
+                        )
+                })
+                .collect();
+            page = page
+                .child(caps("Status", cx).mt_2())
+                .children(card(rows, cx));
+            let button = if connected {
+                Button::new("engine-stop")
+                    .danger()
+                    .label(if self.engine_stopping {
+                        "Stopping engine…"
+                    } else {
+                        "Stop engine"
+                    })
+                    .disabled(self.engine_stopping)
+                    .on_click(cx.listener(|this, _, _, cx| this.stop_engine(cx)))
+            } else {
+                Button::new("engine-start")
+                    .primary()
+                    .label("Start engine")
+                    .disabled(matches!(
+                        connection.state,
+                        client::State::Demo | client::State::Connecting | client::State::Starting
+                    ))
+                    .on_click(cx.listener(|_, _, _, cx| client::connect(true, cx)))
+            };
+            page = page.child(div().flex().justify_end().mt_2().child(button.small()));
+        }
+        page
+    }
+
     fn thinking_animation_row(&self, cx: &Context<Self>) -> Div {
         div()
             .w_full()
@@ -1511,6 +1771,22 @@ fn general_matches(child: usize, query: &str) -> bool {
         _ => false,
     }
 }
+fn engine_matches(query: &str) -> bool {
+    [
+        KEEP_RUNNING,
+        RETRY_LABEL,
+        "Status",
+        "PID",
+        "Version",
+        "Uptime",
+        "Clients",
+        "Stop engine",
+        "Start engine",
+        "daemon",
+    ]
+    .iter()
+    .any(|label| matches_query(query, &["Engine", label]))
+}
 /// Small capitals in the code font, like the chat list's section labels.
 fn caps(text: &str, cx: &App) -> Div {
     div()
@@ -1663,6 +1939,7 @@ impl Render for SettingsWindow {
             let icon = match group {
                 1 => "chat.svg",
                 2 => "file.svg",
+                4 => "devices.svg",
                 _ => "robot.svg",
             };
             for (child, title) in matching {
@@ -1847,20 +2124,11 @@ impl Render for SettingsWindow {
                         matches_query(&query, &["Modes", "Chats", option.0, option.1])
                     })
                     .collect();
-                let retry_matches = matches_query(
-                    &query,
-                    &[
-                        "Modes",
-                        "Chats",
-                        "Automatic retry limit",
-                        "Additional attempts after a temporary failure",
-                    ],
-                );
                 let thinking_matches = matches_query(
                     &query,
                     &["Modes", "Chats", THINKING_LABEL, THINKING_DESCRIPTION],
                 );
-                if !options.is_empty() || retry_matches || thinking_matches {
+                if !options.is_empty() || thinking_matches {
                     found = true;
                     if searching || self.subgroup.is_none() {
                         content = content.child(div().text_lg().child("Chats"));
@@ -1881,12 +2149,13 @@ impl Render for SettingsWindow {
                     if thinking_matches {
                         rows.push(self.thinking_animation_row(cx));
                     }
-                    if retry_matches {
-                        rows.push(self.retry_limit_row(cx));
-                    }
                     content = content.children(card(rows, cx));
                 }
             }
+        }
+        if show(4, 0) && engine_matches(&query) {
+            found = true;
+            content = content.child(self.engine_settings(&query, cx));
         }
         if self.group == 2 && !searching {
             for (index, (name, description, license)) in [

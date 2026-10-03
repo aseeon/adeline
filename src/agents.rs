@@ -10,7 +10,7 @@ use std::{
 pub const VERSION: u32 = 1;
 
 /// The agent's icon, copied from its harness when the agent is added.
-const AVATAR: &str = "avatar.svg";
+pub const AVATAR: &str = "avatar.svg";
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PermissionMode {
@@ -148,7 +148,7 @@ pub(crate) fn normalize_name(name: &str) -> Result<String, String> {
     Ok(id)
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentEntry {
     pub id: String,
     pub definition: AgentDefinition,
@@ -167,6 +167,16 @@ impl AgentCatalog {
             crate::config::directory().map(|path| path.join("agents")),
             demo,
         )
+    }
+
+    /// A client's copy of the engine's agents; the engine saves them.
+    pub fn remote() -> Self {
+        Self {
+            entries: Vec::new(),
+            errors: Vec::new(),
+            root: Err("Agents are saved by the conversation engine.".into()),
+            demo: false,
+        }
     }
 
     fn with_root(root: Result<PathBuf, String>, demo: bool) -> Self {
@@ -377,27 +387,12 @@ impl AgentCatalog {
 
 /// An agent's avatar asset path, else its harness icon.
 pub fn avatar_path(id: &str, harness: &str) -> String {
-    let saved = crate::config::directory()
-        .is_ok_and(|path| path.join("agents").join(id).join(AVATAR).is_file());
-    if saved {
-        format!("agent-avatars/{id}.svg")
+    let path = format!("agent-avatars/{id}.svg");
+    if crate::harness::icon(&path).is_some() {
+        path
     } else {
         crate::harness::icon_path(harness)
     }
-}
-
-/// A saved avatar, served to the asset loader as `agent-avatars/<id>.svg`.
-pub fn avatar(path: &str) -> Option<Vec<u8>> {
-    let id = path.strip_prefix("agent-avatars/")?.strip_suffix(".svg")?;
-    checked_id(id).ok()?;
-    fs::read(
-        crate::config::directory()
-            .ok()?
-            .join("agents")
-            .join(id)
-            .join(AVATAR),
-    )
-    .ok()
 }
 
 /// `None` for a file older than [`VERSION`]: it is left alone and not listed.

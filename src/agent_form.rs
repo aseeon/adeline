@@ -167,7 +167,7 @@ pub(super) struct AgentForm {
     probing: Probing,
     /// The probe's model and effort lists; kept while a model change re-probes.
     offered: Option<Probed>,
-    probe: Option<harness::Probe>,
+    probe: Option<client::Probe>,
     probe_generation: u64,
     _subscriptions: Vec<Subscription>,
 }
@@ -369,22 +369,16 @@ impl AgentForm {
             return;
         };
         let catalog = cx.global::<Catalog>();
+        // The engine finds the executable and runs the probe.
         let launch = if id == CUSTOM {
             let command = self.command.read(cx).value().trim().to_owned();
             if command.is_empty() {
                 self.probing = Probing::Idle;
                 return;
             }
-            let Some(path) = harness::resolve(&command) else {
-                self.probing = Probing::Failed(ProbeError {
-                    message: format!("Command {command} was not found on this machine."),
-                    login: Vec::new(),
-                });
-                return;
-            };
-            (path, self.arguments(cx))
-        } else if let (Some(path), Some(harness)) = (catalog.installed.get(&id), catalog.get(&id)) {
-            (path.clone(), harness.arguments.clone())
+            (command, self.arguments(cx))
+        } else if catalog.is_installed(&id) == Some(true) {
+            (String::new(), Vec::new())
         } else {
             self.probing = Probing::Idle;
             return;
@@ -404,7 +398,7 @@ impl AgentForm {
             .map(ToString::to_string)
             .or_else(|| (id == self.original.harness).then(|| self.original.model.clone()))
             .filter(|model| !model.is_empty());
-        let (probe, results) = harness::probe(launch.0, launch.1, model);
+        let (probe, results) = client::probe(id, launch.0, launch.1, model, cx);
         self.probe = Some(probe);
         self.probing = Probing::Loading;
         let generation = self.probe_generation;

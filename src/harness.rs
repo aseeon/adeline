@@ -1,27 +1,27 @@
 //! Harnesses Adeline can run: the ACP registry plus built-in OMP, where their
 //! executables are installed, and short prompt-free probes of their options.
 use gpui_kit::{App, Global};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fs,
-    io::{BufRead, BufReader, Write},
+    io::Write,
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
-    sync::{
-        Arc,
-        atomic::{AtomicBool, Ordering},
-        mpsc,
-    },
-    thread,
-    time::{Duration, Instant},
+    process::{Child, ChildStdin, Command, Stdio},
+    time::Duration,
+};
+use tokio::{
+    io::{AsyncBufReadExt as _, BufReader, Lines},
+    sync::oneshot,
+    task::block_in_place,
 };
 
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 pub const OMP: &str = "omp";
 pub const CUSTOM: &str = "custom";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Harness {
     pub id: String,
     pub name: String,
@@ -41,14 +41,16 @@ fn omp() -> Harness {
     }
 }
 
-/// Every known harness and where each installed one lives.
-#[derive(Default)]
+/// Every known harness and where each installed one lives. The engine
+/// detects them; clients get a copy.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Catalog {
     pub harnesses: Vec<Harness>,
     pub installed: HashMap<String, PathBuf>,
     /// Detection has finished at least once.
     pub detected: bool,
-    demo: bool,
+    #[serde(skip)]
+    pub demo: bool,
 }
 
 impl Global for Catalog {}
@@ -123,44 +125,30 @@ impl Catalog {
     }
 }
 
-/// Loads the cached or bundled harness list and starts background detection.
+/// The client's catalog until the engine sends its own. Demo mode, which has
+/// no engine, lists the bundled harnesses as not installed.
 pub fn init(demo: bool, cx: &mut App) {
     cx.set_global(Catalog {
-        harnesses: load(),
+        harnesses: if demo { load() } else { Vec::new() },
+        detected: demo,
         demo,
         ..Default::default()
     });
-    refresh(false, cx);
 }
 
-/// Detects installed harnesses in the background, after fetching a fresh
-/// registry when `fetch` is set. Windows redraw as results arrive.
-pub fn refresh(fetch: bool, cx: &mut App) {
-    let fetch = fetch && !cx.global::<Catalog>().demo;
-    let known = cx.global::<Catalog>().harnesses.clone();
-    let task = cx.background_executor().spawn(async move {
-        let harnesses = if fetch && download().is_ok() {
-            load()
-        } else {
-            known
-        };
-        let installed: HashMap<_, _> = harnesses
-            .iter()
-            .filter_map(|harness| Some((harness.id.clone(), locate(harness)?)))
-            .collect();
-        (harnesses, installed)
-    });
-    cx.spawn(async move |cx| {
-        let (harnesses, installed) = task.await;
-        cx.update(|cx| {
-            let catalog = cx.global_mut::<Catalog>();
-            catalog.harnesses = harnesses;
-            catalog.installed = installed;
-            catalog.detected = true;
-            cx.refresh_windows();
-        });
-    })
-    .detach();
+/// Finds installed harnesses, after fetching a fresh registry when `fetch`
+/// is set. Blocking: the engine runs it on its blocking pool.
+pub fn detect(fetch: bool, known: Vec<Harness>) -> (Vec<Harness>, HashMap<String, PathBuf>) {
+    let harnesses = if fetch && download().is_ok() {
+        load()
+    } else {
+        known
+    };
+    let installed = harnesses
+        .iter()
+        .filter_map(|harness| Some((harness.id.clone(), locate(harness)?)))
+        .collect();
+    (harnesses, installed)
 }
 
 fn cache() -> Option<PathBuf> {
@@ -169,43 +157,50 @@ fn cache() -> Option<PathBuf> {
         .map(|path| path.join("cache"))
 }
 
-/// A cached registry icon, served to the asset loader as `registry-icons/<id>.svg`.
-pub fn icon(path: &str) -> Option<Vec<u8>> {
-    let name = path.strip_prefix("registry-icons/")?;
-    if name.contains(['/', '\\']) || name.contains("..") {
-        return None;
+/// Icons the engine sent, by asset path.
+static ICONS: std::sync::RwLock<BTreeMap<String, Vec<u8>>> =
+    std::sync::RwLock::new(BTreeMap::new());
+
+pub fn set_icons(icons: &BTreeMap<String, String>) {
+    if let Ok(mut map) = ICONS.write() {
+        *map = icons
+            .iter()
+            .map(|(path, svg)| (path.clone(), svg.clone().into_bytes()))
+            .collect();
     }
-    fs::read(cache()?.join("registry-icons").join(name)).ok()
 }
 
-/// A harness's icon: bundled for OMP, else the cached registry icon.
+/// A registry icon or agent avatar from the engine, for the asset loader.
+pub fn icon(path: &str) -> Option<Vec<u8>> {
+    ICONS.read().ok()?.get(path).cloned()
+}
+
+/// A harness's icon, read by the engine: bundled for OMP, else the cached registry icon.
 pub fn icon_svg(id: &str) -> Option<Vec<u8>> {
     if id == OMP {
         crate::embedded("omp.svg").map(<[u8]>::to_vec)
+    } else if id.contains(['/', '\\']) || id.contains("..") {
+        None
     } else {
-        icon(&format!("registry-icons/{id}.svg"))
+        fs::read(cache()?.join("registry-icons").join(format!("{id}.svg"))).ok()
     }
 }
 
-/// A harness's icon asset path: bundled for OMP, the cached registry icon
+/// A harness's icon asset path: bundled for OMP, the registry icon
 /// otherwise, else the generic robot.
 pub fn icon_path(id: &str) -> String {
+    let registry = format!("registry-icons/{id}.svg");
     if id == OMP {
         "omp.svg".into()
-    } else if cache().is_some_and(|cache| {
-        cache
-            .join("registry-icons")
-            .join(format!("{id}.svg"))
-            .is_file()
-    }) {
-        format!("registry-icons/{id}.svg")
+    } else if icon(&registry).is_some() {
+        registry
     } else {
         "robot.svg".into()
     }
 }
 
 /// The cached registry, else the bundled copy, else OMP alone.
-fn load() -> Vec<Harness> {
+pub fn load() -> Vec<Harness> {
     let cached = cache()
         .and_then(|cache| fs::read_to_string(cache.join("registry.json")).ok())
         .and_then(|text| parse_registry(&text).ok());
@@ -223,7 +218,7 @@ fn load() -> Vec<Harness> {
 
 #[expect(
     clippy::disallowed_methods,
-    reason = "Runs on the background executor, never on the UI thread"
+    reason = "Runs on the engine's blocking pool, never on the UI thread"
 )]
 fn download() -> Result<(), String> {
     let cache = cache().ok_or("No configuration directory.")?;
@@ -572,13 +567,13 @@ fn choice(item: &Value, group: &str) -> Option<Choice> {
 }
 
 /// What a probe learned: the reported identity and offered options.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probed {
     pub identity: String,
     pub options: Vec<Value>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ProbeError {
     pub message: String,
     /// Advertised ACP login methods, when authentication is missing.
@@ -587,36 +582,43 @@ pub struct ProbeError {
 
 /// A running probe. Dropping it stops the probe's process.
 pub struct Probe {
-    cancelled: Arc<AtomicBool>,
-}
-
-impl Drop for Probe {
-    fn drop(&mut self) {
-        self.cancelled.store(true, Ordering::SeqCst);
-    }
+    /// Never sent; dropping it wakes the probe task to cancel.
+    _cancel: oneshot::Sender<()>,
 }
 
 /// Starts `command` in a temporary folder, runs the ACP handshake and opens a
-/// session without prompting, sets `model` when given, then stops it.
+/// session without prompting, sets `model` when given, then stops it. Runs as a
+/// task on the current tokio runtime.
 pub fn probe(
     command: PathBuf,
     arguments: Vec<String>,
     model: Option<String>,
 ) -> (Probe, async_channel::Receiver<Result<Probed, ProbeError>>) {
-    let cancelled = Arc::new(AtomicBool::new(false));
+    let (cancel, mut cancelled) = oneshot::channel();
     let (sender, receiver) = async_channel::bounded(1);
-    let flag = cancelled.clone();
-    thread::spawn(move || {
+    tokio::spawn(async move {
         let folder = std::env::temp_dir().join(crate::files::unique("adeline-probe"));
-        let result = fs::create_dir_all(&folder)
-            .map_err(|e| failure(format!("Could not create a probe folder: {e}")))
-            .and_then(|()| run_probe(&command, &arguments, model.as_deref(), &folder, &flag));
-        let _ = fs::remove_dir_all(&folder);
-        if !flag.load(Ordering::SeqCst) {
-            let _ = sender.send_blocking(result);
+        let result = match block_in_place(|| fs::create_dir_all(&folder)) {
+            Ok(()) => {
+                run_probe(
+                    &command,
+                    &arguments,
+                    model.as_deref(),
+                    &folder,
+                    &mut cancelled,
+                )
+                .await
+            }
+            Err(e) => Err(failure(format!("Could not create a probe folder: {e}"))),
+        };
+        block_in_place(|| {
+            let _ = fs::remove_dir_all(&folder);
+        });
+        if cancelled.try_recv() != Err(oneshot::error::TryRecvError::Closed) {
+            let _ = sender.try_send(result);
         }
     });
-    (Probe { cancelled }, receiver)
+    (Probe { _cancel: cancel }, receiver)
 }
 
 fn failure(message: String) -> ProbeError {
@@ -628,8 +630,9 @@ fn failure(message: String) -> ProbeError {
 
 struct Session<'a> {
     child: Child,
-    lines: mpsc::Receiver<String>,
-    cancelled: &'a AtomicBool,
+    stdin: ChildStdin,
+    lines: Lines<BufReader<crate::platform::Reader>>,
+    cancelled: &'a mut oneshot::Receiver<()>,
     next: u64,
     command: String,
 }
@@ -637,42 +640,34 @@ struct Session<'a> {
 impl Drop for Session<'_> {
     fn drop(&mut self) {
         let _ = self.child.kill();
-        let _ = self.child.wait();
+        let _ = block_in_place(|| self.child.wait());
     }
 }
 
 impl Session<'_> {
-    fn request(&mut self, method: &str, params: &Value) -> Result<Value, ProbeError> {
+    async fn request(&mut self, method: &str, params: &Value) -> Result<Value, ProbeError> {
         self.next += 1;
         let id = self.next;
         let message = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
-        let stdin = self
-            .child
-            .stdin
-            .as_mut()
-            .ok_or_else(|| failure("No stdin.".into()))?;
-        writeln!(stdin, "{message}")
-            .and_then(|()| stdin.flush())
+        let stdin = &mut self.stdin;
+        block_in_place(|| writeln!(stdin, "{message}").and_then(|()| stdin.flush()))
             .map_err(|_| self.silent())?;
-        let deadline = Instant::now() + Duration::from_secs(30);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
         loop {
-            if self.cancelled.load(Ordering::SeqCst) {
-                return Err(failure("Probe cancelled.".into()));
-            }
-            if Instant::now() >= deadline {
-                return Err(if id == 1 {
-                    self.silent()
-                } else {
-                    failure(format!(
+            let line = tokio::select! {
+                _ = &mut *self.cancelled => return Err(failure("Probe cancelled.".into())),
+                line = tokio::time::timeout_at(deadline, self.lines.next_line()) => line,
+            };
+            let line = match line {
+                Ok(Ok(Some(line))) => line,
+                Ok(_) => return Err(self.silent()),
+                Err(_) if id == 1 => return Err(self.silent()),
+                Err(_) => {
+                    return Err(failure(format!(
                         "{} did not answer ACP {method} within 30 seconds.",
                         self.command
-                    ))
-                });
-            }
-            let line = match self.lines.recv_timeout(Duration::from_millis(100)) {
-                Ok(line) => line,
-                Err(mpsc::RecvTimeoutError::Timeout) => continue,
-                Err(mpsc::RecvTimeoutError::Disconnected) => return Err(self.silent()),
+                    )));
+                }
             };
             let Ok(reply) = serde_json::from_str::<Value>(&line) else {
                 if id == 1 {
@@ -703,43 +698,26 @@ impl Session<'_> {
     }
 }
 
-#[expect(
-    clippy::disallowed_methods,
-    reason = "Runs on the probe's own thread, never on the UI thread"
-)]
-fn run_probe(
+async fn run_probe(
     command: &Path,
     arguments: &[String],
     model: Option<&str>,
     folder: &Path,
-    cancelled: &AtomicBool,
+    cancelled: &mut oneshot::Receiver<()>,
 ) -> Result<Probed, ProbeError> {
     let shown = command.file_name().map_or_else(
         || command.display().to_string(),
         |name| name.to_string_lossy().into_owned(),
     );
     let mut process = hidden(Command::new(command));
-    process
-        .args(arguments)
-        .current_dir(folder)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped());
-    let mut child = process
-        .spawn()
-        .map_err(|e| failure(format!("Could not start {shown}: {e}")))?;
-    let stdout = child.stdout.take().expect("piped stdout");
-    let (lines, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        for line in BufReader::new(stdout).lines() {
-            let Ok(line) = line else { break };
-            if lines.send(line).is_err() {
-                break;
-            }
-        }
-    });
+    process.args(arguments).current_dir(folder);
+    let (child, stdin, stdout, _) =
+        block_in_place(|| crate::platform::spawn_piped(&mut process, false))
+            .map_err(|e| failure(format!("Could not start {shown}: {e}")))?;
     let mut session = Session {
         child,
-        lines: receiver,
+        stdin,
+        lines: BufReader::new(stdout).lines(),
         cancelled,
         next: 0,
         command: shown,
@@ -747,7 +725,7 @@ fn run_probe(
     let info = session.request(
         "initialize",
         &json!({"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"adeline","title":"Adeline","version":env!("CARGO_PKG_VERSION")}}),
-    )?;
+    ).await?;
     let login: Vec<String> = info["authMethods"]
         .as_array()
         .into_iter()
@@ -770,6 +748,7 @@ fn run_probe(
             "session/new",
             &json!({"cwd":folder.to_string_lossy(),"mcpServers":[]}),
         )
+        .await
         .map_err(|mut error| {
             if crate::acp::needs_login(&error.message) {
                 error.login = login;
@@ -794,10 +773,12 @@ fn run_probe(
         })
         .or_else(|| setting.choices.first().map(|choice| choice.value.as_str()))
     {
-        let result = session.request(
-            "session/set_config_option",
-            &json!({"sessionId":session_id,"configId":setting.id,"value":model}),
-        )?;
+        let result = session
+            .request(
+                "session/set_config_option",
+                &json!({"sessionId":session_id,"configId":setting.id,"value":model}),
+            )
+            .await?;
         if let Some(updated) = result["configOptions"].as_array() {
             options.clone_from(updated);
         }
@@ -878,10 +859,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn missing_custom_command_fails_the_probe_with_a_clear_error() {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn missing_custom_command_fails_the_probe_with_a_clear_error() {
         let (_probe, results) = probe(PathBuf::from("adeline-no-such-command"), Vec::new(), None);
-        let error = results.recv_blocking().unwrap().unwrap_err();
+        let error = results.recv().await.unwrap().unwrap_err();
         assert!(
             error.message.contains("Could not start"),
             "{}",

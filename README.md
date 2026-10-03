@@ -59,17 +59,31 @@ Conversations from older Adeline versions stay readable and can be completed or 
 
 Create a project with a name and an existing absolute working directory. Its `~/.config/adeline/projects/<normalized-name>/project.yml` contains only `name` and `directory`. Project settings can rename the project and its configuration folder. Changing the working directory requires every conversation to be completed or archived; existing conversations keep their saved directory.
 
-Each conversation has a generated folder under the project's `conversations/`, containing `conversation.yml` and timestamped `transcript.jsonl`. The log retains raw ACP traffic, visible messages, tool activity, permission decisions, errors, and lifecycle events. Saved history is readable without a running harness. External project and conversation edits load at startup.
+Each conversation has a generated folder under the project's `conversations/`, containing `conversation.yml` and timestamped `transcript.jsonl`. The log retains raw ACP traffic, visible messages, tool activity, permission decisions, errors, and lifecycle events. Saved history is readable without a running harness. Project, conversation and agent files edited outside Adeline reach every open window live.
 
-Responses stream with formatted text and expandable tool results. Settings → Modes → Chats controls tool visibility and the automatic retry limit (five additional attempts by default; zero disables retries). Thinking is shown instead of reasoning text. Stop cancels the current turn and retries while preserving partial output and normally keeping the process available for another turn. Switching chats or closing a project tab leaves its agents running.
+Responses stream with formatted text and expandable tool results. Settings → Modes → Chats controls tool visibility. Settings → Engine sets the automatic retry limit (five additional attempts by default; zero disables retries). Thinking is shown instead of reasoning text. Stop cancels the current turn and retries while preserving partial output and normally keeping the process available for another turn. Switching chats or closing a project tab leaves its agents running.
 
 Each conversation has its own mutable Ask / Allow reads / Allow everything permission mode. Allow reads approves read and search tool calls automatically and asks for everything else. Ask shows only the choices and remembered-grant scope offered by the harness, including one-time denial, never permanent denial. Grants are not broadened or re-created by replaying the transcript.
 
-Complete and Archive preserve history and gracefully close that conversation's process. Sending again restores the saved session when supported. Application exit and confirmed project deletion also stop agents gracefully. If shutdown stalls, Force Stop is an explicit choice. Deleting a project removes its saved Adeline data, never its working directory.
+Complete and Archive preserve history and gracefully close that conversation's process. Sending again restores the saved session when supported. Confirmed project deletion also stops agents gracefully. If shutdown stalls, Force Stop is an explicit choice. Deleting a project removes its saved Adeline data, never its working directory.
 
 Temporary failures retry within the configured limit. Recovery after partial work restores the session and asks for continuation rather than replaying the original request. If restoration fails, starting a replacement session with saved messages requires your choice. Missing configuration, authentication, and denied permissions do not automatically retry. For authentication errors, authenticate using the harness outside Adeline, then use Retry. Transcript write failures cancel processing and block new prompts until Retry storage succeeds.
 
 OMP 18.3.2 was exercised with real responses, appended name/custom guidance, model and effort selection, follow-up context, process restart and session restoration, cancellation with partial text, and graceful shutdown. Harness probing was checked against OMP 18.4.8, Codex ACP 1.13.1, OpenCode 1.18.32, and Gemini CLI 0.42.0.
+
+### Conversation engine
+
+Agents run in the conversation engine, a background process started from the same executable (`Adeline.exe engine`). Adeline starts it or connects to a running one; one engine runs per OS user, reached over a named pipe (Windows) or Unix socket that only the same user can open. Several Adeline windows can connect at once and see the same live state. The engine owns `projects/` and `agents/`; its own `settings.yml` and `logs/` live in `~/.config/adeline/engine/`.
+
+Quitting the last window while a turn is active asks: **Stop all** cancels turns, closes agents and kills any still running after 5 seconds; **Finish in background** lets running turns and retries finish with Adeline closed; **Cancel** keeps Adeline open. With no window open, a turn that needs a permission is stopped and shown as interrupted, and Retry continues it later. Outside daemon mode the engine exits 60 seconds after its last window closes and its last turn ends. Settings → Engine shows its status, holds **Keep conversation engine running** (daemon mode) and offers Stop engine or Start engine. The app menu has **Stop all agents**.
+
+```sh
+adeline engine status        # exit 0 when running, 1 when not
+adeline engine start [--daemon]
+adeline engine stop
+```
+
+`Adeline.exe` is a GUI-subsystem program, so in an interactive console its output appears after the prompt and `$LASTEXITCODE` isn't waited for; pipe it (`adeline engine status | Out-Host`) to wait. `scripts/engine-check/` holds end-to-end checks against an isolated temporary home: `run_checks.py` (protocol level, with a fake ACP agent) and `ui_check.py` (UI Automation).
 
 ### Demo mode
 
@@ -77,7 +91,7 @@ OMP 18.3.2 was exercised with real responses, appended name/custom guidance, mod
 cargo run --release --locked -- --demo
 ```
 
-Or launch `Adeline.exe --demo`. Demo mode restores the bundled workspace and simulated chat replies. It excludes real agents, saved projects, and conversation execution. Demo project, agent, and chat changes never modify the user's definitions or conversation history. Appearance and feature preferences still use `settings.yml`.
+Or launch `Adeline.exe --demo`. Demo mode restores the bundled workspace and simulated chat replies, and never starts or connects to the engine. It excludes real agents, saved projects, and conversation execution. Demo project, agent, and chat changes never modify the user's definitions or conversation history. Appearance and feature preferences still use `settings.yml`.
 
 Docs, Workflows, Services, Groupchats, Issues, and Whiteboard are empty destinations in both normal and demo mode. Their feature switches remain under Settings → General → Features. Existing content and preferences for those modes are left intact and ignored; unrelated settings changes preserve their stored values. New settings files contain their feature switches but no obsolete content or panel preferences.
 
@@ -173,7 +187,13 @@ Theme selection accepts YAML filenames within the themes folder. Path separators
 | `src/agent_form.rs` | Shared creation and editing fields |
 | `src/acp.rs` | ACP workers, protocol negotiation, permissions, cancellation and recovery |
 | `src/storage.rs` | Durable projects, conversation snapshots and transcript replay |
-| `src/runtime_ui.rs` | Runtime events, conversation actions and persistence integration |
+| `src/engine.rs` | The conversation engine process: command ordering, conversation runtime, stop-all, idle exit, file watching, logs, `engine` subcommands |
+| `src/protocol.rs` | Client–engine messages and the shared state changes both sides apply |
+| `src/ipc.rs` | Same-user named pipe or Unix socket transport, engine start |
+| `src/client.rs` | The UI's engine connection: requests, replies, reconnects, version mismatch |
+| `src/platform.rs` | Job object, detached start, owner-only pipe, overlapped child pipes |
+| `src/ui_state.rs` | Per-window state: when each project was last opened |
+| `src/runtime_ui.rs` | Conversation actions sent to the engine, engine state screens, quit flow |
 | `src/project_ui.rs` | Project settings, validation and confirmed deletion |
 | `src/views.rs` | Chat header/activity, searchable command dialogs, project dialog hosting |
 | `src/chat.rs` | Chat entities, cache invalidation, virtual chat list with stacked section labels |

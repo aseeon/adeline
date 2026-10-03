@@ -178,7 +178,9 @@ pub struct Chats {
     pub hide_tool_calls: bool,
     /// Enter sends the message and Shift+Enter starts a new line.
     pub submit_on_enter: bool,
-    pub retry_limit: usize,
+    /// Moved to the engine's own settings; kept so older files round-trip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    retry_limit: Option<usize>,
     pub thinking_animation: ThinkingAnimation,
 }
 impl Default for Chats {
@@ -190,7 +192,7 @@ impl Default for Chats {
             show_agent_activity: false,
             hide_tool_calls: false,
             submit_on_enter: true,
-            retry_limit: 5,
+            retry_limit: None,
             thinking_animation: ThinkingAnimation::default(),
         }
     }

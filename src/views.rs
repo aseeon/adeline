@@ -257,6 +257,9 @@ impl Adeline {
                 if self.has_open_project() {
                     entries.push(("Project settings…".into(), Action::Settings));
                 }
+                if !self.demo_mode {
+                    entries.push(("Stop all agents".into(), Action::StopAll));
+                }
                 entries.extend([
                     ("Settings…".into(), Action::AppSettings),
                     ("About Adeline…".into(), Action::About),

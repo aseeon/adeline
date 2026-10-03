@@ -189,15 +189,25 @@ fn project_rename_preserves_history_and_directory_snapshot() {
 }
 
 #[test]
-fn opened_time_persists_and_survives_a_rename() {
+fn legacy_opened_time_is_read_and_survives_a_rename() {
     let test = TempDir::new("adeline-storage");
     let work = working(&test, "work");
     let mut store = open_store(&test);
     let id = store.save_project(None, "Opened", &work).unwrap();
     assert_eq!(store.projects[0].opened_at, None);
-    assert!(store.mark_opened("missing", 1).is_err());
-    store.mark_opened(&id, 1_700_000_000).unwrap();
-    assert_eq!(open_store(&test).projects[0].opened_at, Some(1_700_000_000));
+    // Older versions recorded the time in project.yml; clients copy it once.
+    let definition = test.join("projects").join(&id).join("project.yml");
+    let text = fs::read_to_string(&definition).unwrap();
+    fs::write(
+        &definition,
+        format!(
+            "{text}opened_at: 1700000000
+"
+        ),
+    )
+    .unwrap();
+    let mut store = open_store(&test);
+    assert_eq!(store.projects[0].opened_at, Some(1_700_000_000));
     let renamed = store
         .save_project(Some(&id), "Opened Again", &work)
         .unwrap();
@@ -205,6 +215,48 @@ fn opened_time_persists_and_survives_a_rename() {
     let project = reloaded.projects.iter().find(|p| p.id == renamed).unwrap();
     assert_eq!(project.opened_at, Some(1_700_000_000));
     assert_eq!(project.to_workspace().config.opened_at, Some(1_700_000_000));
+}
+
+#[test]
+fn reconcile_takes_in_outside_changes_but_not_busy_conversations() {
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let mut store = open_store(&test);
+    let project = store.save_project(None, "Outside", &work).unwrap();
+    let quiet = store
+        .create_conversation(&project, &agent(), launch(), "Quiet")
+        .unwrap();
+    let busy = store
+        .create_conversation(&project, &agent(), launch(), "Busy")
+        .unwrap();
+    let none = std::collections::HashSet::new();
+    assert!(
+        store
+            .reconcile(open_store(&test), &none, &none)
+            .conversations
+            .is_empty()
+    );
+    for id in [&quiet, &busy] {
+        let mut writer = open_store(&test);
+        writer
+            .record_event(
+                id,
+                &TranscriptEvent::new("message", serde_json::json!({"role":"user","text":"hi"})),
+            )
+            .unwrap();
+    }
+    fs::create_dir_all(work.join("other")).unwrap();
+    let mut outside = open_store(&test);
+    outside
+        .save_project(None, "Second", &work.join("other"))
+        .unwrap();
+    let running: std::collections::HashSet<_> = [busy.clone()].into();
+    let changes = store.reconcile(open_store(&test), &running, &none);
+    assert_eq!(changes.conversations, std::slice::from_ref(&quiet));
+    assert_eq!(changes.projects.len(), 1);
+    assert_eq!(changes.projects[0].config.name, "Second");
+    assert_eq!(store.conversation(&quiet).unwrap().events.len(), 1);
+    assert!(store.conversation(&busy).unwrap().events.is_empty());
 }
 
 #[test]

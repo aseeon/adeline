@@ -10,64 +10,74 @@ impl Adeline {
             .value()
             .trim()
             .to_owned();
-        match self.add_project(name, &directory, window, cx) {
-            Ok(()) => {
-                self.project_error = None;
-                self.modal = None;
-            }
-            Err(error) => {
-                self.project_error = Some(error);
-                cx.notify();
-            }
-        }
+        self.add_project(name, &directory, true, window, cx);
     }
 
-    /// Saves a new project and opens it in a tab.
+    /// Saves a new project and opens it in a tab. Errors show in the project
+    /// dialog when it's `from_dialog`, else as a notification.
     pub(super) fn add_project(
         &mut self,
         name: String,
         directory: &str,
+        from_dialog: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Result<(), String> {
-        let project = if self.demo_mode {
+    ) {
+        if self.demo_mode {
             if name.is_empty() {
-                Err("Enter a project name.".into())
-            } else {
-                Ok(Workspace {
-                    config: Config {
-                        id: format!("local-project-{}", self.projects.len()),
-                        name,
-                        provider: "claude".into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                })
+                self.project_error = Some("Enter a project name.".into());
+                cx.notify();
+                return;
             }
-        } else {
-            self.project_store
-                .lock()
-                .map_err(|_| "Project storage is unavailable.".to_owned())
-                .and_then(|mut store| {
-                    let id = store.save_project(None, &name, Path::new(directory))?;
-                    Ok(store
-                        .projects
-                        .iter()
-                        .find(|project| project.id == id)
-                        .expect("saved project is in the store")
-                        .to_workspace())
-                })
-        }?;
-        let index = self.projects.len();
-        self.projects.push(project);
-        self.open_projects.push(false);
-        self.project_tints
-            .push(index % theme::project_colors().len());
-        self.act(Action::Project(index), window, cx);
-        Ok(())
+            let index = self.projects.len();
+            self.projects.push(Workspace {
+                config: Config {
+                    id: format!("local-project-{index}"),
+                    name,
+                    provider: "claude".into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            });
+            self.open_projects.push(false);
+            self.project_tints
+                .push(index % theme::project_colors().len());
+            if from_dialog {
+                self.project_error = None;
+                self.modal = None;
+            }
+            self.act(Action::Project(index), window, cx);
+            return;
+        }
+        let command = protocol::Command::SaveProject {
+            original: None,
+            name,
+            directory: directory.into(),
+        };
+        self.request(command, cx, move |app, result, window, cx| match result {
+            Ok(id) => {
+                if from_dialog {
+                    app.project_error = None;
+                    app.modal = None;
+                }
+                // The engine's change arrived before its reply.
+                if let Some(index) = app
+                    .projects
+                    .iter()
+                    .position(|project| Some(project.config.id.as_str()) == id.as_str())
+                {
+                    app.act(Action::Project(index), window, cx);
+                }
+            }
+            Err(error) if from_dialog => {
+                app.project_error = Some(error);
+                cx.notify();
+            }
+            Err(error) => window.push_notification(error, cx),
+        });
     }
 
-    /// Remembers when a project was opened, for the projects menu's order.
+    /// Remembers when this window opened a project, for the projects menu's order.
     pub(super) fn record_project_opened(
         &mut self,
         ix: usize,
@@ -80,17 +90,50 @@ impl Adeline {
             return;
         }
         let id = self.projects[ix].config.id.clone();
-        let saved = self
-            .project_store
-            .lock()
-            .map_err(|_| "Project storage is unavailable.".to_owned())
-            .and_then(|mut store| store.mark_opened(&id, now));
-        if let Err(error) = saved {
+        if let Err(error) = ui_state::record_opened(&id, now) {
             window.push_notification(format!("Couldn't record opening {id}: {error}"), cx);
         }
     }
 
-    pub(super) fn save_project_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Saves a project's name and directory through the engine.
+    fn save_project_as(
+        &mut self,
+        ix: usize,
+        name: String,
+        directory: std::path::PathBuf,
+        cx: &mut Context<Self>,
+    ) {
+        let original = self.projects[ix].config.id.clone();
+        let command = protocol::Command::SaveProject {
+            original: Some(original),
+            name: name.clone(),
+            directory,
+        };
+        self.request(command, cx, move |app, result, window, cx| {
+            match result {
+                Ok(id) => {
+                    if let Some(ix) = app
+                        .projects
+                        .iter()
+                        .position(|project| Some(project.config.id.as_str()) == id.as_str())
+                    {
+                        if ix == app.project && app.open_projects[ix] {
+                            window.set_window_title(&format!("{name} · Adeline"));
+                        }
+                        app.project_tints[ix] = app.selected_tint;
+                    }
+                    app.rename_project = None;
+                    app.project_error = None;
+                    app.modal = None;
+                    app.sync_regions(&Action::Project(app.project), cx);
+                }
+                Err(error) => app.project_error = Some(error),
+            }
+            cx.notify();
+        });
+    }
+
+    pub(super) fn save_project_settings(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
         if !self.has_open_project() {
             return;
         }
@@ -101,41 +144,20 @@ impl Adeline {
             .value()
             .trim()
             .to_owned();
-        let old_id = self.projects[self.project].config.id.clone();
-        let saved = if self.demo_mode {
+        if self.demo_mode {
             if name.is_empty() {
-                Err("Enter a project name.".into())
+                self.project_error = Some("Enter a project name.".into());
             } else {
-                Ok(old_id)
-            }
-        } else {
-            self.project_store
-                .lock()
-                .map_err(|_| "Project storage is unavailable.".to_owned())
-                .and_then(|mut store| {
-                    store.save_project(Some(&old_id), &name, Path::new(&directory))
-                })
-        };
-        match saved {
-            Ok(id) => {
-                let config = &mut self.projects[self.project].config;
-                config.id.clone_from(&id);
-                config.name = name;
-                if !self.demo_mode {
-                    config.directory = directory.into();
-                }
+                self.projects[self.project].config.name = name;
                 self.project_tints[self.project] = self.selected_tint;
                 self.project_error = None;
                 self.modal = None;
-                window.set_window_title(&format!("{} — Adeline", config.name));
                 self.sync_regions(&Action::Project(self.project), cx);
-                cx.notify();
             }
-            Err(error) => {
-                self.project_error = Some(error);
-                cx.notify();
-            }
+            cx.notify();
+            return;
         }
+        self.save_project_as(self.project, name, directory.into(), cx);
     }
 
     /// Renames the project the rename dialog is for, keeping its directory.
@@ -144,37 +166,26 @@ impl Adeline {
             return;
         };
         let name = self.name_input.read(cx).value().trim().to_owned();
-        let config = &self.projects[ix].config;
-        let saved = if self.demo_mode {
+        if self.demo_mode {
             if name.is_empty() {
-                Err("Enter a project name.".into())
+                self.project_error = Some("Enter a project name.".into());
             } else {
-                Ok(config.id.clone())
-            }
-        } else {
-            self.project_store
-                .lock()
-                .map_err(|_| "Project storage is unavailable.".to_owned())
-                .and_then(|mut store| {
-                    store.save_project(Some(&config.id), &name, &config.directory)
-                })
-        };
-        match saved {
-            Ok(id) => {
-                let config = &mut self.projects[ix].config;
-                config.id = id;
-                config.name = name;
+                self.projects[ix].config.name.clone_from(&name);
                 if ix == self.project && self.open_projects[ix] {
-                    window.set_window_title(&format!("{} · Adeline", config.name));
+                    window.set_window_title(&format!("{name} · Adeline"));
                 }
                 self.rename_project = None;
                 self.project_error = None;
                 self.modal = None;
                 self.sync_regions(&Action::Project(self.project), cx);
             }
-            Err(error) => self.project_error = Some(error),
+            cx.notify();
+            return;
         }
-        cx.notify();
+        // Renaming keeps the tab's color.
+        self.selected_tint = self.project_tints[ix];
+        let directory = self.projects[ix].config.directory.clone();
+        self.save_project_as(ix, name, directory, cx);
     }
 
     pub(super) fn begin_project_delete(&mut self, cx: &mut Context<Self>) {
@@ -187,6 +198,8 @@ impl Adeline {
         cx.notify();
     }
 
+    /// Asks the engine to stop the project's agents and delete it. The engine
+    /// removes it everywhere once they've stopped.
     pub(super) fn confirm_project_delete(&mut self, cx: &mut Context<Self>) {
         if self.modal != Some("delete-project") && self.modal != Some("delete-project-shutdown") {
             return;
@@ -200,8 +213,24 @@ impl Adeline {
         let id = self.projects[index].config.id.clone();
         self.modal = Some("delete-project-shutdown");
         self.project_error = None;
-        self.stop_project(&id, cx);
-        self.finish_project_deletion(cx);
+        self.request(
+            protocol::Command::DeleteProject { id: id.clone() },
+            cx,
+            move |app, result, window, cx| {
+                if let Err(error) = result {
+                    let pending = app
+                        .delete_project
+                        .and_then(|ix| app.projects.get(ix))
+                        .is_some_and(|project| project.config.id == id);
+                    if pending && app.modal == Some("delete-project-shutdown") {
+                        app.project_error = Some(error);
+                        app.open_modal(window, cx);
+                    }
+                    cx.notify();
+                }
+            },
+        );
+        cx.notify();
     }
 
     pub(super) fn force_project_delete(&mut self, cx: &mut Context<Self>) {
@@ -216,35 +245,23 @@ impl Adeline {
         };
         let id = self.projects[index].config.id.clone();
         self.force_project(&id, cx);
-        self.finish_project_deletion(cx);
     }
 
-    pub(super) fn finish_project_deletion(&mut self, cx: &mut Context<Self>) {
-        if self.modal != Some("delete-project-shutdown") {
-            return;
+    /// Closing the stopping dialog keeps the project; agents already asked to
+    /// stop keep stopping.
+    pub(super) fn cancel_project_delete(&mut self, cx: &mut Context<Self>) {
+        if self.modal == Some("delete-project-shutdown")
+            && let Some(project) = self.delete_project.and_then(|ix| self.projects.get(ix))
+            && !self.demo_mode
+        {
+            let id = project.config.id.clone();
+            client::request(
+                protocol::Command::CancelDeleteProject { id },
+                Box::new(|_, _| {}),
+                cx,
+            );
         }
-        let Some(index) = self
-            .delete_project
-            .filter(|index| *index < self.projects.len())
-        else {
-            return;
-        };
-        let id = self.projects[index].config.id.clone();
-        if !self.project_agents_stopped(&id) {
-            cx.notify();
-            return;
-        }
-        let result = self
-            .project_store
-            .lock()
-            .map_err(|_| "Project storage is unavailable.".to_owned())
-            .and_then(|mut store| store.delete_project(&id));
-        if let Err(error) = result {
-            self.project_error = Some(error);
-            cx.notify();
-            return;
-        }
-        self.remove_project_at(index, cx);
+        self.delete_project = None;
     }
 
     /// Forgets a deleted project: its tab, runtime state and selection.
@@ -483,10 +500,19 @@ impl Adeline {
                         .when(stopping && !stopped, |row| row.child(self.button("force-delete", "Force stop", Action::ForceDeleteProject, cx).danger()))
                         .when(!stopping, |row| row.child(self.button("confirm-delete", "Delete", Action::ConfirmDeleteProject, cx).danger())));
             }
-            Some("shutdown") => {
-                content = content.child(views::dialog_title("Stopping agents"))
-                    .child(note("Adeline is waiting for running agents to stop. If shutdown stalls, choose Force stop."))
-                    .child(footer().child(self.button("force-stop-all", "Force stop", Action::ForceStopAll, cx).danger()));
+            Some("quit") => {
+                let stopping = self.runtime.stopping_all;
+                content = content
+                    .child(views::dialog_title(if stopping { "Stopping agents…" } else { "Agents are still working" }))
+                    .child(note(if stopping {
+                        "Adeline closes once every agent has exited. Agents still running after 5 seconds are stopped."
+                    } else {
+                        "Stop all cancels running turns and closes every agent. Finish in background keeps them running after Adeline closes, and their replies are here when you reopen it."
+                    }))
+                    .when(!stopping, |column| column.child(footer()
+                        .child(self.button("quit-cancel", "Cancel", Action::Close, cx))
+                        .child(self.button("quit-background", "Finish in background", Action::FinishInBackground, cx))
+                        .child(self.button("quit-stop-all", "Stop all", Action::QuitStopAll, cx).danger())));
             }
             _ => {}
         }
