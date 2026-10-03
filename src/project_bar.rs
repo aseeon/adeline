@@ -1,8 +1,8 @@
 //! The unified title bar and the mode rail down the window's left edge.
 //!
 //! Open projects are full-height cells separated by quiet dividers. Each cell
-//! shows the project's letter mark, its name and its attention count; the
-//! count gives way to a close button while the pointer is over the cell.
+//! shows the project's letter mark and its name, an accent dot when the
+//! project needs the user, and a close button while the pointer is over it.
 //! The active tab always shows its full name. When the strip runs out of room,
 //! inactive names shorten to three letters, then to the mark alone, and the
 //! tabs that still don't fit move into a "+N" menu. Projects that need the user
@@ -76,9 +76,11 @@ pub(super) enum TabSize {
 }
 
 /// A tab's fixed parts in rem, matching `project_cell`: padding, mark, gap
-/// and count slot. A name adds its own gap and is capped in width.
+/// and close slot. A name adds its own gap and is capped in width, and an
+/// attention dot adds the same gap and its size.
 const TAB_CHROME: f32 = 0.625 + 1.125 + 0.5 + 1.5 + 0.375;
 const TAB_NAME_GAP: f32 = 0.5;
+const ATTENTION_DOT: f32 = 0.375;
 const TAB_NAME_MAX: f32 = 11.25;
 /// Widths of the new-project and overflow cells, in rem.
 const NEW_TAB_WIDTH: f32 = 2.25;
@@ -90,6 +92,7 @@ pub(super) struct FitTab {
     name: String,
     active: bool,
     busy: bool,
+    dot: bool,
 }
 
 /// A tab's width at full, short and letter size.
@@ -122,22 +125,31 @@ impl TabFit {
         let rem = window.rem_size();
         let font_size = rems(0.875).to_pixels(rem);
         let style = window.text_style();
-        let chrome = rems(TAB_CHROME).to_pixels(rem) + px(1.);
-        let named = |label: String| {
+        let chrome = |dot: bool| {
+            let dot = if dot {
+                TAB_NAME_GAP + ATTENTION_DOT
+            } else {
+                0.
+            };
+            rems(TAB_CHROME + dot).to_pixels(rem) + px(1.)
+        };
+        let named = |label: String, dot: bool| {
             let run = style.to_run(label.len());
             let text = window
                 .text_system()
                 .shape_line(label.into(), font_size, &[run], None)
                 .width;
-            chrome + rems(TAB_NAME_GAP).to_pixels(rem) + text.min(rems(TAB_NAME_MAX).to_pixels(rem))
+            chrome(dot)
+                + rems(TAB_NAME_GAP).to_pixels(rem)
+                + text.min(rems(TAB_NAME_MAX).to_pixels(rem))
         };
         let measured: Vec<Measured> = tabs
             .iter()
             .map(|tab| Measured {
                 widths: [
-                    named(tab.name.clone()),
-                    named(short_name(&tab.name)),
-                    chrome,
+                    named(tab.name.clone(), tab.dot),
+                    named(short_name(&tab.name), tab.dot),
+                    chrome(tab.dot),
                 ],
                 active: tab.active,
                 busy: tab.busy,
@@ -246,6 +258,7 @@ impl Adeline {
                     name: project.config.name.clone(),
                     active: ix == self.project,
                     busy: project.busy(),
+                    dot: project.attention_count() > 0,
                 }
             })
             .collect();
@@ -442,35 +455,23 @@ impl Adeline {
             .when_some(shown, |cell, shown| {
                 cell.child(div().max_w(rems(TAB_NAME_MAX)).truncate().child(shown))
             })
+            .when(attention > 0, |cell| cell.child(attention_dot(cx)))
             .child(
                 div()
-                    .relative()
                     .flex_shrink_0()
                     .flex()
                     .items_center()
                     .justify_center()
                     .size(rems(1.5))
-                    .child(
-                        count_badge(attention, bar, cx)
-                            .group_hover(group.clone(), |style| style.invisible()),
-                    )
-                    .child(
-                        div()
-                            .absolute()
-                            .inset_0()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .invisible()
-                            .group_hover(group, |style| style.visible())
-                            .child(self.icon_button(
-                                SharedString::from(format!("close-{id}")),
-                                "Close project tab",
-                                Icon::default().path("close.svg"),
-                                Action::CloseProject(ix),
-                                cx,
-                            )),
-                    ),
+                    .invisible()
+                    .group_hover(group, |style| style.visible())
+                    .child(self.icon_button(
+                        SharedString::from(format!("close-{id}")),
+                        "Close project tab",
+                        Icon::default().path("close.svg"),
+                        Action::CloseProject(ix),
+                        cx,
+                    )),
             )
             .context_menu(move |menu, _, _| project_actions(menu, &owner, ix, true, &id))
     }
@@ -555,15 +556,7 @@ impl Adeline {
             .border_color(bar.divider)
             .child(trigger)
             .when(waiting, |cell| {
-                cell.child(
-                    div()
-                        .absolute()
-                        .top(rems(0.5))
-                        .right(rems(0.5))
-                        .size(rems(0.375))
-                        .rounded_full()
-                        .bg(theme.primary),
-                )
+                cell.child(attention_dot(cx).absolute().top(rems(0.5)).right(rems(0.5)))
             })
     }
 
@@ -1239,31 +1232,13 @@ fn letter_mark(name: &str, fill: Hsla, letter: Hsla, size: Rems, cx: &App) -> Di
         )
 }
 
-/// A project's attention count. Zero stays visible but quiet, so every tab
-/// keeps the same shape; anything more fills with the accent.
-fn count_badge(count: usize, bar: &theme::BarColors, cx: &App) -> Div {
-    let theme = cx.theme();
+/// The accent dot marking a project that needs the user.
+fn attention_dot(cx: &App) -> Div {
     div()
-        .flex()
-        .items_center()
-        .justify_center()
-        .min_w(rems(1.))
-        .h(rems(1.))
-        .px_1()
+        .flex_shrink_0()
+        .size(rems(ATTENTION_DOT))
         .rounded_full()
-        .text_xs()
-        .map(|badge| {
-            if count == 0 {
-                badge
-                    .border_1()
-                    .border_color(bar.divider)
-                    .text_color(theme.muted_foreground)
-                    .opacity(0.7)
-            } else {
-                badge.bg(theme.primary).text_color(theme.primary_foreground)
-            }
-        })
-        .child(count.to_string())
+        .bg(cx.theme().primary)
 }
 
 #[cfg(test)]
