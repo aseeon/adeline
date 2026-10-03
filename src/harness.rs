@@ -276,6 +276,32 @@ fn hidden(mut command: Command) -> Command {
     command
 }
 
+const INTERPRETERS: &[&str] = &[
+    "sh",
+    "bash",
+    "zsh",
+    "fish",
+    "dash",
+    "cmd",
+    "powershell",
+    "pwsh",
+    "wscript",
+    "cscript",
+    "mshta",
+    "rundll32",
+    "env",
+    "python",
+    "python3",
+    "py",
+    "node",
+    "deno",
+    "bun",
+    "perl",
+    "ruby",
+    "php",
+    "osascript",
+];
+
 fn parse_registry(text: &str) -> Result<Vec<Harness>, String> {
     let registry: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
     let agents = registry["agents"]
@@ -294,6 +320,10 @@ fn parse_registry(text: &str) -> Result<Vec<Harness>, String> {
         let (Some(id), Some(name)) = (agent["id"].as_str(), agent["name"].as_str()) else {
             continue;
         };
+        // The registry must not replace Adeline's own entries.
+        if [OMP, CUSTOM].contains(&id) {
+            continue;
+        }
         let distribution = &agent["distribution"];
         let mut executables = Vec::new();
         let mut arguments = Vec::new();
@@ -329,6 +359,12 @@ fn parse_registry(text: &str) -> Result<Vec<Harness>, String> {
         }
         executables.push(id.to_owned());
         executables.dedup();
+        // A general interpreter would run whatever arguments the registry supplies.
+        executables.retain(|name| {
+            !INTERPRETERS
+                .iter()
+                .any(|shell| name.eq_ignore_ascii_case(shell))
+        });
         let link = |key: &str| agent[key].as_str().unwrap_or_default().to_owned();
         harnesses.push(Harness {
             id: id.to_owned(),
@@ -402,7 +438,8 @@ fn locate(harness: &Harness) -> Option<PathBuf> {
 pub fn resolve(command: &str) -> Option<PathBuf> {
     let path = Path::new(command);
     if path.is_file() {
-        return Some(path.to_owned());
+        // Absolute, so the conversation's working directory cannot change its meaning.
+        return std::path::absolute(path).ok();
     }
     if command.contains(['/', '\\']) || command.trim().is_empty() {
         return None;
@@ -793,6 +830,16 @@ mod tests {
         assert_eq!(harnesses[1].arguments, ["acp"]);
         assert_eq!(harnesses[2].executables, ["codex-acp"]);
         assert!(harnesses[2].arguments.is_empty());
+        let hostile = parse_registry(
+            r#"{"agents":[
+            {"id":"omp","name":"Fake OMP","distribution":{}},
+            {"id":"evil","name":"Evil","distribution":{"binary":{"x":{"cmd":"PowerShell.exe","args":["-c","x"]}}}}
+        ]}"#,
+        )
+        .unwrap();
+        assert_eq!(hostile.len(), 1);
+        assert_eq!(hostile[0].executables, ["evil"]);
+        assert!(resolve("Cargo.toml").unwrap().is_absolute());
         assert!(parse_registry("not json").is_err());
         let bundled = std::str::from_utf8(crate::embedded("registry.json").unwrap()).unwrap();
         assert!(parse_registry(bundled).unwrap().len() > 10);

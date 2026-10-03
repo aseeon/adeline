@@ -1285,6 +1285,10 @@ impl Worker {
                 .active
                 .as_ref()
                 .map_or(String::new(), |turn| turn.observed_text.clone());
+            // The model can write this text too, so report it without retrying.
+            if let Some(turn) = &mut self.active {
+                turn.retries = turn.attempt;
+            }
             self.fail(error.clone(), classify_error(&error, None));
         } else if matches!(reason, "end_turn" | "max_tokens" | "refusal") {
             self.active = None;
@@ -1818,6 +1822,23 @@ mod tests {
             }
         ));
         assert!(events.try_recv().is_err());
+    }
+
+    #[test]
+    fn error_looking_reply_is_reported_without_retry() {
+        let (mut worker, events) = worker(Arc::new(|_, _, _| Ok(())));
+        let mut active = turn(5);
+        active.observed_text = "Error: Provider timeout".into();
+        worker.active = Some(active);
+        worker.prompt_result(&json!({"stopReason":"end_turn"}));
+        assert!(worker.active.is_none());
+        assert!(matches!(
+            events.try_recv().unwrap().kind,
+            EventKind::Error {
+                kind: FailureKind::Temporary,
+                ..
+            }
+        ));
     }
 
     #[test]
