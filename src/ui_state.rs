@@ -32,7 +32,8 @@ fn with<T>(change: impl FnOnce(&mut UiState) -> T) -> T {
 }
 
 fn save(state: &UiState) -> Result<(), String> {
-    crate::config::write_yaml(&path()?, state)
+    let path = path()?;
+    crate::config::seed_yaml(&path, state).and_then(|()| crate::config::write_yaml(&path, state))
 }
 
 /// Gives projects this UI's recency. The first time, it adopts the times the
