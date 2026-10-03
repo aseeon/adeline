@@ -79,14 +79,6 @@ fn row() -> Div {
 fn col() -> Div {
     div().flex().flex_col()
 }
-// Published Kit 0.6.6 owns overlay state in Root; window views mount its layers.
-fn window_layers(window: &mut Window, cx: &mut App) -> [Option<AnyElement>; 3] {
-    [
-        Root::render_sheet_layer(window, cx).map(IntoElement::into_any_element),
-        Root::render_dialog_layer(window, cx).map(IntoElement::into_any_element),
-        Root::render_notification_layer(window, cx).map(IntoElement::into_any_element),
-    ]
-}
 fn text(s: impl Into<SharedString>, size: f32, color: u32) -> Div {
     div()
         .text_size(config::text_pixels(size))
@@ -579,7 +571,7 @@ impl Adeline {
     }
 }
 impl Render for Adeline {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = if let Some(screen) = self.engine_screen(cx) {
             screen
         } else if !self.has_open_project() {
@@ -658,10 +650,7 @@ impl Render for Adeline {
                             .child(self.control_pane.clone()),
                     ),
             );
-        col()
-            .size_full()
-            .child(content)
-            .children(window_layers(window, cx).into_iter().flatten())
+        col().size_full().child(content)
     }
 }
 

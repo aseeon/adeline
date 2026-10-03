@@ -161,15 +161,8 @@ fn running_ring(turn: f32, track: Hsla, arc: Hsla) -> impl IntoElement {
                 .into_iter()
                 .enumerate()
             {
-                let segment = ArcData {
-                    data: &(),
-                    index,
-                    value: 1.,
-                    start_angle: from,
-                    end_angle: to,
-                    pad_angle: 0.,
-                };
-                shape.paint(&segment, color, None, None, &bounds, window);
+                let segment = ArcData::new(&(), index, 1., from, to);
+                shape.paint(&segment, color, &bounds, window);
             }
         },
     )

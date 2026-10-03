@@ -598,7 +598,6 @@ impl Render for AgentWindow {
                     window.remove_window();
                 }
             }))
-            .children(window_layers(window, cx).into_iter().flatten())
     }
 }
 
@@ -2379,6 +2378,5 @@ impl Render for SettingsWindow {
                     .left_0()
                     .right_0(),
             )
-            .children(window_layers(window, cx).into_iter().flatten())
     }
 }

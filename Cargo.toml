@@ -6,7 +6,7 @@ description = "A native GPUI desktop workspace"
 license = "MIT"
 
 [dependencies]
-gpui-kit = "=0.6.6"
+gpui-kit = "=0.7.0"
 chrono = "0.4"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
