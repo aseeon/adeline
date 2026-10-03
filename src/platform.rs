@@ -58,6 +58,10 @@ pub fn contain_children() -> Result<(), String> {
 
 /// Ties every process this one starts to its lifetime, even when it is killed.
 #[cfg(not(windows))]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "matches the Windows version, which can fail"
+)]
 pub fn contain_children() -> Result<(), String> {
     // ponytail: children only see stdin EOF when the engine dies; a child that
     // ignores it outlives us. Use PR_SET_PDEATHSIG (Linux) if that bites.
