@@ -47,6 +47,12 @@ pub enum Command {
     ReplaceSession {
         context: String,
     },
+    /// Gives a new fork's first session its copied history: a native fork of
+    /// `session` when the harness offers one, else `context` as text.
+    Fork {
+        session: Option<String>,
+        context: String,
+    },
     Shutdown,
     ForceStop,
     ResumeStorage,
@@ -105,6 +111,8 @@ pub enum EventKind {
     ShutdownComplete,
     StorageError(String),
     ReplacementRequired(String),
+    /// A fork's first prompt carries its history as text.
+    TextCopy,
 }
 
 #[derive(Debug, Clone)]
@@ -171,6 +179,8 @@ impl Driver {
             previous_session: None,
             pending_context: None,
             replacing: false,
+            fork: None,
+            forking: false,
         };
         tokio::spawn(worker.run());
         Self { sender }
@@ -263,6 +273,10 @@ struct Worker {
     pending_context: Option<String>,
     forced: bool,
     replacing: bool,
+    /// A fork's source session and history, until its first session is set up.
+    fork: Option<(Option<String>, String)>,
+    /// The session being set up is a native fork.
+    forking: bool,
 }
 
 impl Worker {
@@ -442,9 +456,7 @@ impl Worker {
                 } else if !text.trim().is_empty() {
                     self.turn += 1;
                     let text = if let Some(context) = self.pending_context.take() {
-                        format!(
-                            "Saved conversation context (prior history; do not repeat completed tool actions):\n{context}\n\nNew user request:\n{text}"
-                        )
+                        with_context(&context, &text)
                     } else {
                         text
                     };
@@ -508,6 +520,7 @@ impl Worker {
                     }
                 }
             }
+            Command::Fork { session, context } => self.fork = Some((session, context)),
             Command::ResumeStorage => {
                 if self.record("lifecycle", &json!({"storage_resumed":true})) {
                     self.blocked = false;
@@ -746,6 +759,7 @@ impl Worker {
             return;
         }
         self.configured = false;
+        self.forking = false;
         let cwd = self.config.directory.to_string_lossy().into_owned();
         let (method, params) = if let Some(id) = &self.session_id {
             if self
@@ -766,6 +780,17 @@ impl Worker {
                 self.restore_failed("The agent does not support restoring sessions.");
                 return;
             }
+        } else if let Some((Some(source), _)) = &self.fork
+            && self
+                .capabilities
+                .pointer("/sessionCapabilities/fork")
+                .is_some_and(|capability| !capability.is_null())
+        {
+            self.forking = true;
+            (
+                "session/fork",
+                json!({"sessionId":source,"cwd":cwd,"mcpServers":[]}),
+            )
         } else {
             ("session/new", json!({"cwd":cwd,"mcpServers":[]}))
         };
@@ -801,6 +826,15 @@ impl Worker {
             self.handshake = None;
         }
         if let Some(error) = message.get("error") {
+            // A failed native fork falls back to a new session with the text copy.
+            if request == Request::Setup && self.forking {
+                self.setup = None;
+                if let Some((session, _)) = &mut self.fork {
+                    *session = None;
+                }
+                self.setup_session();
+                return;
+            }
             let text = error
                 .get("message")
                 .and_then(Value::as_str)
@@ -886,6 +920,16 @@ impl Worker {
                     .unwrap_or_default();
                 let previous_session = self.previous_session.take();
                 if !self.record("session", &json!({"session_id":session_id,"replaced":was_replacement,"old_session_id":previous_session})) { return; }
+                if let Some((_, context)) = self.fork.take()
+                    && !std::mem::take(&mut self.forking)
+                {
+                    if let Some(turn) = &mut self.active {
+                        turn.text = with_context(&context, &turn.text);
+                    } else {
+                        self.pending_context = Some(context);
+                    }
+                    self.emit(EventKind::TextCopy);
+                }
                 self.emit(EventKind::Session {
                     session_id,
                     replaced: was_replacement,
@@ -1503,6 +1547,13 @@ fn tool_detail(update: &Value) -> String {
     detail
 }
 
+/// A prompt that carries saved conversation history ahead of the new request.
+fn with_context(context: &str, text: &str) -> String {
+    format!(
+        "Saved conversation context (prior history; do not repeat completed tool actions):\n{context}\n\nNew user request:\n{text}"
+    )
+}
+
 /// Command fragments that always need the user's approval, whatever the
 /// permission mode. Matched case-insensitively against the tool call's title
 /// and raw input.
@@ -1660,9 +1711,72 @@ mod tests {
                 pending_context: None,
                 replacing: false,
                 forced: false,
+                fork: None,
+                forking: false,
             },
             received,
         )
+    }
+
+    #[test]
+    fn forks_use_the_native_fork_and_fall_back_to_the_text_copy() {
+        for native_works in [true, false] {
+            let (sent, received) = std::sync::mpsc::channel();
+            let (mut worker, events) = worker(Arc::new(move |_, direction, message| {
+                if direction == "outgoing" {
+                    sent.send(message.clone()).unwrap();
+                }
+                Ok(())
+            }));
+            worker.session_id = None;
+            worker.configured = false;
+            worker.config.model.clear();
+            worker.config.effort.clear();
+            worker.capabilities = json!({"sessionCapabilities":{"fork":{}}});
+            worker.command(Command::Fork {
+                session: Some("source".into()),
+                context: "user: one".into(),
+            });
+            worker.active = Some(Turn {
+                text: "two".into(),
+                retries: 0,
+                attempt: 0,
+                worked: false,
+                observed_text: String::new(),
+                denied: false,
+                cancelled: false,
+                prompt_request: None,
+                retry_at: None,
+            });
+            sent_requests(&mut worker, |worker| {
+                worker.setup_session();
+                let id = *worker.pending.keys().next().expect("fork request");
+                if native_works {
+                    worker.incoming(&json!({"id":id,"result":{"sessionId":"forked"}}));
+                } else {
+                    worker.incoming(&json!({"id":id,"error":{"code":-32601,"message":"no"}}));
+                    let id = *worker.pending.keys().next().expect("new session request");
+                    worker.incoming(&json!({"id":id,"result":{"sessionId":"new"}}));
+                }
+            });
+            let methods: Vec<_> = received
+                .try_iter()
+                .map(|request| request["method"].as_str().unwrap_or_default().to_owned())
+                .collect();
+            let prompt = &worker.active.as_ref().unwrap().text;
+            let copied = std::iter::from_fn(|| events.try_recv().ok())
+                .any(|event| matches!(event.kind, EventKind::TextCopy));
+            if native_works {
+                assert_eq!(methods, ["session/fork", "session/prompt"]);
+                assert_eq!(prompt, "two");
+                assert!(!copied);
+            } else {
+                assert_eq!(methods, ["session/fork", "session/new", "session/prompt"]);
+                assert!(prompt.contains("user: one") && prompt.ends_with("two"));
+                assert!(copied);
+            }
+            assert!(worker.fork.is_none());
+        }
     }
 
     #[expect(

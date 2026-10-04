@@ -6,5 +6,5 @@ End-to-end checks for `docs/scope-conversation-engine.md`. Windows only, Python 
 2. `python scripts/engine-check/run_checks.py` runs every check; `--fast` skips the ~90 s background/idle-exit check, `--only AC11` filters by name, `--keep` keeps the temp home.
 3. Each run uses a fresh temp home (`USERPROFILE`/`HOME`), so your real engine and data are never touched. Exit code 1 means a check failed.
 
-`fake_agent.py` is a scriptable ACP agent (prompt keywords `SLOW n`, `PERMISSION`, `FAIL n`, `HANG_ON_CLOSE`); `python scripts/engine-check/test_fake_agent.py` checks it on its own.
+`fake_agent.py` is a scriptable ACP agent (prompt keywords `SLOW n`, `PERMISSION`, `FAIL n`, `HANG_ON_CLOSE`, `NO_FORK`); `python scripts/engine-check/test_fake_agent.py` checks it on its own.
 `engine_client.py` is the protocol client; `python scripts/engine-check/engine_client.py` prints the pipe name for the current user.

@@ -31,6 +31,7 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `file.svg` | `file-text.svg` |
 | `flag.svg` | `flag.svg` |
 | `folder.svg` | `folder.svg` |
+| `fork.svg` | `arrows-split.svg`, turned 90° counter-clockwise |
 | `house.svg` | `house.svg` |
 | `link.svg` | `link.svg` |
 | `list-bullets.svg` | `list-bullets.svg` |

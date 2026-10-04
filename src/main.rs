@@ -198,6 +198,8 @@ enum Action {
     ReplyTo(usize),
     /// Copy a message of the open chat to the clipboard.
     CopyMessage(usize),
+    /// Fork the open chat at one of its finished replies.
+    Fork(usize),
     /// Archive a chat of the current project, by its index.
     ArchiveChat(usize),
     Decision(usize),

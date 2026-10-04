@@ -75,6 +75,18 @@ pub struct ConversationSettings {
     /// The ACP config options the agent last offered, for switching while it is stopped.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub config_options: Vec<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub forked_from: Option<ForkOrigin>,
+}
+
+/// The conversation and reply a fork was made from.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ForkOrigin {
+    pub conversation_id: String,
+    pub title: String,
+    /// The fork point: the index of the source's reply the fork ends with.
+    pub message: usize,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -127,6 +139,11 @@ impl StoredConversation {
             provider: self.settings.execution.name.clone(),
             status: self.settings.status.clone(),
             created_at: self.settings.created_at.clone(),
+            fork: self.settings.forked_from.as_ref().map(|origin| data::Fork {
+                id: origin.conversation_id.clone(),
+                title: origin.title.clone(),
+                text_copy: false,
+            }),
             ..Default::default()
         };
         let mut current_assistant = None;
@@ -235,13 +252,14 @@ impl StoredConversation {
                         ..Default::default()
                     });
                 }
-                "lifecycle"
-                    if event.data.get("event").and_then(Value::as_str)
-                        == Some("replacement_session_approved")
-                        || (event.data.get("event").and_then(Value::as_str)
-                            == Some("turn_started")
-                            && event.data.get("retry").and_then(Value::as_bool) == Some(true)) =>
-                {
+                "fork_text_copy" => {
+                    if let Some(fork) = &mut thread.fork {
+                        fork.text_copy = true;
+                    }
+                }
+                // A fork's copy of a lifecycle event that started a new reply.
+                "reply_break" => current_assistant = None,
+                "lifecycle" if starts_reply(event) => {
                     current_assistant = None;
                 }
                 _ => {}
@@ -268,6 +286,14 @@ impl StoredConversation {
         thread.prepare_search();
         thread
     }
+}
+
+/// Whether a lifecycle event starts a new reply rather than continuing the last one.
+fn starts_reply(event: &TranscriptEvent) -> bool {
+    let name = event.data.get("event").and_then(Value::as_str);
+    name == Some("replacement_session_approved")
+        || (name == Some("turn_started")
+            && event.data.get("retry").and_then(Value::as_bool) == Some(true))
 }
 
 #[derive(Clone, Debug)]
@@ -631,36 +657,83 @@ impl ProjectStore {
             session_id: None,
             previous_session_ids: Vec::new(),
             config_options: Vec::new(),
+            forked_from: None,
         };
-        let id = loop {
-            let id = files::unique(&format!("{:x}", now_nanos()));
-            match fs::create_dir(base.join(&id)) {
-                Ok(()) => break id,
-                Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(e) => return Err(file_error(&base, e)),
-            }
-        };
-        let folder = base.join(&id);
-        let text = serde_yaml_ng::to_string(&settings).map_err(|e| e.to_string())?;
-        let result = files::write_new(&folder.join("conversation.yml"), text.as_bytes())
-            .and_then(|()| files::write_new(&folder.join("transcript.jsonl"), b""));
-        if let Err(error) = result {
-            let _ = fs::remove_file(folder.join("conversation.yml"));
-            let _ = fs::remove_dir(&folder);
-            return Err(error);
+        let conversation = write_conversation(&base, settings, Vec::new())?;
+        let id = conversation.id.clone();
+        project.conversations.push(conversation);
+        Ok(id)
+    }
+
+    /// Copies a conversation's visible history through its reply `message`
+    /// into a new conversation in the same project. Raw protocol traffic,
+    /// lifecycle records and permission decisions stay behind.
+    pub fn fork_conversation(&mut self, source_id: &str, message: usize) -> Result<String, String> {
+        checked_id(source_id)?;
+        let root = self.root.as_ref().map_err(Clone::clone)?;
+        let project = self
+            .projects
+            .iter_mut()
+            .find(|p| p.conversations.iter().any(|c| c.id == source_id))
+            .ok_or_else(|| format!("Conversation {source_id} no longer exists."))?;
+        let source = project
+            .conversations
+            .iter()
+            .find(|c| c.id == source_id)
+            .expect("found above");
+        let thread = source.to_thread();
+        if !thread.ends_turn(message) {
+            return Err("Fork from the last reply of a finished turn.".into());
         }
-        project.conversations.push(StoredConversation {
-            id: id.clone(),
-            settings,
-            events: Vec::new(),
-            unsaved_events: Vec::new(),
-            storage_error: None,
-            persisted_len: 0,
-            needs_rollback: false,
-            pending_settings: None,
-            load_error: false,
-            interrupted: false,
-        });
+        let base = root.join(&project.id).join("conversations");
+        safe_directory(root)?;
+        safe_directory(&root.join(&project.id))?;
+        safe_directory(&base)?;
+        let prompts = thread.messages[..=message]
+            .iter()
+            .filter(|m| m.role == "user")
+            .count();
+        let mut seen = 0;
+        let mut events = Vec::new();
+        for event in source.events.iter().chain(&source.unsaved_events) {
+            if event.kind == "message" && event.data["role"] == "user" {
+                seen += 1;
+                if seen > prompts {
+                    break;
+                }
+            }
+            match event.kind.as_str() {
+                "message" | "assistant_chunk" | "message_update" | "tool" | "error" => {
+                    events.push(event.clone());
+                }
+                "lifecycle" if starts_reply(event) => events.push(TranscriptEvent {
+                    kind: "reply_break".into(),
+                    data: Value::Object(serde_json::Map::new()),
+                    ..event.clone()
+                }),
+                _ => {}
+            }
+        }
+        events.push(TranscriptEvent::new(
+            "message_read",
+            serde_json::json!({"through": message}),
+        ));
+        let settings = ConversationSettings {
+            title: format!("{} (fork)", source.settings.title),
+            status: "idle".into(),
+            created_at: now_millis().to_string(),
+            session_id: None,
+            previous_session_ids: Vec::new(),
+            forked_from: Some(ForkOrigin {
+                conversation_id: source_id.to_owned(),
+                title: source.settings.title.clone(),
+                message,
+            }),
+            ..source.settings.clone()
+        };
+        let conversation = write_conversation(&base, settings, events)?;
+        let id = conversation.id.clone();
+        project.conversations.push(conversation);
         Ok(id)
     }
 
@@ -875,6 +948,50 @@ impl ProjectStore {
         }
         changes
     }
+}
+
+/// Saves a new conversation folder, leaving nothing behind on failure.
+fn write_conversation(
+    base: &Path,
+    settings: ConversationSettings,
+    events: Vec<TranscriptEvent>,
+) -> Result<StoredConversation, String> {
+    let id = loop {
+        let id = files::unique(&format!("{:x}", now_nanos()));
+        match fs::create_dir(base.join(&id)) {
+            Ok(()) => break id,
+            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(file_error(base, e)),
+        }
+    };
+    let folder = base.join(&id);
+    let mut transcript = Vec::new();
+    for event in &events {
+        serde_json::to_writer(&mut transcript, event).map_err(|e| e.to_string())?;
+        transcript.push(b'\n');
+    }
+    let result = serde_yaml_ng::to_string(&settings)
+        .map_err(|e| e.to_string())
+        .and_then(|text| files::write_new(&folder.join("conversation.yml"), text.as_bytes()))
+        .and_then(|()| files::write_new(&folder.join("transcript.jsonl"), &transcript));
+    if let Err(error) = result {
+        let _ = fs::remove_file(folder.join("conversation.yml"));
+        let _ = fs::remove_file(folder.join("transcript.jsonl"));
+        let _ = fs::remove_dir(&folder);
+        return Err(error);
+    }
+    Ok(StoredConversation {
+        id,
+        settings,
+        events,
+        unsaved_events: Vec::new(),
+        storage_error: None,
+        persisted_len: transcript.len() as u64,
+        needs_rollback: false,
+        pending_settings: None,
+        load_error: false,
+        interrupted: false,
+    })
 }
 
 fn flush_settings(conversation: &mut StoredConversation, path: &Path) -> Result<(), String> {

@@ -15,7 +15,7 @@ use std::{
 
 /// Bumped whenever a message changes shape. `hello`, `welcome`, `status`,
 /// `stop_all` and `shutdown` must keep working across versions.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -85,6 +85,12 @@ pub enum Command {
     },
     ReplaceSession {
         id: String,
+    },
+    /// Copies a conversation through its finished reply `message` into a new
+    /// conversation. Replies with the new conversation's ID.
+    Fork {
+        id: String,
+        message: usize,
     },
     SetPermissionMode {
         id: String,

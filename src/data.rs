@@ -35,6 +35,19 @@ pub struct Thread {
     /// Tokens in the agent's context and the size of its window, once the agent reports them.
     pub context: Option<(u64, u64)>,
     pub timing: Timing,
+    /// The conversation this one was forked from.
+    pub fork: Option<Fork>,
+}
+/// Where a fork came from, for its marker.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Fork {
+    /// The immediate source conversation.
+    pub id: String,
+    /// The source's title when forked, shown if the source is gone.
+    pub title: String,
+    /// The agent got the history as text rather than a native session fork.
+    pub text_copy: bool,
 }
 /// When a chat's turns ran and how fast its replies streamed. Times are
 /// milliseconds since the epoch.

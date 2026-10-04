@@ -26,7 +26,7 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from engine_client import Client, EngineError, pipe_exists  # noqa: E402
+from engine_client import PROTOCOL, Client, EngineError, pipe_exists  # noqa: E402
 
 EXE = HERE.parents[1] / "target" / "release" / "adeline.exe"
 PROJECT = "demo"
@@ -261,7 +261,7 @@ def check_basics():
     expect(pipe_exists(), "engine pipe not found under \\\\.\\pipe\\")
     with Client() as client:
         expect(client.snapshot["status"]["pid"] == pid, "snapshot status has another PID")
-        expect(client.welcome["protocol"] == 1, f"welcome protocol {client.welcome['protocol']}")
+        expect(client.welcome["protocol"] == PROTOCOL, f"welcome protocol {client.welcome['protocol']}")
     with Client(protocol=999) as old:
         expect(old.snapshot is None, "a mismatched client received a snapshot")
         expect("Err" in old.request(send_command("hi")), "a mismatched client could send")
@@ -613,6 +613,61 @@ def check_file_watching():
         mark = client.mark()
         shutil.rmtree(config / "projects" / "other")
         client.wait_delta(lambda d: d.get("delta") == "project_removed" and d["id"] == "other", 10, mark)
+
+
+@check("Fork AC2/AC4/AC6-AC9 native fork at the latest reply, text copy otherwise")
+def check_fork():
+    start_engine()
+
+    def sent(conversation, method):
+        return [e["data"]["message"] for e in transcript(conversation)
+                if e["kind"] == "raw" and e["data"]["direction"] == "outgoing"
+                and e["data"]["message"].get("method") == method]
+
+    def text_copy(conversation):
+        return any(e["kind"] == "fork_text_copy" for e in transcript(conversation))
+
+    def send_in(client, conversation, prompt):
+        mark = client.mark()
+        client.call(send_command(prompt, conversation))
+        return wait_turn(client, conversation, mark)
+
+    with Client() as client:
+        source, mark = new_conversation(client, "first")
+        wait_turn(client, source, mark)
+        send_in(client, source, "second")
+        fork = client.call({"op": "fork", "id": source, "message": 3})
+        kinds = {e["kind"] for e in transcript(fork)}
+        expect(not kinds & {"raw", "lifecycle", "session", "permission_decision"}, f"fork copied {kinds}")
+        settings = (config / "projects" / PROJECT / "conversations" / fork / "conversation.yml").read_text()
+        expect("(fork)" in settings and "session_id: null" in settings, settings)
+        expect(not sent(fork, "initialize"), "forking started an agent")
+        # AC7: the latest reply of an idle source forks natively.
+        send_in(client, fork, "third")
+        expect(sent(fork, "session/fork") and not text_copy(fork), "latest reply did not fork natively")
+        expect(sent(fork, "session/prompt")[0]["params"]["prompt"][0]["text"] == "third",
+               "native fork prompt carried the text copy")
+        # AC8: an earlier reply gets the text copy and the note.
+        early = client.call({"op": "fork", "id": source, "message": 1})
+        send_in(client, early, "again")
+        prompt = sent(early, "session/prompt")[0]["params"]["prompt"][0]["text"]
+        expect(not sent(early, "session/fork") and text_copy(early), "earlier reply used a native fork")
+        expect("user: first" in prompt and "second" not in prompt and prompt.endswith("again"), prompt)
+        # AC9: a failed native fork falls back to the text copy.
+        broken, mark = new_conversation(client, "NO_FORK")
+        wait_turn(client, broken, mark)
+        retry = client.call({"op": "fork", "id": broken, "message": 1})
+        send_in(client, retry, "fallback")
+        expect(sent(retry, "session/fork") and sent(retry, "session/new") and text_copy(retry),
+               "failed native fork did not fall back")
+        # AC6: forking a processing source leaves its turn running.
+        mark = client.mark()
+        client.call(send_command("SLOW 2", source))
+        client.wait_live(source, lambda live: live["processing"], 10, mark)
+        client.call({"op": "fork", "id": source, "message": 3})
+        final = wait_turn(client, source, mark)
+        expect(not final["error"], f"source turn ended with {final['error']}")
+        expect(lifecycle(transcript(source), "turn_finished")[-1:], "source turn did not finish")
 
 
 @check("AC20 thread count with 20 conversations, 5 processing")

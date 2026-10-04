@@ -507,7 +507,17 @@ fn blocking<T>(work: impl FnOnce() -> T) -> T {
 
 fn live_for(conversation: &storage::StoredConversation) -> Live {
     let thread = conversation.to_thread();
-    let last_user = thread.messages.iter().rposition(|m| m.role == "user");
+    // A fork's copied prompts belong to its source's turns.
+    let copied = conversation
+        .settings
+        .forked_from
+        .as_ref()
+        .map_or(0, |origin| origin.message + 1);
+    let last_user = thread
+        .messages
+        .iter()
+        .rposition(|m| m.role == "user")
+        .filter(|&i| i >= copied);
     let interrupted = matches!(
         conversation.settings.status.as_str(),
         "processing" | "blocked"
@@ -559,6 +569,15 @@ fn live_for(conversation: &storage::StoredConversation) -> Live {
         worked: interrupted || last_user.is_some_and(|i| i + 1 < thread.messages.len()),
         ..Default::default()
     }
+}
+
+/// Messages as `role: text` paragraphs, for giving an agent saved history.
+fn history_text(messages: &[Message]) -> String {
+    messages
+        .iter()
+        .map(|m| format!("{}: {}", m.role, m.text))
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 /// Registry icons and agent avatars, which clients can't read from disk.
@@ -919,6 +938,9 @@ impl Engine {
             }
             Command::ReplaceSession { id } => {
                 conversation(self, &id).and_then(|()| self.replace_session(&id))
+            }
+            Command::Fork { id, message } => {
+                conversation(self, &id).and_then(|()| self.fork(&id, message))
             }
             Command::SetPermissionMode { id, mode } => {
                 conversation(self, &id).map(|()| self.set_permission_mode(&id, mode))
@@ -1475,6 +1497,11 @@ impl Engine {
             live.worked = false;
             live.last_prompt.clone_from(&prompt);
         }
+        if let Some((session, context)) = self.fork_history(id)
+            && let Some(slot) = self.drivers.get(id)
+        {
+            let _ = slot.driver.send(acp::Command::Fork { session, context });
+        }
         let retries = u32::try_from(self.settings.retry_limit).unwrap_or(u32::MAX);
         // The worker numbers turns; a prompt it rejects keeps the old number.
         let Some(slot) = self.drivers.get_mut(id) else {
@@ -1716,6 +1743,13 @@ impl Engine {
                 return;
             }
             acp::EventKind::StorageError(error) => self.storage_failure(&id, &error),
+            acp::EventKind::TextCopy => {
+                if self.record_visible(&id, "fork_text_copy", json!({}))
+                    && let Some((project_id, thread)) = self.thread_from_store(&id)
+                {
+                    self.broadcast(Delta::Thread { project_id, thread });
+                }
+            }
             acp::EventKind::ReplacementRequired(error) => {
                 if closing {
                     return;
@@ -1960,14 +1994,7 @@ impl Engine {
         }
         let context = self
             .locate(id)
-            .map(|thread| {
-                thread
-                    .messages
-                    .iter()
-                    .map(|m| format!("{}: {}", m.role, m.text))
-                    .collect::<Vec<_>>()
-                    .join("\n\n")
-            })
+            .map(|thread| history_text(&thread.messages))
             .unwrap_or_default();
         if !self.set_runtime_status(id, "processing") {
             self.send_live(id);
@@ -2001,6 +2028,66 @@ impl Engine {
         live.assistant = None;
         self.send_live(id);
         Ok(Value::Null)
+    }
+
+    /// Copies a conversation through its finished reply `message` into a new
+    /// conversation. The source and its agent are left alone.
+    fn fork(&mut self, id: &str, message: usize) -> Result<Value, String> {
+        if self
+            .project_of(id)
+            .is_some_and(|project| self.deleting.contains_key(&project))
+        {
+            return Err("This project is being deleted.".into());
+        }
+        let running = self.live.get(id).is_some_and(|live| live.processing)
+            && self.locate(id).is_some_and(|thread| {
+                thread
+                    .messages
+                    .iter()
+                    .rposition(|m| m.role == "user")
+                    .is_some_and(|last| message > last)
+            });
+        if running {
+            return Err("Wait for this reply to finish before forking.".into());
+        }
+        let store = self.store.clone();
+        let (fork, live) = blocking(|| {
+            let mut store = store.lock().map_err(|e| e.to_string())?;
+            let fork = store.fork_conversation(id, message)?;
+            let live = store.conversation(&fork).map(live_for).unwrap_or_default();
+            Ok::<_, String>((fork, live))
+        })?;
+        self.touched.insert(fork.clone(), Instant::now());
+        self.live.insert(fork.clone(), live);
+        if let Some((project_id, thread)) = self.thread_from_store(&fork) {
+            self.broadcast(Delta::Thread { project_id, thread });
+        }
+        self.send_live(&fork);
+        Ok(Value::String(fork))
+    }
+
+    /// For a fork without a session yet: its source's session, when a native
+    /// fork would give the agent exactly the copied history, and that history as text.
+    // ponytail: keyed on "no session yet", so a text copy whose session started
+    // but whose first turn failed for good isn't resent on Retry; track
+    // delivery per fork if that shows up.
+    fn fork_history(&self, id: &str) -> Option<(Option<String>, String)> {
+        let settings = self.conversation_settings(id)?;
+        if settings.session_id.is_some() {
+            return None;
+        }
+        let origin = settings.forked_from?;
+        let context = history_text(self.locate(id)?.messages.get(..=origin.message)?);
+        let source = &origin.conversation_id;
+        let unchanged = self.live.get(source).is_none_or(|live| !live.processing)
+            && self
+                .locate(source)
+                .is_some_and(|thread| thread.messages.len() == origin.message + 1);
+        let session = self
+            .conversation_settings(source)
+            .and_then(|source| source.session_id)
+            .filter(|_| unchanged);
+        Some((session, context))
     }
 
     fn switch_setting(&mut self, id: &str, effort: bool, value: String) -> Result<Value, String> {

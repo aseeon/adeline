@@ -757,3 +757,88 @@ fn unsafe_config_contents_block_delete_without_touching_workdir() {
     store.delete_project(&id).unwrap();
     assert_eq!(fs::read(&sentinel).unwrap(), b"important");
 }
+
+#[test]
+fn forks_copy_visible_history_through_the_fork_point_only() {
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let mut store = open_store(&test);
+    let project = store.save_project(None, "Project", &work).unwrap();
+    let source = store
+        .create_conversation(&project, &agent(), launch(), "Plan")
+        .unwrap();
+    let event = |kind: &str, data: Value| TranscriptEvent::new(kind, data);
+    for event in [
+        event("message", serde_json::json!({"role":"user","text":"one"})),
+        event("raw", serde_json::json!({"direction":"outgoing"})),
+        event("assistant_chunk", serde_json::json!({"text":"first "})),
+        event(
+            "tool",
+            serde_json::json!({"id":"t1","title":"Read","status":"completed"}),
+        ),
+        event("error", serde_json::json!({"message":"overloaded"})),
+        event(
+            "lifecycle",
+            serde_json::json!({"event":"turn_started","retry":true}),
+        ),
+        event("assistant_chunk", serde_json::json!({"text":"retried"})),
+        event(
+            "permission_decision",
+            serde_json::json!({"option_id":"allow"}),
+        ),
+        event("lifecycle", serde_json::json!({"event":"turn_finished"})),
+        event("message", serde_json::json!({"role":"user","text":"two"})),
+        event("assistant_chunk", serde_json::json!({"text":"later"})),
+    ] {
+        store.record_event(&source, &event).unwrap();
+    }
+    let mut settings = store.conversation(&source).unwrap().settings.clone();
+    settings.permission_mode = PermissionMode::AllowEverything;
+    settings.execution.model = "xai/grok".into();
+    settings.session_id = Some("source-session".into());
+    store
+        .update_conversation(&project, &source, settings)
+        .unwrap();
+    // Message 1 ends its turn's first reply; message 2 is the retried reply.
+    assert!(store.fork_conversation(&source, 1).is_err());
+    assert!(store.fork_conversation(&source, 3).is_err());
+    let fork = store.fork_conversation(&source, 2).unwrap();
+    let restored = open_store(&test);
+    let saved = restored.conversation(&fork).unwrap();
+    assert_eq!(saved.settings.title, "Plan (fork)");
+    assert_eq!(saved.settings.execution.model, "xai/grok");
+    assert_eq!(
+        saved.settings.permission_mode,
+        PermissionMode::AllowEverything
+    );
+    assert_eq!(saved.settings.session_id, None);
+    assert_eq!(
+        saved.settings.forked_from.as_ref().unwrap().conversation_id,
+        source
+    );
+    assert!(saved.events.iter().all(|event| !matches!(
+        event.kind.as_str(),
+        "raw" | "lifecycle" | "permission_decision" | "session"
+    )));
+    let thread = saved.to_thread();
+    let texts: Vec<_> = thread.messages.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(texts, ["one", "first ", "retried"]);
+    assert!(thread.messages.iter().all(|m| m.read));
+    assert_eq!(thread.activity.len(), 2);
+    assert_eq!(thread.fork.as_ref().unwrap().title, "Plan");
+    assert!(!thread.fork.as_ref().unwrap().text_copy);
+    // Forking a fork points at the first fork; the source is untouched.
+    let again = store.fork_conversation(&fork, 2).unwrap();
+    let again = store.conversation(&again).unwrap().to_thread();
+    assert_eq!(again.title, "Plan (fork) (fork)");
+    assert_eq!(again.fork.unwrap().id, fork);
+    assert_eq!(
+        store
+            .conversation(&source)
+            .unwrap()
+            .to_thread()
+            .messages
+            .len(),
+        5
+    );
+}

@@ -238,6 +238,44 @@ def check_demo():
         process.kill()
 
 
+def count(window, name):
+    return sum(element.element_info.name == name for element in window.descendants())
+
+
+@check("Fork AC1/AC2/AC5/AC7/AC12: Fork opens a copy that links back to its source, also in demo mode")
+def check_fork():
+    process, window = launch()
+    try:
+        # The tab reads "demo (1)" once an earlier check leaves a chat needing input.
+        named(window, "Message", timeout=30)
+        send(window, "hello")
+        named(window, "Fork", "Button", timeout=20)
+        click(window, "Fork")
+        named(window, "Forked from hello", timeout=10)
+        with Client() as client:
+            titles = [t["title"] for p in client.snapshot["projects"] for t in p["threads"]]
+        assert "hello (fork)" in titles, titles
+        send(window, "after")
+        wait(lambda: count(window, "Fork") == 2, 20, what="the fork's own reply")
+        assert find(window, "Forked from hello"), "a native fork showed the text-copy note"
+        click(window, "hello", "Hyperlink")
+        wait(lambda: gone(window, "Forked from hello"), 10, what="the source to open")
+    finally:
+        process.kill()
+    # AC12: demo mode forks locally and starts no engine.
+    rc.stop_engine()
+    process, window = launch("--demo")
+    try:
+        chat = wait(lambda: next(e for e in window.descendants() if e.element_info.control_type == "ListItem"),
+                    15, what="a demo chat")
+        chat.click_input()
+        click(window, "Fork")
+        named(window, "Forked from " + chat.element_info.name.split(",")[0], timeout=10)
+        assert engine_pid() is None, "a demo fork started the engine"
+    finally:
+        process.kill()
+
+
 def main():
     temp = rc.setup()
     # One agent, so new chats pick it without a menu.
@@ -247,7 +285,7 @@ def main():
         path.parent.rmdir()
     try:
         for run in (check_launch, check_quit_background, check_quit_idle, check_quit_stop_all,
-                    check_settings_engine, check_unavailable, check_demo):
+                    check_settings_engine, check_unavailable, check_demo, check_fork):
             run()
     finally:
         rc.stop_engine()

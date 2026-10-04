@@ -12,7 +12,7 @@ import threading
 import time
 from ctypes import wintypes
 
-PROTOCOL = 1
+PROTOCOL = 2
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 _kernel32.PeekNamedPipe.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
                                     ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]

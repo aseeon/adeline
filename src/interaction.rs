@@ -366,6 +366,7 @@ impl Adeline {
                     cx.write_to_clipboard(ClipboardItem::new_string(text));
                 }
             }
+            Action::Fork(message) => self.fork_conversation(message, window, cx),
             Action::ToggleTool(id) => {
                 if !self.runtime.expanded_tools.remove(&id) {
                     self.runtime.expanded_tools.insert(id);

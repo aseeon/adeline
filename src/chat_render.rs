@@ -904,9 +904,59 @@ impl Adeline {
             .child(
                 chat_column()
                     .pb(rems(if user { 1.5 } else { 2. }))
+                    .when_some(thread.fork.as_ref().filter(|_| i == 0), |column, fork| {
+                        column.child(self.fork_marker(fork, cx))
+                    })
                     .child(content),
             )
             .into_any_element()
+    }
+
+    /// "Forked from" its source, above a fork's copied history.
+    fn fork_marker(&self, fork: &Fork, cx: &Context<Self>) -> Stateful<Div> {
+        let source = self
+            .workspace()
+            .threads
+            .iter()
+            .position(|thread| thread.id == fork.id);
+        let title = source.map_or_else(
+            || fork.title.clone(),
+            |ix| self.workspace().threads[ix].title.clone(),
+        );
+        let note = "Started from a text copy of the history.";
+        let spoken = if fork.text_copy {
+            format!("Forked from {title}. {note}")
+        } else {
+            format!("Forked from {title}")
+        };
+        let link = match source {
+            Some(ix) => Button::new("fork-source")
+                .link()
+                .small()
+                .label(title)
+                .on_click(cx.listener(move |app, _, window, cx| {
+                    app.act(Action::Chat(ix), window, cx);
+                }))
+                .into_any_element(),
+            None => div().child(title).into_any_element(),
+        };
+        col()
+            .id("fork-marker")
+            .role(Role::Group)
+            .aria_label(spoken)
+            .w_full()
+            .pb_4()
+            .gap_1()
+            .text_sm()
+            .text_color(cx.theme().muted_foreground)
+            .child(
+                row()
+                    .gap_1p5()
+                    .child(icon("fork").size(rems(0.875)))
+                    .child("Forked from")
+                    .child(link),
+            )
+            .when(fork.text_copy, |marker| marker.child(note))
     }
 
     /// Reply, Copy and Retry for a finished turn's last reply, then what the turn did.
@@ -918,7 +968,14 @@ impl Adeline {
             .filter(|summary| summary.tools > 0);
         let key = format!("summary:{}:{i}", thread.id);
         let expanded = summary.is_some() && self.runtime.expanded_tools.contains(&key);
-        let retry = !self.demo_mode && i + 1 == thread.messages.len();
+        // A fork that hasn't sent yet has nothing of its own to retry.
+        let retry = !self.demo_mode
+            && i + 1 == thread.messages.len()
+            && self
+                .runtime
+                .conversations
+                .get(&thread.id)
+                .is_some_and(|live| !live.last_prompt.is_empty());
         let action = |name: &str, asset: &str, label: &'static str, action: Action| {
             Button::new(SharedString::from(format!("{name}:{}:{i}", thread.id)))
                 .ghost()
@@ -936,6 +993,7 @@ impl Adeline {
             .gap(rems(0.125))
             .child(action("reply", "reply", "Reply", Action::ReplyTo(i)))
             .child(action("copy", "copy", "Copy", Action::CopyMessage(i)))
+            .child(action("fork", "fork", "Fork", Action::Fork(i)))
             .when(retry, |actions| {
                 actions.child(action(
                     "retry",

@@ -64,7 +64,7 @@ def main():
 
     init = agent.call("initialize", {"protocolVersion": 1, "clientCapabilities": {}})
     assert init["protocolVersion"] == 1 and init["agentCapabilities"]["loadSession"] is True
-    assert init["agentCapabilities"]["sessionCapabilities"] == {"resume": {}, "close": {}}
+    assert init["agentCapabilities"]["sessionCapabilities"] == {"resume": {}, "close": {}, "fork": {}}
     session = agent.call("session/new", {"cwd": str(temp), "mcpServers": []})
     sid = session["sessionId"]
     assert session["configOptions"][0]["currentValue"] == "fake-model"

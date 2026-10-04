@@ -5,6 +5,7 @@ Keywords in the prompt script each turn, applied in this order:
   SLOW <secs>    stream one chunk every 0.5 s for that long
   PERMISSION     ask the client for an edit permission and wait for the answer
   HANG_ON_CLOSE  from now on ignore session/close and stdin EOF
+  NO_FORK        later session/fork calls of this session fail
 Without keywords the turn streams a short greeting. Every wait honors
 session/cancel and then replies stopReason "cancelled".
 
@@ -100,6 +101,8 @@ def prompt(message):
     def finish(reason):
         send({"id": message["id"], "result": {"stopReason": reason}})
 
+    if "NO_FORK" in text:
+        attempts_file(session + ".no-fork").touch()
     if "HANG_ON_CLOSE" in text:
         hang_on_close.set()
     if match := re.search(r"FAIL (\d+)", text):
@@ -141,12 +144,17 @@ def handle(message):
         case "initialize":
             reply({
                 "protocolVersion": 1,
-                "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"resume": {}, "close": {}}},
+                "agentCapabilities": {"loadSession": True, "sessionCapabilities": {"resume": {}, "close": {}, "fork": {}}},
                 "agentInfo": {"name": "fake", "version": "1.0"},
                 "authMethods": [],
             })
         case "session/new":
             reply({"sessionId": str(uuid.uuid4()), "configOptions": [MODEL_OPTION]})
+        case "session/fork":
+            if attempts_file(params.get("sessionId", "") + ".no-fork").exists():
+                send({"id": message["id"], "error": {"code": -32000, "message": "cannot fork this session"}})
+            else:
+                reply({"sessionId": str(uuid.uuid4()), "configOptions": [MODEL_OPTION]})
         case "session/resume" | "session/load":
             reply({"configOptions": [MODEL_OPTION]})
         case "session/set_config_option":

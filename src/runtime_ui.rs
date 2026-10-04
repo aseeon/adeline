@@ -364,6 +364,64 @@ impl Adeline {
         }
     }
 
+    /// Copies the open chat through a finished reply into a new chat and opens it.
+    pub(super) fn fork_conversation(
+        &mut self,
+        message: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(ix) = self.selected else {
+            return;
+        };
+        if self.demo_mode {
+            let source = &self.workspace().threads[ix];
+            let fork = Thread {
+                id: format!("local-{}", self.workspace().threads.len()),
+                title: format!("{} (fork)", source.title),
+                provider: source.provider.clone(),
+                status: "idle".into(),
+                messages: source.messages[..=message].to_vec(),
+                activity: source
+                    .activity
+                    .iter()
+                    .filter(|a| a.turn.is_some_and(|turn| turn < message))
+                    .cloned()
+                    .collect(),
+                fork: Some(Fork {
+                    id: source.id.clone(),
+                    title: source.title.clone(),
+                    text_copy: false,
+                }),
+                ..Default::default()
+            };
+            self.projects[self.project].threads.insert(0, fork);
+            self.open_fork(0, window, cx);
+            return;
+        }
+        let id = self.workspace().threads[ix].id.clone();
+        self.request(
+            Command::Fork { id, message },
+            cx,
+            move |app, result, window, cx| match result {
+                Ok(Value::String(id)) => {
+                    if let Some(ix) = app.workspace().threads.iter().position(|t| t.id == id) {
+                        app.open_fork(ix, window, cx);
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => app.notify_toast(&format!("Could not fork the chat: {error}"), cx),
+            },
+        );
+    }
+
+    fn open_fork(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.act(Action::Chat(ix), window, cx);
+        self.composer
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        window.focus(&self.composer.focus_handle(cx), cx);
+    }
+
     pub(super) fn retry_storage(&mut self, cx: &mut Context<Self>) {
         if let Some(id) = self.current_id() {
             self.command(Command::RetryStorage { id }, cx);
