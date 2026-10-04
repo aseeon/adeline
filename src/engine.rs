@@ -2068,9 +2068,6 @@ impl Engine {
 
     /// For a fork without a session yet: its source's session, when a native
     /// fork would give the agent exactly the copied history, and that history as text.
-    // ponytail: keyed on "no session yet", so a text copy whose session started
-    // but whose first turn failed for good isn't resent on Retry; track
-    // delivery per fork if that shows up.
     fn fork_history(&self, id: &str) -> Option<(Option<String>, String)> {
         let settings = self.conversation_settings(id)?;
         if settings.session_id.is_some() {

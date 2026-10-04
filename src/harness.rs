@@ -338,7 +338,6 @@ fn parse_registry(text: &str) -> Result<Vec<Harness>, String> {
                 continue;
             };
             // `@scope/name@1.2.3` installs a `name` executable, sometimes without `-cli`.
-            // ponytail: name heuristic; packages whose binary is named otherwise stay red.
             let unversioned = package
                 .get(1..)
                 .and_then(|rest| rest.find('@'))

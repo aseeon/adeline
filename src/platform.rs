@@ -63,8 +63,6 @@ pub fn contain_children() -> Result<(), String> {
     reason = "matches the Windows version, which can fail"
 )]
 pub fn contain_children() -> Result<(), String> {
-    // ponytail: children only see stdin EOF when the engine dies; a child that
-    // ignores it outlives us. Use PR_SET_PDEATHSIG (Linux) if that bites.
     Ok(())
 }
 
@@ -307,7 +305,6 @@ fn overlapped_pipe() -> io::Result<(Reader, std::fs::File)> {
         std::process::id(),
         NEXT.fetch_add(1, Ordering::Relaxed)
     );
-    // ponytail: default DACL; one instance, connected at once, so nobody else can join.
     let server = tokio::net::windows::named_pipe::ServerOptions::new()
         .first_pipe_instance(true)
         .max_instances(1)

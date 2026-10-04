@@ -1557,8 +1557,6 @@ fn with_context(context: &str, text: &str) -> String {
 /// Command fragments that always need the user's approval, whatever the
 /// permission mode. Matched case-insensitively against the tool call's title
 /// and raw input.
-// ponytail: substring match, so quoting or aliases can slip past; this is a
-// floor under auto-approval, not a sandbox.
 const PROTECTED: &[&str] = &[
     "rm -rf",
     "rm -fr",

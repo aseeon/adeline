@@ -239,7 +239,6 @@ impl Adeline {
     /// The icon path and color of the agent named `agent`: its avatar in text
     /// colors, else the muted robot.
     pub(super) fn agent_icon(&self, agent: &str, cx: &App) -> (String, Hsla) {
-        // ponytail: checks the avatar file on each render; cache per agent if lists get slow.
         let path = self
             .agent_catalog
             .entries
