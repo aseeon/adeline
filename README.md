@@ -82,9 +82,11 @@ cargo run --release --locked -- --demo
 
 ## Contributing
 
-Bug reports and pull requests are welcome. Please [open an issue](https://github.com/aseeon/adeline/issues) before starting on a large change.
+Bug reports are welcome. If something doesn't work, please [open an issue](https://github.com/aseeon/adeline/issues).
 
-Before you open a pull request, run the same checks as CI:
+Adeline is at an early stage of development and its design still changes often, so pull requests that add features can't be accepted at the moment. Thank you for understanding. Feel free to suggest features in an issue instead.
+
+If you send a pull request that fixes a bug, run the same checks as CI first:
 
 ```bash
 cargo fmt --all -- --check
