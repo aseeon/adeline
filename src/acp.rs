@@ -1241,7 +1241,7 @@ impl Worker {
                 let _ = write!(title, "\nInput: {input}");
             }
             if protected && self.permission_mode != PermissionMode::Ask {
-                title.push_str("\nAdeline always asks before destructive commands.");
+                title.push_str("\nAdeline always asks before commands like this one.");
             }
             self.permissions.insert(id, (self.turn, options.clone()));
             self.emit(EventKind::Permission {

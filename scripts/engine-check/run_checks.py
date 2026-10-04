@@ -668,6 +668,16 @@ def check_fork():
         final = wait_turn(client, source, mark)
         expect(not final["error"], f"source turn ended with {final['error']}")
         expect(lifecycle(transcript(source), "turn_finished")[-1:], "source turn did not finish")
+        # A text-copy fork whose first turn fails sends its history again on Retry, in a new session.
+        client.call({"op": "set_settings", "settings": {"keep_running": False, "retry_limit": 0}})
+        failed = client.call({"op": "fork", "id": source, "message": 1})
+        send_in(client, failed, "FAIL 9")
+        mark = client.mark()
+        client.call({"op": "retry", "id": failed})
+        wait_turn(client, failed, mark)
+        prompts = [m["params"]["prompt"][0]["text"] for m in sent(failed, "session/prompt")]
+        expect(len(prompts) == 2 and all("user: first" in p for p in prompts), prompts)
+        expect(len(sent(failed, "session/new")) == 2, "retry reused the failed fork's session")
 
 
 @check("AC20 thread count with 20 conversations, 5 processing")

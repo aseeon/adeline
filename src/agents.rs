@@ -388,7 +388,7 @@ impl AgentCatalog {
 /// An agent's avatar asset path, else its harness icon.
 pub fn avatar_path(id: &str, harness: &str) -> String {
     let path = format!("agent-avatars/{id}.svg");
-    if crate::harness::icon(&path).is_some() {
+    if crate::harness::has_icon(&path) {
         path
     } else {
         crate::harness::icon_path(harness)

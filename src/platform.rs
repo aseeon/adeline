@@ -9,6 +9,7 @@
 )]
 use std::{
     io,
+    path::Path,
     process::{Child, ChildStdin, Command, Stdio},
 };
 use tokio::io::AsyncRead;
@@ -21,7 +22,7 @@ pub type Reader = Box<dyn AsyncRead + Send + Unpin>;
     clippy::cast_possible_truncation,
     reason = "Win32 struct sizes fit in u32"
 )]
-pub fn contain_children() -> Result<(), String> {
+pub fn contain_children(_dir: &Path) -> Result<(), String> {
     use windows_sys::Win32::System::{
         JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -56,14 +57,85 @@ pub fn contain_children() -> Result<(), String> {
     Ok(())
 }
 
-/// Ties every process this one starts to its lifetime, even when it is killed.
+/// Ties every process this one starts to its lifetime. Unix has no job
+/// objects: each agent gets its own process group, listed in a file in `dir`.
+/// [`stop_children`] stops them on exit, and the next engine stops the ones an
+/// engine that was killed or crashed left behind.
 #[cfg(not(windows))]
 #[expect(
     clippy::unnecessary_wraps,
     reason = "matches the Windows version, which can fail"
 )]
-pub fn contain_children() -> Result<(), String> {
+pub fn contain_children(dir: &Path) -> Result<(), String> {
+    let file = dir.join("agent-groups");
+    stop_groups(&file);
+    if let Ok(mut groups) = GROUPS.lock() {
+        *groups = Some(file);
+    }
     Ok(())
+}
+
+/// Windows needs nothing: the job object stops them when the engine exits.
+#[cfg(windows)]
+pub fn stop_children() {}
+
+/// Stops the agent process groups this engine started.
+#[cfg(not(windows))]
+pub fn stop_children() {
+    if let Some(file) = GROUPS.lock().ok().and_then(|groups| groups.clone()) {
+        stop_groups(&file);
+    }
+}
+
+/// The file listing this engine's agent process groups, once known.
+#[cfg(not(windows))]
+static GROUPS: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+/// Lists a new agent's process group, led by `pid` running `program`.
+#[cfg(not(windows))]
+fn record_group(pid: u32, program: &std::ffi::OsStr) {
+    use std::io::Write as _;
+    let Some(file) = GROUPS.lock().ok().and_then(|groups| groups.clone()) else {
+        return;
+    };
+    let name = Path::new(program).file_name().unwrap_or(program);
+    if let Ok(mut out) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(file)
+    {
+        let _ = writeln!(out, "{pid} {}", name.to_string_lossy());
+    }
+}
+
+/// Kills every listed group whose leader still runs what was started, then
+/// empties the list. An ID that a new, unrelated process now has is skipped.
+/// ponytail: a group whose leader already exited is skipped too, with its
+/// children; walk `ps -g` if agents start leaving those behind.
+#[cfg(not(windows))]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "Runs at engine start and exit, off any UI thread"
+)]
+fn stop_groups(file: &Path) {
+    let Ok(text) = std::fs::read_to_string(file) else {
+        return;
+    };
+    for (pid, name) in text.lines().filter_map(|line| line.split_once(' ')) {
+        let Ok(out) = Command::new("ps")
+            .args(["-o", "pgid=,command=", "-p", pid])
+            .output()
+        else {
+            continue;
+        };
+        let out = String::from_utf8_lossy(&out.stdout);
+        if out.split_whitespace().next() == Some(pid) && out.contains(name) {
+            let _ = Command::new("kill")
+                .args(["-KILL", "--", &format!("-{pid}")])
+                .status();
+        }
+    }
+    let _ = std::fs::remove_file(file);
 }
 
 /// Starts a background process that outlives the caller, outside its console and job.
@@ -277,7 +349,9 @@ pub fn spawn_piped(
         } else {
             Stdio::null()
         });
-        let mut child = command.spawn()?;
+        use std::os::unix::process::CommandExt as _;
+        let mut child = command.process_group(0).spawn()?;
+        record_group(child.id(), command.get_program());
         let reader = |fd: std::os::fd::OwnedFd| -> io::Result<Reader> {
             Ok(Box::new(tokio::net::unix::pipe::Receiver::from_owned_fd(
                 fd,
@@ -379,9 +453,25 @@ mod tests {
         );
     }
 
+    fn groups_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("adeline-groups-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
     #[test]
     fn children_can_be_contained() {
-        contain_children().unwrap();
+        contain_children(&groups_dir()).unwrap();
+    }
+
+    // nextest runs each test in its own process, so no other test's agents share the list.
+    #[cfg(not(windows))]
+    #[tokio::test]
+    async fn stop_children_kills_agent_groups() {
+        contain_children(&groups_dir()).unwrap();
+        let (mut child, ..) = spawn_piped(Command::new("sleep").arg("30"), false).unwrap();
+        stop_children();
+        assert!(!child.wait().unwrap().success());
     }
 
     #[cfg(windows)]

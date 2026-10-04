@@ -28,6 +28,9 @@ pub struct Harness {
     pub website: String,
     /// Executable names to look for, in order.
     executables: Vec<String>,
+    /// The npm or uv package the executables must come from.
+    #[serde(default)]
+    package: Option<String>,
     pub arguments: Vec<String>,
 }
 
@@ -37,6 +40,7 @@ fn omp() -> Harness {
         name: "OMP".into(),
         website: "https://github.com/can1357/oh-my-pi".into(),
         executables: vec!["omp".into()],
+        package: None,
         arguments: vec!["acp".into()],
     }
 }
@@ -175,6 +179,11 @@ pub fn icon(path: &str) -> Option<Vec<u8>> {
     ICONS.read().ok()?.get(path).cloned()
 }
 
+/// Whether the engine sent an icon for `path`, without copying it.
+pub fn has_icon(path: &str) -> bool {
+    ICONS.read().is_ok_and(|icons| icons.contains_key(path))
+}
+
 /// A harness's icon, read by the engine: bundled for OMP, else the cached registry icon.
 pub fn icon_svg(id: &str) -> Option<Vec<u8>> {
     if id == OMP {
@@ -192,7 +201,7 @@ pub fn icon_path(id: &str) -> String {
     let registry = format!("registry-icons/{id}.svg");
     if id == OMP {
         "omp.svg".into()
-    } else if icon(&registry).is_some() {
+    } else if has_icon(&registry) {
         registry
     } else {
         "robot.svg".into()
@@ -322,6 +331,7 @@ fn parse_registry(text: &str) -> Result<Vec<Harness>, String> {
         let distribution = &agent["distribution"];
         let mut executables = Vec::new();
         let mut arguments = Vec::new();
+        let mut source = None;
         if let Some(binaries) = distribution["binary"].as_object() {
             let binary = binaries
                 .get(&platform)
@@ -342,6 +352,10 @@ fn parse_registry(text: &str) -> Result<Vec<Harness>, String> {
                 .get(1..)
                 .and_then(|rest| rest.find('@'))
                 .map_or(package, |at| &package[..=at]);
+            let unversioned = unversioned
+                .split_once("==")
+                .map_or(unversioned, |(name, _)| name);
+            source = Some(unversioned.to_owned());
             let base = unversioned.rsplit('/').next().unwrap_or(unversioned);
             executables.push(base.to_owned());
             if let Some(short) = base.strip_suffix("-cli") {
@@ -367,6 +381,7 @@ fn parse_registry(text: &str) -> Result<Vec<Harness>, String> {
                 .filter(|url| !url.is_empty())
                 .unwrap_or_else(|| link("repository")),
             executables,
+            package: source,
             arguments,
         });
     }
@@ -425,7 +440,37 @@ fn locate(harness: &Harness) -> Option<PathBuf> {
     harness
         .executables
         .iter()
-        .find_map(|name| find(name, &dirs))
+        .filter_map(|name| find(name, &dirs))
+        .find(|path| {
+            harness
+                .package
+                .as_deref()
+                .is_none_or(|package| comes_from(path, package))
+        })
+}
+
+/// Whether `path` runs `package`: it links into the package's folder, or is a
+/// small shim or launcher that names it, as npm, bun and uv install them.
+/// Names are guessed from the package, so `@minimax-ai/code` must not find VS Code's `code`.
+fn comes_from(path: &Path, package: &str) -> bool {
+    let needles: Vec<String> = ['/', '\\']
+        .iter()
+        .map(|sep| format!("{sep}{}{sep}", package.replace('/', &sep.to_string())))
+        .collect();
+    let mentions = |bytes: &[u8]| {
+        needles
+            .iter()
+            .any(|needle| contains_ascii_bytes(bytes, needle.as_bytes()))
+    };
+    fs::canonicalize(path).is_ok_and(|real| mentions(real.as_os_str().as_encoded_bytes()))
+        || fs::metadata(path).is_ok_and(|meta| meta.len() <= 4 << 20)
+            && fs::read(path).is_ok_and(|bytes| mentions(&bytes))
+}
+
+fn contains_ascii_bytes(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
 /// A Custom command as a path: itself when it names a file, else found on PATH.
@@ -810,6 +855,11 @@ mod tests {
         assert_eq!(harnesses[1].arguments, ["acp"]);
         assert_eq!(harnesses[2].executables, ["codex-acp"]);
         assert!(harnesses[2].arguments.is_empty());
+        assert_eq!(
+            harnesses[2].package.as_deref(),
+            Some("@agentclientprotocol/codex-acp")
+        );
+        assert_eq!(harnesses[1].package, None);
         let hostile = parse_registry(
             r#"{"agents":[
             {"id":"omp","name":"Fake OMP","distribution":{}},
@@ -823,6 +873,34 @@ mod tests {
         assert!(parse_registry("not json").is_err());
         let bundled = std::str::from_utf8(crate::embedded("registry.json").unwrap()).unwrap();
         assert!(parse_registry(bundled).unwrap().len() > 10);
+    }
+
+    #[test]
+    fn guessed_executables_must_come_from_their_package() {
+        let dir = std::env::temp_dir().join(format!("adeline-shims-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let vs_code = dir.join("code.cmd");
+        fs::write(
+            &vs_code,
+            r#"@"%~dp0..\Code.exe" "%~dp0..\resources\app\out\cli.js" %*"#,
+        )
+        .unwrap();
+        let npm = dir.join("mcode.cmd");
+        fs::write(
+            &npm,
+            r#""%_prog%" "%dp0%\node_modules\@minimax-ai\code\cli.js" %*"#,
+        )
+        .unwrap();
+        assert!(!comes_from(&vs_code, "@minimax-ai/code"));
+        assert!(comes_from(&npm, "@minimax-ai/code"));
+        assert!(!comes_from(&npm, "@minimax-ai/co"));
+        let uv = parse_registry(
+            r#"{"agents":[{"id":"fast-agent","name":"fast-agent",
+             "distribution":{"uvx":{"package":"fast-agent-acp==0.10.1"}}}]}"#,
+        )
+        .unwrap();
+        assert_eq!(uv[0].package.as_deref(), Some("fast-agent-acp"));
+        assert_eq!(uv[0].executables, ["fast-agent-acp", "fast-agent"]);
     }
 
     #[test]

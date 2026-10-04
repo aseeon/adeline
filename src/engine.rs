@@ -301,7 +301,7 @@ fn run(daemon: bool) -> i32 {
         env!("CARGO_PKG_VERSION"),
         if daemon { ", --daemon" } else { "" }
     ));
-    if let Err(error) = crate::platform::contain_children() {
+    if let Err(error) = crate::platform::contain_children(&dir) {
         log(format!("Cannot tie agent processes to the engine: {error}"));
     }
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -318,6 +318,7 @@ fn run(daemon: bool) -> i32 {
     let code = runtime.block_on(serve(daemon));
     // A detection or probe still running mustn't hold up the exit.
     runtime.shutdown_timeout(Duration::from_secs(1));
+    crate::platform::stop_children();
     log("Engine exited");
     drop(lock);
     code
@@ -489,6 +490,8 @@ struct Engine {
     deleting: HashMap<String, Vec<(u64, u64)>>,
     probes: HashMap<(u64, u64), harness::Probe>,
     permission_stopped: HashSet<String>,
+    /// Forks whose copied history went out as text but no turn has finished yet.
+    text_copy_pending: HashSet<String>,
     /// Turns waiting for their conversation's closing agent to exit.
     queued: HashMap<String, String>,
     /// When the engine itself last wrote each conversation, for file watching.
@@ -659,6 +662,7 @@ impl Engine {
             deleting: HashMap::new(),
             probes: HashMap::new(),
             permission_stopped: HashSet::new(),
+            text_copy_pending: HashSet::new(),
             queued: HashMap::new(),
             touched: HashMap::new(),
             watched: Vec::new(),
@@ -1663,8 +1667,12 @@ impl Engine {
                         self.set_runtime_status(&id, "blocked");
                     }
                 }
+                if self.text_copy_pending.remove(&id) {
+                    self.drop_undelivered_fork_session(&id);
+                }
             }
             acp::EventKind::Finished { stop_reason } => {
+                self.text_copy_pending.remove(&id);
                 self.record_visible(
                     &id,
                     "lifecycle",
@@ -1744,6 +1752,7 @@ impl Engine {
             }
             acp::EventKind::StorageError(error) => self.storage_failure(&id, &error),
             acp::EventKind::TextCopy => {
+                self.text_copy_pending.insert(id.clone());
                 if self.record_visible(&id, "fork_text_copy", json!({}))
                     && let Some((project_id, thread)) = self.thread_from_store(&id)
                 {
@@ -1811,6 +1820,20 @@ impl Engine {
             let _ = slot.driver.send(acp::Command::Cancel);
         }
         self.send_live(id);
+    }
+
+    /// A text-copy fork whose first turn failed: retire its session and agent,
+    /// so Retry starts a fresh session and sends the copied history again.
+    fn drop_undelivered_fork_session(&mut self, id: &str) {
+        let Some(mut settings) = self.conversation_settings(id) else {
+            return;
+        };
+        if let Some(old) = settings.session_id.take() {
+            settings.previous_session_ids.push(old);
+        }
+        if self.save_conversation_settings(id, settings) {
+            self.shutdown_conversation(id);
+        }
     }
 
     fn shutdown_conversation(&mut self, id: &str) {
