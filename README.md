@@ -46,7 +46,9 @@ Adeline runs harnesses that are already installed on your machine. It never down
 
 ## Install
 
-There are no prebuilt releases yet. Build Adeline from source.
+Download the zip for your platform from the [latest release](https://github.com/aseeon/adeline/releases/latest). Builds are available for Windows (x86_64), macOS (Apple Silicon) and Linux (x86_64).
+
+## Build from source
 
 ### Requirements
 
