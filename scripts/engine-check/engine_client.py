@@ -8,11 +8,15 @@ import itertools
 import json
 import msvcrt
 import os
+import re
 import threading
 import time
 from ctypes import wintypes
 
-PROTOCOL = 2
+# Read from src/protocol.rs so the Rust constant stays the only copy.
+PROTOCOL = int(re.search(r"pub const PROTOCOL: u32 = (\d+);", open(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src", "protocol.rs"),
+    encoding="utf-8").read()).group(1))
 _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 _kernel32.PeekNamedPipe.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD,
                                     ctypes.c_void_p, ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p]

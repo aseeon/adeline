@@ -1,3 +1,4 @@
+//! The Chats layout, command popovers (the menus) and modal dialogs.
 use super::*;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::command::{Command, CommandItem, CommandState};

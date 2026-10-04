@@ -1,4 +1,4 @@
-"""End-to-end checks of the conversation engine (docs/scope-conversation-engine.md).
+"""End-to-end checks of the conversation engine (docs/archive/scope-conversation-engine.md).
 
 Runs target/release/adeline.exe against an isolated temporary home: every
 process started here gets USERPROFILE and HOME pointing at it, so the real

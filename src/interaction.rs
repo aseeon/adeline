@@ -1,3 +1,5 @@
+//! `Adeline::act`, the dispatcher every `Action` goes through, and sending the
+//! composer's message.
 use super::*;
 use std::fmt::Write as _;
 

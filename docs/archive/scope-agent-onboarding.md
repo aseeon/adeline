@@ -1,4 +1,4 @@
-Status: Confirmed
+Status: Implemented in v0.1.0. This scope is history. Where it and the code differ, the code is right.
 
 # Agent onboarding and live model/effort selection
 
@@ -12,7 +12,7 @@ The user is the person running Adeline locally, who adds agents and chats with t
 
 **After:** The user types a name and picks a harness from a list showing which ones are installed. Adeline starts the harness in the background and fills the Model and Effort pickers with what that harness actually offers. The user picks a default model and effort, a permission mode, and optional system instructions, then saves. Command and Arguments appear only for a custom harness.
 
-This scope supersedes, for agent definitions, the Command/Arguments form and legacy migration (R2, R3), the bans on changing model and effort mid-conversation (R5) and the agent-name sentence wording (R6) in `docs/scope-acp-agent-driver.md`. All other parts of that scope remain in force.
+This scope supersedes, for agent definitions, the Command/Arguments form and legacy migration (R2, R3), the bans on changing model and effort mid-conversation (R5) and the agent-name sentence wording (R6) in `docs/archive/scope-acp-agent-driver.md`. All other parts of that scope remain in force.
 
 Repository evidence inspected on 2026-10-02:
 
@@ -92,7 +92,7 @@ Repository evidence inspected on 2026-10-02:
 - No embedded login. Authentication stays outside Adeline (driver-scope R27 still applies).
 - No migration of old agent definitions or old conversation snapshots.
 - Switching agents mid-conversation remains excluded. Only model and effort become switchable, and only when the harness allows it.
-- The working directory, permission mode behavior, retries, transcripts and lifecycle from `docs/scope-acp-agent-driver.md` are unchanged.
+- The working directory, permission mode behavior, retries, transcripts and lifecycle from `docs/archive/scope-acp-agent-driver.md` are unchanged.
 - Demo mode stays isolated and must not fetch the registry into real config, probe real harnesses on the user's behalf for saving, or write real definitions.
 
 ### Rejected ideas

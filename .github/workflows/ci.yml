@@ -8,11 +8,23 @@ env:
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
 
+# Pushes that only touch docs or agent skills skip CI. A push with any other
+# file runs it, whatever the commit order, so commits need no `[skip ci]`.
 on:
   push:
     branches:
       - main
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.agents/**'
+      - '.claude/**'
   pull_request:
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+      - '.agents/**'
+      - '.claude/**'
   workflow_dispatch:
 
 permissions:

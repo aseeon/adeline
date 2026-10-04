@@ -1,3 +1,5 @@
+//! The UI's model of projects, chats, messages and tool activity, plus the
+//! bundled demo workspace (`assets/workspace.json`).
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

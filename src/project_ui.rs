@@ -1,3 +1,4 @@
+//! Projects from the UI: add, rename, settings, delete with undo, and the project dialog.
 use super::*;
 use std::path::Path;
 

@@ -1,3 +1,5 @@
+//! Drawing Chats: chat list rows and sidebar, transcript messages and their
+//! actions (Reply, Copy, Retry, Fork), decision rows and the composer.
 use super::*;
 use crate::chat::{self, LABEL_GAP, ROW_HEIGHT, SECTION_HEIGHT};
 use crate::prepared::{Group, Outcome};

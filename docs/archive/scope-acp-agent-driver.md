@@ -1,4 +1,4 @@
-Status: Confirmed
+Status: Implemented in v0.1.0. This scope is history. Where it and the code differ, the code is right.
 
 # ACP agent execution and persistent conversations
 
@@ -6,7 +6,7 @@ Status: Confirmed
 
 Adeline's local user needs to send real messages to configured agents and continue those conversations across application restarts. ACP is the first agent driver; OMP is the required test harness. The concrete example is an agent named Josh with command `omp.exe`, arguments `["acp"]`, and the saved provider/model, effort and instructions. The first Send creates a conversation in the selected project, starts its agent, sends the message and streams a formatted response.
 
-This scope supersedes the execution exclusion and combined-command requirement in `docs/scope-agents-mvp.md`. Existing agent-management and demo behavior remains applicable except where explicitly changed here. This document captures required behavior, not architecture, implementation tasks or delivery phases.
+This scope supersedes the execution exclusion and combined-command requirement in `docs/archive/scope-agents-mvp.md`. Existing agent-management and demo behavior remains applicable except where explicitly changed here. This document captures required behavior, not architecture, implementation tasks or delivery phases.
 
 Repository evidence inspected on 2026-09-26:
 
@@ -59,7 +59,7 @@ These findings support a small implementation that honors negotiated capabilitie
 - **R17.** Show tool calls, their status and results in expandable conversation entries. Add a Chats setting to hide tool calls entirely from the visible conversation. Hiding them must not remove transcript records or hide permission requests. Use generic Thinking rather than displaying reasoning text.
 - **R18.** While the current prompt is processing, replace Send with Stop using a square icon. Stop requests cancellation of that turn and pending retries while keeping the agent process running. Once cancellation settles, another prompt can use the same conversation. Cancel pending permission interactions for the stopped turn; late events must not corrupt a subsequent turn.
 - **R19.** Marking a conversation Completed or archiving it cancels pending work and retries and gracefully closes its agent. Preserve its transcript and settings. These actions affect only that conversation.
-- **R20.** On reopening a completed or archived conversation, restart its agent on the next Send and restore its prior context. The same restoration behavior applies when continuing after an application restart. Do not automatically restart agents or resubmit interrupted prompts merely because Adeline starts or a saved transcript is viewed. Application exit gracefully stops its running agents. (Replaced for application exit by R7–R9 of `docs/scope-conversation-engine.md`.)
+- **R20.** On reopening a completed or archived conversation, restart its agent on the next Send and restore its prior context. The same restoration behavior applies when continuing after an application restart. Do not automatically restart agents or resubmit interrupted prompts merely because Adeline starts or a saved transcript is viewed. Application exit gracefully stops its running agents. (Replaced for application exit by R7–R9 of `docs/archive/scope-conversation-engine.md`.)
 - **R21.** Prefer graceful shutdown for completion, archiving, deletion and application exit. If the agent does not cooperate, show that shutdown is stuck and offer an explicit Force Stop action. Never silently escalate to forceful termination or report that cleanup succeeded while the agent remains running.
 
 ### Permissions

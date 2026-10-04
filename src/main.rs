@@ -1,3 +1,6 @@
+//! Entry point and the `Adeline` root view. `adeline engine` runs the conversation
+//! engine. Anything else opens the UI (`--demo` uses bundled data). Every UI
+//! event is an `Action`.
 #![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
 mod acp;
 mod activity;

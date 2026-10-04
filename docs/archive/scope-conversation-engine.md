@@ -1,4 +1,4 @@
-Status: Confirmed
+Status: Implemented in v0.1.0. This scope is history. Where it and the code differ, the code is right.
 
 # Scope: Conversation engine
 
@@ -22,7 +22,7 @@ Current behavior, from the repo:
 - `src/runtime_ui.rs`, the `record` closure in `ensure_driver`: drivers write transcripts through `ProjectStore`, which lives in the UI process behind `Arc<Mutex>`.
 - `src/config.rs`, `directory`: data lives under `~/.config/adeline/`, with `settings.yml`, `projects/` (`src/storage.rs`, `ProjectStore`) and `agents/` (`src/agents.rs`, `AgentCatalog`). `modes.chats.retry_limit` is currently a UI setting (`src/config.rs`, `Chats`).
 - `src/main.rs`: the UI watches `agents/` with `notify`.
-- `docs/scope-acp-agent-driver.md`: R20 and R21 currently define exit as a graceful stop of every running agent, with force used only by explicit choice.
+- `docs/archive/scope-acp-agent-driver.md`: R20 and R21 currently define exit as a graceful stop of every running agent, with force used only by explicit choice.
 
 Comparable tools, researched during scoping:
 
@@ -47,7 +47,7 @@ Comparable tools, researched during scoping:
 ### Quitting the UI
 
 - **R7.** When the last connected client quits while any conversation is active, the UI shows a dialog with **Stop all**, **Finish in background** and **Cancel**. Cancel keeps Adeline open. If nothing is active, the UI quits with no dialog. When other clients are still connected, closing a UI only disconnects it: no dialog appears and nothing stops. Stop all is also available as a menu action at any time. Idle agent processes are stopped whichever of Stop all or Finish in background is chosen (outside daemon mode, R6).
-- **R8.** **Stop all** cancels every running turn and every pending retry, then asks each agent to close gracefully. Any agent still running after 5 seconds is killed automatically, with no second confirmation. The dialog closes only after every agent process has actually exited. `adeline engine stop` and Settings › Engine › Stop engine use the same flow. For application exit, this replaces the exit behavior in `docs/scope-acp-agent-driver.md` R20 and R21.
+- **R8.** **Stop all** cancels every running turn and every pending retry, then asks each agent to close gracefully. Any agent still running after 5 seconds is killed automatically, with no second confirmation. The dialog closes only after every agent process has actually exited. `adeline engine stop` and Settings › Engine › Stop engine use the same flow. For application exit, this replaces the exit behavior in `docs/archive/scope-acp-agent-driver.md` R20 and R21.
 - **R9.** **Finish in background** lets the UI exit while the engine keeps every active turn running, including pending automatic retries up to the retry limit. Running out of retries ends a turn the same way it does today, with the error recorded. When a turn finishes, its agent process closes gracefully (outside daemon mode). Once nothing is active and no client is connected, R5 applies.
 - **R10.** If a turn needs a permission while no client is connected, the engine stops that turn immediately and records it as interrupted, waiting for permission. That covers a request already waiting when the last client disconnected, and a request that arrives while none is connected. Daemon mode follows the same rule. After a client reconnects, Retry continues the turn.
 - **R11.** If Adeline is reopened while the engine is still running background work, the UI connects to that engine. Running conversations keep streaming live, and Stop, sending, answering permissions and every other conversation action work as usual. A connected client cancels the auto-shutdown countdown (R5).
@@ -67,7 +67,7 @@ Comparable tools, researched during scoping:
 - **R19.** The main Settings window gets an **Engine** group. It contains every engine setting (Keep conversation engine running, and the retry limit, which moves there from Chats), the same status fields as `adeline engine status`, and Stop engine or Start engine. Chats keeps only UI preferences.
 - **R20.** The engine watches its data folders. Agent definitions and project files changed outside Adeline, by hand or by an agent, reach every connected client live.
 - **R21.** The engine handles harness detection, harness probes, and registry and icon downloads. Clients request these from the engine and receive the results from it.
-- **R22.** Every requirement in `docs/scope-acp-agent-driver.md` still applies and is now enforced by the engine. That includes transcripts (R12 there), one process and session per conversation (R15), Stop (R18), permissions (R22–R24) and retries (R26–R27). Only the application-exit behavior in R20 and R21 is replaced, by R7–R9 here. For Complete, Archive and project deletion, R21 there still holds: graceful first, then an **explicit** Force stop.
+- **R22.** Every requirement in `docs/archive/scope-acp-agent-driver.md` still applies and is now enforced by the engine. That includes transcripts (R12 there), one process and session per conversation (R15), Stop (R18), permissions (R22–R24) and retries (R26–R27). Only the application-exit behavior in R20 and R21 is replaced, by R7–R9 here. For Complete, Archive and project deletion, R21 there still holds: graceful first, then an **explicit** Force stop.
 
 ### Connection and compatibility
 
@@ -168,7 +168,7 @@ Covered by R10 (a permission needed with no client), R13 and R14 (simultaneous o
 - **AC14 (R18, R19).** After the upgrade, the retry limit matches the old `modes.chats.retry_limit` and is stored in `engine/settings.yml`. Settings has an Engine group with the daemon toggle, the retry limit, the status fields and Stop engine or Start engine. Chats no longer shows the retry limit. Changing the retry limit affects a turn already running in the background.
 - **AC15 (R20).** Editing an `agent.yml` or a project file on disk updates every connected client with no restart.
 - **AC16 (R21).** Harness detection, probes and icon downloads run in the engine process. Clients display the results the engine sends them.
-- **AC17 (R22).** The acceptance criteria in `docs/scope-acp-agent-driver.md` still pass, except for exit behavior. Complete, Archive and project deletion still require an explicit Force stop when an agent hangs.
+- **AC17 (R22).** The acceptance criteria in `docs/archive/scope-acp-agent-driver.md` still pass, except for exit behavior. Complete, Archive and project deletion still require an explicit Force stop when an agent hangs.
 - **AC18 (R23).** The engine accepts connections only through a local named pipe or Unix socket, and only from the same OS user. The protocol doesn't depend on the client and engine sharing files or paths.
 - **AC19 (R24).** A newer UI connecting to an older engine that has active conversations shows Wait and Stop them now, and each behaves as described. For an older engine in daemon mode, Restart engine is offered only when nothing is active.
 - **AC20 (R25).** With 20 live conversations, 5 of them processing, the engine's OS thread count is the same as with 1 conversation, apart from blocking-pool threads that come and go. A harness probe leaves no permanent threads behind.

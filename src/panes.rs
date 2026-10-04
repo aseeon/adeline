@@ -1,3 +1,4 @@
+//! The resizable workspace layout (left, main and side panels) and the control bar.
 use super::*;
 use gpui_kit::base::ResizeHandleContext;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel};

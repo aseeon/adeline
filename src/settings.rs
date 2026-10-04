@@ -1,3 +1,5 @@
+//! The Settings and agent windows: groups and pages, creating, editing and
+//! deleting agents, and closing with unsaved changes.
 use super::*;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, FocusableExt as _, Icon, IndexPath, Root, Selectable as _,

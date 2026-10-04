@@ -1,4 +1,4 @@
-Status: Confirmed
+Status: Implemented in v0.1.2. This scope is history. Where it and the code differ, the code is right.
 
 # Session forking
 
@@ -14,7 +14,7 @@ Current behavior:
 - When a saved session can't be restored, Adeline already rebuilds context as text. `Engine` in `src/engine.rs` (the replacement-session path that sends `acp::Command::ReplaceSession`) joins the visible messages as `role: text`. `Worker::configured` and `pending_context` in `src/acp.rs` put a "Saved conversation context…" preamble in front of the next prompt.
 - Each conversation keeps its own copied execution settings and permission mode (`ExecutionConfig` and `StoredConversation` in `src/storage.rs`).
 - A finished turn's last reply offers Reply, Copy and Retry (`closing_row` in `src/chat_render.rs`). Retry is hidden in demo mode.
-- A new chat is not saved and does not start an agent until its first Send (`docs/scope-acp-agent-driver.md`, AC1 and AC6).
+- A new chat is not saved and does not start an agent until its first Send (`docs/archive/scope-acp-agent-driver.md`, AC1 and AC6).
 - ACP defines `session/fork` only as an unstable draft, gated on `sessionCapabilities.fork`. It forks a whole session, not from a chosen message, and the RFD names only `claude-agent-acp` as an implementation (https://agentclientprotocol.com/rfds/session-fork).
 
 ## Requirements

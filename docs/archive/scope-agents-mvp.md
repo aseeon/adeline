@@ -1,4 +1,4 @@
-Status: Confirmed
+Status: Implemented in v0.1.0. This scope is history. Where it and the code differ, the code is right.
 Implemented: Yes
 
 # Agents MVP
