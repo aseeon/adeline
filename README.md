@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>A native desktop app for running coding agents across your projects.</strong><br />
-  Chat with Gemini CLI, Codex, OpenCode, oh-my-pi, and any other ACP agent in one window.
+  Chat with Claude Code, Codex, OpenCode, oh-my-pi, and any other ACP agent in one window.
 </p>
 
 <p align="center">
@@ -14,10 +14,10 @@
 </p>
 
 <p align="center">
-  <img src="assets/adeline-screenshot.png" alt="Adeline showing a project with its conversations and an agent chat" width="960" />
+  <img src="assets/adeline-screenshot.png" alt="Adeline with a project's chats on the left, a Claude Code conversation in the middle, and the agent's activity on the right" width="960" />
 </p>
 
-Adeline is an agentic development environment written in Rust. It keeps your projects, agents, and conversations in one fast native app. Agents keep working after you close the window, and every conversation is saved to disk as plain files.
+Adeline is an agentic development environment written in Rust. It keeps your projects, agents, and conversations in one fast native app. Agents keep working after you close the window, and every conversation is saved to disk.
 
 > [!NOTE]
 > Adeline is in early development. Expect missing features and breaking changes between versions.
@@ -31,16 +31,16 @@ Adeline is an agentic development environment written in Rust. It keeps your pro
 - **Permission control.** Choose per conversation whether the agent asks before every action, runs reads on its own, or runs everything.
 - **Runs in the background.** Agents keep working when you switch chats or close Adeline. Open several windows and they all see the same live state.
 - **Recovery.** Adeline retries failed turns and restores interrupted sessions when the harness supports it.
-- **Plain files.** Agents, projects, and transcripts are YAML and JSONL files under `~/.config/adeline/`. Edit them by hand and Adeline picks up the changes live.
+- **Plain files.** Agents and projects are YAML files under `~/.config/adeline/`. Edit them by hand and Adeline picks up the changes live.
 
 ## Supported agents
 
 Adeline works with any harness that speaks the [Agent Client Protocol](https://agentclientprotocol.com). These have been tested:
 
 - [oh-my-pi](https://omp.sh)
-- [Codex](https://github.com/openai/codex) (through its ACP adapter)
+- [Claude Code](https://github.com/anthropics/claude-code) through the [claude-agent-acp](https://github.com/agentclientprotocol/claude-agent-acp) adapter
+- [Codex](https://github.com/openai/codex) through the [codex-acp](https://github.com/agentclientprotocol/codex-acp) adapter
 - [OpenCode](https://opencode.ai)
-- [Gemini CLI](https://github.com/google-gemini/gemini-cli)
 
 Adeline runs harnesses that are already installed on your machine. It never downloads or installs them for you. Sign in to each harness on its own before using it in Adeline.
 
@@ -75,7 +75,7 @@ cargo run --release --locked -- --demo
 
 ## Getting started
 
-1. Install an ACP harness, for example Gemini CLI or OpenCode, and sign in to it.
+1. Install an ACP harness, for example OpenCode or Codex through codex-acp, and sign in to it.
 2. Open Adeline and choose **Agents → Add an Agent**. Pick the harness, model, and effort level.
 3. Create a project and select its working directory.
 4. Start a new chat and send your first message.
