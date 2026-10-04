@@ -4,7 +4,7 @@
 
 <p align="center">
   <strong>A native desktop app for running coding agents across your projects.</strong><br />
-  Chat with Claude Code, Codex, OpenCode, oh-my-pi, and any other ACP agent in one window.
+  Chat with Claude Code, Codex, OpenCode, oh-my-pi, and any other ACP agent in one application. Built with Rust and GPUI for native performance.
 </p>
 
 <p align="center">
