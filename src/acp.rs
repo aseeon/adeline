@@ -1158,8 +1158,10 @@ impl Worker {
             })
             .collect();
         let read_only = matches!(params["toolCall"]["kind"].as_str(), Some("read" | "search"));
-        if self.permission_mode == PermissionMode::AllowEverything
-            || (self.permission_mode == PermissionMode::AllowReads && read_only)
+        let protected = is_protected(&params["toolCall"]);
+        if !protected
+            && (self.permission_mode == PermissionMode::AllowEverything
+                || (self.permission_mode == PermissionMode::AllowReads && read_only))
         {
             if let Some(option) = options
                 .iter()
@@ -1193,6 +1195,9 @@ impl Worker {
             if let Some(input) = tool.get("rawInput").filter(|input| !input.is_null()) {
                 use std::fmt::Write as _;
                 let _ = write!(title, "\nInput: {input}");
+            }
+            if protected && self.permission_mode != PermissionMode::Ask {
+                title.push_str("\nAdeline always asks before destructive commands.");
             }
             self.permissions.insert(id, (self.turn, options.clone()));
             self.emit(EventKind::Permission {
@@ -1496,6 +1501,39 @@ fn tool_detail(update: &Value) -> String {
         }
     }
     detail
+}
+
+/// Command fragments that always need the user's approval, whatever the
+/// permission mode. Matched case-insensitively against the tool call's title
+/// and raw input.
+// ponytail: substring match, so quoting or aliases can slip past; this is a
+// floor under auto-approval, not a sandbox.
+const PROTECTED: &[&str] = &[
+    "rm -rf",
+    "rm -fr",
+    "remove-item -recurse",
+    "rmdir /s",
+    "del /s",
+    "git push --force",
+    "git push -f",
+    "git reset --hard",
+    "git clean -f",
+    "--no-verify",
+    "mkfs",
+    "dd if=",
+    "sudo ",
+];
+
+fn is_protected(tool: &Value) -> bool {
+    let text = format!(
+        "{} {}",
+        tool.get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+        tool.get("rawInput").unwrap_or(&Value::Null)
+    )
+    .to_lowercase();
+    PROTECTED.iter().any(|pattern| text.contains(pattern))
 }
 
 fn continue_interrupted_turn() -> &'static str {
@@ -2165,6 +2203,30 @@ mod tests {
             events.try_recv().unwrap().kind,
             EventKind::Permission { request_id: 8, .. }
         ));
+    }
+
+    #[test]
+    fn allow_everything_still_asks_for_destructive_commands() {
+        let (mut worker, events) = worker(Arc::new(|_, _, _| Ok(())));
+        worker.active = Some(turn(0));
+        worker.permission_mode = PermissionMode::AllowEverything;
+        let request = |id, command| {
+            json!({"id":id,"params":{"sessionId":"session-1",
+            "toolCall":{"toolCallId":"tool-1","title":"Run command","kind":"execute",
+            "rawInput":{"command":command}},
+            "options":[{"optionId":"allow","name":"Allow once","kind":"allow_once"}]}})
+        };
+        worker.permission_request(&request(7, "cargo test"));
+        assert!(events.try_recv().is_err());
+        worker.permission_request(&request(8, "Git Push --Force origin main"));
+        let EventKind::Permission {
+            request_id, title, ..
+        } = events.try_recv().unwrap().kind
+        else {
+            panic!("protected command was approved automatically")
+        };
+        assert_eq!(request_id, 8);
+        assert!(title.contains("always asks"));
     }
 
     #[test]
