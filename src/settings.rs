@@ -635,6 +635,8 @@ struct SettingsWindow {
     theme_picker: Entity<SelectState<SearchableVec<theme::ThemeChoice>>>,
     font_pickers: [Entity<SelectState<SearchableVec<String>>>; 2],
     theme_status: Option<String>,
+    /// Demo mode shows the General > Features page, whose toggles are still stubs.
+    demo: bool,
     group: usize,
     subgroup: Option<usize>,
     search_page: Option<(usize, Option<usize>)>,
@@ -711,6 +713,10 @@ impl SettingsWindow {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let demo = owner
+            .entity
+            .read_with(cx, |app, _| app.demo_mode)
+            .unwrap_or(false);
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
         let focus = cx.focus_handle().tab_stop(true);
         fonts::refresh(cx);
@@ -941,8 +947,10 @@ impl SettingsWindow {
             theme_picker,
             font_pickers,
             theme_status,
+            demo,
             group: usize::from(mode == Some(Section::Chats)),
-            subgroup: Some(0),
+            // General opens on Features in demo mode, Appearance otherwise.
+            subgroup: Some(usize::from(!demo && mode != Some(Section::Chats))),
             search_page: None,
             folded: std::array::from_fn(|group| group != usize::from(mode == Some(Section::Chats))),
             focus,
@@ -1875,7 +1883,9 @@ impl Render for SettingsWindow {
         let query = self.query.read(cx).value().to_lowercase();
         let searching = !query.trim().is_empty();
         let mut navigation = div().flex().flex_col().gap_1();
-        for (group, name) in GROUPS.into_iter().enumerate() {
+        // Licenses (group 2) always comes last in the sidebar.
+        for group in [0, 1, 3, 4, 2] {
+            let name = GROUPS[group];
             if group == 2 && searching {
                 continue;
             }
@@ -1884,7 +1894,7 @@ impl Render for SettingsWindow {
                 .enumerate()
                 .filter(|(child, title)| {
                     if group == 0 {
-                        general_matches(*child, &query)
+                        (self.demo || *child != 0) && general_matches(*child, &query)
                     } else {
                         matches_query(&query, &[name, title])
                     }
@@ -2039,7 +2049,7 @@ impl Render for SettingsWindow {
         let mut found = false;
         if let Some(owner) = self.owner.entity.upgrade() {
             let app = owner.read(cx);
-            if show(0, 0) && general_matches(0, &query) {
+            if self.demo && show(0, 0) && general_matches(0, &query) {
                 found = true;
                 if searching || self.subgroup.is_none() {
                     content = content.child(div().text_lg().child("Features"));
