@@ -10,7 +10,7 @@ This benefits people using Adeline and maintaining its UI. The requester decides
 
 ### Current behavior and evidence
 
-- `README.md`, "Platform setup" and "Validation": Adeline uses `gpui-pre 0.3.6` and supports Windows, macOS, and Linux, including X11 and Wayland. `docs/gpui-migration-guide.md`, section 9, records a compiled GPUI Kit 0.6.6 embedding check; Kit is not yet a production dependency. This scope does not choose a new dependency version.
+- `README.md`, "Platform setup" and "Validation": Adeline uses `gpui-pre 0.3.6` and supports Windows, macOS, and Linux, including X11 and Wayland. An earlier check confirmed that GPUI Kit 0.6.6 compiles when embedded in Adeline, but Kit is not yet a production dependency. This scope does not choose a new dependency version.
 - `src/config.rs`, `Settings`, `Appearance`, `Keymap`, `Features`, and `Modes`: settings cover appearance, shortcuts, feature visibility, and mode preferences. `Features::enabled` keeps Chats available independently of optional modes.
 - `src/settings.rs`, `SettingsWindow::render`, `open_agent`, and `Adeline::mode_options`: Settings includes General, Modes, Licenses, and Agents; agent creation has its own window. Excluded modes currently have content-specific and panel settings.
 - `src/views.rs`, `Adeline::chats` and `Adeline::activity_content`; `src/chat_render.rs`, `Adeline::chat_card` and `Adeline::chat_sidebar`: Chats has a conversation list, status filters, transcript, composer, conversation actions, and agent activity.
