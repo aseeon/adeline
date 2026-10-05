@@ -117,14 +117,23 @@ jobs:
         with:
           license-check: false
 
+  # The full desktop build, zipped as it's released.
   build:
     needs: [clippy, run_tests]
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-latest, macos-latest, ubuntu-24.04]
+        include:
+          - os: windows-latest
+            platform: windows-x86_64
+          - os: macos-latest
+            platform: macos-arm64
+          - os: ubuntu-24.04
+            platform: linux-x86_64
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    env:
+      ZIP: adeline-${{ matrix.platform }}.zip
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: install Linux libraries
@@ -133,12 +142,17 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - name: cargo build --profile dist
         run: cargo build --profile dist --locked
+      - name: zip (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path target/dist/adeline.exe -DestinationPath $env:ZIP
+      - name: zip
+        if: runner.os != 'Windows'
+        run: zip -j "$ZIP" target/dist/adeline
+      # Uploaded as is, so the downloaded artifact is the release zip.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: adeline-${{ runner.os }}
-          path: |
-            target/dist/adeline
-            target/dist/adeline.exe
+          path: ${{ env.ZIP }}
+          archive: false
           if-no-files-found: error
 
   # The headless build (`--no-default-features`), zipped as it's released.
