@@ -1,6 +1,6 @@
 [package]
 name = "adeline"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 description = "A native GPUI desktop workspace"
 license = "MIT"

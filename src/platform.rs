@@ -108,34 +108,59 @@ fn record_group(pid: u32, program: &std::ffi::OsStr) {
     }
 }
 
-/// Kills every listed group whose leader still runs what was started, then
-/// empties the list. An ID that a new, unrelated process now has is skipped.
-/// ponytail: a group whose leader already exited is skipped too, with its
-/// children; walk `ps -g` if agents start leaving those behind.
+/// Kills the listed groups that are still ours, then empties the list.
 #[cfg(not(windows))]
 #[expect(
     clippy::disallowed_methods,
     reason = "Runs at engine start and exit, off any UI thread"
 )]
 fn stop_groups(file: &Path) {
-    let Ok(text) = std::fs::read_to_string(file) else {
+    let Ok(listed) = std::fs::read_to_string(file) else {
         return;
     };
-    for (pid, name) in text.lines().filter_map(|line| line.split_once(' ')) {
-        let Ok(out) = Command::new("ps")
-            .args(["-o", "pgid=,command=", "-p", pid])
-            .output()
-        else {
-            continue;
-        };
-        let out = String::from_utf8_lossy(&out.stdout);
-        if out.split_whitespace().next() == Some(pid) && out.contains(name) {
+    if let Ok(out) = Command::new("ps")
+        .args(["-A", "-o", "pid=,pgid=,command="])
+        .output()
+    {
+        for group in ours(&String::from_utf8_lossy(&out.stdout), &listed) {
             let _ = Command::new("kill")
-                .args(["-KILL", "--", &format!("-{pid}")])
+                .args(["-KILL", "--", &format!("-{group}")])
                 .status();
         }
     }
     let _ = std::fs::remove_file(file);
+}
+
+/// The groups in `listed` (`<pgid> <program>` lines) that `ps` (`<pid> <pgid>
+/// <command>` lines) shows are still ours. An ID isn't handed out again while a
+/// group by that ID has members, so a group without its leader is still ours.
+/// A live leader must be the program that was started: the group may have
+/// emptied and its ID gone to a new process.
+#[cfg(any(not(windows), test))]
+fn ours<'a>(ps: &str, listed: &'a str) -> Vec<&'a str> {
+    let processes: Vec<(&str, &str, &str)> = ps
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim_start();
+            let (pid, rest) = line.split_once(char::is_whitespace)?;
+            let (pgid, command) = rest
+                .trim_start()
+                .split_once(char::is_whitespace)
+                .unwrap_or((rest.trim_start(), ""));
+            Some((pid, pgid, command))
+        })
+        .collect();
+    listed
+        .lines()
+        .filter_map(|line| line.split_once(' '))
+        .filter(
+            |&(group, name)| match processes.iter().find(|&&(pid, ..)| pid == group) {
+                Some(&(_, pgid, command)) => pgid == group && command.contains(name),
+                None => processes.iter().any(|&(_, pgid, _)| pgid == group),
+            },
+        )
+        .map(|(group, _)| group)
+        .collect()
 }
 
 /// Starts a background process that outlives the caller, outside its console and job.
@@ -457,6 +482,23 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("adeline-groups-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn only_groups_still_ours_are_stopped() {
+        let ps = "  100   100 node /usr/bin/gemini --acp
+  201   200 node mcp-server.js
+  300   300 vim notes.txt
+  400   400 node /usr/bin/claude-agent-acp
+";
+        let listed = "100 gemini
+200 codex-acp
+300 cline
+400 claude-agent-acp
+500 gone
+";
+        // 200 lost its leader but has a member; 300 is a reused ID; 500 is empty.
+        assert_eq!(ours(ps, listed), ["100", "200", "400"]);
     }
 
     #[test]

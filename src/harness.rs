@@ -437,6 +437,13 @@ fn find(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
 
 fn locate(harness: &Harness) -> Option<PathBuf> {
     let dirs = search_path();
+    if let Some(path) = harness
+        .package
+        .as_deref()
+        .and_then(|package| from_package(package, &dirs))
+    {
+        return Some(path);
+    }
     harness
         .executables
         .iter()
@@ -447,6 +454,82 @@ fn locate(harness: &Harness) -> Option<PathBuf> {
                 .as_deref()
                 .is_none_or(|package| comes_from(path, package))
         })
+}
+
+/// The executable an installed `package` provides, read from what npm and uv
+/// record: npm's `package.json` next to its shims, uv's tool receipt.
+fn from_package(package: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
+    let unscoped = package.rsplit('/').next().unwrap_or(package);
+    let uv_name = package.to_lowercase().replace(['_', '.'], "-");
+    for tools in uv_tool_dirs() {
+        let Ok(receipt) = fs::read_to_string(tools.join(&uv_name).join("uv-receipt.toml")) else {
+            continue;
+        };
+        let paths: Vec<PathBuf> = receipt
+            .split("install-path = \"")
+            .skip(1)
+            .filter_map(|rest| rest.split('"').next())
+            .map(PathBuf::from)
+            .collect();
+        let names: Vec<String> = paths
+            .iter()
+            .filter_map(|path| Some(path.file_stem()?.to_string_lossy().into_owned()))
+            .collect();
+        if let Some(name) = pick(&names, &uv_name) {
+            return paths
+                .into_iter()
+                .find(|path| {
+                    path.file_stem()
+                        .is_some_and(|stem| stem.to_string_lossy() == name)
+                })
+                .filter(|path| path.is_file());
+        }
+    }
+    // Windows npm keeps packages in `<shims>/node_modules`, Unix in `<prefix>/lib/node_modules`.
+    dirs.iter().find_map(|dir| {
+        [dir.join("node_modules"), dir.join("../lib/node_modules")]
+            .iter()
+            .find_map(|modules| {
+                let text = fs::read(modules.join(package).join("package.json")).ok()?;
+                let manifest: Value = serde_json::from_slice(&text).ok()?;
+                let names = match &manifest["bin"] {
+                    Value::String(_) => vec![unscoped.to_owned()],
+                    Value::Object(bins) => bins.keys().cloned().collect(),
+                    _ => Vec::new(),
+                };
+                find(&pick(&names, unscoped)?, std::slice::from_ref(dir))
+            })
+    })
+}
+
+/// The executable `npx` or `uvx` would run: the one named after the package,
+/// else the only one.
+/// ponytail: else the shortest name, as in `mcode` over `mcode-tools`; let
+/// the agent definition name it if a package ever needs another.
+fn pick(names: &[String], package: &str) -> Option<String> {
+    names
+        .iter()
+        .find(|name| *name == package)
+        .or_else(|| names.iter().min_by_key(|name| name.len()))
+        .cloned()
+}
+
+/// Where `uv tool install` puts its tools, by its documented defaults.
+fn uv_tool_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = std::env::var_os("UV_TOOL_DIR")
+        .map(PathBuf::from)
+        .into_iter()
+        .collect();
+    if let Some(data) = std::env::var_os("XDG_DATA_HOME") {
+        dirs.push(PathBuf::from(data).join("uv/tools"));
+    }
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        dirs.push(PathBuf::from(appdata).join("uv/tools"));
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        dirs.push(PathBuf::from(home).join(".local/share/uv/tools"));
+    }
+    dirs
 }
 
 /// Whether `path` runs `package`: it links into the package's folder, or is a
@@ -901,6 +984,28 @@ mod tests {
         .unwrap();
         assert_eq!(uv[0].package.as_deref(), Some("fast-agent-acp"));
         assert_eq!(uv[0].executables, ["fast-agent-acp", "fast-agent"]);
+    }
+
+    #[test]
+    fn package_metadata_names_the_executable() {
+        let dir = std::env::temp_dir().join(format!("adeline-npm-{}", std::process::id()));
+        let package = dir.join("node_modules/@minimax-ai/code");
+        fs::create_dir_all(&package).unwrap();
+        fs::write(
+            package.join("package.json"),
+            r#"{"bin":{"mcode":"cli.js","mcode-tools":"tools.js"}}"#,
+        )
+        .unwrap();
+        let shim = dir.join(if cfg!(windows) { "mcode.cmd" } else { "mcode" });
+        fs::write(&shim, "").unwrap();
+        assert_eq!(from_package("@minimax-ai/code", &[dir]), Some(shim));
+        let names = ["gcm".to_owned(), "fast-agent-acp".to_owned()];
+        assert_eq!(
+            pick(&names, "fast-agent-acp").as_deref(),
+            Some("fast-agent-acp")
+        );
+        assert_eq!(pick(&names, "other").as_deref(), Some("gcm"));
+        assert_eq!(pick(&[], "other"), None);
     }
 
     #[test]
