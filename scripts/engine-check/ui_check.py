@@ -598,7 +598,7 @@ def old_adeline():
     return exe
 
 
-@check("Remote AC28/AC27/AC29/AC12/AC13: upgrade prompt, local update needed, unsupported, browsing remote folders")
+@check("Remote AC28/AC27/AC29/AC12/AC13: upgrade prompt, a newer Adeline on the same protocol, unsupported, browsing remote folders")
 def check_upgrade_and_browse():
     rc.stop_engine()
     old = old_adeline()
@@ -609,6 +609,8 @@ def check_upgrade_and_browse():
     assert started.returncode == 0, started.stdout + started.stderr
     newer = REMOTES / "newer" / ".adeline" / "bin"
     newer.mkdir(parents=True, exist_ok=True)
+    # A newer Adeline that speaks this client's protocol is used as it is.
+    (newer / "adeline.exe").write_bytes(rc.EXE.read_bytes())
     (newer / "version").write_text("99.0.0")
     (REMOTES / "desktop" / "code" / "site").mkdir(parents=True, exist_ok=True)
     text = (rc.config / "machines.yml").read_text(encoding="utf-8")
@@ -622,10 +624,11 @@ def check_upgrade_and_browse():
     try:
         named(window, "Upgrade Old?", "Group", timeout=60)
         click(window, "Later")
-        rows = wait(lambda: (r := selector(window)).get("Board") == "Board, Unsupported" and r, 30,
+        rows = wait(lambda: (r := selector(window)).get("Board") == "Board, Unsupported"
+                    and r.get("Newer") == "Newer, Connected" and r, 60,
                     what="every machine's state")
         assert rows["Old"] == "Old, Upgrade needed", rows
-        assert rows["Newer"] == "Newer, Local update needed", rows
+        assert (newer / "version").read_text() == "99.0.0", "the newer Adeline was replaced"
         assert containing(window, "No Adeline build for windows-arm64"), "the unsupported platform isn't named"
         assert containing(window, "It runs Adeline 0.1.0 with 0 active conversations"), "the old version isn't named"
         assert remote_status("old")["version"] == "0.1.0", "Later replaced the old engine"

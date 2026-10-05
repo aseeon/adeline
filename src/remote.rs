@@ -50,9 +50,9 @@ pub enum Failure {
     /// Retrying wouldn't help: a refused host key, the wrong engine, no build.
     Fatal(String),
     Unsupported(String),
-    /// The remote runs a newer Adeline than this client.
+    /// The remote engine speaks a newer protocol than this client.
     LocalUpdate(String),
-    /// An older engine runs there; replacing it stops its agents.
+    /// An engine with an older protocol runs there; replacing it stops its agents.
     Upgrade {
         version: String,
         active: usize,
@@ -125,7 +125,7 @@ async fn attempt(
     upgrade: bool,
     askpass: &Askpass,
 ) -> Result<Link, Failure> {
-    let probe = probe(destination, askpass).await?;
+    let mut probe = probe(destination, askpass).await?;
     if !SUPPORTED.contains(&probe.platform.as_str()) {
         return Err(Failure::Unsupported(format!(
             "No Adeline build for {}",
@@ -145,10 +145,11 @@ async fn attempt(
     {
         return Err(wrong(&probe.id));
     }
-    match compare(&probe.version) {
-        std::cmp::Ordering::Greater => return Err(Failure::LocalUpdate(probe.version)),
-        std::cmp::Ordering::Less => install(destination, &probe.platform, askpass).await?,
-        std::cmp::Ordering::Equal => {}
+    // Only the engine's protocol decides compatibility; any Adeline version
+    // that speaks this client's protocol is used as it is.
+    if probe.version.trim().is_empty() {
+        install(destination, &probe.platform, askpass).await?;
+        probe.version = VERSION.into();
     }
     let windows = probe.platform.starts_with("windows");
     for round in 0..2 {
@@ -158,7 +159,7 @@ async fn attempt(
         {
             return Err(wrong(&status.engine_id));
         }
-        if status.protocol == PROTOCOL && status.version == VERSION {
+        if status.protocol == PROTOCOL {
             return Ok(Link {
                 reader,
                 writer,
@@ -167,7 +168,7 @@ async fn attempt(
                 child,
             });
         }
-        if compare(&status.version) == std::cmp::Ordering::Greater {
+        if status.protocol > PROTOCOL {
             return Err(Failure::LocalUpdate(status.version));
         }
         if !upgrade || round > 0 {
@@ -175,6 +176,10 @@ async fn attempt(
                 version: status.version,
                 active: status.conversations.len(),
             });
+        }
+        // An installed build newer than this one may already speak its protocol.
+        if compare(&probe.version) == std::cmp::Ordering::Less {
+            install(destination, &probe.platform, askpass).await?;
         }
         shut_down(child, reader, writer).await;
     }

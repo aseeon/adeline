@@ -32,9 +32,9 @@ One client shows the projects of every checked machine (`machines.rs`: saved rem
 `client.rs` keeps one `Connection` per checked machine. Every request names its machine: `Adeline::request` uses the open project's, `machine_request` any other. The local engine is reached through `ipc.rs`. A remote one goes through `remote.rs` over the system `ssh`:
 
 1. A probe finds the remote platform, its engine identity (`engine/id`) and the Adeline in `~/.adeline/bin` (its `version` file). Unix hosts answer `sh`; Windows hosts a base64 PowerShell script, which reads the same under cmd and PowerShell.
-2. A missing or older Adeline is replaced with the client's exact version: the headless build from its GitHub release or, with no release and the same platform, the client's own executable, sent over `ssh` stdin.
+2. A missing Adeline is installed in the client's exact version: the headless build from its GitHub release or, with no release and the same platform, the client's own executable, sent over `ssh` stdin.
 3. `adeline bridge` joins the SSH session to that machine's engine pipe or socket, starting the engine like a local client would. No network port opens anywhere.
-4. The client checks the welcome: the saved engine identity, and the exact version. An older running engine needs the user's consent before it's shut down.
+4. The client checks the welcome: the saved engine identity, and `PROTOCOL`. The Adeline version doesn't matter, so a 0.1.7 client uses a 0.1.6 engine with the same protocol. A newer protocol asks for a local update. An older one is replaced (step 2's install, when the installed Adeline is older) and its engine restarted, after the user consents.
 
 `ssh` runs this executable as `SSH_ASKPASS` with `ADELINE_ASKPASS` set (`main` checks it first), and the helper hands each prompt to the UI over an owner-only pipe or socket. A password typed during one connect answers the same prompt in that connect's later `ssh` runs and is then forgotten.
 
