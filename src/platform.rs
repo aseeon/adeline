@@ -369,12 +369,12 @@ pub fn spawn_piped(
     };
     #[cfg(not(windows))]
     let (mut child, stdout, stderr) = {
+        use std::os::unix::process::CommandExt as _;
         command.stdout(Stdio::piped()).stderr(if stderr {
             Stdio::piped()
         } else {
             Stdio::null()
         });
-        use std::os::unix::process::CommandExt as _;
         let mut child = command.process_group(0).spawn()?;
         record_group(child.id(), command.get_program());
         let reader = |fd: std::os::fd::OwnedFd| -> io::Result<Reader> {
