@@ -218,6 +218,9 @@ pub struct Status {
     /// The engine's lasting identity, the same across restarts.
     #[serde(default)]
     pub engine_id: String,
+    /// The engine runs the headless build. Older engines, all full, omit it.
+    #[serde(default)]
+    pub headless: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

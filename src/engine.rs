@@ -103,6 +103,7 @@ async fn cli_status() -> i32 {
     println!("Conversation engine: running");
     println!("PID: {}", status.pid);
     println!("Version: {}", status.version);
+    println!("Build: {}", crate::build(status.headless));
     println!("Protocol: {}", status.protocol);
     println!("Daemon mode: {}", if status.daemon { "on" } else { "off" });
     println!(
@@ -762,6 +763,7 @@ impl Engine {
             conversations,
             log: ipc::log_path(),
             engine_id: self.identity.clone(),
+            headless: !cfg!(feature = "gui"),
         }
     }
 

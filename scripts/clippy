@@ -6,6 +6,8 @@ set -euo pipefail
 
 set -x
 "${CARGO:-cargo}" clippy "$@" --locked --all-targets --all-features -- --deny warnings
+# The headless build (no `gui` feature).
+"${CARGO:-cargo}" clippy "$@" --locked --all-targets --no-default-features -- --deny warnings
 set +x
 
 # If local, run other checks if we have the tools installed.

@@ -292,9 +292,11 @@ pub fn font_size() -> u16 {
     })
 }
 
+#[cfg(feature = "gui")]
 pub fn text_pixels(base: f32) -> gpui_kit::Pixels {
     gpui_kit::px(base * f32::from(font_size()) / 14.)
 }
+#[cfg(feature = "gui")]
 pub fn bind_keys(cx: &mut gpui_kit::App) {
     use super::*;
     use gpui_kit::base::actions::Cancel;
@@ -375,6 +377,7 @@ fn update_at(path: &Path, change: impl FnOnce(&mut Settings)) -> Result<(), Stri
     });
     Ok(())
 }
+#[cfg(feature = "gui")]
 impl super::Adeline {
     pub(super) fn load_settings(&mut self) {
         let s = current();
@@ -486,8 +489,11 @@ mod tests {
         for (requested, expected) in [(0, 10), (14, 14), (18, 18), (65535, 24)] {
             ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.font_size = requested);
             assert_eq!(font_size(), expected);
-            assert_eq!(text_pixels(14.), gpui_kit::px(f32::from(expected)));
-            assert_eq!(text_pixels(21.), gpui_kit::px(f32::from(expected) * 1.5));
+            #[cfg(feature = "gui")]
+            {
+                assert_eq!(text_pixels(14.), gpui_kit::px(f32::from(expected)));
+                assert_eq!(text_pixels(21.), gpui_kit::px(f32::from(expected) * 1.5));
+            }
         }
         ACTIVE.with(|s| s.borrow_mut().settings = original);
     }

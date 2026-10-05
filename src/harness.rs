@@ -1,5 +1,6 @@
 //! Harnesses Adeline can run: the ACP registry plus built-in OMP, where their
 //! executables are installed, and short prompt-free probes of their options.
+#[cfg(feature = "gui")]
 use gpui_kit::{App, Global};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -57,6 +58,7 @@ pub struct Catalog {
     pub demo: bool,
 }
 
+#[cfg(feature = "gui")]
 impl Global for Catalog {}
 
 impl Catalog {
@@ -131,6 +133,7 @@ impl Catalog {
 
 /// The client's catalog until the engine sends its own. Demo mode, which has
 /// no engine, lists the bundled harnesses as not installed.
+#[cfg(feature = "gui")]
 pub fn init(demo: bool, cx: &mut App) {
     cx.set_global(Catalog {
         harnesses: if demo { load() } else { Vec::new() },

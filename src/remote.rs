@@ -22,8 +22,13 @@ use tokio::{
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RELEASES: &str = "https://github.com/aseeon/adeline/releases/download";
-/// The platforms each release ships.
-const SUPPORTED: [&str; 3] = ["windows-x86_64", "macos-arm64", "linux-x86_64"];
+/// The platforms each release ships a headless build for.
+const SUPPORTED: [&str; 4] = [
+    "windows-x86_64",
+    "macos-arm64",
+    "linux-x86_64",
+    "linux-aarch64",
+];
 const MARKER: &str = "ADELINE-PROBE";
 const INSTALLED: &str = "ADELINE-INSTALLED";
 
@@ -587,8 +592,9 @@ async fn install(destination: &str, platform: &str, askpass: &Askpass) -> Result
     }
 }
 
-/// The client's version for `platform`: from its GitHub release, or this
-/// very executable when there's no release and the platforms match.
+/// The client's version for `platform`: the headless build from its GitHub
+/// release, or this very executable when there's no release and the
+/// platforms match.
 async fn binary(platform: &str) -> Result<Vec<u8>, Failure> {
     let release = download(platform).await;
     match release {
@@ -603,9 +609,9 @@ async fn binary(platform: &str) -> Result<Vec<u8>, Failure> {
     }
 }
 
-/// Downloads and unpacks a release build, keeping it for other machines.
+/// Downloads and unpacks a release's headless build, keeping it for other machines.
 async fn download(platform: &str) -> Result<Vec<u8>, String> {
-    let folder = std::env::temp_dir().join(format!("adeline-{VERSION}-{platform}"));
+    let folder = std::env::temp_dir().join(format!("adeline-headless-{VERSION}-{platform}"));
     let exe = folder.join(if platform.starts_with("windows") {
         "adeline.exe"
     } else {
@@ -616,7 +622,7 @@ async fn download(platform: &str) -> Result<Vec<u8>, String> {
     }
     std::fs::create_dir_all(&folder).map_err(|e| crate::files::error(&folder, e))?;
     let zip = folder.join("adeline.zip");
-    let url = format!("{RELEASES}/v{VERSION}/adeline-{platform}.zip");
+    let url = format!("{RELEASES}/v{VERSION}/adeline-headless-{platform}.zip");
     local_tool(
         "curl",
         &[

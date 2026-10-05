@@ -48,6 +48,8 @@ Adeline runs harnesses that are already installed on your machine. It never down
 
 Download the zip for your platform from the [latest release](https://github.com/aseeon/adeline/releases/latest). Builds are available for Windows (x86_64), macOS (Apple Silicon) and Linux (x86_64).
 
+The `adeline-headless-*` zips are for servers. They run the engine with no window and need no desktop libraries. Adeline installs them by itself on the machines you add, so you only need one to set up a server by hand: take `linux-x86_64` or `linux-aarch64` for a Linux server of that processor.
+
 > [!IMPORTANT]
 > The release builds aren't code signed yet, so your system will warn you the first time you open Adeline. To open it anyway:
 >

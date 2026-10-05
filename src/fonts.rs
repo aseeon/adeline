@@ -1,5 +1,7 @@
 //! Bundled interface font and the font families available to GPUI this session.
-use std::{borrow::Cow, cell::RefCell};
+#[cfg(feature = "gui")]
+use std::borrow::Cow;
+use std::cell::RefCell;
 
 pub const DEFAULT: &str = "Chivo";
 pub const CODE_DEFAULT: &str = "Chivo Mono";
@@ -9,6 +11,7 @@ thread_local! {
     static FAMILIES: RefCell<Vec<String>> = RefCell::new(vec![DEFAULT.into(), CODE_DEFAULT.into()]);
 }
 
+#[cfg(feature = "gui")]
 pub fn init(cx: &gpui_kit::App) {
     // Register before any window shapes text. The font travels inside the binary.
     cx.text_system()
@@ -20,6 +23,7 @@ pub fn init(cx: &gpui_kit::App) {
     refresh(cx);
 }
 
+#[cfg(feature = "gui")]
 pub fn refresh(cx: &gpui_kit::App) {
     let families = catalogue(cx.text_system().all_font_names());
     FAMILIES.with(|active| *active.borrow_mut() = families);

@@ -1697,6 +1697,7 @@ impl SettingsWindow {
                 "Status",
                 "PID",
                 "Version",
+                "Build",
                 "Uptime",
                 "Clients",
                 "Stop engine",
@@ -1729,6 +1730,7 @@ impl SettingsWindow {
                 fields.extend([
                     ("PID", status.pid.to_string()),
                     ("Version", status.version.clone()),
+                    ("Build", build(status.headless).to_owned()),
                     ("Protocol", status.protocol.to_string()),
                     (
                         "Daemon mode",
@@ -2351,6 +2353,7 @@ fn engine_matches(query: &str) -> bool {
         "Status",
         "PID",
         "Version",
+        "Build",
         "Uptime",
         "Clients",
         "Stop engine",

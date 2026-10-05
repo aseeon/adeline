@@ -1,13 +1,29 @@
 //! Entry point and the `Adeline` root view. `adeline engine` runs the conversation
 //! engine. Anything else opens the UI (`--demo` uses bundled data). Every UI
-//! event is an `Action`.
-#![cfg_attr(target_os = "windows", windows_subsystem = "windows")]
+//! event is an `Action`. Without the `gui` feature, the headless build has no
+//! UI and prints its usage instead.
+#![cfg_attr(
+    all(target_os = "windows", feature = "gui"),
+    windows_subsystem = "windows"
+)]
+#![cfg_attr(
+    not(feature = "gui"),
+    expect(
+        dead_code,
+        reason = "the headless build leaves out the UI that uses it"
+    )
+)]
 mod acp;
+#[cfg(feature = "gui")]
 mod activity;
+#[cfg(feature = "gui")]
 mod agent_form;
 mod agents;
+#[cfg(feature = "gui")]
 mod chat;
+#[cfg(feature = "gui")]
 mod chat_render;
+#[cfg(feature = "gui")]
 mod client;
 mod config;
 mod data;
@@ -15,37 +31,55 @@ mod engine;
 mod files;
 mod fonts;
 mod harness;
+#[cfg(feature = "gui")]
 mod interaction;
 mod ipc;
 mod machines;
+#[cfg(feature = "gui")]
 mod panes;
 mod platform;
 mod prepared;
+#[cfg(feature = "gui")]
 mod project_bar;
+#[cfg(feature = "gui")]
 mod project_ui;
 mod protocol;
 mod recency;
 mod remote;
+#[cfg(feature = "gui")]
 mod runtime_ui;
+#[cfg(feature = "gui")]
 mod settings;
 mod storage;
+#[cfg(feature = "gui")]
 mod themed_icon;
+#[cfg(feature = "gui")]
 mod titlebar;
+#[cfg(feature = "gui")]
 mod ui_state;
+#[cfg(feature = "gui")]
 mod views;
+#[cfg(feature = "gui")]
 use data::*;
+#[cfg(feature = "gui")]
 use gpui_kit::base::actions::Cancel;
+#[cfg(feature = "gui")]
 use gpui_kit::component::{
     ActiveTheme, Icon, Root, Selectable, Sizable, TitleBar, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState, TextareaState},
 };
+#[cfg(feature = "gui")]
 use gpui_kit::{prelude::*, *};
+#[cfg(feature = "gui")]
 use std::borrow::Cow;
+#[cfg(feature = "gui")]
 mod theme;
 
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
+#[cfg(feature = "gui")]
 struct Assets;
+#[cfg(feature = "gui")]
 impl AssetSource for Assets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
         match embedded(path) {
@@ -60,18 +94,22 @@ impl AssetSource for Assets {
         assets::Assets.list(path)
     }
 }
+#[cfg(feature = "gui")]
 fn row() -> Div {
     div().flex().items_center()
 }
+#[cfg(feature = "gui")]
 fn col() -> Div {
     div().flex().flex_col()
 }
+#[cfg(feature = "gui")]
 fn text(s: impl Into<SharedString>, size: f32, color: u32) -> Div {
     div()
         .text_size(config::text_pixels(size))
         .text_color(rgb(color))
         .child(s.into())
 }
+#[cfg(feature = "gui")]
 /// Search fields drop Kit's focus glow; a focused one shows a 1px primary
 /// border instead.
 fn search_field(input: Input, state: &Entity<InputState>, window: &Window, cx: &App) -> Input {
@@ -81,6 +119,7 @@ fn search_field(input: Input, state: &Entity<InputState>, window: &Window, cx: &
         .focus_ring(false)
         .when(focused, |input| input.border_color(cx.theme().primary))
 }
+#[cfg(feature = "gui")]
 fn icon(name: &str) -> themed_icon::ThemedIcon {
     themed_icon::ThemedIcon::new(name)
         .size(px(16.))
@@ -93,6 +132,7 @@ fn short(s: &str, n: usize) -> String {
         s.into()
     }
 }
+#[cfg(feature = "gui")]
 fn provider(s: &str) -> &'static str {
     if s == "claude" {
         "Claude Code"
@@ -110,6 +150,7 @@ enum Section {
     Issues,
     Whiteboard,
 }
+#[cfg(feature = "gui")]
 #[derive(Clone)]
 enum Action {
     Project(usize),
@@ -213,6 +254,7 @@ enum Action {
     AddDirectory,
     Tint(usize),
 }
+#[cfg(feature = "gui")]
 impl Action {
     fn menu_target(&self) -> Option<&'static str> {
         match self {
@@ -227,6 +269,7 @@ impl Action {
         }
     }
 }
+#[cfg(feature = "gui")]
 actions!(
     adeline,
     [
@@ -239,6 +282,7 @@ actions!(
         PreviousFocus
     ]
 );
+#[cfg(feature = "gui")]
 struct Adeline {
     main_window: WindowHandle<Root>,
     projects: Vec<Workspace>,
@@ -312,6 +356,7 @@ struct Adeline {
     header_region: Entity<chat::Header>,
     control_pane: Entity<panes::ControlPane>,
 }
+#[cfg(feature = "gui")]
 impl Adeline {
     fn new(
         demo_mode: bool,
@@ -624,6 +669,7 @@ impl Adeline {
         });
     }
 }
+#[cfg(feature = "gui")]
 impl Render for Adeline {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = if let Some(screen) = self.engine_screen(cx) {
@@ -720,12 +766,35 @@ fn main() {
         Some("bridge") => std::process::exit(remote::bridge_main()),
         Some("--version") => {
             platform::attach_parent_console();
-            println!("{}", env!("CARGO_PKG_VERSION"));
+            let headless = if cfg!(feature = "gui") {
+                ""
+            } else {
+                " (headless)"
+            };
+            println!("{}{headless}", env!("CARGO_PKG_VERSION"));
             std::process::exit(0);
         }
         _ => {}
     }
-    let demo_mode = args.iter().any(|arg| arg == "--demo");
+    #[cfg(feature = "gui")]
+    open(args.iter().any(|arg| arg == "--demo"));
+    #[cfg(not(feature = "gui"))]
+    {
+        platform::attach_parent_console();
+        eprintln!(
+            "Usage: adeline engine [status | start [--daemon] | stop] | adeline bridge | adeline --version"
+        );
+        std::process::exit(2);
+    }
+}
+
+/// The build kind the Engine settings page and `adeline engine status` show.
+fn build(headless: bool) -> &'static str {
+    if headless { "headless" } else { "full" }
+}
+
+#[cfg(feature = "gui")]
+fn open(demo_mode: bool) {
     machines::init(demo_mode);
     application().with_assets(Assets).run(move |cx: &mut App| {
         init(cx);

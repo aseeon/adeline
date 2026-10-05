@@ -666,6 +666,82 @@ def check_upgrade_and_browse():
         process.kill()
 
 
+# The headless build, beside the full one: `cargo build --release --locked
+# --no-default-features --target-dir target/headless`.
+HEADLESS = rc.EXE.parents[1] / "headless" / "release" / "adeline.exe"
+
+
+def headless(*args, home=None):
+    env = {**os.environ, "USERPROFILE": str(home), "HOME": str(home)} if home else None
+    return subprocess.run([str(HEADLESS), *args], capture_output=True, text=True, timeout=30, env=env)
+
+
+def windows_subsystem(exe):
+    """The PE subsystem: 2 for a GUI program, 3 for a console one."""
+    data = exe.read_bytes()
+    pe = int.from_bytes(data[0x3C:0x40], "little")
+    return int.from_bytes(data[pe + 24 + 68:pe + 24 + 70], "little")
+
+
+@check("Headless AC4/AC5/AC6: usage, a console program, the version marker, a hidden background engine")
+def check_headless_cli():
+    assert HEADLESS.is_file(), f"build the headless binary first: {HEADLESS}"
+    assert windows_subsystem(HEADLESS) == 3, "the headless build isn't a console program"
+    assert windows_subsystem(rc.EXE) == 2, "the full build isn't a GUI program"
+    # A window would keep the process running past the timeout.
+    for args in ([], ["--demo"], ["frobnicate"]):
+        result = headless(*args)
+        assert result.returncode == 2, (args, result.returncode)
+        assert "engine" in result.stderr and "bridge" in result.stderr and "--version" in result.stderr, result.stderr
+    version = rc.adeline("--version").stdout.strip()
+    assert headless("--version").stdout.strip() == f"{version} (headless)", headless("--version").stdout
+    assert "(headless)" not in version, version
+    home = REMOTES.parent / "headless-home"
+    home.mkdir(exist_ok=True)
+    assert "not running" in headless("engine", "status", home=home).stdout
+    started = headless("engine", "start", home=home)
+    assert started.returncode == 0, started.stdout + started.stderr
+    try:
+        status = headless("engine", "status", home=home).stdout
+        assert "Build: headless" in status, status
+        pid = int(next(line for line in status.splitlines() if line.startswith("PID:")).split(":")[1])
+        assert not [w for w in Desktop(backend="uia").windows(process=pid) if w.is_visible()], "the engine shows a window"
+    finally:
+        headless("engine", "stop", home=home)
+    return f"engine {pid}"
+
+
+@check("Headless AC3/AC11: a remote with the headless build connects, runs a prompt, reconnects")
+def check_headless_remote():
+    rc.stop_engine()
+    make_remote("server")
+    bin = REMOTES / "server" / ".adeline" / "bin"
+    bin.mkdir(parents=True, exist_ok=True)
+    (bin / "adeline.exe").write_bytes(HEADLESS.read_bytes())
+    (bin / "version").write_text(rc.adeline("--version").stdout.strip())
+    save_machines(("m-server", "Server", ["server"]))
+    process, window = launch()
+    try:
+        wait(lambda: "app · Server" in tabs(window), 60, what="the headless remote's tab")
+        tab(window, "app · Server").click_input()
+        named(window, "New chat").click_input()
+        send(window, "SLOW 4")
+        conversation = wait(lambda: remote_conversations("server")[0], 20, what="a remote conversation")
+        wait(lambda: remote_status("server")["conversations"], 20, what="the remote turn")
+        assert remote_status("server")["headless"], "the remote engine isn't the headless build"
+        for pid in bridges():
+            rc.kill(pid)
+        wait(lambda: containing(window, "Server is disconnected"), 10, what="the disconnected banner")
+        wait(lambda: not containing(window, "Server is disconnected"), 30, what="the reconnect")
+        wait(lambda: "turn_finished" in remote_transcript("server", conversation), 30, what="the turn")
+        assert (bin / "adeline.exe").read_bytes() == HEADLESS.read_bytes(), "the headless build was replaced"
+        # UI Automation can't read Settings' "Build" line; it shows this flag.
+        local = rc.adeline("engine", "status").stdout
+        assert "Build: full" in local, local
+    finally:
+        process.kill()
+
+
 def main():
     global REMOTES
     temp = rc.setup()
@@ -683,7 +759,7 @@ def main():
         for run in (check_launch, check_quit_background, check_quit_idle, check_quit_stop_all,
                     check_settings_engine, check_unavailable, check_demo, check_fork,
                     check_demo_machines, check_add_machine, check_drop, check_ssh_failures,
-                    check_upgrade_and_browse):
+                    check_upgrade_and_browse, check_headless_cli, check_headless_remote):
             if only.lower() in run.label.lower():
                 run()
     finally:

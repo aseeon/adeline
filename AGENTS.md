@@ -14,8 +14,9 @@ When application code changes, run the checks CI runs, then rebuild the runnable
 
 - `cargo fmt --all -- --check`
 - `scripts/check-todos` (a bash script, run it through Git Bash on Windows)
-- clippy: `scripts/clippy.ps1` on Windows, `scripts/clippy` on macOS and Linux
+- clippy: `scripts/clippy.ps1` on Windows, `scripts/clippy` on macOS and Linux (checks the full and the headless build)
 - `cargo nextest run --locked --all-features`
+- `cargo nextest run --locked --no-default-features` (the headless build)
 
 Local clippy only sees code for the current OS. Code behind `cfg(target_os = ...)` for another OS is checked only by CI.
 

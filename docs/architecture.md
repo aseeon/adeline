@@ -10,6 +10,8 @@ One binary, two roles (`main` in `src/main.rs`):
 - Engine: `adeline engine` (`engine::main`). A background process that owns agent processes, conversation state and storage. It outlives the UI.
 - Bridge: `adeline bridge` (`remote::bridge_main`). A remote client runs it over SSH to reach that machine's engine (see Machines).
 
+The default `gui` feature holds the UI. `--no-default-features` builds the headless binary: engine, bridge and `--version` only, without GPUI. Its UI-only modules and items are behind `#[cfg(feature = "gui")]`, and code only the UI calls is allowed to be dead there. Remote installs use the headless build (`adeline-headless-<platform>.zip`). Build it with `--target-dir target/headless` so it doesn't replace the full `adeline` in `target/release`.
+
 They talk over a same-user named pipe on Windows and a Unix socket elsewhere (`ipc.rs`), one JSON object per line. The message types live in `protocol.rs`, and bumping `PROTOCOL` there is the only version change needed. `scripts/engine-check/engine_client.py` reads it from that file.
 
 ## A user action, end to end
@@ -30,7 +32,7 @@ One client shows the projects of every checked machine (`machines.rs`: saved rem
 `client.rs` keeps one `Connection` per checked machine. Every request names its machine: `Adeline::request` uses the open project's, `machine_request` any other. The local engine is reached through `ipc.rs`. A remote one goes through `remote.rs` over the system `ssh`:
 
 1. A probe finds the remote platform, its engine identity (`engine/id`) and the Adeline in `~/.adeline/bin` (its `version` file). Unix hosts answer `sh`; Windows hosts a base64 PowerShell script, which reads the same under cmd and PowerShell.
-2. A missing or older Adeline is replaced with the client's exact version, from its GitHub release or, with no release and the same platform, the client's own executable, sent over `ssh` stdin.
+2. A missing or older Adeline is replaced with the client's exact version: the headless build from its GitHub release or, with no release and the same platform, the client's own executable, sent over `ssh` stdin.
 3. `adeline bridge` joins the SSH session to that machine's engine pipe or socket, starting the engine like a local client would. No network port opens anywhere.
 4. The client checks the welcome: the saved engine identity, and the exact version. An older running engine needs the user's consent before it's shut down.
 

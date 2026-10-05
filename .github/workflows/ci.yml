@@ -96,6 +96,8 @@ jobs:
           tool: cargo-nextest
       - name: cargo nextest
         run: cargo nextest run --locked --all-features --profile ci --no-tests=warn
+      - name: cargo nextest (headless)
+        run: cargo nextest run --locked --no-default-features --profile ci --no-tests=warn
 
   check_dependencies:
     runs-on: ubuntu-24.04
@@ -139,8 +141,64 @@ jobs:
             target/dist/adeline.exe
           if-no-files-found: error
 
+  # The headless build (`--no-default-features`), zipped as it's released.
+  # Linux builds are static musl, run in Alpine with no desktop libraries.
+  build_headless:
+    needs: [clippy, run_tests]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            platform: windows-x86_64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            platform: macos-arm64
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-musl
+            platform: linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            platform: linux-aarch64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      ZIP: adeline-headless-${{ matrix.platform }}.zip
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: add the target
+        run: rustup target add ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.target }}
+      - name: cargo build --profile dist --no-default-features
+        run: cargo build --profile dist --locked --no-default-features --target ${{ matrix.target }}
+      - name: smoke test in Alpine
+        if: runner.os == 'Linux'
+        run: |
+          docker run --rm -v "$PWD/target/${{ matrix.target }}/dist:/w:ro" alpine:3.22 sh -euxc '
+            /w/adeline --version | grep -qx "[0-9.]* (headless)"
+            status=0; /w/adeline --demo || status=$?; [ "$status" -eq 2 ]
+            /w/adeline engine start
+            /w/adeline engine status
+            /w/adeline engine stop
+          '
+      - name: zip (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path target/${{ matrix.target }}/dist/adeline.exe -DestinationPath $env:ZIP
+      - name: zip
+        if: runner.os != 'Windows'
+        run: zip -j "$ZIP" target/${{ matrix.target }}/dist/adeline
+      # Uploaded as is, so the downloaded artifact is the release zip.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: ${{ env.ZIP }}
+          archive: false
+          if-no-files-found: error
+
   tests_pass:
-    needs: [check_style, clippy, run_tests, check_dependencies, build]
+    needs: [check_style, clippy, run_tests, check_dependencies, build, build_headless]
     if: always()
     runs-on: ubuntu-24.04
     steps:
