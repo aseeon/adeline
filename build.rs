@@ -86,6 +86,28 @@ fn build_app_icon(out_dir: &std::path::Path) {
     for size in sizes {
         images.push(render_icon(&tree, size));
     }
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
+        // `scripts/macos-app` puts this in the app bundle. Each entry is a type code, its
+        // length with the 8-byte header, and one PNG.
+        let mut entries = Vec::new();
+        for (kind, size) in [
+            (b"icp4", 16),
+            (b"icp5", 32),
+            (b"ic07", 128),
+            (b"ic08", 256),
+            (b"ic09", 512),
+            (b"ic10", 1024),
+        ] {
+            let png = render_icon(&tree, size);
+            entries.extend_from_slice(kind);
+            entries.extend_from_slice(&(u32::try_from(png.len()).unwrap() + 8).to_be_bytes());
+            entries.extend_from_slice(&png);
+        }
+        let mut icns = b"icns".to_vec();
+        icns.extend_from_slice(&(u32::try_from(entries.len()).unwrap() + 8).to_be_bytes());
+        icns.extend_from_slice(&entries);
+        fs::write(out_dir.join("adeline.icns"), icns).unwrap();
+    }
     if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
         return;
     }

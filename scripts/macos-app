@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Wraps target/dist/adeline in target/dist/Adeline.app, so Finder opens it as an app
+# rather than running it in Terminal. Run on macOS after `cargo build --profile dist --locked`.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)
+# build.rs writes the icon; the newest build directory holds the current one.
+icon=$(ls -t target/dist/build/adeline-*/out/adeline.icns | head -n 1)
+app=target/dist/Adeline.app
+
+rm -rf "$app"
+mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+cp target/dist/adeline "$app/Contents/MacOS/adeline"
+cp "$icon" "$app/Contents/Resources/Adeline.icns"
+sips -g pixelWidth "$app/Contents/Resources/Adeline.icns" >/dev/null
+cat >"$app/Contents/Info.plist" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleExecutable</key><string>adeline</string>
+  <key>CFBundleIdentifier</key><string>dev.adeline.Adeline</string>
+  <key>CFBundleName</key><string>Adeline</string>
+  <key>CFBundleDisplayName</key><string>Adeline</string>
+  <key>CFBundleIconFile</key><string>Adeline</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleShortVersionString</key><string>$version</string>
+  <key>CFBundleVersion</key><string>$version</string>
+  <key>LSMinimumSystemVersion</key><string>11.0</string>
+  <key>NSHighResolutionCapable</key><true/>
+</dict>
+</plist>
+EOF
+plutil -lint "$app/Contents/Info.plist" >/dev/null
+# Copying the binary into a bundle breaks its ad-hoc signature, and Apple silicon runs only
+# signed code. A Developer ID signature would also get past Gatekeeper.
+codesign --force --sign - "$app"
+echo "Packaged $app"

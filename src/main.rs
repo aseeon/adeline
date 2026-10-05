@@ -36,6 +36,8 @@ mod interaction;
 mod ipc;
 mod machines;
 #[cfg(feature = "gui")]
+mod menu_bar;
+#[cfg(feature = "gui")]
 mod panes;
 mod platform;
 mod prepared;
@@ -841,10 +843,7 @@ fn open(demo_mode: bool) {
                     settings::request_close(handle, closing_owner.clone(), cx);
                     false
                 });
-                let quit_owner = owner;
-                cx.on_action(move |_: &Quit, cx| {
-                    settings::request_close(handle, quit_owner.clone(), cx);
-                });
+                menu_bar::init(handle, owner, demo_mode, cx);
                 cx.on_window_closed(move |cx, closed| {
                     if closed == handle.window_id() {
                         settings::close_for(handle, cx);

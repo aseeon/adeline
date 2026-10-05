@@ -20,7 +20,7 @@ When application code changes, run the checks CI runs, then rebuild the runnable
 
 Local clippy only sees code for the current OS. Code behind `cfg(target_os = ...)` for another OS is checked only by CI.
 
-When a feature or bug fix is implemented and passes those checks, start the slower shipping build in the background so a fresh dist package gets built: `scripts/package.ps1` on Windows, `cargo build --profile dist --locked` on macOS and Linux. Don't wait for it before reporting completion. Report whether it succeeded once it finishes.
+When a feature or bug fix is implemented and passes those checks, start the slower shipping build in the background so a fresh dist package gets built: `scripts/package.ps1` on Windows, `cargo build --profile dist --locked && scripts/macos-app` on macOS (builds `target/dist/Adeline.app`), `cargo build --profile dist --locked` on Linux. Don't wait for it before reporting completion. Report whether it succeeded once it finishes.
 
 Changes limited to documentation or agent instructions do not require application tests or a rebuild.
 

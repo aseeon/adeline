@@ -145,8 +145,14 @@ jobs:
       - name: zip (Windows)
         if: runner.os == 'Windows'
         run: Compress-Archive -Path target/dist/adeline.exe -DestinationPath $env:ZIP
-      - name: zip
-        if: runner.os != 'Windows'
+      # Finder runs a bare executable in Terminal, so macOS ships an app bundle.
+      - name: zip (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          ./scripts/macos-app
+          ditto -c -k --keepParent target/dist/Adeline.app "$ZIP"
+      - name: zip (Linux)
+        if: runner.os == 'Linux'
         run: zip -j "$ZIP" target/dist/adeline
       # Uploaded as is, so the downloaded artifact is the release zip.
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

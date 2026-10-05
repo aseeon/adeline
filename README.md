@@ -46,7 +46,7 @@ Adeline runs harnesses that are already installed on your machine. It never down
 
 ## Install
 
-Download the zip for your platform from the [latest release](https://github.com/aseeon/adeline/releases/latest). Builds are available for Windows (x86_64), macOS (Apple Silicon) and Linux (x86_64).
+Download the zip for your platform from the [latest release](https://github.com/aseeon/adeline/releases/latest). Builds are available for Windows (x86_64), macOS (Apple Silicon) and Linux (x86_64). On macOS, unzip it and move `Adeline.app` to Applications.
 
 The `adeline-headless-*` zips are for servers. They run the engine with no window and need no desktop libraries. Adeline installs them by itself on the machines you add, so you only need one to set up a server by hand: take `linux-x86_64` or `linux-aarch64` for a Linux server of that processor.
 
@@ -54,7 +54,7 @@ The `adeline-headless-*` zips are for servers. They run the engine with no windo
 > The release builds aren't code signed yet, so your system will warn you the first time you open Adeline. To open it anyway:
 >
 > - **Windows:** when SmartScreen says "Windows protected your PC", click **More info**, then **Run anyway**.
-> - **macOS:** open Adeline once and close the warning. Then go to **System Settings › Privacy & Security**, scroll down to the message about Adeline, and click **Open Anyway**. If macOS says the app is damaged, run `xattr -dr com.apple.quarantine` on it in Terminal and open it again.
+> - **macOS:** open Adeline once and close the warning. Then go to **System Settings › Privacy & Security**, scroll down to the message about Adeline, and click **Open Anyway**. If macOS says the app is damaged, run `xattr -dr com.apple.quarantine /Applications/Adeline.app` in Terminal and open it again.
 > - **Linux:** no approval is needed.
 >
 > If you'd rather not run unsigned software, build Adeline from source instead.

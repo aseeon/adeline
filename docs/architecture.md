@@ -16,7 +16,7 @@ They talk over a same-user named pipe on Windows and a Unix socket elsewhere (`i
 
 ## A user action, end to end
 
-1. A click or key binding calls `app.act(Action::…)`. `Action` is in `main.rs`, and keys are bound in `config::bind_keys`.
+1. A click, key binding or macOS menu-bar item calls `app.act(Action::…)`. `Action` is in `main.rs`, keys are bound in `config::bind_keys`, and the menu bar is in `menu_bar.rs`.
 2. `Adeline::act` (`interaction.rs`) dispatches it. Actions that touch a conversation go to `runtime_ui.rs`.
 3. `runtime_ui.rs` sends a `protocol::Command` through `client.rs`, the UI's engine connection.
 4. `Engine::command` (`engine.rs`) handles it, persists through `storage.rs`, and sends `acp::Command`s to the conversation's worker.
