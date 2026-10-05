@@ -110,7 +110,15 @@ pub fn all() -> Vec<String> {
 
 pub fn name(id: &str) -> String {
     if id == LOCAL {
-        return if demo() { "Nexus" } else { "Local machine" }.into();
+        if demo() {
+            return "Nexus".into();
+        }
+        // macOS reports names like "Mac.local"; the label wants just "Mac".
+        let host = gethostname::gethostname().to_string_lossy().into_owned();
+        return match host.split('.').next() {
+            Some(host) if !host.is_empty() => host.into(),
+            _ => "Local machine".into(),
+        };
     }
     remote(id).map_or_else(|| id.to_owned(), |m| m.name)
 }

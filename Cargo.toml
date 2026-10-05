@@ -1,6 +1,6 @@
 [package]
 name = "adeline"
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 description = "A native GPUI desktop workspace"
 license = "MIT"
@@ -8,6 +8,7 @@ license = "MIT"
 [dependencies]
 gpui-kit = { version = "=0.7.0", optional = true }
 chrono = "0.4"
+gethostname = "1.1"
 serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 serde_yaml_ng = "0.10"

@@ -93,11 +93,12 @@ dependencies = [
 
 [[package]]
 name = "adeline"
-version = "0.1.6"
+version = "0.1.7"
 dependencies = [
  "async-channel",
  "chrono",
  "embed-resource",
+ "gethostname",
  "gpui-kit",
  "notify 8.2.0",
  "resvg 0.45.1",

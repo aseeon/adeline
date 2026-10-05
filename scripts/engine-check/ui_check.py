@@ -10,6 +10,7 @@ Start engine, and demo mode without an engine. Run from the repo root:
 import contextlib
 import os
 import re
+import socket
 import subprocess
 import sys
 import time
@@ -461,7 +462,7 @@ def check_add_machine():
         click(settings, "Add machine")
         named(window, "Machines", "Button", timeout=15)
         wait(lambda: "app · Desktop" in tabs(window), 60, what="the remote project's tab")
-        assert "app · Local machine" in tabs(window), tabs(window)
+        assert f"app · {socket.gethostname().split('.')[0]}" in tabs(window), tabs(window)
         assert (REMOTES / "desktop" / ".adeline" / "bin" / "adeline.exe").is_file(), "nothing was installed"
         settings.close()
         tab(window, "app · Desktop").click_input()
