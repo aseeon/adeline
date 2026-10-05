@@ -6,9 +6,18 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Workspace {
+    /// The machine whose engine owns the project. Set by the client; an
+    /// engine leaves it empty.
+    pub machine: String,
     pub config: Config,
     pub threads: Vec<Thread>,
     pub decisions: Vec<Decision>,
+}
+impl Workspace {
+    /// Unique across machines; project IDs are unique only within one.
+    pub fn key(&self) -> String {
+        format!("{}:{}", self.machine, self.config.id)
+    }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -194,6 +203,13 @@ pub fn load() -> Vec<Workspace> {
         serde_json::from_str(include_str!("../assets/workspace.json")).expect("valid bundled demo");
     let mut projects = vec![data.workspace];
     projects.extend(data.projects.into_iter().map(|p| p.workspace));
+    // One demo project on each demo machine.
+    for (project, machine) in projects
+        .iter_mut()
+        .zip([crate::machines::LOCAL, "matrix", "vortex"])
+    {
+        project.machine = machine.into();
+    }
     shift_to(&mut projects, crate::recency::now());
     for project in &mut projects {
         project.threads.reverse();

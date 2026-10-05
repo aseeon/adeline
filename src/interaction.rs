@@ -18,6 +18,15 @@ impl Adeline {
                     | Action::Projects
                     | Action::Machines
                     | Action::Machine(_)
+                    | Action::MachineRetry(_)
+                    | Action::ManageMachines
+                    | Action::MachineUpgrade(_)
+                    | Action::ConfirmUpgrade
+                    | Action::AnswerPrompt(_)
+                    | Action::FolderMachine(_)
+                    | Action::ProjectMachine(_)
+                    | Action::BrowseTo(_)
+                    | Action::BrowsePick(_)
                     | Action::AppMenu
                     | Action::AppSettings
                     | Action::AgentSettings
@@ -34,7 +43,6 @@ impl Adeline {
                     | Action::HideToolCalls
                     | Action::SubmitOnEnter
                     | Action::ToggleMode(_)
-                    | Action::ToggleMachineSelector
                     | Action::RemoveClosedProject(_)
                     | Action::UndoProjectRemoval(_)
                     | Action::RenameProject(_)
@@ -47,7 +55,7 @@ impl Adeline {
         }
         if let Some(menu) = action.menu_target() {
             if matches!(action, Action::AgentMenu | Action::Agents) {
-                client::refresh_harnesses(false, cx);
+                client::refresh_harnesses(&self.current_machine(), false, cx);
             }
             if matches!(action, Action::AgentMenu) && !self.demo_mode && self.selected.is_some() {
                 window.push_notification(
@@ -73,7 +81,7 @@ impl Adeline {
                     .and_then(|id| self.conversation_agent(&id))
                     .or_else(|| self.selected_agent.clone())
                     .filter(|id| {
-                        self.agent_catalog
+                        self.agent_catalog()
                             .entries
                             .iter()
                             .any(|entry| &entry.id == id)
@@ -81,6 +89,7 @@ impl Adeline {
                 settings::open_agent_page(
                     window.window_handle().downcast::<Root>().unwrap(),
                     cx.weak_entity(),
+                    self.current_machine(),
                     id,
                     cx,
                 );
@@ -88,6 +97,7 @@ impl Adeline {
             Action::AddAgent => settings::open_agent(
                 window.window_handle().downcast::<Root>().unwrap(),
                 cx.weak_entity(),
+                self.current_machine(),
                 cx,
             ),
             Action::ConfigureModeSettings => settings::open_mode(
@@ -108,7 +118,16 @@ impl Adeline {
                 self.project_directory_input
                     .update(cx, |state, cx| state.set_value("", window, cx));
                 self.project_error = None;
+                self.project_machine = self.current_machine();
                 self.modal = Some("add-project");
+            }
+            Action::ProjectMachine(machine) => {
+                if machine != self.project_machine {
+                    self.project_machine = machine;
+                    // A folder path means nothing on another machine.
+                    self.project_directory_input
+                        .update(cx, |state, cx| state.set_value("", window, cx));
+                }
             }
             Action::SaveProject => self.create_project(window, cx),
             Action::Settings => {
@@ -128,6 +147,7 @@ impl Adeline {
                 });
                 self.selected_tint = self.project_tints[self.project];
                 self.project_error = None;
+                self.project_machine = self.workspace().machine.clone();
                 self.modal = Some("settings");
             }
             Action::SaveSettings => self.save_project_settings(window, cx),
@@ -144,6 +164,10 @@ impl Adeline {
             Action::DeleteProject => self.begin_project_delete(cx),
             Action::ConfirmDeleteProject => self.confirm_project_delete(cx),
             Action::ForceDeleteProject => self.force_project_delete(cx),
+            Action::Close if self.modal == Some("browser") && self.browser_return.is_some() => {
+                self.browser = None;
+                self.modal = self.browser_return.take();
+            }
             Action::Close => {
                 self.cancel_project_delete(cx);
                 self.menu = None;
@@ -158,6 +182,11 @@ impl Adeline {
                     self.agent_filter = None;
                     self.query
                         .update(cx, |state, cx| state.set_value("", window, cx));
+                    // Agents belong to a machine.
+                    if self.projects[ix].machine != self.current_machine() {
+                        self.project = ix;
+                        self.agents_changed(None, None, false, cx);
+                    }
                 }
                 self.project = ix;
                 self.section = Section::Chats;
@@ -175,26 +204,66 @@ impl Adeline {
             }
             Action::OpenFolder => {
                 self.menu = None;
-                let selection = cx.prompt_for_paths(PathPromptOptions {
-                    files: false,
-                    directories: true,
-                    multiple: false,
-                    prompt: Some("Open folder".into()),
-                });
-                cx.spawn_in(window, async move |this, cx| {
-                    let result = selection.await;
-                    let _ = this.update_in(cx, |app, window, cx| match result {
-                        Ok(Ok(Some(paths))) => {
-                            if let Some(directory) = paths.into_iter().next() {
-                                app.open_folder(&directory, window, cx);
-                            }
-                        }
-                        Ok(Ok(None)) => {}
-                        _ => window.push_notification("Could not open the folder picker.", cx),
-                    });
-                })
-                .detach();
+                let checked = machines::checked();
+                if let [machine] = checked.as_slice() {
+                    self.browse_folder_to_open(machine.clone(), window, cx);
+                } else {
+                    // Several machines: ask which one's folders to browse.
+                    self.modal = Some("folder-machine");
+                }
             }
+            Action::FolderMachine(machine) => {
+                // A remote machine's browser takes the dialog's place.
+                self.modal = None;
+                self.browse_folder_to_open(machine, window, cx);
+            }
+            Action::Machine(machine) => {
+                let checked = !machines::is_checked(&machine);
+                match machines::set_checked(&machine, checked) {
+                    Ok(()) => client::sync(cx),
+                    Err(error) => window.push_notification(error, cx),
+                }
+            }
+            Action::MachineRetry(machine) => client::retry(&machine, cx),
+            Action::ManageMachines => {
+                self.menu = None;
+                settings::open_machines(
+                    window.window_handle().downcast::<Root>().unwrap(),
+                    cx.weak_entity(),
+                    cx,
+                );
+            }
+            Action::MachineUpgrade(machine) => {
+                self.menu = None;
+                self.upgrade_machine = Some(machine);
+                self.modal = Some("upgrade");
+            }
+            Action::ConfirmUpgrade => {
+                self.modal = None;
+                if let Some(machine) = self.upgrade_machine.take() {
+                    client::upgrade(&machine, cx);
+                }
+            }
+            Action::AnswerPrompt(accept) => {
+                let (_, _, host_key) = client::prompt(cx).unwrap_or_default();
+                let answer = accept.then(|| {
+                    if host_key {
+                        "yes".to_owned()
+                    } else {
+                        self.prompt_input.read(cx).value().to_string()
+                    }
+                });
+                self.prompt_input
+                    .update(cx, |state, cx| state.set_value("", window, cx));
+                client::answer_prompt(answer, cx);
+                if client::prompt(cx).is_none() {
+                    self.modal = None;
+                } else {
+                    window.focus(&self.prompt_input.focus_handle(cx), cx);
+                }
+            }
+            Action::BrowseTo(path) => self.browse(Some(path), cx),
+            Action::BrowsePick(file) => self.browse_pick(file, window, cx),
             Action::CloseProject(ix) => {
                 if let Some(next) = close_project_tab(&mut self.open_projects, self.project, ix) {
                     if next != self.project {
@@ -232,8 +301,8 @@ impl Adeline {
                     .update(cx, |state, cx| state.set_value("", window, cx));
                 self.composer
                     .update(cx, |state, cx| state.set_value("", window, cx));
-                if !self.demo_mode && self.agent_catalog.entries.len() == 1 {
-                    self.selected_agent = Some(self.agent_catalog.entries[0].id.clone());
+                if !self.demo_mode && self.agent_catalog().entries.len() == 1 {
+                    self.selected_agent = Some(self.agent_catalog().entries[0].id.clone());
                 }
                 window.focus(&self.composer.focus_handle(cx), cx);
             }
@@ -290,7 +359,7 @@ impl Adeline {
             }
             Action::Agent(id) => {
                 if self
-                    .agent_catalog
+                    .agent_catalog()
                     .entries
                     .iter()
                     .any(|entry| entry.id == id)
@@ -300,11 +369,6 @@ impl Adeline {
                     self.new_chat_permission = None;
                 } else {
                     self.notify_toast("The selected agent is no longer available.", cx);
-                }
-            }
-            Action::Machine(ix) => {
-                if ix < if self.demo_mode { MACHINES.len() } else { 1 } {
-                    self.machine = ix;
                 }
             }
             Action::Speed(ix) => self.speed = ix,
@@ -317,15 +381,10 @@ impl Adeline {
                     self.set_conversation_permission(ix, cx);
                 }
             }
-            Action::ToggleMode(_) | Action::ToggleMachineSelector => {
-                if let Err(error) = config::update(|settings| {
-                    if let Action::ToggleMode(section) = action {
-                        settings.general.features.toggle(section);
-                    } else {
-                        settings.general.features.machine_selector =
-                            !settings.general.features.machine_selector;
-                    }
-                }) {
+            Action::ToggleMode(section) => {
+                if let Err(error) =
+                    config::update(|settings| settings.general.features.toggle(section))
+                {
                     window.push_notification(format!("Could not save settings: {error}"), cx);
                 }
                 if !config::current().general.features.enabled(self.section) {
@@ -339,7 +398,8 @@ impl Adeline {
             Action::StopAll => self.stop_all(cx),
             Action::QuitStopAll => self.quit_stopping_all(cx),
             Action::FinishInBackground => self.quit_in_background(cx),
-            Action::StartEngine | Action::EngineRetry => client::connect(true, cx),
+            Action::StartEngine => client::connect(&self.current_machine(), cx),
+            Action::EngineRetry => client::connect(machines::LOCAL, cx),
             Action::EngineWait => client::replace_old(false, cx),
             Action::EngineStopOld => client::replace_old(true, cx),
             Action::RetryPrompt => self.retry_prompt(cx),
@@ -390,6 +450,13 @@ impl Adeline {
                     self.projects[self.project].threads[thread].status = "idle".into();
                 }
             }
+            Action::AddFile | Action::AddDirectory
+                if self.workspace().machine != machines::LOCAL && !self.demo_mode =>
+            {
+                // A remote project's files are on its machine.
+                let directory = matches!(action, Action::AddDirectory);
+                self.open_browser(project_ui::BrowserPurpose::Attach { directory }, cx);
+            }
             Action::AddFile | Action::AddDirectory => {
                 let directory = matches!(action, Action::AddDirectory);
                 let selection = cx.prompt_for_paths(PathPromptOptions {
@@ -409,15 +476,9 @@ impl Adeline {
                     let result = selection.await;
                     let _ = this.update_in(cx, |app, window, cx| match result {
                         Ok(Ok(Some(paths))) => {
-                            let mut value = app.composer.read(cx).value().to_string();
                             for path in paths {
-                                if !value.is_empty() && !value.ends_with(char::is_whitespace) {
-                                    value.push(' ');
-                                }
-                                let _ = write!(value, "@\"{}\" ", path.display());
+                                app.attach_path(&path.display().to_string(), window, cx);
                             }
-                            app.composer
-                                .update(cx, |state, cx| state.set_value(value, window, cx));
                         }
                         Ok(Ok(None)) => {}
                         _ => window.push_notification("Could not open the file picker.", cx),
@@ -451,6 +512,17 @@ impl Adeline {
             window.close_dialog(cx);
         }
         cx.notify();
+    }
+
+    /// Adds `@"path"` to the composer.
+    pub(super) fn attach_path(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let mut value = self.composer.read(cx).value().to_string();
+        if !value.is_empty() && !value.ends_with(char::is_whitespace) {
+            value.push(' ');
+        }
+        let _ = write!(value, "@\"{path}\" ");
+        self.composer
+            .update(cx, |state, cx| state.set_value(value, window, cx));
     }
 
     /// The text of a message in the open chat.

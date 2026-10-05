@@ -115,9 +115,9 @@ impl Owner {
             .update(cx, |app, cx| app.act(action, window, cx));
     }
 
-    fn diagnostics(&self, cx: &App) -> Vec<String> {
+    fn diagnostics(&self, machine: &str, cx: &App) -> Vec<String> {
         self.entity
-            .read_with(cx, |app, _| app.agent_catalog.errors.clone())
+            .read_with(cx, |app, _| app.catalog(machine).errors.clone())
             .unwrap_or_default()
     }
 }
@@ -138,16 +138,36 @@ pub(super) fn open(
     entity: WeakEntity<Adeline>,
     cx: &mut Context<Adeline>,
 ) {
-    open_at(Owner::new(owner, entity), None, cx);
+    open_at(Owner::new(owner, entity), None, None, cx);
 }
-/// Settings on an agent's page, or where they were if it no longer exists.
+/// Settings on the machines page.
+pub(super) fn open_machines(
+    owner: WindowHandle<Root>,
+    entity: WeakEntity<Adeline>,
+    cx: &mut Context<Adeline>,
+) {
+    open_at(
+        Owner::new(owner, entity),
+        None,
+        Some(AfterAgent::Machines),
+        cx,
+    );
+}
+/// Settings on an agent's page of `machine`, or where they were if it no
+/// longer exists.
 pub(super) fn open_agent_page(
     owner: WindowHandle<Root>,
     entity: WeakEntity<Adeline>,
+    machine: String,
     id: Option<String>,
     cx: &mut Context<Adeline>,
 ) {
-    open_at(Owner::new(owner, entity), id.map(AfterAgent::Agent), cx);
+    open_at(
+        Owner::new(owner, entity),
+        Some(machine),
+        id.map(AfterAgent::Agent),
+        cx,
+    );
 }
 pub(super) fn open_mode(
     owner: WindowHandle<Root>,
@@ -157,11 +177,18 @@ pub(super) fn open_mode(
 ) {
     open_at(
         Owner::new(owner, entity),
+        Some(machines::LOCAL.to_owned()),
         Some(AfterAgent::OpenMode(mode)),
         cx,
     );
 }
-fn open_at(owner: Owner, target: Option<AfterAgent>, cx: &mut Context<Adeline>) {
+/// Opens Settings, or brings it forward, on `machine`'s settings and `target`.
+fn open_at(
+    owner: Owner,
+    machine: Option<String>,
+    target: Option<AfterAgent>,
+    cx: &mut Context<Adeline>,
+) {
     cx.defer(move |cx| {
         if let Some((root, settings)) = windows_of::<SettingsWindow>(cx)
             .into_iter()
@@ -169,6 +196,13 @@ fn open_at(owner: Owner, target: Option<AfterAgent>, cx: &mut Context<Adeline>) 
         {
             let _ = cx.update_window(root.into(), |_, window, cx| {
                 settings.update(cx, |settings, cx| {
+                    let dirty = settings
+                        .agent_form
+                        .as_ref()
+                        .is_some_and(|form| form.read(cx).dirty(cx));
+                    if let Some(machine) = machine.filter(|m| *m != settings.machine && !dirty) {
+                        settings.set_machine(machine, window, cx);
+                    }
                     let shown = matches!(&target, Some(AfterAgent::Agent(id))
                         if settings.agent_page.as_ref() == Some(id));
                     if let Some(target) = target.filter(|_| !shown) {
@@ -192,9 +226,18 @@ fn open_at(owner: Owner, target: Option<AfterAgent>, cx: &mut Context<Adeline>) 
                     Some(AfterAgent::OpenMode(mode)) => Some(mode),
                     _ => None,
                 };
-                let view = cx.new(|cx| SettingsWindow::new(owner, mode, window, cx));
-                if let Some(AfterAgent::Agent(id)) = target {
-                    view.update(cx, |view, cx| view.show_agent(id, window, cx));
+                let machine = machine.unwrap_or_else(|| machines::LOCAL.to_owned());
+                let view = cx.new(|cx| SettingsWindow::new(owner, machine, mode, window, cx));
+                match target {
+                    Some(AfterAgent::Agent(id)) => {
+                        view.update(cx, |view, cx| view.show_agent(id, window, cx));
+                    }
+                    Some(AfterAgent::Machines) => {
+                        view.update(cx, |view, cx| {
+                            view.after_agent(AfterAgent::Machines, window, cx);
+                        });
+                    }
+                    _ => {}
                 }
                 // Kit's root paints the background, which would hide the window blur.
                 cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
@@ -205,9 +248,11 @@ fn open_at(owner: Owner, target: Option<AfterAgent>, cx: &mut Context<Adeline>) 
         }
     });
 }
+/// The "Add an agent" window, for `machine`.
 pub(super) fn open_agent(
     owner: WindowHandle<Root>,
     entity: WeakEntity<Adeline>,
+    machine: String,
     cx: &mut Context<Adeline>,
 ) {
     let owner = Owner::new(owner, entity);
@@ -225,7 +270,7 @@ pub(super) fn open_agent(
                 ..Default::default()
             },
             |window, cx| {
-                let view = cx.new(|cx| AgentWindow::new(owner, window, cx));
+                let view = cx.new(|cx| AgentWindow::new(owner, machine, window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             },
         );
@@ -310,22 +355,24 @@ fn persist_form(
     form.check(cx)?;
     let definition = form.values(cx);
     let original = form.id.clone();
+    let machine = form.machine.clone();
     let expected = original.as_ref().map(|_| form.original.clone());
     let (demo, select_first) = owner
         .entity
         .read_with(cx, |app, _| {
             (
                 app.demo_mode,
-                original.is_none() && app.agent_catalog.entries.is_empty(),
+                original.is_none() && app.catalog(&machine).entries.is_empty(),
             )
         })
         .map_err(|error| error.to_string())?;
     let saved = if demo {
         let original = original.clone();
+        let machine = machine.clone();
         owner
             .entity
             .update(cx, move |app, _| {
-                app.agent_catalog.save(
+                app.catalog_mut(&machine).save(
                     original.as_deref(),
                     definition,
                     expected.as_ref(),
@@ -340,7 +387,7 @@ fn persist_form(
             expected,
             overwrite,
         };
-        client::request_blocking(command, cx)?
+        client::request_blocking(&machine, command, cx)?
             .as_str()
             .map(str::to_owned)
             .ok_or("The conversation engine returned no agent ID.")?
@@ -354,8 +401,8 @@ fn persist_form(
     Ok(saved)
 }
 
-/// Deletes an agent through the engine, or locally in demo mode.
-fn delete_agent(owner: &Owner, id: &str, cx: &mut App) -> Result<(), String> {
+/// Deletes one of `machine`'s agents through its engine, or locally in demo mode.
+fn delete_agent(owner: &Owner, machine: &str, id: &str, cx: &mut App) -> Result<(), String> {
     let demo = owner
         .entity
         .read_with(cx, |app, _| app.demo_mode)
@@ -363,10 +410,14 @@ fn delete_agent(owner: &Owner, id: &str, cx: &mut App) -> Result<(), String> {
     if demo {
         owner
             .entity
-            .update(cx, |app, _| app.agent_catalog.delete(id))
+            .update(cx, |app, _| app.catalog_mut(machine).delete(id))
             .map_err(|error| error.to_string())??;
     } else {
-        client::request_blocking(protocol::Command::DeleteAgent { id: id.to_owned() }, cx)?;
+        client::request_blocking(
+            machine,
+            protocol::Command::DeleteAgent { id: id.to_owned() },
+            cx,
+        )?;
     }
     owner
         .entity
@@ -398,7 +449,7 @@ fn choose(
                     window.close_dialog(cx);
                     selected(index, window, cx);
                 });
-            footer = footer.child(if label == "Delete" {
+            footer = footer.child(if matches!(label, "Delete" | "Remove") {
                 button.danger()
             } else if index == 0 {
                 button.primary()
@@ -438,17 +489,25 @@ fn choose(
 
 struct AgentWindow {
     owner: Owner,
+    machine: String,
     form: Entity<agent_form::AgentForm>,
     focus: FocusHandle,
     pending: bool,
     _subscriptions: Vec<Subscription>,
 }
 impl AgentWindow {
-    fn new(owner: Owner, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        client::ensure(cx);
-        client::refresh_harnesses(true, cx);
+    fn new(owner: Owner, machine: String, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        client::focus(&machine, cx);
+        client::ensure(&machine, cx);
+        client::refresh_harnesses(&machine, true, cx);
         let form = cx.new(|cx| {
-            agent_form::AgentForm::new(None, agents::AgentDefinition::default(), window, cx)
+            agent_form::AgentForm::new(
+                machine.clone(),
+                None,
+                agents::AgentDefinition::default(),
+                window,
+                cx,
+            )
         });
         let focus = cx.focus_handle().tab_stop(true);
         let name = form.read(cx).name_focus(cx);
@@ -460,6 +519,7 @@ impl AgentWindow {
         });
         Self {
             owner,
+            machine,
             form,
             focus,
             pending: false,
@@ -541,17 +601,21 @@ impl Render for AgentWindow {
             .flex_col()
             .gap_5()
             .p_6()
-            .child(div().text_xl().child("Add an agent"))
+            .child(div().text_xl().child(if self.machine == machines::LOCAL {
+                "Add an agent".to_owned()
+            } else {
+                format!("Add an agent on {}", machines::name(&self.machine))
+            }))
             .child(
                 div()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
                     .child(
-                        "Configure an agent for this workspace. Saving does not start the command.",
+                        "Configure an agent for this machine's projects. Saving does not start the command.",
                     ),
             )
             .child(self.form.clone())
-            .child(diagnostics(self.owner.diagnostics(cx), cx));
+            .child(diagnostics(self.owner.diagnostics(&self.machine, cx), cx));
         let shell = div()
             .size_full()
             .flex()
@@ -609,6 +673,10 @@ impl Render for AgentWindow {
 
 #[derive(Clone)]
 enum AfterAgent {
+    /// Show another machine's settings.
+    Machine(String),
+    /// The machines page.
+    Machines,
     CloseSettings,
     CloseOwner,
     Child(usize, usize),
@@ -619,6 +687,16 @@ enum AfterAgent {
 }
 struct SettingsWindow {
     owner: Owner,
+    /// The machine whose Agents and Engine settings show.
+    machine: String,
+    /// The machine dropdown: every machine, then "Add machine…" and "Manage machines…".
+    machine_picker: Entity<SelectState<SearchableVec<String>>>,
+    machines_page: bool,
+    /// The machines page edits this machine, or adds one with `None`.
+    editing: Option<String>,
+    machine_name: Entity<InputState>,
+    machine_destination: Entity<InputState>,
+    machine_error: Option<String>,
     query: Entity<InputState>,
     last_query: String,
     agent_page: Option<String>,
@@ -708,9 +786,27 @@ fn diagnostics(errors: Vec<String>, cx: &App) -> Div {
     list
 }
 
+const ADD_MACHINE: &str = "Add machine…";
+const MANAGE_MACHINES: &str = "Manage machines…";
+
+/// The machine dropdown's entries.
+fn machine_labels() -> Vec<String> {
+    let mut labels: Vec<String> = machines::all().iter().map(|m| machines::name(m)).collect();
+    labels.extend([ADD_MACHINE.to_owned(), MANAGE_MACHINES.to_owned()]);
+    labels
+}
+
+/// The engine settings shown for `machine`, if it's connected.
+fn engine_settings_of(machine: &str, cx: &App) -> protocol::EngineSettings {
+    client::connection(machine, cx)
+        .map(|c| c.settings.clone())
+        .unwrap_or_default()
+}
+
 impl SettingsWindow {
     fn new(
         owner: Owner,
+        machine: String,
         mode: Option<Section>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -719,6 +815,17 @@ impl SettingsWindow {
             .entity
             .read_with(cx, |app, _| app.demo_mode)
             .unwrap_or(false);
+        client::focus(&machine, cx);
+        let machine_picker = cx.new(|cx| {
+            let mut picker =
+                SelectState::new(SearchableVec::new(machine_labels()), None, window, cx);
+            picker.set_selected_value(&machines::name(&machine), window, cx);
+            picker
+        });
+        let machine_name = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
+        let machine_destination = cx.new(|cx| {
+            InputState::new(window, cx).placeholder("user@host, user@host:port or a Host alias")
+        });
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
         let focus = cx.focus_handle().tab_stop(true);
         fonts::refresh(cx);
@@ -726,7 +833,7 @@ impl SettingsWindow {
             text_input(selected_font_size(which).to_string(), "14", window, cx)
         });
         let retry_limit = text_input(
-            client::connection(cx).settings.retry_limit.to_string(),
+            engine_settings_of(&machine, cx).retry_limit.to_string(),
             "5",
             window,
             cx,
@@ -802,11 +909,12 @@ impl SettingsWindow {
                     return;
                 }
                 let value = input.read(cx).value().trim().parse::<usize>();
+                let current = engine_settings_of(&this.machine, cx);
                 match value {
-                    Ok(limit) if limit != client::connection(cx).settings.retry_limit => {
+                    Ok(limit) if limit != current.retry_limit => {
                         let settings = protocol::EngineSettings {
                             retry_limit: limit,
-                            ..client::connection(cx).settings.clone()
+                            ..current
                         };
                         this.save_engine_settings(settings, cx);
                     }
@@ -820,6 +928,34 @@ impl SettingsWindow {
                 cx.notify();
             }),
         );
+        subscriptions.push(cx.subscribe_in(
+            &machine_picker,
+            window,
+            |this, _, event: &SelectEvent<SearchableVec<String>>, window, cx| {
+                let SelectEvent::Confirm(Some(label)) = event else {
+                    return;
+                };
+                let next = match label.as_str() {
+                    ADD_MACHINE | MANAGE_MACHINES => AfterAgent::Machines,
+                    name => match machines::all()
+                        .into_iter()
+                        .find(|m| machines::name(m) == name)
+                    {
+                        Some(machine) => AfterAgent::Machine(machine),
+                        None => return,
+                    },
+                };
+                if label == ADD_MACHINE {
+                    this.editing = None;
+                }
+                // The dropdown names the machine shown, not the page.
+                let shown = machines::name(&this.machine);
+                this.machine_picker.update(cx, |picker, cx| {
+                    picker.set_selected_value(&shown, window, cx);
+                });
+                this.leave(next, window, cx);
+            },
+        ));
         subscriptions.push(cx.subscribe(
             &thinking_picker,
             |this, _, event: &SelectEvent<SearchableVec<String>>, cx| {
@@ -932,6 +1068,13 @@ impl SettingsWindow {
         let theme_status = (!notices.is_empty()).then(|| notices.join("\n"));
         Self {
             owner,
+            machine,
+            machine_picker,
+            machines_page: false,
+            editing: None,
+            machine_name,
+            machine_destination,
+            machine_error: None,
             query,
             last_query: String::new(),
             agent_page: None,
@@ -960,12 +1103,57 @@ impl SettingsWindow {
         }
     }
 
+    /// Shows another machine's settings. Only Agents and Engine belong to a
+    /// remote machine.
+    fn set_machine(&mut self, machine: String, window: &mut Window, cx: &mut Context<Self>) {
+        client::focus(&machine, cx);
+        client::ensure(&machine, cx);
+        client::refresh_harnesses(&machine, false, cx);
+        let name = machines::name(&machine);
+        self.machine_picker.update(cx, |picker, cx| {
+            picker.set_items(SearchableVec::new(machine_labels()), window, cx);
+            picker.set_selected_value(&name, window, cx);
+        });
+        let limit = engine_settings_of(&machine, cx).retry_limit.to_string();
+        self.retry_limit
+            .update(cx, |input, cx| input.set_value(limit, window, cx));
+        self.retry_limit_error = None;
+        self.agent_page = None;
+        self.agent_form = None;
+        self.agent_subscriptions.clear();
+        self.agent_status = None;
+        self.machines_page = false;
+        if machine != machines::LOCAL && self.group < 3 {
+            self.group = 4;
+            self.subgroup = Some(0);
+            self.folded[4] = false;
+        }
+        self.machine = machine;
+        cx.notify();
+    }
+
+    fn agent_definition(&self, id: Option<&String>, cx: &App) -> Option<agents::AgentDefinition> {
+        let machine = &self.machine;
+        self.owner
+            .entity
+            .read_with(cx, |app, _| {
+                app.catalog(machine)
+                    .entries
+                    .iter()
+                    .find(|entry| Some(&entry.id) == id)
+                    .map(|entry| entry.definition.clone())
+            })
+            .ok()
+            .flatten()
+    }
+
     fn show_agent(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let machine = self.machine.clone();
         let definition = self
             .owner
             .entity
             .read_with(cx, |app, _| {
-                app.agent_catalog
+                app.catalog(&machine)
                     .entries
                     .iter()
                     .find(|entry| entry.id == id)
@@ -974,16 +1162,17 @@ impl SettingsWindow {
             .ok()
             .flatten();
         self.agent_page = Some(id.clone());
+        self.machines_page = false;
         self.group = 3;
         self.subgroup = None;
         self.folded[3] = false;
         self.agent_status = None;
         self.search_page = Some((3, None));
         self.agent_subscriptions.clear();
-        client::ensure(cx);
-        client::refresh_harnesses(false, cx);
+        client::ensure(&machine, cx);
+        client::refresh_harnesses(&machine, false, cx);
         self.agent_form = definition.map(|definition| {
-            cx.new(|cx| agent_form::AgentForm::new(Some(id), definition, window, cx))
+            cx.new(|cx| agent_form::AgentForm::new(machine, Some(id), definition, window, cx))
         });
         if let Some(form) = &self.agent_form {
             self.agent_subscriptions
@@ -997,18 +1186,7 @@ impl SettingsWindow {
             return;
         };
         let form_id = form.read(cx).id.clone();
-        let current = self
-            .owner
-            .entity
-            .read_with(cx, |app, _| {
-                app.agent_catalog
-                    .entries
-                    .iter()
-                    .find(|entry| Some(&entry.id) == form_id.as_ref())
-                    .map(|entry| entry.definition.clone())
-            })
-            .ok()
-            .flatten();
+        let current = self.agent_definition(form_id.as_ref(), cx);
         if current.as_ref() == Some(&form.read(cx).original) {
             form.update(cx, |form, _| form.external_changed = false);
         } else if form.read(cx).dirty(cx) {
@@ -1025,6 +1203,15 @@ impl SettingsWindow {
 
     fn after_agent(&mut self, after: AfterAgent, window: &mut Window, cx: &mut Context<Self>) {
         match after {
+            AfterAgent::Machine(machine) => self.set_machine(machine, window, cx),
+            AfterAgent::Machines => {
+                self.agent_page = None;
+                self.agent_form = None;
+                self.agent_subscriptions.clear();
+                self.machines_page = true;
+                self.machine_error = None;
+                self.fill_machine_inputs(window, cx);
+            }
             AfterAgent::CloseSettings => window.remove_window(),
             AfterAgent::CloseOwner => {
                 self.agent_form = None;
@@ -1032,6 +1219,7 @@ impl SettingsWindow {
                 request_close(self.owner.window, self.owner.entity.clone(), cx);
             }
             AfterAgent::Child(group, child) => {
+                self.machines_page = false;
                 self.group = group;
                 self.folded[group] = false;
                 self.subgroup = Some(child);
@@ -1076,18 +1264,7 @@ impl SettingsWindow {
             return;
         };
         let form_id = form.read(cx).id.clone();
-        let current = self
-            .owner
-            .entity
-            .read_with(cx, |app, _| {
-                app.agent_catalog
-                    .entries
-                    .iter()
-                    .find(|entry| Some(&entry.id) == form_id.as_ref())
-                    .map(|entry| entry.definition.clone())
-            })
-            .ok()
-            .flatten();
+        let current = self.agent_definition(form_id.as_ref(), cx);
         if !overwrite
             && (form.read(cx).external_changed || current.as_ref() != Some(&form.read(cx).original))
         {
@@ -1111,18 +1288,7 @@ impl SettingsWindow {
                                 // The engine watches agent files, so the list is current.
                                 if let Some(form) = view.agent_form.clone() {
                                     let form_id = form.read(cx).id.clone();
-                                    let definition = view
-                                        .owner
-                                        .entity
-                                        .read_with(cx, |app, _| {
-                                            app.agent_catalog
-                                                .entries
-                                                .iter()
-                                                .find(|entry| Some(&entry.id) == form_id.as_ref())
-                                                .map(|entry| entry.definition.clone())
-                                        })
-                                        .ok()
-                                        .flatten();
+                                    let definition = view.agent_definition(form_id.as_ref(), cx);
                                     if let Some(definition) = definition {
                                         form.update(cx, |form, cx| {
                                             form.reload(definition, window, cx);
@@ -1250,7 +1416,8 @@ impl SettingsWindow {
                         return;
                     }
                     let owner = view.owner.clone();
-                    let result = delete_agent(&owner, &id, cx);
+                    let machine = view.machine.clone();
+                    let result = delete_agent(&owner, &machine, &id, cx);
                     match result {
                         Ok(()) => {
                             view.agent_page = None;
@@ -1405,6 +1572,7 @@ impl SettingsWindow {
     fn save_engine_settings(&mut self, settings: protocol::EngineSettings, cx: &mut Context<Self>) {
         let view = cx.entity().downgrade();
         client::request(
+            &self.machine,
             protocol::Command::SetSettings { settings },
             Box::new(move |result, cx| {
                 let _ = view.update(cx, |this, cx| {
@@ -1420,6 +1588,7 @@ impl SettingsWindow {
         self.engine_stopping = true;
         let view = cx.entity().downgrade();
         client::request(
+            &self.machine,
             protocol::Command::Shutdown,
             Box::new(move |_, cx| {
                 let _ = view.update(cx, |this, cx| {
@@ -1432,16 +1601,38 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    /// Settings › Engine: the engine's own settings, its status, and Stop or Start.
+    /// Settings › Engine: the machine's engine settings, its status, and Stop or Start.
     fn engine_settings(&self, query: &str, cx: &Context<Self>) -> Div {
-        let connection = client::connection(cx);
-        let connected = connection.state == client::State::Connected;
         let mut page = div().w_full().flex().flex_col().gap_3();
+        let name = machines::name(&self.machine);
         page = page
-            .child(div().text_lg().child("Engine"))
+            .child(div().text_lg().child(if self.machine == machines::LOCAL {
+                "Engine".to_owned()
+            } else {
+                format!("Engine on {name}")
+            }))
             .child(div().text_sm().text_color(cx.theme().muted_foreground).child(
                 "The conversation engine runs agents in the background, so work can finish after Adeline closes. These settings apply immediately, including to work already running.",
             ));
+        let Some(connection) = client::connection(&self.machine, cx) else {
+            let machine = self.machine.clone();
+            return page
+                .child(div().text_sm().child(format!(
+                    "Check {name} in the machine selector to see and change its engine."
+                )))
+                .child(
+                    div().flex().justify_end().child(
+                        Button::new("engine-check-machine")
+                            .small()
+                            .primary()
+                            .label(format!("Check {name}"))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.owner.act(Action::Machine(machine.clone()), window, cx);
+                            })),
+                    ),
+                );
+        };
+        let connected = connection.state == client::State::Connected;
         let mut rows = Vec::new();
         if matches_query(
             query,
@@ -1481,7 +1672,11 @@ impl SettingsWindow {
                             .on_change(move |_, _, cx| {
                                 let settings = protocol::EngineSettings {
                                     keep_running: !checked,
-                                    ..client::connection(cx).settings.clone()
+                                    ..view
+                                        .read_with(cx, |this, cx| {
+                                            engine_settings_of(&this.machine, cx)
+                                        })
+                                        .unwrap_or_default()
                                 };
                                 let _ = view
                                     .update(cx, |this, cx| this.save_engine_settings(settings, cx));
@@ -1519,9 +1714,17 @@ impl SettingsWindow {
                     "An older engine is running".to_owned()
                 }
                 client::State::Demo => "Not used in demo mode".to_owned(),
+                state => format!(
+                    "{}{}",
+                    state.label(),
+                    state.detail().map(|d| format!(": {d}")).unwrap_or_default()
+                ),
             };
             let uptime = status.uptime_secs + connection.status_at.elapsed().as_secs();
             let mut fields = vec![("Status", state)];
+            if let Some(destination) = &connection.destination {
+                fields.push(("Connected through", destination.clone()));
+            }
             if connected {
                 fields.extend([
                     ("PID", status.pid.to_string()),
@@ -1591,7 +1794,7 @@ impl SettingsWindow {
                         connection.state,
                         client::State::Demo | client::State::Connecting | client::State::Starting
                     ))
-                    .on_click(cx.listener(|_, _, _, cx| client::connect(true, cx)))
+                    .on_click(cx.listener(|this, _, _, cx| client::retry(&this.machine, cx)))
             };
             page = page.child(div().flex().justify_end().mt_2().child(button.small()));
         }
@@ -1746,6 +1949,373 @@ impl SettingsWindow {
     }
 }
 
+impl SettingsWindow {
+    /// Fills the machines page's inputs for the machine being edited, or
+    /// empties them for a new one.
+    fn fill_machine_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self
+            .editing
+            .as_deref()
+            .and_then(machines::remote)
+            .map(|m| m.name)
+            .unwrap_or_default();
+        self.machine_name
+            .update(cx, |input, cx| input.set_value(name, window, cx));
+        self.machine_destination
+            .update(cx, |input, cx| input.set_value("", window, cx));
+    }
+
+    /// After the saved machines change: the dropdown, the title bar and the
+    /// connections follow.
+    fn machines_changed(
+        &mut self,
+        result: Result<(), String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.machine_error = result.err();
+        if !machines::all().contains(&self.machine) {
+            machines::LOCAL.clone_into(&mut self.machine);
+            client::focus(machines::LOCAL, cx);
+        }
+        let name = machines::name(&self.machine);
+        self.machine_picker.update(cx, |picker, cx| {
+            picker.set_items(SearchableVec::new(machine_labels()), window, cx);
+            picker.set_selected_value(&name, window, cx);
+        });
+        client::sync(cx);
+        cx.refresh_windows();
+        cx.notify();
+    }
+
+    fn add_machine(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self.machine_name.read(cx).value().to_string();
+        let destination = self.machine_destination.read(cx).value().to_string();
+        let result = machines::add(&name, &destination).map(|_| ());
+        if result.is_ok() {
+            self.fill_machine_inputs(window, cx);
+        }
+        self.machines_changed(result, window, cx);
+    }
+
+    /// Forgets a machine after asking.
+    fn confirm_remove(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity().downgrade();
+        choose(
+            window,
+            cx,
+            format!("Remove {}?", machines::name(&id)),
+            "Adeline forgets it on this computer. Its engine, projects and agents stay on that machine, and running agents keep running.",
+            &["Remove", "Cancel"],
+            move |choice, window, cx| {
+                if choice != 0 {
+                    return;
+                }
+                let _ = view.update(cx, |this, cx| {
+                    if this.editing.as_deref() == Some(id.as_str()) {
+                        this.editing = None;
+                    }
+                    let result = machines::remove(&id);
+                    this.machines_changed(result, window, cx);
+                });
+            },
+        );
+    }
+
+    fn edit_machine(
+        &mut self,
+        id: &str,
+        edit: impl FnOnce(&mut machines::Machine) -> Result<(), String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let result = machines::edit(id, edit);
+        self.machines_changed(result, window, cx);
+    }
+
+    /// Settings › Machines: the remote machines saved on this client.
+    fn machines_settings(&self, cx: &Context<Self>) -> Div {
+        let theme = cx.theme();
+        let mut page = div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().text_lg().child("Machines"))
+            .child(div().text_sm().text_color(theme.muted_foreground).child(
+                "Remote machines are reached with your ssh setup and saved on this computer only. Removing one only forgets it here: its engine, projects and agents stay on that machine.",
+            ));
+        if self.demo {
+            page = page.child(
+                div()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child("Demo machines can't be changed."),
+            );
+        }
+        for (ix, machine) in machines::remotes().into_iter().enumerate() {
+            let editing = self.editing.as_deref() == Some(machine.id.as_str());
+            let id = machine.id.clone();
+            let mut rows = vec![
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_4()
+                    .py_3()
+                    .child(
+                        div()
+                            .flex_1()
+                            .font_weight(FontWeight::MEDIUM)
+                            .child(machine.name.clone()),
+                    )
+                    .when(!editing && !self.demo, |row| {
+                        let id = id.clone();
+                        row.child(
+                            Button::new(("machine-edit", ix))
+                                .small()
+                                .label("Edit")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.editing = Some(id.clone());
+                                    this.machine_error = None;
+                                    this.fill_machine_inputs(window, cx);
+                                    cx.notify();
+                                })),
+                        )
+                    })
+                    .when(!self.demo, |row| {
+                        let id = id.clone();
+                        row.child(
+                            Button::new(("machine-remove", ix))
+                                .small()
+                                .danger()
+                                .label("Remove")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.confirm_remove(id.clone(), window, cx);
+                                })),
+                        )
+                    }),
+            ];
+            let count = machine.destinations.len();
+            for (at, destination) in machine.destinations.iter().enumerate() {
+                let button = |name: &'static str, label: &'static str, enabled: bool| {
+                    Button::new((name, ix * 100 + at))
+                        .xsmall()
+                        .ghost()
+                        .label(label)
+                        .disabled(!enabled || self.demo)
+                };
+                let (up, down, remove) = (id.clone(), id.clone(), id.clone());
+                rows.push(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_2()
+                        .px_4()
+                        .py_2()
+                        .child(
+                            div()
+                                .w(rems(1.5))
+                                .text_sm()
+                                .text_color(theme.muted_foreground)
+                                .child(format!("{}.", at + 1)),
+                        )
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .truncate()
+                                .font_family(theme.mono_font_family.clone())
+                                .text_sm()
+                                .child(destination.clone()),
+                        )
+                        .child(button("destination-up", "Up", at > 0).on_click(cx.listener(
+                            move |this, _, window, cx| {
+                                this.edit_machine(
+                                    &up,
+                                    |m| {
+                                        m.destinations.swap(at - 1, at);
+                                        Ok(())
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            },
+                        )))
+                        .child(button("destination-down", "Down", at + 1 < count).on_click(
+                            cx.listener(move |this, _, window, cx| {
+                                this.edit_machine(
+                                    &down,
+                                    |m| {
+                                        m.destinations.swap(at, at + 1);
+                                        Ok(())
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            }),
+                        ))
+                        .child(button("destination-remove", "Remove", count > 1).on_click(
+                            cx.listener(move |this, _, window, cx| {
+                                this.edit_machine(
+                                    &remove,
+                                    |m| {
+                                        m.destinations.remove(at);
+                                        Ok(())
+                                    },
+                                    window,
+                                    cx,
+                                );
+                            }),
+                        )),
+                );
+            }
+            if editing {
+                let (rename, add) = (id.clone(), id.clone());
+                rows.push(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_2()
+                        .px_4()
+                        .py_3()
+                        .child(
+                            Field::new().label("Name").child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .child(div().flex_1().child(
+                                        Input::new(&self.machine_name).aria_label("Machine name"),
+                                    ))
+                                    .child(
+                                        Button::new("machine-rename")
+                                            .small()
+                                            .label("Rename")
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                let name =
+                                                    this.machine_name.read(cx).value().to_string();
+                                                this.edit_machine(
+                                                    &rename,
+                                                    |m| {
+                                                        m.name = name;
+                                                        Ok(())
+                                                    },
+                                                    window,
+                                                    cx,
+                                                );
+                                            })),
+                                    ),
+                            ),
+                        )
+                        .child(
+                            Field::new().label("Another destination").child(
+                                div()
+                                    .flex()
+                                    .gap_2()
+                                    .child(
+                                        div().flex_1().child(
+                                            Input::new(&self.machine_destination)
+                                                .aria_label("New destination"),
+                                        ),
+                                    )
+                                    .child(
+                                        Button::new("destination-add")
+                                            .small()
+                                            .label("Add destination")
+                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                                let destination = this
+                                                    .machine_destination
+                                                    .read(cx)
+                                                    .value()
+                                                    .trim()
+                                                    .to_owned();
+                                                this.edit_machine(
+                                                    &add,
+                                                    |m| {
+                                                        remote::check_destination(&destination)?;
+                                                        if m.destinations.contains(&destination) {
+                                                            return Err(format!(
+                                                                "{destination} is already listed."
+                                                            ));
+                                                        }
+                                                        m.destinations.push(destination);
+                                                        Ok(())
+                                                    },
+                                                    window,
+                                                    cx,
+                                                );
+                                                if this.machine_error.is_none() {
+                                                    this.machine_destination.update(
+                                                        cx,
+                                                        |input, cx| {
+                                                            input.set_value("", window, cx);
+                                                        },
+                                                    );
+                                                }
+                                            })),
+                                    ),
+                            ),
+                        )
+                        .child(div().flex().justify_end().child(
+                            Button::new("machine-done").small().label("Done").on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.editing = None;
+                                    this.machine_error = None;
+                                    this.fill_machine_inputs(window, cx);
+                                    cx.notify();
+                                }),
+                            ),
+                        )),
+                );
+            }
+            page = page.children(card(rows, cx));
+        }
+        if let Some(message) = &self.machine_error {
+            page = page.child(error(message.clone(), cx));
+        }
+        if self.editing.is_none() && !self.demo {
+            page = page.child(caps("Add a machine", cx).mt_2()).children(card(
+                vec![
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap_3()
+                        .px_4()
+                        .py_3()
+                        .child(
+                            Field::new()
+                                .label("Name")
+                                .child(Input::new(&self.machine_name).aria_label("Machine name")),
+                        )
+                        .child(
+                            Field::new()
+                                .label("Destination")
+                                .description(
+                                    "Tried first. You can add more destinations afterwards.",
+                                )
+                                .child(
+                                    Input::new(&self.machine_destination).aria_label("Destination"),
+                                ),
+                        )
+                        .child(
+                            div().flex().justify_end().child(
+                                Button::new("machine-add")
+                                    .small()
+                                    .primary()
+                                    .label("Add machine")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.add_machine(window, cx);
+                                    })),
+                            ),
+                        ),
+                ],
+                cx,
+            ));
+        }
+        page
+    }
+}
+
 fn matches_query(query: &str, parts: &[&str]) -> bool {
     query
         .split_whitespace()
@@ -1753,22 +2323,12 @@ fn matches_query(query: &str, parts: &[&str]) -> bool {
 }
 fn general_matches(child: usize, query: &str) -> bool {
     match child {
-        0 => {
+        0 => MODES.iter().any(|(_, name)| {
             matches_query(
                 query,
-                &[
-                    "General",
-                    "Features",
-                    "Machine selector",
-                    "Show the machine selector in the top bar.",
-                ],
-            ) || MODES.iter().any(|(_, name)| {
-                matches_query(
-                    query,
-                    &["General", "Features", name, "Enable mode in the main view"],
-                )
-            })
-        }
+                &["General", "Features", name, "Enable mode in the main view"],
+            )
+        }),
         1 => [
             "Theme",
             "Interface font",
@@ -1885,10 +2445,12 @@ impl Render for SettingsWindow {
         let query = self.query.read(cx).value().to_lowercase();
         let searching = !query.trim().is_empty();
         let mut navigation = div().flex().flex_col().gap_1();
+        // A remote machine has only Agents and Engine; the rest is this client's.
+        let remote = self.machine != machines::LOCAL;
         // Licenses (group 2) always comes last in the sidebar.
         for group in [0, 1, 3, 4, 2] {
             let name = GROUPS[group];
-            if group == 2 && searching {
+            if group == 2 && searching || remote && group < 3 {
                 continue;
             }
             let matching: Vec<_> = SUBGROUPS[group]
@@ -1903,10 +2465,11 @@ impl Render for SettingsWindow {
                 })
                 .collect();
             let matching_agents: Vec<_> = if group == 3 {
+                let machine = self.machine.clone();
                 self.owner
                     .entity
                     .read_with(cx, |app, _| {
-                        app.agent_catalog
+                        app.catalog(&machine)
                             .entries
                             .iter()
                             .filter(|entry| {
@@ -1968,7 +2531,7 @@ impl Render for SettingsWindow {
                         format!("settings-{group}-{child}"),
                         *title,
                         icon,
-                        self.group == group && self.subgroup == Some(child),
+                        !self.machines_page && self.group == group && self.subgroup == Some(child),
                         cx,
                     )
                     .on_click(cx.listener(move |this, _, window, cx| {
@@ -1977,7 +2540,7 @@ impl Render for SettingsWindow {
                 );
             }
             for (id, title, harness) in matching_agents {
-                let selected = self.agent_page.as_ref() == Some(&id);
+                let selected = !self.machines_page && self.agent_page.as_ref() == Some(&id);
                 let installed = cx.global::<harness::Catalog>().is_installed(&harness);
                 navigation = navigation.child(
                     navigation_button(
@@ -2023,32 +2586,55 @@ impl Render for SettingsWindow {
                     .overflow_y_scrollbar()
                     .id("settings-navigation")
                     .child(navigation),
+            )
+            .child(
+                div()
+                    .pt_2()
+                    .border_t_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        Select::new(&self.machine_picker)
+                            .icon(Icon::default().path("devices.svg"))
+                            .accessibility_label("Machine")
+                            .menu_width(rems(15.)),
+                    ),
             );
         let show = |group, child| {
-            if searching {
+            if self.machines_page || remote && group < 3 {
+                false
+            } else if searching {
                 self.search_page
                     .is_none_or(|(g, c)| g == group && c.is_none_or(|c| c == child))
             } else {
                 self.group == group && self.subgroup.is_none_or(|c| c == child)
             }
         };
-        let heading = if searching {
+        let heading = if self.machines_page {
+            "Machines".to_string()
+        } else if searching {
             "Search results".to_string()
-        } else if self.group == 3 && self.agent_form.is_some() {
-            self.agent_form.as_ref().unwrap().read(cx).name(cx)
+        } else if let Some(form) = self.agent_form.as_ref().filter(|_| self.group == 3) {
+            form.read(cx).name(cx)
         } else {
             self.subgroup
                 .map_or(GROUPS[self.group], |child| SUBGROUPS[self.group][child])
                 .to_string()
         };
         // The title bar names the page, so the content starts with its settings.
-        let crumbs = if searching || heading == GROUPS[self.group] {
+        let mut crumbs = if searching || self.machines_page || heading == GROUPS[self.group] {
             vec![heading]
         } else {
             vec![GROUPS[self.group].to_string(), heading]
         };
+        if remote && !self.machines_page {
+            crumbs.insert(0, machines::name(&self.machine));
+        }
         let mut content = div().w_full().p_6().pt_4().flex().flex_col().gap_3();
         let mut found = false;
+        if self.machines_page {
+            found = true;
+            content = content.child(self.machines_settings(cx));
+        }
         if let Some(owner) = self.owner.entity.upgrade() {
             let app = owner.read(cx);
             if self.demo && show(0, 0) && general_matches(0, &query) {
@@ -2059,20 +2645,6 @@ impl Render for SettingsWindow {
                 content = content.child(div().text_sm().text_color(cx.theme().muted_foreground)
                     .child("Choose which features are available in the main view. Chats is always enabled."));
                 let features = config::current().general.features;
-                let mut top_bar = Vec::new();
-                if matches_query(
-                    &query,
-                    &["General", "Features", "Machine selector", "top bar"],
-                ) {
-                    top_bar.push(self.setting_row(
-                        "machine-selector",
-                        "Machine selector",
-                        "Show the machine selector in the top bar.",
-                        features.machine_selector,
-                        Action::ToggleMachineSelector,
-                        cx,
-                    ));
-                }
                 let mut modes = Vec::new();
                 for (section, name) in MODES.into_iter().skip(1) {
                     if matches_query(
@@ -2089,10 +2661,8 @@ impl Render for SettingsWindow {
                         ));
                     }
                 }
-                for (label, rows) in [("Top bar", top_bar), ("Modes", modes)] {
-                    if let Some(card) = card(rows, cx) {
-                        content = content.child(caps(label, cx).mt_2()).child(card);
-                    }
+                if let Some(card) = card(modes, cx) {
+                    content = content.child(caps("Modes", cx).mt_2()).child(card);
                 }
             }
             if show(0, 1) && general_matches(1, &query) {
@@ -2172,7 +2742,7 @@ impl Render for SettingsWindow {
             found = true;
             content = content.child(self.engine_settings(&query, cx));
         }
-        if self.group == 2 && !searching {
+        if self.group == 2 && !searching && !remote && !self.machines_page {
             for (index, (name, description, license)) in [
                 (
                     "Phosphor Icons",
@@ -2213,12 +2783,13 @@ impl Render for SettingsWindow {
                 );
             }
         }
-        if self.group == 3 || searching {
+        if (self.group == 3 || searching) && !self.machines_page {
+            let machine = self.machine.clone();
             let matching_agent = self
                 .owner
                 .entity
                 .read_with(cx, |app, _| {
-                    app.agent_catalog.entries.iter().any(|entry| {
+                    app.catalog(&machine).entries.iter().any(|entry| {
                         matches_query(
                             &query,
                             &[
@@ -2283,7 +2854,7 @@ impl Render for SettingsWindow {
                 if let Some(message) = &self.agent_status {
                     content = content.child(error(message.clone(), cx));
                 }
-                content = content.child(diagnostics(self.owner.diagnostics(cx), cx));
+                content = content.child(diagnostics(self.owner.diagnostics(&self.machine, cx), cx));
             }
         }
         if !found {
@@ -2294,6 +2865,8 @@ impl Render for SettingsWindow {
             );
         }
         if !searching
+            && !self.machines_page
+            && !remote
             && (self.group == 1 || (self.group == 0 && self.subgroup.is_none_or(|i| i == 0)))
         {
             content = content.child(

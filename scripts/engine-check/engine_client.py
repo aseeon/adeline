@@ -55,7 +55,7 @@ class Client:
     """A connection to the engine. A reader thread polls with PeekNamedPipe, so a
     read never blocks the synchronous pipe handle while another thread writes."""
 
-    def __init__(self, hello=True, cli=False, protocol=PROTOCOL, timeout=10):
+    def __init__(self, hello=True, cli=False, protocol=PROTOCOL, timeout=10, resume=None):
         deadline = time.monotonic() + timeout
         while True:
             try:
@@ -73,13 +73,16 @@ class Client:
         self.deltas = []
         self.welcome = None
         self.snapshot = None
+        self.resumed = False
         self.bye = False
         self.closed = False
         threading.Thread(target=self._read, daemon=True).start()
         if hello:
-            self.send({"type": "hello", "protocol": protocol, "cli": cli})
+            # `resume` is {"epoch": ..., "seq": ...}: where a reconnecting client left off.
+            self.send({"type": "hello", "protocol": protocol, "cli": cli, "resume": resume})
             subscribed = protocol == PROTOCOL and not cli
-            self._wait(lambda: self.welcome and (self.snapshot or not subscribed), timeout, "welcome")
+            self._wait(lambda: self.welcome and (self.snapshot or self.resumed or not subscribed),
+                       timeout, "welcome")
 
     # -- transport ---------------------------------------------------------
 
@@ -111,6 +114,8 @@ class Client:
                 self.welcome = message["status"]
             elif kind == "snapshot":
                 self.snapshot = message
+            elif kind == "resumed":
+                self.resumed = True
             elif kind == "delta":
                 self.deltas.append(message)
             elif kind == "reply":
@@ -167,6 +172,11 @@ class Client:
         return result["Ok"]
 
     # -- deltas ------------------------------------------------------------
+
+    def position(self):
+        """Where this client is in the engine's delta stream, for a later `resume`."""
+        with self._changed:
+            return {"epoch": self.snapshot["epoch"], "seq": self.snapshot["seq"] + len(self.deltas)}
 
     def mark(self):
         """The current position in `deltas`, for waiting only on later ones."""

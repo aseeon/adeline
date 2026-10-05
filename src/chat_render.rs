@@ -240,7 +240,7 @@ impl Adeline {
     /// colors, else the muted robot.
     pub(super) fn agent_icon(&self, agent: &str, cx: &App) -> (String, Hsla) {
         let path = self
-            .agent_catalog
+            .agent_catalog()
             .entries
             .iter()
             .find(|entry| entry.definition.name == agent)
@@ -1138,7 +1138,8 @@ impl Adeline {
         } else {
             Vec::new()
         };
-        let no_agents = bound.is_none() && self.agent_catalog.entries.is_empty() && !self.demo_mode;
+        let no_agents =
+            bound.is_none() && self.agent_catalog().entries.is_empty() && !self.demo_mode;
         let (agent_path, agent_color) = self.agent_icon(&agent_name, cx);
         let processing = self.conversation_processing();
         let can_send = self

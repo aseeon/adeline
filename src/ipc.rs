@@ -13,6 +13,22 @@ pub fn engine_dir() -> Result<PathBuf, String> {
     Ok(crate::config::directory()?.join("engine"))
 }
 
+/// The engine's lasting identity, created on first use. Remote clients tell
+/// engines apart by it, and read the file over SSH before connecting.
+pub fn engine_id() -> Result<String, String> {
+    let path = engine_dir()?.join("id");
+    if let Ok(id) = std::fs::read_to_string(&path)
+        && !id.trim().is_empty()
+    {
+        return Ok(id.trim().to_owned());
+    }
+    std::fs::create_dir_all(engine_dir()?).map_err(|e| crate::files::error(&path, e))?;
+    crate::files::seed(&path, crate::files::random_id().as_bytes())?;
+    std::fs::read_to_string(&path)
+        .map(|id| id.trim().to_owned())
+        .map_err(|e| crate::files::error(&path, e))
+}
+
 pub fn log_path() -> String {
     engine_dir().map_or_else(|error| error, |dir| dir.join("logs").display().to_string())
 }

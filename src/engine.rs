@@ -26,6 +26,8 @@ use std::{
 use tokio::sync::mpsc;
 
 const IDLE_EXIT: Duration = Duration::from_secs(60);
+/// Deltas kept for clients that reconnect after a short drop.
+const RECENT_DELTAS: usize = 20_000;
 const STOP_GRACE: Duration = Duration::from_secs(5);
 const ALREADY_PROCESSING: &str =
     "This conversation is already processing (sent from another window)";
@@ -70,6 +72,7 @@ async fn request(command: Command) -> Result<(Value, ipc::Reader), String> {
     let hello = ClientMessage::Hello {
         protocol: PROTOCOL,
         cli: true,
+        resume: None,
     };
     let request = ClientMessage::Request { id: 1, command };
     for message in [hello, request] {
@@ -501,6 +504,12 @@ struct Engine {
     _watcher: Option<notify::RecommendedWatcher>,
     status: Status,
     exit: bool,
+    identity: String,
+    /// This process's delta stream: every delta sent so far is numbered, and
+    /// the latest ones are kept for reconnecting clients.
+    epoch: String,
+    seq: u64,
+    recent: std::collections::VecDeque<(u64, String)>,
 }
 
 /// Runs blocking file work without stalling the runtime's other tasks.
@@ -572,6 +581,32 @@ fn live_for(conversation: &storage::StoredConversation) -> Live {
         worked: interrupted || last_user.is_some_and(|i| i + 1 < thread.messages.len()),
         ..Default::default()
     }
+}
+
+/// A folder's entries for a client browsing this machine; the home folder by default.
+fn list_directory(path: Option<PathBuf>) -> Result<crate::protocol::Listing, String> {
+    let path = match path.filter(|path| !path.as_os_str().is_empty()) {
+        Some(path) => path,
+        None => config::directory()?
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .ok_or("Could not find your home directory.")?,
+    };
+    let mut entries: Vec<_> = std::fs::read_dir(&path)
+        .map_err(|e| crate::files::error(&path, e))?
+        .flatten()
+        .map(|entry| crate::protocol::Entry {
+            name: entry.file_name().to_string_lossy().into_owned(),
+            directory: entry.path().is_dir(),
+        })
+        .collect();
+    entries.sort_by_key(|entry| (!entry.directory, entry.name.to_lowercase()));
+    Ok(crate::protocol::Listing {
+        parent: path.parent().map(Path::to_path_buf),
+        path,
+        entries,
+    })
 }
 
 /// Messages as `role: text` paragraphs, for giving an agent saved history.
@@ -669,6 +704,13 @@ impl Engine {
             watch_due: None,
             status: Status::default(),
             exit: false,
+            identity: ipc::engine_id().unwrap_or_else(|error| {
+                log(format!("Cannot keep an engine identity: {error}"));
+                String::new()
+            }),
+            epoch: crate::files::random_id(),
+            seq: 0,
+            recent: std::collections::VecDeque::new(),
         };
         engine.detect_harnesses(false);
         engine.status = engine.compute_status();
@@ -719,6 +761,7 @@ impl Engine {
             clients: self.subscribers(),
             conversations,
             log: ipc::log_path(),
+            engine_id: self.identity.clone(),
         }
     }
 
@@ -744,7 +787,7 @@ impl Engine {
         }
     }
 
-    fn broadcast_message(&self, message: &EngineMessage) {
+    fn broadcast_message(&mut self, message: &EngineMessage) {
         let Ok(mut line) = serde_json::to_string(message) else {
             return;
         };
@@ -752,6 +795,29 @@ impl Engine {
         for client in self.clients.values().filter(|c| c.subscribed) {
             let _ = client.sender.send(line.clone());
         }
+        if matches!(message, EngineMessage::Delta(_)) {
+            self.seq += 1;
+            self.recent.push_back((self.seq, line));
+            if self.recent.len() > RECENT_DELTAS {
+                self.recent.pop_front();
+            }
+        }
+    }
+
+    /// Sends a reconnecting client the deltas after `resume`, if they are all
+    /// still kept. Returns whether it did.
+    fn resume(&self, client: u64, resume: &crate::protocol::Resume) -> bool {
+        let first = self.recent.front().map_or(self.seq + 1, |(seq, _)| *seq);
+        if resume.epoch != self.epoch || resume.seq > self.seq || resume.seq + 1 < first {
+            return false;
+        }
+        self.send_to(client, &EngineMessage::Resumed);
+        if let Some(entry) = self.clients.get(&client) {
+            for (_, line) in self.recent.iter().filter(|(seq, _)| *seq > resume.seq) {
+                let _ = entry.sender.send(line.clone());
+            }
+        }
+        true
     }
 
     /// Applies a change to the engine's own state, then sends it to every client.
@@ -800,6 +866,8 @@ impl Engine {
                 .map(|store| store.errors.clone())
                 .unwrap_or_default(),
             status: self.compute_status(),
+            epoch: self.epoch.clone(),
+            seq: self.seq,
         }
     }
 
@@ -859,7 +927,11 @@ impl Engine {
 
     fn message(&mut self, client: u64, message: ClientMessage) {
         match message {
-            ClientMessage::Hello { protocol, cli } => {
+            ClientMessage::Hello {
+                protocol,
+                cli,
+                resume,
+            } => {
                 self.send_to(
                     client,
                     &EngineMessage::Welcome {
@@ -871,7 +943,9 @@ impl Engine {
                         entry.subscribed = true;
                     }
                     log(format!("Client {client} connected"));
-                    self.send_to(client, &EngineMessage::Snapshot(Box::new(self.snapshot())));
+                    if !resume.is_some_and(|resume| self.resume(client, &resume)) {
+                        self.send_to(client, &EngineMessage::Snapshot(Box::new(self.snapshot())));
+                    }
                     self.clients_changed();
                 }
             }
@@ -1042,6 +1116,8 @@ impl Engine {
             Command::Status => {
                 serde_json::to_value(self.compute_status()).map_err(|e| e.to_string())
             }
+            Command::ListDirectory { path } => blocking(|| list_directory(path))
+                .and_then(|listing| serde_json::to_value(listing).map_err(|e| e.to_string())),
             Command::StopAll => {
                 self.begin_stop_all(Some((client, request)), false);
                 return None;

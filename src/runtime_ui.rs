@@ -16,9 +16,20 @@ pub(super) struct Runtime {
 }
 
 impl Adeline {
-    /// Sends a command to the engine; `done` runs with its reply.
+    /// Sends a command to the open project's engine; `done` runs with its reply.
     pub(super) fn request(
         &self,
+        command: Command,
+        cx: &mut Context<Self>,
+        done: impl FnOnce(&mut Self, Result<Value, String>, &mut Window, &mut Context<Self>) + 'static,
+    ) {
+        self.machine_request(&self.current_machine(), command, cx, done);
+    }
+
+    /// Sends a command to one machine's engine; `done` runs with its reply.
+    pub(super) fn machine_request(
+        &self,
+        machine: &str,
         command: Command,
         cx: &mut Context<Self>,
         done: impl FnOnce(&mut Self, Result<Value, String>, &mut Window, &mut Context<Self>) + 'static,
@@ -26,6 +37,7 @@ impl Adeline {
         let owner = cx.weak_entity();
         let handle = self.main_window;
         client::request(
+            machine,
             command,
             Box::new(move |result, cx| {
                 let _ = handle.update(cx, |_, window, cx| {
@@ -99,7 +111,9 @@ impl Adeline {
     }
 
     pub(super) fn mark_conversation_read(&mut self, cx: &mut Context<Self>) {
-        if self.demo_mode {
+        let machine = self.current_machine();
+        // A disconnected remote machine's chats stay as they were last received.
+        if self.demo_mode || machine != machines::LOCAL && !client::usable(&machine, cx) {
             return;
         }
         let Some(id) = self.current_id() else {
@@ -145,8 +159,8 @@ impl Adeline {
         let conversation_id = self.current_id();
         let new = conversation_id.is_none();
         let agent_id = if new {
-            if self.selected_definition().is_none() && self.agent_catalog.entries.len() == 1 {
-                self.selected_agent = Some(self.agent_catalog.entries[0].id.clone());
+            if self.selected_definition().is_none() && self.agent_catalog().entries.len() == 1 {
+                self.selected_agent = Some(self.agent_catalog().entries[0].id.clone());
             }
             if self.selected_definition().is_none() {
                 self.notify_toast("Create or select an agent before sending.", cx);
@@ -158,8 +172,9 @@ impl Adeline {
             None
         };
         let project_id = self.workspace().config.id.clone();
+        let key = self.workspace().key();
         let command = Command::Send {
-            project_id: project_id.clone(),
+            project_id,
             conversation_id,
             agent_id,
             permission_mode: if new { self.new_chat_permission } else { None },
@@ -169,7 +184,7 @@ impl Adeline {
             Ok(id) => {
                 if new {
                     app.new_chat_permission = None;
-                    if app.selected.is_none() && app.workspace().config.id == project_id {
+                    if app.selected.is_none() && app.workspace().key() == key {
                         app.selected = app
                             .workspace()
                             .threads
@@ -253,10 +268,10 @@ impl Adeline {
         self.refresh_runtime_views(cx);
     }
 
-    pub(super) fn project_agents_stopped(&self, project_id: &str) -> bool {
+    pub(super) fn project_agents_stopped(&self, ix: usize) -> bool {
         self.projects
-            .iter()
-            .filter(|p| p.config.id == project_id)
+            .get(ix)
+            .into_iter()
             .flat_map(|p| &p.threads)
             .all(|t| {
                 self.runtime
@@ -276,13 +291,18 @@ impl Adeline {
         }
     }
 
-    pub(super) fn force_project(&mut self, project_id: &str, cx: &mut Context<Self>) {
-        self.command(
-            Command::ForceProject {
-                id: project_id.to_owned(),
-            },
-            cx,
-        );
+    pub(super) fn force_project(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let Some(project) = self.projects.get(ix) else {
+            return;
+        };
+        let command = Command::ForceProject {
+            id: project.config.id.clone(),
+        };
+        self.machine_request(&project.machine, command, cx, |app, result, _, cx| {
+            if let Err(error) = result {
+                app.notify_toast(&error, cx);
+            }
+        });
     }
 
     pub(super) fn force_conversation(&mut self, cx: &mut Context<Self>) {
@@ -291,36 +311,63 @@ impl Adeline {
         }
     }
 
-    /// Stops every agent the engine runs, for every client.
-    pub(super) fn stop_all(&mut self, cx: &mut Context<Self>) {
-        self.request(Command::StopAll, cx, |app, result, _, cx| {
-            let message = match result {
-                Ok(value) => match value["stopped"].as_array().map_or(0, Vec::len) {
-                    0 => "No agents were running.".to_owned(),
-                    1 => "Stopped 1 agent.".to_owned(),
-                    count => format!("Stopped {count} agents."),
-                },
-                Err(error) => error,
-            };
-            app.notify_toast(&message, cx);
-        });
+    /// Connected machines, for actions that reach every engine.
+    fn connected_machines(cx: &App) -> Vec<String> {
+        client::connections(cx)
+            .iter()
+            .filter(|c| c.state == client::State::Connected)
+            .map(|c| c.machine.clone())
+            .collect()
     }
 
-    /// Whether the window may close now. Quitting the last client while a
-    /// turn is active asks first.
+    /// Stops every agent of every connected machine's engine, for every client.
+    pub(super) fn stop_all(&mut self, cx: &mut Context<Self>) {
+        for machine in Self::connected_machines(cx) {
+            let name = machines::name(&machine);
+            let several = client::connections(cx).len() > 1;
+            self.machine_request(&machine, Command::StopAll, cx, move |app, result, _, cx| {
+                let message = match result {
+                    Ok(value) => match value["stopped"].as_array().map_or(0, Vec::len) {
+                        0 => "No agents were running.".to_owned(),
+                        1 => "Stopped 1 agent.".to_owned(),
+                        count => format!("Stopped {count} agents."),
+                    },
+                    Err(error) => error,
+                };
+                app.notify_toast(
+                    &if several {
+                        format!("{name}: {message}")
+                    } else {
+                        message
+                    },
+                    cx,
+                );
+            });
+        }
+    }
+
+    /// Whether the window may close now. Quitting the last client of an
+    /// engine while one of its turns is active asks first.
     pub(super) fn request_quit(&mut self, cx: &mut Context<Self>) -> bool {
         if self.demo_mode || self.runtime.quitting {
             return true;
         }
-        let connection = client::connection(cx);
-        if connection.state != client::State::Connected
-            || connection.status.clients > 1
-            || !self
-                .runtime
-                .conversations
-                .values()
-                .any(|live| live.processing)
-        {
+        let busy = client::connections(cx).iter().any(|connection| {
+            connection.state == client::State::Connected
+                && connection.status.clients <= 1
+                && self
+                    .projects
+                    .iter()
+                    .filter(|p| p.machine == connection.machine)
+                    .flat_map(|p| &p.threads)
+                    .any(|t| {
+                        self.runtime
+                            .conversations
+                            .get(&t.id)
+                            .is_some_and(|live| live.processing)
+                    })
+        });
+        if !busy {
             return true;
         }
         self.modal = Some("quit");
@@ -339,16 +386,24 @@ impl Adeline {
             return;
         }
         self.runtime.stopping_all = true;
-        self.request(Command::StopAll, cx, |app, result, _, cx| {
-            app.runtime.stopping_all = false;
-            if let Err(error) = result {
-                app.notify_toast(&error, cx);
-            }
-            app.runtime.quitting = true;
-            app.modal = None;
-            app.close_main_window(cx);
-            cx.notify();
-        });
+        let machines = Self::connected_machines(cx);
+        let waiting = std::rc::Rc::new(std::cell::Cell::new(machines.len()));
+        for machine in machines {
+            let waiting = waiting.clone();
+            self.machine_request(&machine, Command::StopAll, cx, move |app, result, _, cx| {
+                if let Err(error) = result {
+                    app.notify_toast(&error, cx);
+                }
+                waiting.set(waiting.get() - 1);
+                if waiting.get() == 0 {
+                    app.runtime.stopping_all = false;
+                    app.runtime.quitting = true;
+                    app.modal = None;
+                    app.close_main_window(cx);
+                }
+                cx.notify();
+            });
+        }
         cx.notify();
     }
 
@@ -467,67 +522,244 @@ impl Adeline {
     // -----------------------------------------------------------------------
     // State from the engine
 
-    /// Takes the engine's whole state, keeping this window's tabs and selection.
-    pub(super) fn apply_snapshot(&mut self, snapshot: Snapshot, cx: &mut Context<Self>) {
-        let first = !self.engine_loaded;
-        self.engine_loaded = true;
-        let current = self
-            .has_open_project()
-            .then(|| self.workspace().config.id.clone());
-        let selected = self.current_id();
+    /// The open project's key and chat, to find them again after the
+    /// project list changes.
+    fn place(&self) -> (Option<String>, Option<String>) {
+        (
+            self.has_open_project().then(|| self.workspace().key()),
+            self.current_id(),
+        )
+    }
+
+    /// Finds the open project and chat again by `place`.
+    fn restore(&mut self, (current, selected): (Option<String>, Option<String>)) {
+        let found = current.and_then(|key| self.projects.iter().position(|p| p.key() == key));
+        self.project = found
+            .or_else(|| self.open_projects.iter().position(|open| *open))
+            .unwrap_or(0);
+        self.selected = if found.is_some() {
+            selected.and_then(|id| {
+                self.workspace()
+                    .threads
+                    .iter()
+                    .position(|thread| thread.id == id)
+            })
+        } else {
+            None
+        };
+    }
+
+    /// Where a machine's projects sit in the list, which keeps each
+    /// machine's projects together.
+    fn machine_range(&self, machine: &str) -> std::ops::Range<usize> {
+        let start = self.projects.iter().position(|p| p.machine == machine);
+        let Some(start) = start else {
+            let order = machines::all();
+            let rank = |m: &str| order.iter().position(|o| o == m).unwrap_or(order.len());
+            let at = self
+                .projects
+                .iter()
+                .position(|p| rank(&p.machine) > rank(machine))
+                .unwrap_or(self.projects.len());
+            return at..at;
+        };
+        let end = start
+            + self.projects[start..]
+                .iter()
+                .take_while(|p| p.machine == machine)
+                .count();
+        start..end
+    }
+
+    /// Adds a project at the end of its machine's projects. Returns its index.
+    pub(super) fn insert_project(&mut self, project: Workspace, open: bool) -> usize {
+        let at = self.machine_range(&project.machine).end;
+        self.projects.insert(at, project);
+        self.open_projects.insert(at, open);
+        self.project_tints
+            .insert(at, at % theme::project_colors().len());
+        if self.project >= at && self.projects.len() > 1 {
+            self.project += 1;
+        }
+        at
+    }
+
+    /// Replaces a machine's projects with `projects`, in the same place.
+    fn replace_machine_projects(
+        &mut self,
+        machine: &str,
+        mut projects: Vec<Workspace>,
+        open_all: bool,
+    ) {
+        let place = self.place();
         let open: HashSet<String> = self
             .projects
             .iter()
             .zip(&self.open_projects)
             .filter(|(_, open)| **open)
-            .map(|(project, _)| project.config.id.clone())
+            .map(|(project, _)| project.key())
             .collect();
         let tints: HashMap<String, usize> = self
             .projects
             .iter()
             .zip(&self.project_tints)
-            .map(|(project, tint)| (project.config.id.clone(), *tint))
+            .map(|(project, tint)| (project.key(), *tint))
             .collect();
-        let mut projects = snapshot.projects;
-        ui_state::apply(&mut projects);
-        self.open_projects = projects
+        let range = self.machine_range(machine);
+        for project in &mut projects {
+            machine.clone_into(&mut project.machine);
+        }
+        let gone: Vec<String> = self.projects[range.clone()]
             .iter()
-            .map(|project| first || open.contains(&project.config.id))
+            .flat_map(|p| &p.threads)
+            .map(|t| t.id.clone())
             .collect();
-        self.project_tints = projects
+        for id in gone {
+            self.runtime.conversations.remove(&id);
+        }
+        let start = range.start;
+        let opened: Vec<bool> = projects
+            .iter()
+            .map(|project| open_all || open.contains(&project.key()))
+            .collect();
+        let tinted: Vec<usize> = projects
             .iter()
             .enumerate()
             .map(|(i, project)| {
                 tints
-                    .get(&project.config.id)
+                    .get(&project.key())
                     .copied()
-                    .unwrap_or([0, 2, 3][i.min(2)])
+                    .unwrap_or([0, 2, 3][(start + i).min(2)])
             })
             .collect();
-        self.projects = projects;
-        self.project = current
-            .and_then(|id| self.projects.iter().position(|p| p.config.id == id))
-            .unwrap_or(0);
-        self.selected = selected.and_then(|id| {
-            self.workspace()
-                .threads
-                .iter()
-                .position(|thread| thread.id == id)
-        });
-        self.runtime.conversations = snapshot.live;
-        self.agent_catalog.entries = snapshot.agents;
-        self.agent_catalog.errors = snapshot.agent_errors;
-        if self.selected_agent.is_none() && self.agent_catalog.entries.len() == 1 {
-            self.selected_agent = Some(self.agent_catalog.entries[0].id.clone());
+        self.projects.splice(range.clone(), projects);
+        self.open_projects.splice(range.clone(), opened);
+        self.project_tints.splice(range, tinted);
+        self.restore(place);
+    }
+
+    /// Takes a machine's whole state, keeping this window's tabs and selection.
+    pub(super) fn apply_snapshot(
+        &mut self,
+        machine: &str,
+        snapshot: Snapshot,
+        cx: &mut Context<Self>,
+    ) {
+        let first = self.loaded_machines.insert(machine.to_owned());
+        let mut projects = snapshot.projects;
+        ui_state::apply(machine, &mut projects);
+        self.replace_machine_projects(machine, projects, first);
+        self.runtime.conversations.extend(snapshot.live);
+        let catalog = self.catalog_mut(machine);
+        catalog.entries = snapshot.agents;
+        catalog.errors = snapshot.agent_errors;
+        if self.selected_agent.is_none() && self.agent_catalog().entries.len() == 1 {
+            self.selected_agent = Some(self.agent_catalog().entries[0].id.clone());
         }
         if !snapshot.errors.is_empty() {
-            self.notify_toast(&snapshot.errors.join("\n"), cx);
+            self.notify_toast(
+                &self.about_machine(machine, &snapshot.errors.join("\n")),
+                cx,
+            );
         }
         self.agents_changed(None, None, false, cx);
         self.refresh_runtime_views(cx);
     }
 
-    pub(super) fn apply_delta(&mut self, delta: Delta, cx: &mut Context<Self>) {
+    /// A message about a machine, named when several machines show.
+    fn about_machine(&self, machine: &str, message: &str) -> String {
+        if machines::checked().len() > 1 {
+            format!("{}: {message}", machines::name(machine))
+        } else {
+            message.to_owned()
+        }
+    }
+
+    /// An unchecked machine's projects and conversations leave the window.
+    pub(super) fn machine_unchecked(&mut self, machine: &str, cx: &mut Context<Self>) {
+        let place = self.place();
+        self.replace_machine_projects(machine, Vec::new(), false);
+        self.catalogs.remove(machine);
+        self.loaded_machines.remove(machine);
+        if self.has_open_project() {
+            self.restore(place);
+        } else {
+            self.selected = None;
+        }
+        self.agents_changed(None, None, false, cx);
+        self.sync_regions(&Action::Project(self.project), cx);
+        self.refresh_runtime_views(cx);
+    }
+
+    /// Demo mode: a checked machine shows its bundled projects again.
+    pub(super) fn machine_checked(&mut self, machine: &str, cx: &mut Context<Self>) {
+        if self.demo_mode {
+            let projects = load()
+                .into_iter()
+                .filter(|project| project.machine == machine)
+                .collect();
+            self.replace_machine_projects(machine, projects, true);
+            self.catalogs
+                .insert(machine.to_owned(), agents::AgentCatalog::new(true));
+        }
+        self.sync_regions(&Action::Project(self.project), cx);
+        self.refresh_runtime_views(cx);
+    }
+
+    /// A machine's connection changed state: its banner and labels follow.
+    pub(super) fn refresh_machine(&mut self, _machine: &str, cx: &mut Context<Self>) {
+        self.header_region.update(cx, |_, cx| cx.notify());
+        self.refresh_runtime_views(cx);
+    }
+
+    /// A machine reconnected and caught up on what it missed.
+    pub(super) fn machine_resumed(&mut self, machine: &str, cx: &mut Context<Self>) {
+        self.refresh_machine(machine, cx);
+    }
+
+    /// Asks whether to restart an older remote engine, which stops its agents.
+    pub(super) fn ask_upgrade(&mut self, machine: &str, cx: &mut Context<Self>) {
+        if self.modal.is_some() {
+            return;
+        }
+        self.upgrade_machine = Some(machine.to_owned());
+        self.open_modal_later("upgrade", cx);
+    }
+
+    /// Shows the waiting SSH prompt.
+    pub(super) fn show_prompt(&mut self, cx: &mut Context<Self>) {
+        if self.modal == Some("prompt") {
+            cx.notify();
+            return;
+        }
+        if self.modal.is_some() {
+            // Another dialog is open; the prompt waits for it to close.
+            return;
+        }
+        self.open_modal_later("prompt", cx);
+    }
+
+    /// Opens a dialog from outside an action, once the current update ends.
+    fn open_modal_later(&mut self, modal: &'static str, cx: &mut Context<Self>) {
+        self.modal = Some(modal);
+        let handle = self.main_window;
+        let owner = cx.weak_entity();
+        cx.defer(move |cx| {
+            let _ = cx.update_window(handle.into(), |_, window, cx| {
+                let _ = owner.update(cx, |app, cx| {
+                    if app.modal == Some(modal) {
+                        app.prompt_input
+                            .update(cx, |input, cx| input.set_value("", window, cx));
+                        app.open_modal(window, cx);
+                    }
+                });
+            });
+        });
+        cx.notify();
+    }
+
+    pub(super) fn apply_delta(&mut self, machine: &str, delta: Delta, cx: &mut Context<Self>) {
+        let range = self.machine_range(machine);
         match delta {
             Delta::Project {
                 previous,
@@ -535,36 +767,45 @@ impl Adeline {
             } => {
                 let key = previous.as_deref().unwrap_or(&workspace.config.id);
                 if let Some(old) = &previous {
-                    ui_state::rename(old, &workspace.config.id);
+                    ui_state::rename(machine, old, &workspace.config.id);
                 }
-                workspace.config.opened_at = ui_state::opened_at(&workspace.config.id);
-                if let Some(project) = self.projects.iter_mut().find(|p| p.config.id == key) {
+                machine.clone_into(&mut workspace.machine);
+                workspace.config.opened_at = ui_state::opened_at(machine, &workspace.config.id);
+                if let Some(project) = self.projects[range].iter_mut().find(|p| p.config.id == key)
+                {
                     project.config = workspace.config;
                 } else {
-                    self.projects.push(workspace);
-                    self.open_projects.push(false);
-                    self.project_tints
-                        .push((self.projects.len() - 1) % theme::project_colors().len());
+                    self.insert_project(workspace, false);
                 }
                 self.sync_regions(&Action::Project(self.project), cx);
             }
             Delta::ProjectRemoved { id } => {
-                if let Some(ix) = self.projects.iter().position(|p| p.config.id == id) {
-                    self.remove_project_at(ix, cx);
+                if let Some(ix) = self.projects[range.clone()]
+                    .iter()
+                    .position(|p| p.config.id == id)
+                {
+                    self.remove_project_at(range.start + ix, cx);
                 }
             }
             Delta::Agents { entries, errors } => {
-                self.agent_catalog.entries = entries;
-                self.agent_catalog.errors = errors;
+                let catalog = self.catalog_mut(machine);
+                catalog.entries = entries;
+                catalog.errors = errors;
                 self.agents_changed(None, None, false, cx);
             }
-            Delta::Notice { message } => self.notify_toast(&message, cx),
+            Delta::Notice { message } => {
+                self.notify_toast(&self.about_machine(machine, &message), cx);
+            }
             delta => {
                 let id = match &delta {
                     Delta::Live { id, .. } | Delta::Text { id, .. } => Some(id.clone()),
                     _ => None,
                 };
-                protocol::apply(&mut self.projects, &mut self.runtime.conversations, &delta);
+                protocol::apply(
+                    &mut self.projects[range],
+                    &mut self.runtime.conversations,
+                    &delta,
+                );
                 if id.is_some() && id == self.current_id() {
                     if let Some((p, t)) = id.as_deref().and_then(|id| self.locate_conversation(id))
                     {
@@ -584,9 +825,24 @@ impl Adeline {
         self.refresh_runtime_views(cx);
     }
 
-    /// The engine went away: nothing runs any more until it starts again.
-    pub(super) fn engine_stopped(&mut self, unexpected: bool, cx: &mut Context<Self>) {
-        for live in self.runtime.conversations.values_mut() {
+    /// A machine's engine went away: nothing runs there until it starts again.
+    pub(super) fn engine_stopped(
+        &mut self,
+        machine: &str,
+        unexpected: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let ids: HashSet<&str> = self.projects[self.machine_range(machine)]
+            .iter()
+            .flat_map(|p| &p.threads)
+            .map(|t| t.id.as_str())
+            .collect();
+        for (_, live) in self
+            .runtime
+            .conversations
+            .iter_mut()
+            .filter(|(id, _)| ids.contains(id.as_str()))
+        {
             live.running = false;
             live.shutting_down = false;
             live.shutdown_stuck = false;
@@ -599,14 +855,25 @@ impl Adeline {
         }
         self.runtime.stopping_all = false;
         if unexpected {
-            self.notify_toast("Conversation engine stopped unexpectedly", cx);
+            self.notify_toast(
+                &self.about_machine(machine, "Conversation engine stopped unexpectedly"),
+                cx,
+            );
         }
         self.refresh_runtime_views(cx);
     }
 
-    /// A full-window state while there's no engine state to show.
+    /// A full-window state while the only checked machine has no state to show.
     pub(super) fn engine_screen(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let connection = client::connection(cx);
+        let checked = machines::checked();
+        // With several machines, each one's state shows in the machine selector.
+        let [machine] = checked.as_slice() else {
+            return None;
+        };
+        let connection = client::connection(machine, cx)?;
+        if machine != machines::LOCAL {
+            return self.remote_screen(machine, connection, cx);
+        }
         let (title, detail, buttons): (String, Option<String>, Vec<Button>) =
             match &connection.state {
                 client::State::Connecting | client::State::Starting if !connection.loaded => {
@@ -672,52 +939,158 @@ impl Adeline {
                 ),
                 _ => return None,
             };
-        Some(
-            col()
-                .id("engine-state")
-                .role(Role::Status)
-                .aria_label(title.clone())
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_3()
-                .p_6()
-                .child(div().text_lg().child(title))
-                .children(detail.map(|detail| {
-                    div()
-                        .max_w(px(560.))
-                        .text_sm()
-                        .text_center()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(detail)
-                }))
-                .child(row().gap_2().children(buttons))
-                .into_any_element(),
-        )
+        Some(Self::state_screen(title, detail, buttons, cx))
     }
 
-    /// A strip above the content while data is shown without an engine.
+    /// The full-window state of a remote machine that has nothing to show yet.
+    fn remote_screen(
+        &self,
+        machine: &str,
+        connection: &client::Connection,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let name = machines::name(machine);
+        let retry = || {
+            vec![
+                self.button(
+                    "machine-retry",
+                    "Retry",
+                    Action::MachineRetry(machine.to_owned()),
+                    cx,
+                )
+                .primary(),
+            ]
+        };
+        let (title, buttons) = match &connection.state {
+            client::State::Connecting | client::State::Starting if !connection.loaded => {
+                (format!("Connecting to {name}…"), Vec::new())
+            }
+            client::State::Disconnected(_) if !connection.loaded => {
+                (format!("Can't reach {name}"), retry())
+            }
+            client::State::SignInFailed(_) => (format!("Sign-in to {name} failed"), retry()),
+            client::State::Unavailable(_) if !connection.loaded => {
+                (format!("{name} is unavailable"), retry())
+            }
+            client::State::UpgradeNeeded { .. } if !connection.loaded => (
+                format!("{name} runs an older Adeline"),
+                vec![
+                    self.button(
+                        "machine-upgrade",
+                        "Upgrade now",
+                        Action::MachineUpgrade(machine.to_owned()),
+                        cx,
+                    )
+                    .danger(),
+                ],
+            ),
+            client::State::LocalUpdateNeeded(_) if !connection.loaded => {
+                ("Update Adeline on this computer".into(), retry())
+            }
+            client::State::Unsupported(_) => (format!("{name} isn't supported"), Vec::new()),
+            _ => return None,
+        };
+        Some(Self::state_screen(
+            title,
+            connection.state.detail(),
+            buttons,
+            cx,
+        ))
+    }
+
+    fn state_screen(
+        title: String,
+        detail: Option<String>,
+        buttons: Vec<Button>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        col()
+            .id("engine-state")
+            .role(Role::Status)
+            .aria_label(title.clone())
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_3()
+            .p_6()
+            .child(div().text_lg().child(title))
+            .children(detail.map(|detail| {
+                div()
+                    .max_w(px(560.))
+                    .text_sm()
+                    .text_center()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(detail)
+            }))
+            .child(row().gap_2().children(buttons))
+            .into_any_element()
+    }
+
+    /// A strip above the content while the open project's machine shows data
+    /// without its engine.
     pub(super) fn engine_banner(&self, cx: &Context<Self>) -> Option<AnyElement> {
-        let connection = client::connection(cx);
-        let (message, button) = match connection.state {
+        let machine = self.current_machine();
+        let connection = client::connection(&machine, cx)?;
+        let name = machines::name(&machine);
+        let retry = || {
+            Some(self.button(
+                "machine-retry",
+                "Retry",
+                Action::MachineRetry(machine.clone()),
+                cx,
+            ))
+        };
+        let (message, button) = match &connection.state {
             client::State::Stopped { unexpected } => (
-                if unexpected {
-                    "Conversation engine stopped unexpectedly"
-                } else {
-                    "Conversation engine stopped"
-                },
+                self.about_machine(
+                    &machine,
+                    if *unexpected {
+                        "Conversation engine stopped unexpectedly"
+                    } else {
+                        "Conversation engine stopped"
+                    },
+                ),
                 Some(self.button("start-engine", "Start engine", Action::StartEngine, cx)),
             ),
             client::State::Connecting | client::State::Starting if connection.loaded => {
-                ("Starting conversation engine…", None)
+                if machine == machines::LOCAL {
+                    (
+                        self.about_machine(&machine, "Starting conversation engine…"),
+                        None,
+                    )
+                } else {
+                    (
+                        format!("Reconnecting to {name}… Showing what was last received."),
+                        None,
+                    )
+                }
             }
+            state if machine != machines::LOCAL && !state.usable() && connection.loaded => (
+                format!(
+                    "{}. Showing what was last received; changes wait until it reconnects.",
+                    match state.label() {
+                        "Disconnected" => format!("{name} is disconnected"),
+                        label => format!("{name} isn't connected: {}", label.to_lowercase()),
+                    }
+                ),
+                if matches!(state, client::State::UpgradeNeeded { .. }) {
+                    Some(self.button(
+                        "machine-upgrade",
+                        "Upgrade…",
+                        Action::MachineUpgrade(machine.clone()),
+                        cx,
+                    ))
+                } else {
+                    retry()
+                },
+            ),
             _ => return None,
         };
         Some(
             row()
                 .id("engine-banner")
                 .role(Role::Status)
-                .aria_label(message)
+                .aria_label(message.clone())
                 .w_full()
                 .gap_3()
                 .px_4()

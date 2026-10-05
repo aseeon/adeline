@@ -93,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "adeline"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-channel",
  "chrono",
@@ -6864,6 +6864,7 @@ dependencies = [
  "libc",
  "mio",
  "pin-project-lite",
+ "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "windows-sys 0.61.2",

@@ -22,6 +22,17 @@ pub fn unique(prefix: &str) -> String {
     )
 }
 
+/// 32 random hex digits, from the standard library's per-process hash keys.
+pub fn random_id() -> String {
+    use std::hash::{BuildHasher as _, Hasher as _};
+    let half = || {
+        let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+        hasher.write_u64(NEXT.fetch_add(1, Ordering::Relaxed));
+        hasher.finish()
+    };
+    format!("{:016x}{:016x}", half(), half())
+}
+
 /// A folder ID as `agents::normalize_name` would produce it.
 pub fn checked_id(id: &str) -> Result<(), String> {
     if crate::agents::normalize_name(id).as_deref() == Ok(id) {

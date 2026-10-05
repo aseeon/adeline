@@ -702,6 +702,64 @@ def check_threads():
         return report
 
 
+@check("Remote AC33/AC34/AC37: a reconnect gets only the deltas it missed, in order, once")
+def check_resume():
+    start_engine()
+    with Client() as watcher:
+        conversation, mark = new_conversation(watcher, "hello")
+        wait_turn(watcher, conversation, mark)
+        # A long history, so a full snapshot would be large.
+        for _ in range(3):
+            mark = watcher.mark()
+            watcher.call(send_command("again", conversation))
+            wait_turn(watcher, conversation, mark)
+        dropped = Client()
+        left_at = dropped.position()
+        dropped.close()
+        mark = watcher.mark()
+        watcher.call(send_command("SLOW 2", conversation))
+        # The reconnect lands mid-reply: some text came while away, more follows.
+        watcher.wait_delta(lambda d: d.get("delta") == "text" and d["id"] == conversation, 10, mark)
+        with Client(resume=left_at) as back:
+            expect(back.resumed and back.snapshot is None, "a resumable reconnect got a full snapshot")
+            wait_turn(watcher, conversation, mark)
+            back.wait_live(conversation, lambda live: not live["processing"], 10)
+            time.sleep(0.5)
+            # Exactly what the watcher saw from the drop point on: nothing earlier, nothing twice.
+            since = left_at["seq"] - watcher.snapshot["seq"]
+            expected = [json.dumps(d, sort_keys=True) for d in watcher.deltas[since:]]
+            got = [json.dumps(d, sort_keys=True) for d in back.deltas]
+            expect(got == expected, f"resumed {len(got)} deltas, the live stream had {len(expected)}")
+            expect(any('"text"' in d for d in got), "no reply text arrived after the reconnect")
+        # A position from another engine process gets a snapshot.
+        with Client(resume={"epoch": "elsewhere", "seq": 3}) as other:
+            expect(other.snapshot and not other.resumed, "a foreign position was resumed")
+        return f"resumed with {len(got)} deltas instead of a snapshot"
+
+
+@check("Remote AC23: the engine keeps its identity; clients can list its folders")
+def check_identity_and_listing():
+    start_engine()
+    with Client() as client:
+        first = client.snapshot["status"]["engine_id"]
+        listing = client.call({"op": "list_directory", "path": str(work)})
+        home_listing = client.call({"op": "list_directory", "path": None})
+    stored = (config / "engine" / "id").read_text(encoding="utf-8").strip()
+    expect(first and first == stored, f"engine id {first!r} differs from the stored {stored!r}")
+    stop_engine()
+    start_engine()
+    with Client() as client:
+        expect(client.welcome["engine_id"] == first, "the engine id changed across a restart")
+    (work / "sub").mkdir(exist_ok=True)
+    with Client() as client:
+        listing = client.call({"op": "list_directory", "path": str(work)})
+    names = [(e["name"], e["directory"]) for e in listing["entries"]]
+    expect(("sub", True) in names, f"listing lacks the sub folder: {names}")
+    expect(Path(home_listing["path"]) == home, f"home listing is {home_listing['path']}")
+    expect(Path(listing["parent"]) == work.parent, f"parent is {listing['parent']}")
+    return f"engine {first[:8]}…"
+
+
 # ---------------------------------------------------------------------------
 
 def main():

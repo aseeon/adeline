@@ -149,6 +149,8 @@ enum Probing {
 }
 
 pub(super) struct AgentForm {
+    /// The machine the agent belongs to, whose engine probes it.
+    pub(super) machine: String,
     pub(super) id: Option<String>,
     pub(super) original: AgentDefinition,
     pub(super) external_changed: bool,
@@ -211,6 +213,7 @@ fn harness_items(cx: &App) -> SearchableVec<HarnessItem> {
 
 impl AgentForm {
     pub(super) fn new(
+        machine: String,
         id: Option<String>,
         definition: AgentDefinition,
         window: &mut Window,
@@ -299,6 +302,7 @@ impl AgentForm {
             cx.notify();
         }));
         let mut form = Self {
+            machine,
             id,
             instructions_mode: definition.instructions_mode,
             permission_mode: definition.permission_mode,
@@ -398,7 +402,8 @@ impl AgentForm {
             .map(ToString::to_string)
             .or_else(|| (id == self.original.harness).then(|| self.original.model.clone()))
             .filter(|model| !model.is_empty());
-        let (probe, results) = client::probe(id, launch.0, launch.1, model, cx);
+        let (probe, results) =
+            client::probe(&self.machine.clone(), id, launch.0, launch.1, model, cx);
         self.probe = Some(probe);
         self.probing = Probing::Loading;
         let generation = self.probe_generation;

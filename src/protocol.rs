@@ -15,7 +15,7 @@ use std::{
 
 /// Bumped whenever a message changes shape. `hello`, `welcome`, `status`,
 /// `stop_all` and `shutdown` must keep working across versions.
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -28,6 +28,10 @@ pub enum ClientMessage {
     Hello {
         protocol: u32,
         cli: bool,
+        /// Where a reconnecting client left off. The engine sends only the
+        /// deltas after it when it still has them, else a full snapshot.
+        #[serde(default)]
+        resume: Option<Resume>,
     },
     Request {
         id: u64,
@@ -46,6 +50,9 @@ pub enum EngineMessage {
         status: Status,
     },
     Snapshot(Box<Snapshot>),
+    /// Instead of a snapshot: the client's state is current up to its
+    /// `resume`, and the deltas it missed follow.
+    Resumed,
     Delta(Delta),
     Reply {
         id: u64,
@@ -158,6 +165,11 @@ pub enum Command {
     SetSettings {
         settings: EngineSettings,
     },
+    /// Replies with a `Listing` of a folder on the engine's machine, or of the
+    /// home folder without `path`.
+    ListDirectory {
+        path: Option<PathBuf>,
+    },
     Status,
     /// Stops every agent. Replies once all of them have exited.
     StopAll,
@@ -172,6 +184,27 @@ pub struct EngineSettings {
     pub retry_limit: usize,
 }
 
+/// A client's place in the engine's delta stream.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Resume {
+    pub epoch: String,
+    pub seq: u64,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Listing {
+    pub path: PathBuf,
+    pub parent: Option<PathBuf>,
+    /// Folders first, then files, each sorted by name.
+    pub entries: Vec<Entry>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Entry {
+    pub name: String,
+    pub directory: bool,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Status {
     pub protocol: u32,
@@ -182,6 +215,9 @@ pub struct Status {
     pub clients: usize,
     pub conversations: Vec<ActiveConversation>,
     pub log: String,
+    /// The engine's lasting identity, the same across restarts.
+    #[serde(default)]
+    pub engine_id: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,6 +240,9 @@ pub struct Snapshot {
     pub settings: EngineSettings,
     pub errors: Vec<String>,
     pub status: Status,
+    /// This engine process's delta stream, and the deltas it already holds.
+    pub epoch: String,
+    pub seq: u64,
 }
 
 /// What a client shows of a conversation beyond its saved transcript.

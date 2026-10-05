@@ -7,5 +7,6 @@ End-to-end checks for `docs/archive/scope-conversation-engine.md`. Windows only,
 3. Each run uses a fresh temp home (`USERPROFILE`/`HOME`), so your real engine and data are never touched. Exit code 1 means a check failed.
 
 `fake_agent.py` is a scriptable ACP agent (prompt keywords `SLOW n`, `PERMISSION`, `FAIL n`, `HANG_ON_CLOSE`, `NO_FORK`); `python scripts/engine-check/test_fake_agent.py` checks it on its own.
-`ui_check.py` drives the real window through UI Automation (pywinauto), including `--demo`. Add new UI checks to it with `@check("...")`. Run it with `python scripts/engine-check/ui_check.py` after the release build.
+`ui_check.py` drives the real window through UI Automation (pywinauto), including `--demo`. Add new UI checks to it with `@check("...")`. Run it with `python scripts/engine-check/ui_check.py` after the release build; `python scripts/engine-check/ui_check.py "Remote"` runs only the checks whose name contains that text.
+`fake_ssh.py` stands in for `ssh` in the remote-machine checks (`ADELINE_SSH`): each destination is a separate home in the temp folder with its own engine, reached the way Windows OpenSSH runs commands. Host name prefixes simulate timeouts, changed or unknown host keys, passwords and ARM hosts; see its docstring. The upgrade check downloads Adeline 0.1.0 from its GitHub release once.
 `engine_client.py` is the protocol client; `python scripts/engine-check/engine_client.py` prints the pipe name for the current user.

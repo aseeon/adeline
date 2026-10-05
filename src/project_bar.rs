@@ -14,6 +14,7 @@
 //! The mode rail continues the title bar's app-icon cell down to the bottom of
 //! the window: one icon per enabled mode, and the main menu at the foot.
 use super::*;
+use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
@@ -222,7 +223,7 @@ impl Adeline {
         let mut hidden = Vec::new();
         for &ix in &open {
             let project = &self.projects[ix];
-            match self.tab_fit.size(&project.config.id) {
+            match self.tab_fit.size(&project.key()) {
                 TabSize::Hidden if ix != self.project => hidden.push(ix),
                 size => tabs = tabs.child(self.project_cell(ix, project, size, &bar, cx)),
             }
@@ -254,8 +255,8 @@ impl Adeline {
             .map(|&ix| {
                 let project = &self.projects[ix];
                 FitTab {
-                    id: project.config.id.clone(),
-                    name: project.config.name.clone(),
+                    id: project.key(),
+                    name: self.tab_name(project),
                     active: ix == self.project,
                     busy: project.busy(),
                     dot: project.attention_count() > 0,
@@ -359,25 +360,18 @@ impl Adeline {
                     .child(tabs)
                     .child(measure),
             )
-            .when(
-                config::current().general.features.machine_selector,
-                |toolbar| {
-                    toolbar.child(
-                        div()
-                            .h_full()
-                            .occlude()
-                            .border_l_1()
-                            .border_color(bar.divider)
-                            .child(
-                                self.button("machines", "Machines", Action::Machines, cx)
-                                    .ghost()
-                                    .h_full()
-                                    .rounded_none()
-                                    .px(rems(0.875)),
-                            ),
-                    )
-                },
-            )
+            // The selector appears once a remote machine is saved.
+            .when(!machines::remotes().is_empty(), |toolbar| {
+                toolbar.child(
+                    div()
+                        .flex()
+                        .h_full()
+                        .occlude()
+                        .border_l_1()
+                        .border_color(bar.divider)
+                        .child(self.machine_selector(cx)),
+                )
+            })
             .child(
                 // Flex so the popover's trigger wrapper stretches to the bar's height.
                 div()
@@ -402,8 +396,9 @@ impl Adeline {
         cx: &Context<Self>,
     ) -> impl IntoElement {
         let theme = cx.theme();
-        let id = project.config.id.clone();
-        let name = project.config.name.clone();
+        let id = project.key();
+        let name = self.tab_name(project);
+        let offline = !client::usable(&project.machine, cx);
         let active = ix == self.project;
         let attention = project.attention_count();
         let group = SharedString::from(format!("project-tab-{id}"));
@@ -416,11 +411,14 @@ impl Adeline {
             TabSize::Letter | TabSize::Hidden => None,
         };
         let tooltip = (shown.as_ref() != Some(&name)).then(|| name.clone());
-        let label = if attention == 0 {
+        let mut label = if attention == 0 {
             name.clone()
         } else {
             format!("{name} ({attention})")
         };
+        if offline {
+            label.push_str(", disconnected");
+        }
         let owner = cx.weak_entity();
         row()
             .id(SharedString::from(format!("project-{id}")))
@@ -445,6 +443,7 @@ impl Adeline {
                         .hover(|style| style.bg(bar.hover).text_color(theme.foreground))
                 }
             })
+            .when(offline, |cell| cell.opacity(0.6))
             .when_some(tooltip, |cell, name| {
                 cell.tooltip(move |window, cx| Tooltip::new(name.clone()).build(window, cx))
             })
@@ -494,7 +493,7 @@ impl Adeline {
                     .unwrap_or_default();
                 (
                     ix,
-                    project.config.name.clone(),
+                    self.tab_name(project),
                     fill,
                     letter,
                     project.attention_count(),
@@ -837,8 +836,10 @@ impl Adeline {
     fn menu_row(&self, ix: usize, now: i64, owner: &WeakEntity<Self>, cx: &App) -> AnyElement {
         let theme = cx.theme();
         let project = &self.projects[ix];
-        let id = &project.config.id;
+        let id = &project.key();
         let open = self.open_projects[ix];
+        let offline = !client::usable(&project.machine, cx);
+        let machine = (machines::checked().len() > 1).then(|| machines::name(&project.machine));
         let highlighted = self.project_highlight.as_ref() == Some(id);
         let group = SharedString::from(format!("project-row-{id}"));
         let (fill, letter) =
@@ -889,7 +890,10 @@ impl Adeline {
             .id(SharedString::from(format!("project-menu-{id}")))
             .group(group.clone())
             .role(Role::ListBoxOption)
-            .aria_label(project.config.name.clone())
+            .aria_label(match &machine {
+                Some(machine) => format!("{} on {machine}", project.config.name),
+                None => project.config.name.clone(),
+            })
             .aria_selected(highlighted)
             .h(rems(MENU_ROW))
             .flex_shrink_0()
@@ -916,10 +920,22 @@ impl Adeline {
                     .flex_1()
                     .min_w_0()
                     .child(
-                        div()
+                        row()
+                            .gap_2()
+                            .min_w_0()
                             .text_sm()
-                            .truncate()
-                            .child(project.config.name.clone()),
+                            .child(div().truncate().child(project.config.name.clone()))
+                            .children(machine.map(|machine| {
+                                div()
+                                    .flex_shrink_0()
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(if offline {
+                                        format!("{machine} · disconnected")
+                                    } else {
+                                        machine
+                                    })
+                            })),
                     )
                     .when(!project.config.directory.as_os_str().is_empty(), |text| {
                         text.child(
@@ -971,7 +987,7 @@ impl Adeline {
     fn menu_projects(&self, query: &str) -> Vec<usize> {
         let pending = self.pending_removal.as_ref().map(|p| p.id.as_str());
         let mut listed: Vec<usize> = (0..self.projects.len())
-            .filter(|&ix| Some(self.projects[ix].config.id.as_str()) != pending)
+            .filter(|&ix| Some(self.projects[ix].key().as_str()) != pending)
             .filter(|&ix| {
                 query.is_empty() || self.projects[ix].config.name.to_lowercase().contains(query)
             })
@@ -997,11 +1013,10 @@ impl Adeline {
         if listed.is_empty() {
             return false;
         }
-        let position = self.project_highlight.as_ref().and_then(|id| {
-            listed
-                .iter()
-                .position(|&ix| &self.projects[ix].config.id == id)
-        });
+        let position = self
+            .project_highlight
+            .as_ref()
+            .and_then(|id| listed.iter().position(|&ix| &self.projects[ix].key() == id));
         match key {
             "down" | "up" => {
                 let next = match (key, position) {
@@ -1010,7 +1025,7 @@ impl Adeline {
                     (_, Some(at)) => (at + listed.len() - 1) % listed.len(),
                     (_, None) => listed.len() - 1,
                 };
-                self.project_highlight = Some(self.projects[listed[next]].config.id.clone());
+                self.project_highlight = Some(self.projects[listed[next]].key());
                 self.project_list_scroll.scroll_to_item(next);
                 self.header_region.update(cx, |_, cx| cx.notify());
                 true
@@ -1029,7 +1044,7 @@ impl Adeline {
                 let action = if self.open_projects[ix] {
                     Action::CloseProject(ix)
                 } else {
-                    Action::RemoveClosedProject(self.projects[ix].config.id.clone())
+                    Action::RemoveClosedProject(self.projects[ix].key())
                 };
                 self.act(action, window, cx);
                 true
@@ -1056,20 +1071,20 @@ impl Adeline {
         } else {
             self.menu_projects(&query)
                 .first()
-                .map(|&ix| self.projects[ix].config.id.clone())
+                .map(|&ix| self.projects[ix].key())
         };
         self.project_list_scroll.scroll_to_item(0);
         self.header_region.update(cx, |_, cx| cx.notify());
     }
 
-    /// Hides a closed project and deletes it once the undo window passes.
+    /// Hides a closed project, by key, and deletes it once the undo window passes.
     pub(super) fn remove_closed_project(
         &mut self,
         id: &str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let Some(ix) = self.projects.iter().position(|p| p.config.id == id) else {
+        let Some(ix) = self.projects.iter().position(|p| p.key() == id) else {
             return;
         };
         if self.open_projects[ix] {
@@ -1139,7 +1154,7 @@ impl Adeline {
             return;
         };
         window.remove_notification1::<PendingRemoval>(SharedString::from(pending.id.clone()), cx);
-        let Some(ix) = self.projects.iter().position(|p| p.config.id == pending.id) else {
+        let Some(ix) = self.projects.iter().position(|p| p.key() == pending.id) else {
             return;
         };
         if self.open_projects[ix] {
@@ -1154,10 +1169,12 @@ impl Adeline {
         self.confirm_project_delete(cx);
     }
 
-    /// Opens the project for `directory`, creating one named after the folder
-    /// when none uses it yet.
+    /// Opens the project for `directory` on `machine`, creating one named
+    /// after the folder when none uses it yet. The same path on two machines
+    /// is two projects.
     pub(super) fn open_folder(
         &mut self,
+        machine: &str,
         directory: &std::path::Path,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -1165,17 +1182,197 @@ impl Adeline {
         if let Some(ix) = self
             .projects
             .iter()
-            .position(|p| p.config.directory == *directory)
+            .position(|p| p.machine == machine && p.config.directory == *directory)
         {
             self.act(Action::Project(ix), window, cx);
             return;
         }
-        let name = directory
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        self.add_project(name, &directory.to_string_lossy(), false, window, cx);
+        let path = directory.to_string_lossy().into_owned();
+        let name = path
+            .trim_end_matches(['/', '\\'])
+            .rsplit(['/', '\\'])
+            .next()
+            .unwrap_or_default()
+            .to_owned();
+        machine.clone_into(&mut self.project_machine);
+        self.add_project(name, &path, false, window, cx);
     }
+
+    /// A project's tab name: with its machine's when several machines show.
+    pub(super) fn tab_name(&self, project: &Workspace) -> String {
+        if machines::checked().len() > 1 {
+            format!(
+                "{} · {}",
+                project.config.name,
+                machines::name(&project.machine)
+            )
+        } else {
+            project.config.name.clone()
+        }
+    }
+
+    /// The machine selector: every machine with a checkbox, its state, and the
+    /// error behind it.
+    fn machine_selector(&self, cx: &Context<Self>) -> Popover {
+        let owner = cx.weak_entity();
+        let content_owner = owner.clone();
+        let checked = machines::checked();
+        let label = match checked.as_slice() {
+            [one] => machines::name(one),
+            several => format!("{} machines", several.len()),
+        };
+        let attention = client::connections(cx).iter().any(|c| {
+            !c.state.usable()
+                && !matches!(c.state, client::State::Connecting | client::State::Starting)
+        });
+        let trigger = Button::new("machines")
+            .ghost()
+            .icon(Icon::default().path("devices.svg"))
+            .label(label)
+            .dropdown_caret(true)
+            .accessibility_label("Machines")
+            .h_full()
+            .rounded_none()
+            .px(rems(0.875))
+            .when(attention, |button| button.text_color(cx.theme().danger));
+        Popover::new("machine-selector")
+            .anchor(Anchor::TopRight)
+            .trigger(trigger)
+            .open(self.menu == Some("machines"))
+            .p_0()
+            .shadow(menu_shadow(cx))
+            .on_open_change(move |open, window, cx| {
+                let _ = owner.update(cx, |app, cx| {
+                    if *open {
+                        app.act(Action::Machines, window, cx);
+                    } else if app.menu == Some("machines") {
+                        app.menu = None;
+                        app.header_region.update(cx, |_, cx| cx.notify());
+                        cx.notify();
+                    }
+                });
+            })
+            .content(move |_, _, cx| {
+                let owner = content_owner.clone();
+                machine_rows(&owner, cx)
+            })
+    }
+}
+
+/// The machine selector's rows, read fresh each time it draws.
+fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let checked = machines::checked();
+    let mut list = col()
+        .id("machine-list")
+        .role(Role::List)
+        .aria_label("Machines")
+        .w(rems(24.))
+        .p_1()
+        .gap_1();
+    for (ix, machine) in machines::all().into_iter().enumerate() {
+        let name = machines::name(&machine);
+        let on = checked.contains(&machine);
+        let state = client::state(&machine, cx).cloned();
+        let status = match &state {
+            Some(state) => state.label().to_owned(),
+            None if on => "Connecting…".to_owned(),
+            None => "Not checked".to_owned(),
+        };
+        let detail = state.as_ref().and_then(client::State::detail);
+        let action = match &state {
+            Some(client::State::UpgradeNeeded { .. }) => {
+                Some(("Upgrade…", Action::MachineUpgrade(machine.clone())))
+            }
+            Some(state)
+                if !state.usable()
+                    && !matches!(
+                        state,
+                        client::State::Connecting
+                            | client::State::Starting
+                            | client::State::Waiting
+                            | client::State::Unsupported(_)
+                    ) =>
+            {
+                Some(("Retry", Action::MachineRetry(machine.clone())))
+            }
+            _ => None,
+        };
+        let toggle_owner = owner.clone();
+        let toggle = machine.clone();
+        let failed = state.as_ref().is_some_and(|s| {
+            !s.usable()
+                && !matches!(
+                    s,
+                    client::State::Connecting | client::State::Starting | client::State::Waiting
+                )
+        });
+        list = list.child(
+            col()
+                .id(("machine-row", ix))
+                .role(Role::ListItem)
+                .aria_label(format!("{name}, {status}"))
+                .px_2()
+                .py_1p5()
+                .gap_1()
+                .rounded(theme.radius)
+                .hover(|style| style.bg(theme.accent))
+                .child(
+                    row()
+                        .gap_2()
+                        .child(
+                            Checkbox::new(("machine-check", ix))
+                                .checked(on)
+                                .label(name.clone())
+                                .accessibility_label(format!("Show {name}"))
+                                .on_click(move |_, window, cx| {
+                                    let _ = toggle_owner.update(cx, |app, cx| {
+                                        app.act(Action::Machine(toggle.clone()), window, cx);
+                                    });
+                                }),
+                        )
+                        .child(div().flex_1())
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(if failed {
+                                    theme.danger
+                                } else {
+                                    theme.muted_foreground
+                                })
+                                .child(status),
+                        )
+                        .children(action.map(|(label, action)| {
+                            Button::new(("machine-action", ix))
+                                .xsmall()
+                                .label(label)
+                                .on_click(owner_action(owner, action))
+                        })),
+                )
+                .children(detail.filter(|_| on).map(|detail| {
+                    div()
+                        .id(("machine-detail", ix))
+                        .role(Role::Status)
+                        .aria_label(detail.clone())
+                        .pl(rems(1.75))
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(detail)
+                })),
+        );
+    }
+    list.child(
+        div().border_t_1().border_color(theme.border).pt_1().child(
+            Button::new("manage-machines")
+                .ghost()
+                .small()
+                .w_full()
+                .icon(Icon::default().path("settings.svg"))
+                .label("Manage machines…")
+                .on_click(owner_action(owner, Action::ManageMachines)),
+        ),
+    )
+    .into_any_element()
 }
 
 /// A click handler that runs `action` on the shell, for elements built outside

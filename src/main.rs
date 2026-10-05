@@ -17,6 +17,7 @@ mod fonts;
 mod harness;
 mod interaction;
 mod ipc;
+mod machines;
 mod panes;
 mod platform;
 mod prepared;
@@ -24,6 +25,7 @@ mod project_bar;
 mod project_ui;
 mod protocol;
 mod recency;
+mod remote;
 mod runtime_ui;
 mod settings;
 mod storage;
@@ -42,24 +44,6 @@ use gpui_kit::{prelude::*, *};
 use std::borrow::Cow;
 mod theme;
 
-struct Machine {
-    name: &'static str,
-    kind: &'static str,
-}
-const MACHINES: [Machine; 3] = [
-    Machine {
-        name: "Nexus",
-        kind: "Local machine",
-    },
-    Machine {
-        name: "Matrix",
-        kind: "Remote machine",
-    },
-    Machine {
-        name: "Vortex",
-        kind: "Remote machine",
-    },
-];
 include!(concat!(env!("OUT_DIR"), "/assets.rs"));
 struct Assets;
 impl AssetSource for Assets {
@@ -161,7 +145,26 @@ enum Action {
     AppMenu,
     Machines,
     Agents,
-    Machine(usize),
+    /// Check or uncheck a machine in the machine selector.
+    Machine(String),
+    /// Connect a machine again after a failure.
+    MachineRetry(String),
+    /// Settings, open on the machines page.
+    ManageMachines,
+    /// Ask whether to restart a machine's older engine with this version.
+    MachineUpgrade(String),
+    /// The user agreed to that restart.
+    ConfirmUpgrade,
+    /// Answer the waiting SSH prompt: accept or submit, or cancel.
+    AnswerPrompt(bool),
+    /// Open folder: the machine whose folders to browse.
+    FolderMachine(String),
+    /// The project dialog's machine.
+    ProjectMachine(String),
+    /// The folder browser: show this folder.
+    BrowseTo(std::path::PathBuf),
+    /// The folder browser: choose the shown folder, or a file in it.
+    BrowsePick(Option<String>),
     About,
     QuitApp,
     Settings,
@@ -177,7 +180,6 @@ enum Action {
     Speed(usize),
     Permission(usize),
     ToggleMode(Section),
-    ToggleMachineSelector,
     Send,
     Stop,
     ForceStop,
@@ -243,11 +245,22 @@ struct Adeline {
     open_projects: Vec<bool>,
     empty_workspace: Workspace,
     demo_mode: bool,
-    agent_catalog: agents::AgentCatalog,
+    /// Each machine's agents, by machine ID.
+    catalogs: std::collections::HashMap<String, agents::AgentCatalog>,
+    empty_catalog: agents::AgentCatalog,
+    /// Machines whose engine state has arrived at least once.
+    loaded_machines: std::collections::HashSet<String>,
+    /// The machine the project dialog creates a project on.
+    project_machine: String,
+    /// The folder browser for a remote machine, while it's open.
+    browser: Option<project_ui::Browser>,
+    /// The dialog the folder browser returns to.
+    browser_return: Option<&'static str>,
+    /// The remote machine the upgrade question is about.
+    upgrade_machine: Option<String>,
+    prompt_input: Entity<InputState>,
     selected_agent: Option<String>,
     runtime: runtime_ui::Runtime,
-    /// The engine's state has arrived at least once.
-    engine_loaded: bool,
     project_directory_input: Entity<InputState>,
     project_error: Option<String>,
     delete_project: Option<usize>,
@@ -263,7 +276,6 @@ struct Adeline {
     /// A folded tab under the pointer, which shows its name.
     tab_fit: std::rc::Rc<project_bar::TabFit>,
     project: usize,
-    machine: usize,
     section: Section,
     selected: Option<usize>,
     filter: usize,
@@ -307,24 +319,32 @@ impl Adeline {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let engine_loaded = snapshot.is_some();
+        let mut loaded_machines = std::collections::HashSet::new();
+        if snapshot.is_some() {
+            loaded_machines.insert(machines::LOCAL.to_owned());
+        }
         let snapshot = snapshot.unwrap_or_default();
+        let checked = machines::checked();
+        let mut catalogs = std::collections::HashMap::new();
         let projects = if demo_mode {
-            load()
+            let mut projects = load();
+            projects.retain(|project| checked.contains(&project.machine));
+            for machine in &checked {
+                catalogs.insert(machine.clone(), agents::AgentCatalog::new(true));
+            }
+            projects
         } else {
             let mut projects = snapshot.projects;
-            ui_state::apply(&mut projects);
+            for project in &mut projects {
+                project.machine = machines::LOCAL.into();
+            }
+            ui_state::apply(machines::LOCAL, &mut projects);
+            let mut catalog = agents::AgentCatalog::remote();
+            catalog.entries = snapshot.agents;
+            catalog.errors = snapshot.agent_errors;
+            catalogs.insert(machines::LOCAL.to_owned(), catalog);
             projects
         };
-        let mut agent_catalog = if demo_mode {
-            agents::AgentCatalog::new(true)
-        } else {
-            agents::AgentCatalog::remote()
-        };
-        if !demo_mode {
-            agent_catalog.entries = snapshot.agents;
-            agent_catalog.errors = snapshot.agent_errors;
-        }
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats"));
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
@@ -399,13 +419,19 @@ impl Adeline {
             open_projects: vec![true; projects.len()],
             project_tints: (0..projects.len()).map(|i| [0, 2, 3][i.min(2)]).collect(),
             demo_mode,
-            agent_catalog,
+            catalogs,
+            empty_catalog: agents::AgentCatalog::remote(),
+            loaded_machines,
+            project_machine: machines::LOCAL.into(),
+            browser: None,
+            browser_return: None,
+            upgrade_machine: None,
+            prompt_input: cx.new(|cx| InputState::new(window, cx).masked(true)),
             selected_agent: None,
             runtime: runtime_ui::Runtime {
                 conversations: snapshot.live,
                 ..Default::default()
             },
-            engine_loaded,
             project_directory_input: cx
                 .new(|cx| InputState::new(window, cx).placeholder("Existing working directory")),
             project_error: None,
@@ -420,7 +446,6 @@ impl Adeline {
             tab_fit: std::rc::Rc::default(),
             projects,
             project: 0,
-            machine: 0,
             section: Section::Chats,
             selected: None,
             filter: 0,
@@ -452,9 +477,9 @@ impl Adeline {
             control_pane,
         };
         app.load_settings();
-        if demo_mode || app.agent_catalog.entries.len() == 1 {
+        if demo_mode || app.agent_catalog().entries.len() == 1 {
             app.selected_agent = app
-                .agent_catalog
+                .agent_catalog()
                 .entries
                 .first()
                 .map(|entry| entry.id.clone());
@@ -470,9 +495,33 @@ impl Adeline {
             .update(cx, |view, cx| view.sync(&app, false, cx));
         app
     }
+    /// The machine of the open project, or the first checked machine.
+    fn current_machine(&self) -> String {
+        if self.has_open_project() {
+            self.workspace().machine.clone()
+        } else {
+            machines::checked()
+                .into_iter()
+                .next()
+                .unwrap_or_else(|| machines::LOCAL.into())
+        }
+    }
+    /// A machine's agents.
+    fn catalog(&self, machine: &str) -> &agents::AgentCatalog {
+        self.catalogs.get(machine).unwrap_or(&self.empty_catalog)
+    }
+    fn catalog_mut(&mut self, machine: &str) -> &mut agents::AgentCatalog {
+        self.catalogs
+            .entry(machine.to_owned())
+            .or_insert_with(agents::AgentCatalog::remote)
+    }
+    /// The agents of the current machine, which new chats can use.
+    fn agent_catalog(&self) -> &agents::AgentCatalog {
+        self.catalog(&self.current_machine())
+    }
     fn selected_definition(&self) -> Option<&agents::AgentDefinition> {
         let id = self.selected_agent.as_ref()?;
-        self.agent_catalog
+        self.agent_catalog()
             .entries
             .iter()
             .find(|entry| &entry.id == id)
@@ -661,10 +710,23 @@ impl Render for Adeline {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    if args.first().is_some_and(|arg| arg == "engine") {
-        std::process::exit(engine::main(&args[1..]));
+    // `ssh` runs this executable to ask for a password or a host key.
+    if let Some(address) = std::env::var_os("ADELINE_ASKPASS") {
+        let prompt = args.first().map_or("", String::as_str);
+        std::process::exit(remote::askpass_main(&address.to_string_lossy(), prompt));
+    }
+    match args.first().map(String::as_str) {
+        Some("engine") => std::process::exit(engine::main(&args[1..])),
+        Some("bridge") => std::process::exit(remote::bridge_main()),
+        Some("--version") => {
+            platform::attach_parent_console();
+            println!("{}", env!("CARGO_PKG_VERSION"));
+            std::process::exit(0);
+        }
+        _ => {}
     }
     let demo_mode = args.iter().any(|arg| arg == "--demo");
+    machines::init(demo_mode);
     application().with_assets(Assets).run(move |cx: &mut App| {
         init(cx);
         fonts::init(cx);
@@ -673,7 +735,9 @@ fn main() {
         theme::apply(cx);
         harness::init(demo_mode, cx);
         // Demo mode never starts or connects to the engine.
-        let mut initial = (!demo_mode).then(client::connect_existing).flatten();
+        let mut initial = (!demo_mode && machines::is_checked(machines::LOCAL))
+            .then(client::connect_existing)
+            .flatten();
         let snapshot = initial.as_mut().and_then(|initial| initial.snapshot.take());
         client::init(demo_mode, initial, snapshot.as_ref(), cx);
         config::bind_keys(cx);

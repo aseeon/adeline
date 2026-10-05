@@ -22,7 +22,6 @@ pub struct General {
 // Not `deny_unknown_fields`: old files carry flags that no longer exist.
 #[serde(default)]
 pub struct Features {
-    pub machine_selector: bool,
     pub docs: bool,
     pub workflows: bool,
     pub services: bool,
@@ -33,7 +32,6 @@ pub struct Features {
 impl Default for Features {
     fn default() -> Self {
         Self {
-            machine_selector: false,
             docs: false,
             workflows: false,
             services: false,
@@ -514,14 +512,11 @@ mod tests {
             );
             settings.general.features.toggle(section);
         }
-        assert!(!settings.general.features.machine_selector);
-        settings.general.features.machine_selector = true;
         settings.general.features.toggle(Section::Chats);
         let yaml = serde_yaml_ng::to_string(&settings).unwrap();
         assert!(!yaml.contains("close_picker_after_selection"));
         let restored: Settings = serde_yaml_ng::from_str(&yaml).unwrap();
         assert!(restored.general.features.enabled(Section::Chats));
-        assert!(restored.general.features.machine_selector);
         for section in [
             Section::Docs,
             Section::Workflows,

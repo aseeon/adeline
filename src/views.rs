@@ -176,7 +176,7 @@ impl Adeline {
                 "Projects"
             }
             "agents" | "agent" => {
-                entries.extend(self.agent_catalog.entries.iter().map(|entry| {
+                entries.extend(self.agent_catalog().entries.iter().map(|entry| {
                     (
                         entry.definition.name.clone(),
                         Action::Agent(entry.id.clone()),
@@ -191,28 +191,6 @@ impl Adeline {
                     ]);
                 }
                 "Agents"
-            }
-            "machines" => {
-                if !config::current().general.features.machine_selector {
-                    return ("Machines", entries);
-                }
-                entries.extend(
-                    MACHINES
-                        .iter()
-                        .enumerate()
-                        .take(if self.demo_mode { MACHINES.len() } else { 1 })
-                        .map(|(ix, machine)| {
-                            (
-                                if self.demo_mode {
-                                    format!("{} ({})", machine.name, machine.kind)
-                                } else {
-                                    "Local machine".into()
-                                },
-                                Action::Machine(ix),
-                            )
-                        }),
-                );
-                "Machines"
             }
             "files" => {
                 entries.extend([
@@ -266,7 +244,7 @@ impl Adeline {
         };
         let state = self.command_popup.clone();
         let errors = if matches!(menu, "agent" | "agents") {
-            self.agent_catalog.errors.join("\n")
+            self.agent_catalog().errors.join("\n")
         } else {
             String::new()
         };
@@ -386,6 +364,12 @@ impl Adeline {
             self.open_projects_menu(window, cx);
             return;
         }
+        if menu == "machines" {
+            self.menu = Some(menu);
+            self.header_region.update(cx, |_, cx| cx.notify());
+            cx.notify();
+            return;
+        }
         if matches!(
             menu,
             "agent" | "agents" | "app" | "mode-settings" | "model" | "effort" | "files"
@@ -408,7 +392,7 @@ impl Adeline {
         let owner = cx.weak_entity();
         let closing_owner = owner.clone();
         let errors = if matches!(menu, "agent" | "agents") {
-            self.agent_catalog.errors.join("\n")
+            self.agent_catalog().errors.join("\n")
         } else {
             String::new()
         };
@@ -478,10 +462,10 @@ impl Adeline {
                 _subscription: subscription,
             }
         });
-        let width = px(if self.modal == Some("about") {
-            320.
-        } else {
-            400.
+        let width = px(match self.modal {
+            Some("about") => 320.,
+            Some("browser" | "prompt") => 520.,
+            _ => 400.,
         });
         window.open_dialog(cx, move |dialog, _, cx| {
             let owner = weak.clone();
@@ -495,6 +479,7 @@ impl Adeline {
                             Some("add-project") => Some(Action::SaveProject),
                             Some("settings") => Some(Action::SaveSettings),
                             Some("rename-project") => Some(Action::SaveRename),
+                            Some("prompt") => Some(Action::AnswerPrompt(true)),
                             _ => None,
                         };
                         if let Some(action) = action {
@@ -505,7 +490,20 @@ impl Adeline {
                 })
                 .on_close(move |_, _, cx| {
                     let _ = owner.update(cx, |app, cx| {
-                        app.modal = None;
+                        // Closing an SSH prompt cancels it, and the next one shows.
+                        if app.modal == Some("prompt") {
+                            client::answer_prompt(None, cx);
+                            app.modal = None;
+                            if client::prompt(cx).is_some() {
+                                app.show_prompt(cx);
+                            }
+                        } else {
+                            app.modal = None;
+                            // A prompt that came while this dialog was open.
+                            if client::prompt(cx).is_some() {
+                                app.show_prompt(cx);
+                            }
+                        }
                         cx.notify();
                     });
                 })
@@ -515,6 +513,9 @@ impl Adeline {
             Some("add-project" | "settings" | "rename-project")
         ) {
             window.focus(&self.name_input.focus_handle(cx), cx);
+        }
+        if self.modal == Some("prompt") {
+            window.focus(&self.prompt_input.focus_handle(cx), cx);
         }
     }
 }

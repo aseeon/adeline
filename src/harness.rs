@@ -165,12 +165,14 @@ fn cache() -> Option<PathBuf> {
 static ICONS: std::sync::RwLock<BTreeMap<String, Vec<u8>>> =
     std::sync::RwLock::new(BTreeMap::new());
 
+/// Adds icons an engine sent. Every machine's engine adds its own.
 pub fn set_icons(icons: &BTreeMap<String, String>) {
     if let Ok(mut map) = ICONS.write() {
-        *map = icons
-            .iter()
-            .map(|(path, svg)| (path.clone(), svg.clone().into_bytes()))
-            .collect();
+        map.extend(
+            icons
+                .iter()
+                .map(|(path, svg)| (path.clone(), svg.clone().into_bytes())),
+        );
     }
 }
 
