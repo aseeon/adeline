@@ -1197,9 +1197,9 @@ impl Adeline {
                 .tooltip("Stop")
                 .on_click(cx.listener(|app, _, window, cx| app.act(Action::Stop, window, cx)))
         } else {
-            // The icons spell the send shortcut: Enter, or Shift+Enter. Both
-            // are content, not the button's icon, so the padding and the Enter
-            // key stay put when the shortcut changes.
+            // The icons spell the send shortcut: Enter, or Ctrl+Enter (Cmd on
+            // macOS). Both are content, not the button's icon, so the padding
+            // and the Enter key stay put when the shortcut changes.
             Button::new("send-chat-message")
                 .small()
                 .ghost()
@@ -1207,7 +1207,12 @@ impl Adeline {
                     row()
                         .gap_0p5()
                         .when(!config::with(|s| s.modes.chats.submit_on_enter), |keys| {
-                            keys.child(Icon::default().path("arrow-fat-up.svg").size_4())
+                            let modifier = if cfg!(target_os = "macos") {
+                                "command.svg"
+                            } else {
+                                "control.svg"
+                            };
+                            keys.child(Icon::default().path(modifier).size_4())
                         })
                         .child(Icon::default().path("arrow-elbow-down-left.svg").size_4()),
                 )

@@ -9,7 +9,6 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | Asset | Phosphor source |
 | --- | --- |
 | `archive.svg` | `archive.svg` |
-| `arrow-fat-up.svg` | `arrow-fat-up.svg` |
 | `arrow-counter-clockwise.svg` | `arrow-counter-clockwise.svg` |
 | `arrow-elbow-down-left.svg` | `arrow-elbow-down-left.svg` |
 | `arrow.svg` | `arrow-right.svg` |
@@ -25,6 +24,8 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `clock.svg` | `clock.svg` |
 | `close.svg` | `x.svg` |
 | `code.svg` | `code.svg` |
+| `command.svg` | `command.svg` |
+| `control.svg` | `control.svg` |
 | `copy.svg` | `copy.svg` |
 | `devices.svg` | `devices.svg` |
 | `edit.svg` | `pencil-simple.svg` |
