@@ -24,8 +24,28 @@ Set in `general.keymap` in `settings.yml` (defaults in `Keymap::default`, `src/c
 | Enter | Send, when Settings > Chats > "Submit on Enter" is on (default). Otherwise inserts a line break |
 | Shift+Enter | Insert a line break |
 | Ctrl+Enter / Cmd+Enter | Send, when "Submit on Enter" is on |
+| Up | With the box empty and messages queued, take the last queued message back to edit it |
+| `/` | At the start of the box, list the agent's commands; Up / Down move, Enter or Tab insert, Escape closes the list |
+| Ctrl+V / Cmd+V | Paste text, or attach a copied image |
 
 With "Submit on Enter" off, the text box inserts a line break for Enter, Shift+Enter and Ctrl+Enter alike and stops the key there, so the keyboard has no way to send. The send button's icon shows Shift+Enter in that state, which does not send either. (From reading the code in `src/main.rs` and gpui-base's `InputState::enter`, not tested.)
+
+## Conversation
+
+Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `src/config.rs`), not in the keymap setting. The four menus are the exception: Alt on Windows and Linux, Cmd+Shift on macOS, because Ctrl+Shift+M, E and O are global hotkeys of tools such as AMD Adrenalin, which take them before Adeline sees them.
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+Shift+Enter / Cmd+Shift+Enter | Send now: steer the running turn, or stop it and send |
+| Ctrl+. / Cmd+. | Stop the running turn |
+| Ctrl+Shift+R / Cmd+Shift+R | Restart the agent |
+| Alt+M / Cmd+Shift+M | Open the Model menu |
+| Alt+E / Cmd+Shift+E | Open the Effort menu |
+| Alt+O / Cmd+Shift+O | Open the Mode menu |
+| Alt+P / Cmd+Shift+P | Open More options |
+| Ctrl+Shift+A / Cmd+Shift+A | Attach files |
+| Ctrl+Shift+L / Cmd+Shift+L | Show the ACP traffic tab of the side panel |
+| Ctrl+Shift+T / Cmd+Shift+T | Open the TODO list |
 
 ## Chat list
 
@@ -54,7 +74,7 @@ While the projects menu is open, no modifier:
 |---|---|
 | Enter or Space | Activate the focused button or popup trigger |
 | Enter / Escape | Confirm / cancel a dialog |
-| Up / Down, Enter, Escape | Move, pick, close in a dropdown (agent, model, effort, machine pickers) |
+| Up / Down, Enter, Escape | Move, pick, close in a dropdown or menu (agent, model, effort, mode, machine pickers) |
 | Up / Down | Step a number field |
 | Ctrl+C / Cmd+C | Copy selected text in a transcript |
 | Ctrl+A / Cmd+A | Select all text in a transcript |
@@ -120,15 +140,18 @@ Chats:
 - Copy a message
 - Fork a chat at a reply
 - Expand or collapse a tool call; hide all tool calls
-- Stop the running agent; force stop
+- Force stop
 - Answer a permission request or a decision the agent asks for
-- Insert files or folders into the message (the files menu)
+- Edit, remove or send now a queued message other than the last
+- Log in to an agent from a chat
+- Expand a thought
+- Remove an attachment, preview an attached image
+- Copy the ACP traffic
+- Dismiss an error under a chat
 
 Composer pickers:
 
 - Pick the agent
-- Pick the speed
-- Pick the permission level
 - Open the agent menu, open the current agent's settings
 - Add an agent
 
@@ -152,6 +175,8 @@ Settings:
 - Save settings
 - Open mode settings
 - Toggle "Submit on Enter"
+- Add, edit or remove an MCP server
+- Install, update or log in to an agent (the agent form)
 - Toggle a mode on or off
 
 Quit dialog:

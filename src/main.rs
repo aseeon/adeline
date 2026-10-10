@@ -26,21 +26,28 @@ mod chat_render;
 #[cfg(feature = "gui")]
 mod client;
 mod config;
+mod conversation;
+#[cfg(feature = "gui")]
+mod conversation_ui;
 mod data;
 mod engine;
 mod files;
 mod fonts;
 mod harness;
+mod install;
 #[cfg(feature = "gui")]
 mod interaction;
 mod ipc;
 mod machines;
+#[cfg(feature = "gui")]
+mod mcp_ui;
 #[cfg(feature = "gui")]
 mod menu_bar;
 #[cfg(feature = "gui")]
 mod panes;
 mod platform;
 mod prepared;
+mod profiles;
 #[cfg(feature = "gui")]
 mod project_bar;
 #[cfg(feature = "gui")]
@@ -221,9 +228,45 @@ enum Action {
     AgentMenu,
     Agent(String),
     Speed(usize),
-    Permission(usize),
     ToggleMode(Section),
+    /// Sends the composer's message; during a turn it is queued.
     Send,
+    /// Delivers the composer's message now, or the queue when the composer is empty.
+    SendNow,
+    /// Opens a composer menu: Model, Effort, Mode, or More options for `Other`.
+    OptionMenu(conversation::Category),
+    /// Sets an option of the open chat, or of the next new chat's defaults.
+    SetOption {
+        category: conversation::Category,
+        option: String,
+        value: String,
+    },
+    /// Moves a queued message back into the composer.
+    EditQueued(u64),
+    /// Edits the last queued message: Up in an empty composer.
+    EditLastQueued,
+    RemoveQueued(u64),
+    SendQueuedNow(u64),
+    /// Picks files to attach.
+    AttachFile,
+    RemoveAttachment(usize),
+    /// Hides an error under the open chat.
+    DismissError(String),
+    /// Shows a sent image in a dialog: message, attachment.
+    PreviewImage(usize, usize),
+    ToggleThought(String),
+    ShowThinking,
+    /// Opens or closes the TODO list in the chat header.
+    TodoList,
+    /// Opens the right panel on the ACP traffic tab.
+    TrafficView,
+    /// Shows the right panel's tab: 0 activity, 1 traffic.
+    PanelTab(usize),
+    CopyTraffic,
+    /// Logs the open chat's agent in with one of its methods.
+    Login(String),
+    /// Stops the agent and starts it again, continuing the turn.
+    Restart,
     Stop,
     ForceStop,
     /// Stop every agent, from the app menu.
@@ -281,7 +324,17 @@ actions!(
         SendMessage,
         Quit,
         NextFocus,
-        PreviousFocus
+        PreviousFocus,
+        SendNow,
+        StopTurn,
+        RestartAgent,
+        ModelMenu,
+        EffortMenu,
+        ModeMenu,
+        MoreMenu,
+        AttachFile,
+        TrafficView,
+        TodoList
     ]
 );
 #[cfg(feature = "gui")]
@@ -343,9 +396,29 @@ struct Adeline {
     menu: Option<&'static str>,
     command_popup: Option<Entity<component::command::CommandState>>,
     speed: usize,
-    permission: usize,
-    /// The permission mode chosen for the next new chat, over its agent's default.
-    new_chat_permission: Option<agents::PermissionMode>,
+    /// Files waiting in the composer for the next message (scope R23).
+    attachments: Vec<conversation::Attachment>,
+    /// Why the last file couldn't be attached, shown under the chips.
+    attachment_error: Option<String>,
+    /// Errors hidden by hand: chat, its latest turn, message.
+    // ponytail: in memory only, so a restart shows a dismissed error of the latest turn again.
+    dismissed_errors: std::collections::HashSet<(String, Option<usize>, String)>,
+    /// The slash list's highlighted row, while it is open.
+    slash: Option<usize>,
+    /// The slash list was closed with Escape for the text typed so far.
+    slash_dismissed: bool,
+    /// The right panel shows the ACP traffic tab.
+    traffic_tab: bool,
+    /// The traffic shown for the open chat, newest last.
+    traffic: Vec<conversation::TrafficEntry>,
+    traffic_scroll: ScrollHandle,
+    /// Thoughts and agent output opened from their disclosures.
+    open_thoughts: std::collections::HashSet<String>,
+    /// Chats whose agent finished a login started from the login card.
+    logged_in: std::collections::HashSet<String>,
+    /// Decoded attachment pictures, by attachment.
+    pictures: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<Image>>>,
+    /// Focus for the TODO list popover.
     left_panel_open: [bool; 7],
     sidebar_width: f32,
     selected_tint: usize,
@@ -476,7 +549,11 @@ impl Adeline {
             prompt_input: cx.new(|cx| InputState::new(window, cx).masked(true)),
             selected_agent: None,
             runtime: runtime_ui::Runtime {
-                conversations: snapshot.live,
+                conversations: if demo_mode {
+                    demo_live()
+                } else {
+                    snapshot.live
+                },
                 ..Default::default()
             },
             project_directory_input: cx
@@ -510,8 +587,17 @@ impl Adeline {
             menu: None,
             command_popup: None,
             speed: 0,
-            permission: 2,
-            new_chat_permission: None,
+            attachments: Vec::new(),
+            attachment_error: None,
+            dismissed_errors: std::collections::HashSet::new(),
+            slash: None,
+            slash_dismissed: false,
+            traffic_tab: false,
+            traffic: Vec::new(),
+            traffic_scroll: ScrollHandle::new(),
+            open_thoughts: std::collections::HashSet::new(),
+            logged_in: std::collections::HashSet::new(),
+            pictures: std::cell::RefCell::default(),
             left_panel_open: [true, false, false, true, true, true, true],
             sidebar_width: 360.,
             selected_tint: 3,
@@ -540,6 +626,26 @@ impl Adeline {
         app.sync_sidebar(cx);
         app.transcript
             .update(cx, |view, cx| view.sync(&app, false, cx));
+        // A quiet turn's silence notice appears on time without new deltas.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(15))
+                    .await;
+                let alive = this.update(cx, |app, cx| {
+                    if app
+                        .current_live()
+                        .is_some_and(|live| live.quiet_since.is_some())
+                    {
+                        app.transcript.update(cx, |_, cx| cx.notify());
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         app
     }
     /// The machine of the open project, or the first checked machine.
@@ -721,6 +827,48 @@ impl Render for Adeline {
             }))
             .on_action(
                 cx.listener(|app, _: &SendMessage, window, cx| app.act(Action::Send, window, cx)),
+            )
+            .on_action(
+                cx.listener(|app, _: &SendNow, window, cx| app.act(Action::SendNow, window, cx)),
+            )
+            .on_action(
+                cx.listener(|app, _: &StopTurn, window, cx| app.act(Action::Stop, window, cx)),
+            )
+            .on_action(cx.listener(|app, _: &RestartAgent, window, cx| {
+                app.act(Action::Restart, window, cx);
+            }))
+            .on_action(cx.listener(|app, _: &ModelMenu, window, cx| {
+                app.act(
+                    Action::OptionMenu(conversation::Category::Model),
+                    window,
+                    cx,
+                );
+            }))
+            .on_action(cx.listener(|app, _: &EffortMenu, window, cx| {
+                app.act(
+                    Action::OptionMenu(conversation::Category::Effort),
+                    window,
+                    cx,
+                );
+            }))
+            .on_action(cx.listener(|app, _: &ModeMenu, window, cx| {
+                app.act(Action::OptionMenu(conversation::Category::Mode), window, cx);
+            }))
+            .on_action(cx.listener(|app, _: &MoreMenu, window, cx| {
+                app.act(
+                    Action::OptionMenu(conversation::Category::Other),
+                    window,
+                    cx,
+                );
+            }))
+            .on_action(cx.listener(|app, _: &AttachFile, window, cx| {
+                app.act(Action::AttachFile, window, cx);
+            }))
+            .on_action(cx.listener(|app, _: &TrafficView, window, cx| {
+                app.act(Action::TrafficView, window, cx);
+            }))
+            .on_action(
+                cx.listener(|app, _: &TodoList, window, cx| app.act(Action::TodoList, window, cx)),
             )
             .on_action(cx.listener(|_, _: &NextFocus, window, cx| window.focus_next(cx)))
             .on_action(cx.listener(|_, _: &PreviousFocus, window, cx| window.focus_prev(cx)))

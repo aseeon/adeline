@@ -180,6 +180,10 @@ pub struct Chats {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     retry_limit: Option<usize>,
     pub thinking_animation: ThinkingAnimation,
+    /// Streams the agent's thoughts into the chat (scope R24).
+    pub show_thinking: bool,
+    /// Minutes without agent traffic before the silence notice; 0 turns it off.
+    pub silence_notice_minutes: u32,
 }
 impl Default for Chats {
     fn default() -> Self {
@@ -192,6 +196,8 @@ impl Default for Chats {
             submit_on_enter: true,
             retry_limit: None,
             thinking_animation: ThinkingAnimation::default(),
+            show_thinking: false,
+            silence_notice_minutes: 10,
         }
     }
 }
@@ -329,6 +335,33 @@ pub fn bind_keys(cx: &mut gpui_kit::App) {
     bind!(keys.next_control, NextFocus);
     bind!(keys.previous_control, PreviousFocus);
     bindings.push(KeyBinding::new("cmd-q", Quit, None));
+    // The conversation controls' shortcuts (docs/shortcuts.md), Ctrl and Cmd alike.
+    for modifier in ["ctrl", "cmd"] {
+        let key = |rest: &str| format!("{modifier}-{rest}");
+        bindings.extend([
+            KeyBinding::new(&key("shift-enter"), SendNow, None),
+            KeyBinding::new(&key("."), StopTurn, None),
+            KeyBinding::new(&key("shift-r"), RestartAgent, None),
+            KeyBinding::new(&key("shift-a"), AttachFile, None),
+            KeyBinding::new(&key("shift-l"), TrafficView, None),
+            KeyBinding::new(&key("shift-t"), TodoList, None),
+        ]);
+    }
+    // The option menus. Ctrl+Shift+M, E and O are global hotkeys of common
+    // Windows tools (AMD Adrenalin among them), so Windows and Linux use Alt.
+    let menu = |letter: &str| {
+        if cfg!(target_os = "macos") {
+            format!("cmd-shift-{letter}")
+        } else {
+            format!("alt-{letter}")
+        }
+    };
+    bindings.extend([
+        KeyBinding::new(&menu("m"), ModelMenu, None),
+        KeyBinding::new(&menu("e"), EffortMenu, None),
+        KeyBinding::new(&menu("o"), ModeMenu, None),
+        KeyBinding::new(&menu("p"), MoreMenu, None),
+    ]);
     cx.bind_keys(bindings);
 }
 pub fn write_yaml(path: &Path, value: &impl Serialize) -> Result<(), String> {

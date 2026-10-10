@@ -910,6 +910,7 @@ impl Transcript {
         let footer = thread.is_some_and(|t| {
             !app.demo_mode
                 || t.status == "blocked"
+                || app.runtime.conversations.contains_key(&t.id)
                 || app
                     .workspace()
                     .decisions
@@ -982,7 +983,10 @@ impl Render for Transcript {
                             .track_focus(&footer_focus)
                             .child(chat_render::chat_column().flex().flex_col().child(
                                 if app.demo_mode {
-                                    app.decision_row(selected, cx)
+                                    col()
+                                        .child(app.decision_row(selected, cx))
+                                        .child(app.runtime_footer(selected, cx))
+                                        .into_any_element()
                                 } else {
                                     app.runtime_footer(selected, cx)
                                 },
@@ -1121,6 +1125,8 @@ impl Adeline {
                 | SubmitOnEnter
                 | ToggleLeftPanel
                 | ToggleSidePanel
+                | TrafficView
+                | PanelTab(_)
         ) {
             self.control_pane.update(cx, |_, cx| cx.notify());
         }

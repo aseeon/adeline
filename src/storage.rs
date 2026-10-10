@@ -1,7 +1,8 @@
 //! Durable project definitions, conversation snapshots and ordered transcript events.
 use crate::files::{self, checked_id, error as file_error};
 use crate::{
-    agents::{self, AgentDefinition, InstructionsMode, PermissionMode},
+    agents::{self, AgentDefinition, InstructionsMode},
+    conversation::{AgentCommand, Features, McpServer, Selections, SessionOption, TodoStep},
     data,
 };
 use serde::{Deserialize, Serialize};
@@ -13,15 +14,19 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
-/// What a conversation started with. Snapshots older than
-/// [`agents::VERSION`] stay readable but cannot send.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// The conversation format this version writes. Conversations saved in an
+/// earlier format stay on disk untouched but are not loaded (scope R37).
+pub const VERSION: u32 = 2;
+
+/// How long streamed events may wait in memory before they are written.
+pub const FLUSH_INTERVAL_MS: u64 = 250;
+
+/// What a conversation started with.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 #[non_exhaustive]
 pub struct ExecutionConfig {
-    #[serde(default)]
-    pub version: u32,
     pub name: String,
-    #[serde(default = "default_harness")]
     pub harness: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub identity: String,
@@ -29,52 +34,63 @@ pub struct ExecutionConfig {
     pub command: String,
     #[serde(default)]
     pub arguments: Vec<String>,
-    /// Switching changes these two; nothing else changes after creation.
+    /// Variables the registry sets for the agent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub environment: Vec<(String, String)>,
+    /// Model, effort, mode and other options; the only part that changes
+    /// after creation, and only for this conversation (scope R17).
     #[serde(default)]
-    pub model: String,
-    #[serde(default)]
-    pub effort: String,
+    pub selections: Selections,
     #[serde(default)]
     pub system_instructions: String,
     #[serde(default)]
     pub instructions_mode: InstructionsMode,
     pub directory: PathBuf,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<McpServer>,
 }
 
 impl ExecutionConfig {
-    pub fn legacy(&self) -> bool {
-        self.version < agents::VERSION
-    }
-
     fn fixed(&self) -> Self {
         Self {
-            model: String::new(),
-            effort: String::new(),
+            selections: Selections::default(),
             ..self.clone()
         }
     }
 }
 
-fn default_harness() -> String {
-    "OMP".into()
+/// An executable and how to run it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Launch {
+    pub command: String,
+    pub arguments: Vec<String>,
+    pub environment: Vec<(String, String)>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ConversationSettings {
+    pub version: u32,
     pub agent_id: String,
     pub title: String,
     pub status: String,
     pub created_at: String,
     pub execution: ExecutionConfig,
-    pub permission_mode: PermissionMode,
     #[serde(default)]
     pub session_id: Option<String>,
     #[serde(default)]
     pub previous_session_ids: Vec<String>,
-    /// The ACP config options the agent last offered, for switching while it is stopped.
+    /// What the agent last offered, so the menus and the `/` list work while
+    /// it is stopped and come back after a restart.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub config_options: Vec<Value>,
+    pub options: Vec<SessionOption>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commands: Vec<AgentCommand>,
+    #[serde(default)]
+    pub features: Features,
+    /// The agent's TODO list, kept until the agent sends an empty one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub todo: Vec<TodoStep>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<ForkOrigin>,
 }
@@ -124,6 +140,8 @@ pub struct StoredConversation {
     pub events: Vec<TranscriptEvent>,
     pub unsaved_events: Vec<TranscriptEvent>,
     pub storage_error: Option<String>,
+    /// When the oldest unsaved streamed event was queued, in milliseconds.
+    unsaved_since: Option<u64>,
     persisted_len: u64,
     needs_rollback: bool,
     pending_settings: Option<ConversationSettings>,
@@ -164,22 +182,15 @@ impl StoredConversation {
                         thread.messages.push(message);
                     }
                 }
-                "assistant_chunk" => {
+                kind @ ("assistant_chunk" | "thought_chunk") => {
                     if let Some(text) = event.data.get("text").and_then(Value::as_str) {
-                        thread.timing.text(text.chars().count(), event.timestamp);
-                        if let Some(index) = current_assistant {
-                            if let Some(message) = thread.messages.get_mut(index) {
-                                message.text.push_str(text);
-                            }
-                        } else {
-                            current_assistant = Some(thread.messages.len());
-                            thread.messages.push(data::Message {
-                                role: "assistant".into(),
-                                text: text.to_owned(),
-                                created_at: event.timestamp.to_string(),
-                                ..Default::default()
-                            });
-                        }
+                        thread.stream(
+                            &mut current_assistant,
+                            event.data.get("message").and_then(Value::as_str),
+                            text,
+                            kind == "thought_chunk",
+                            event.timestamp,
+                        );
                     }
                 }
                 "message_update" => {
@@ -209,27 +220,10 @@ impl StoredConversation {
                     }
                 }
                 "tool" => {
-                    let text = |field: &str| event.data.get(field).and_then(Value::as_str);
-                    let paths: Vec<String> = event
-                        .data
-                        .get("paths")
-                        .and_then(Value::as_array)
-                        .map(|paths| {
-                            paths
-                                .iter()
-                                .filter_map(|path| path.as_str().map(str::to_owned))
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    thread.apply_tool(
-                        text("id").unwrap_or("unknown"),
-                        text("title").unwrap_or("Tool"),
-                        text("status").unwrap_or("unknown"),
-                        text("detail").unwrap_or(""),
-                        text("kind").unwrap_or(""),
-                        &paths,
-                        event.timestamp,
-                    );
+                    if let Ok(call) = serde_json::from_value::<data::ToolReport>(event.data.clone())
+                    {
+                        thread.apply_tool(&call, event.timestamp);
+                    }
                 }
                 "usage" => {
                     if let (Some(used), Some(size)) = (
@@ -251,6 +245,15 @@ impl StoredConversation {
                         turn: thread.messages.iter().rposition(|m| m.role == "user"),
                         ..Default::default()
                     });
+                }
+                "note" => {
+                    if let Some(message) = event.data.get("message").and_then(Value::as_str) {
+                        thread.activity.push(data::Activity {
+                            kind: "note".into(),
+                            title: message.to_owned(),
+                            ..Default::default()
+                        });
+                    }
                 }
                 "fork_text_copy" => {
                     if let Some(fork) = &mut thread.fork {
@@ -618,7 +621,8 @@ impl ProjectStore {
         &mut self,
         project_id: &str,
         agent: &AgentDefinition,
-        launch: (String, Vec<String>),
+        launch: Launch,
+        mcp_servers: Vec<McpServer>,
         title: &str,
     ) -> Result<String, String> {
         checked_id(project_id)?;
@@ -635,28 +639,37 @@ impl ProjectStore {
         safe_directory(&root.join(project_id))?;
         safe_directory(&base)?;
         outside_project_storage(&project.directory, root)?;
+        // A new conversation always starts with the definition's defaults (scope R16).
         let settings = ConversationSettings {
+            version: VERSION,
             agent_id,
             title: title.to_owned(),
             status: "idle".into(),
             created_at: now_millis().to_string(),
             execution: ExecutionConfig {
-                version: agents::VERSION,
                 name: agent.name.clone(),
                 harness: agent.harness.clone(),
                 identity: agent.identity.clone(),
-                command: launch.0,
-                arguments: launch.1,
-                model: agent.model.clone(),
-                effort: agent.effort.clone(),
+                command: launch.command,
+                arguments: launch.arguments,
+                environment: launch.environment,
+                selections: Selections {
+                    model: agent.model.clone(),
+                    effort: agent.effort.clone(),
+                    mode: agent.mode.clone(),
+                    other: Vec::new(),
+                },
                 system_instructions: agent.system_instructions.clone(),
                 instructions_mode: agent.instructions_mode,
                 directory: project.directory.clone(),
+                mcp_servers,
             },
-            permission_mode: agent.permission_mode,
             session_id: None,
             previous_session_ids: Vec::new(),
-            config_options: Vec::new(),
+            options: Vec::new(),
+            commands: Vec::new(),
+            features: Features::default(),
+            todo: Vec::new(),
             forked_from: None,
         };
         let conversation = write_conversation(&base, settings, Vec::new())?;
@@ -703,7 +716,8 @@ impl ProjectStore {
                 }
             }
             match event.kind.as_str() {
-                "message" | "assistant_chunk" | "message_update" | "tool" | "error" => {
+                "message" | "assistant_chunk" | "thought_chunk" | "message_update" | "tool"
+                | "error" => {
                     events.push(event.clone());
                 }
                 "lifecycle" if starts_reply(event) => events.push(TranscriptEvent {
@@ -780,28 +794,35 @@ impl ProjectStore {
         flush_settings(conversation, &path)
     }
 
-    pub fn record_raw(
-        &mut self,
-        conversation_id: &str,
-        direction: &str,
-        message: &Value,
-    ) -> Result<(), String> {
-        self.record_event(
-            conversation_id,
-            &TranscriptEvent::new(
-                "raw",
-                serde_json::json!({
-                    "direction": direction, "message": message,
-                }),
-            ),
-        )
-    }
-
+    /// Saves an event before returning, with everything queued before it.
     pub fn record_event(
         &mut self,
         conversation_id: &str,
         event: &TranscriptEvent,
     ) -> Result<(), String> {
+        self.queue_event(conversation_id, event.clone())?;
+        self.flush(conversation_id)
+    }
+
+    /// Queues a streamed event; [`Self::flush_due`] writes it within
+    /// [`FLUSH_INTERVAL_MS`] (scope R41).
+    pub fn queue_event(
+        &mut self,
+        conversation_id: &str,
+        event: TranscriptEvent,
+    ) -> Result<(), String> {
+        let conversation = self
+            .projects
+            .iter_mut()
+            .flat_map(|p| &mut p.conversations)
+            .find(|c| c.id == conversation_id)
+            .ok_or_else(|| format!("Conversation {conversation_id} no longer exists."))?;
+        conversation.unsaved_events.push(event);
+        conversation.unsaved_since.get_or_insert_with(now_millis);
+        conversation.storage_error.clone().map_or(Ok(()), Err)
+    }
+
+    fn flush(&mut self, conversation_id: &str) -> Result<(), String> {
         let (project_id, conversation) = self
             .projects
             .iter_mut()
@@ -812,9 +833,11 @@ impl ProjectStore {
                     .map(|c| (&p.id, c))
             })
             .ok_or_else(|| format!("Conversation {conversation_id} no longer exists."))?;
-        conversation.unsaved_events.push(event.clone());
         if let Some(error) = &conversation.storage_error {
             return Err(error.clone());
+        }
+        if conversation.unsaved_events.is_empty() {
+            return Ok(());
         }
         let root = self.root.as_ref().map_err(Clone::clone)?;
         let path = root
@@ -822,7 +845,39 @@ impl ProjectStore {
             .join("conversations")
             .join(conversation_id)
             .join("transcript.jsonl");
+        conversation.unsaved_since = None;
         flush_events(conversation, &path)
+    }
+
+    /// Writes every conversation's queued events that have waited long
+    /// enough, one batch each. Returns the conversations that failed.
+    pub fn flush_due(&mut self) -> Vec<(String, String)> {
+        let due = now_millis().saturating_sub(FLUSH_INTERVAL_MS);
+        let ids: Vec<String> = self
+            .projects
+            .iter()
+            .flat_map(|p| &p.conversations)
+            .filter(|c| c.storage_error.is_none() && c.unsaved_since.is_some_and(|at| at <= due))
+            .map(|c| c.id.clone())
+            .collect();
+        ids.into_iter()
+            .filter_map(|id| self.flush(&id).err().map(|error| (id, error)))
+            .collect()
+    }
+
+    /// The conversation's recorded ACP traffic, newest last.
+    pub fn traffic(&self, conversation_id: &str, limit: usize) -> Vec<Value> {
+        let Some(conversation) = self.conversation(conversation_id) else {
+            return Vec::new();
+        };
+        let all: Vec<_> = conversation
+            .events
+            .iter()
+            .chain(&conversation.unsaved_events)
+            .filter(|event| event.kind == "traffic")
+            .map(|event| event.data.clone())
+            .collect();
+        all[all.len().saturating_sub(limit)..].to_vec()
     }
 
     pub fn retry_unsaved(&mut self, conversation_id: &str) -> Result<(), String> {
@@ -986,6 +1041,7 @@ fn write_conversation(
         events,
         unsaved_events: Vec::new(),
         storage_error: None,
+        unsaved_since: None,
         persisted_len: transcript.len() as u64,
         needs_rollback: false,
         pending_settings: None,
@@ -1108,10 +1164,19 @@ fn load_conversation(folder: &Path) -> Result<Option<StoredConversation>, String
     checked_id(&id)?;
     let settings_path = folder.join("conversation.yml");
     ensure_regular_file(&settings_path)?;
-    let mut settings: ConversationSettings = serde_yaml_ng::from_str(
-        &fs::read_to_string(&settings_path).map_err(|e| file_error(&settings_path, e))?,
-    )
-    .map_err(|e| file_error(&settings_path, e))?;
+    let text = fs::read_to_string(&settings_path).map_err(|e| file_error(&settings_path, e))?;
+    let yaml: serde_yaml_ng::Value =
+        serde_yaml_ng::from_str(&text).map_err(|e| file_error(&settings_path, e))?;
+    // An earlier format stays on disk untouched and is not shown (scope R37).
+    if yaml
+        .get("version")
+        .and_then(serde_yaml_ng::Value::as_u64)
+        .is_none_or(|version| version < u64::from(VERSION))
+    {
+        return Ok(None);
+    }
+    let mut settings: ConversationSettings =
+        serde_yaml_ng::from_value(yaml).map_err(|e| file_error(&settings_path, e))?;
     // Earlier versions saved running chats as "working" and new ones as "active".
     if settings.status == "active" {
         settings.status = "idle".into();
@@ -1156,6 +1221,7 @@ fn load_conversation(folder: &Path) -> Result<Option<StoredConversation>, String
         unsaved_events: Vec::new(),
         load_error: load_error.is_some(),
         storage_error: load_error,
+        unsaved_since: None,
         persisted_len,
         needs_rollback: false,
         pending_settings: None,

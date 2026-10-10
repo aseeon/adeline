@@ -186,7 +186,7 @@ fn outcome(call: &Activity) -> String {
     if call.running {
         return "Running".into();
     }
-    let failed = call.status == "failed";
+    let failed = call.status == conversation::ToolStatus::Failed;
     match call.duration_ms() {
         Some(ms) if failed => format!("Failed after {}", duration(ms)),
         Some(ms) => format!("Completed in {}", duration(ms)),
@@ -354,8 +354,9 @@ impl Adeline {
                 .filter(|call| call.kind.starts_with("tool:"))
         };
         let timed: Vec<u64> = calls().filter_map(Activity::duration_ms).collect();
-        let finished = |status: &str| calls().filter(|call| call.status == status).count();
-        let failed = finished("failed");
+        let finished =
+            |status: conversation::ToolStatus| calls().filter(|call| call.status == status).count();
+        let failed = finished(conversation::ToolStatus::Failed);
         let active = thread.timing.active_ms();
         let dash = || "–".to_owned();
         let cells = [
@@ -375,7 +376,7 @@ impl Adeline {
             ),
             (
                 "Succeeded",
-                finished("completed").to_string(),
+                finished(conversation::ToolStatus::Completed).to_string(),
                 "Tool calls that completed",
             ),
             ("Failed", failed.to_string(), "Tool calls that failed"),
@@ -524,7 +525,7 @@ impl Adeline {
             Entry::Call(ix) => {
                 let call = &thread.activity[ix];
                 let error = call.kind == "error";
-                let failed = error || call.status == "failed";
+                let failed = error || call.status == conversation::ToolStatus::Failed;
                 // A turn's steps show under its last reply once the turn ends.
                 let closing = call.turn.and_then(|prompt| {
                     (prompt + 1..thread.messages.len())
@@ -535,7 +536,7 @@ impl Adeline {
                 let glyph = if call.running {
                     Spinner::new().xsmall().into_any_element()
                 } else {
-                    icon(if error { "flag" } else { tool_icon(&call.tool) })
+                    icon(if error { "flag" } else { tool_icon(call.tool) })
                         .size(rems(0.75))
                         .when(failed, |glyph| glyph.text_color(theme.danger))
                         .into_any_element()
@@ -764,7 +765,8 @@ impl Adeline {
 #[cfg(test)]
 mod tests {
     use super::{Entry, duration, excerpt, timeline};
-    use crate::data::{Activity, Message, Thread};
+    use crate::conversation::{ToolKind, ToolStatus};
+    use crate::data::{Activity, Message, Thread, ToolReport};
 
     fn message(role: &str, text: &str) -> Message {
         Message {
@@ -781,9 +783,22 @@ mod tests {
             ..Default::default()
         };
         thread.push_message(message("assistant", "Looking first."));
-        thread.apply_tool("a", "Read a.rs", "completed", "", "read", &[], 10);
+        let report = |id: &str, title: &str, status, kind| ToolReport {
+            id: id.into(),
+            title: title.into(),
+            status,
+            kind,
+            ..Default::default()
+        };
+        thread.apply_tool(
+            &report("a", "Read a.rs", ToolStatus::Completed, ToolKind::Read),
+            10,
+        );
         thread.messages[1].text.push_str(" Found it.");
-        thread.apply_tool("b", "Edit a.rs", "in_progress", "", "edit", &[], 20);
+        thread.apply_tool(
+            &report("b", "Edit a.rs", ToolStatus::InProgress, ToolKind::Edit),
+            20,
+        );
         thread.messages[1].text.push_str(" Done.");
         thread.activity.push(Activity {
             kind: "error".into(),

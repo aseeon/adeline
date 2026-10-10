@@ -22,8 +22,12 @@ fn agent() -> AgentDefinition {
     }
 }
 
-fn launch() -> (String, Vec<String>) {
-    ("C:/tools/omp.exe".into(), vec!["acp".into()])
+fn launch() -> Launch {
+    Launch {
+        command: "C:/tools/omp.exe".into(),
+        arguments: vec!["acp".into()],
+        environment: Vec::new(),
+    }
 }
 
 #[test]
@@ -33,39 +37,101 @@ fn conversations_snapshot_resolved_launch_and_switch_only_model_and_effort() {
     let mut store = open_store(&test);
     let project = store.save_project(None, "Project", &work).unwrap();
     let id = store
-        .create_conversation(&project, &agent(), launch(), "Hello")
+        .create_conversation(&project, &agent(), launch(), Vec::new(), "Hello")
         .unwrap();
     let restored = open_store(&test);
     let settings = restored.conversation(&id).unwrap().settings.clone();
-    assert!(!settings.execution.legacy());
+    assert_eq!(settings.version, VERSION);
+    assert_eq!(
+        settings.execution.selections.model,
+        "openai-codex/gpt-6-sol"
+    );
     assert_eq!(settings.execution.command, "C:/tools/omp.exe");
     assert_eq!(settings.execution.arguments, ["acp"]);
     assert_eq!(settings.execution.harness, "omp");
     let mut switched = settings;
-    switched.execution.model = "xai/grok".into();
-    switched.execution.effort = "low".into();
-    switched.config_options = vec![serde_json::json!({"id":"model"})];
+    switched.execution.selections.model = "xai/grok".into();
+    switched.execution.selections.effort = "low".into();
+    switched.commands = vec![AgentCommand {
+        name: "review".into(),
+        ..Default::default()
+    }];
     store.update_conversation(&project, &id, switched).unwrap();
     let saved = open_store(&test)
         .conversation(&id)
         .unwrap()
         .settings
         .clone();
-    assert_eq!(saved.execution.model, "xai/grok");
-    assert_eq!(saved.config_options.len(), 1);
+    assert_eq!(saved.execution.selections.model, "xai/grok");
+    assert_eq!(saved.commands.len(), 1);
     let mut moved = saved;
     moved.execution.command = "elsewhere.exe".into();
     assert!(store.update_conversation(&project, &id, moved).is_err());
 }
 
 #[test]
-fn old_snapshots_stay_readable_but_are_marked_legacy() {
-    let restored: ExecutionConfig = serde_yaml_ng::from_str(
-        "name: Josh\ncommand: omp.exe\narguments: [acp]\nmodel: openai-codex/gpt-6-sol\neffort: High\neffort_parameter_name: thinking\nsystem_instructions: ''\ndirectory: C:/work\n",
-    )
-    .unwrap();
-    assert!(restored.legacy());
-    assert_eq!(restored.harness, "OMP");
+fn conversations_in_an_earlier_format_stay_on_disk_but_are_hidden() {
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let mut store = open_store(&test);
+    let project = store.save_project(None, "Project", &work).unwrap();
+    let folder = test.join("projects/project/conversations/old");
+    fs::create_dir_all(&folder).unwrap();
+    let old = "agent_id: josh\ntitle: Old\nstatus: idle\ncreated_at: '1'\npermission_mode: Ask\nexecution:\n  name: Josh\n  command: omp.exe\n  directory: C:/work\n";
+    fs::write(folder.join("conversation.yml"), old).unwrap();
+    fs::write(folder.join("transcript.jsonl"), "").unwrap();
+    let reloaded = open_store(&test);
+    assert!(reloaded.errors.is_empty(), "{:?}", reloaded.errors);
+    assert!(reloaded.conversation("old").is_none());
+    assert_eq!(reloaded.projects[0].id, project);
+    assert_eq!(
+        fs::read_to_string(folder.join("conversation.yml")).unwrap(),
+        old
+    );
+}
+
+#[test]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a test thread, not the UI thread"
+)]
+fn streamed_events_wait_in_memory_until_the_batch_is_due() {
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let mut store = open_store(&test);
+    let project = store.save_project(None, "Project", &work).unwrap();
+    let id = store
+        .create_conversation(&project, &agent(), launch(), Vec::new(), "Hello")
+        .unwrap();
+    let transcript = test
+        .join("projects/project/conversations")
+        .join(&id)
+        .join("transcript.jsonl");
+    store
+        .queue_event(
+            &id,
+            TranscriptEvent::new("assistant_chunk", serde_json::json!({"text":"a"})),
+        )
+        .unwrap();
+    assert!(store.flush_due().is_empty());
+    assert_eq!(fs::read_to_string(&transcript).unwrap(), "");
+    std::thread::sleep(std::time::Duration::from_millis(FLUSH_INTERVAL_MS + 20));
+    assert!(store.flush_due().is_empty());
+    assert_eq!(fs::read_to_string(&transcript).unwrap().lines().count(), 1);
+    // A saved event writes everything queued before it at once.
+    store
+        .queue_event(
+            &id,
+            TranscriptEvent::new("assistant_chunk", serde_json::json!({"text":"b"})),
+        )
+        .unwrap();
+    store
+        .record_event(
+            &id,
+            &TranscriptEvent::new("lifecycle", serde_json::json!({"event":"turn_finished"})),
+        )
+        .unwrap();
+    assert_eq!(fs::read_to_string(&transcript).unwrap().lines().count(), 3);
 }
 
 #[test]
@@ -97,7 +163,7 @@ fn project_rename_preserves_history_and_directory_snapshot() {
     assert_eq!(document["directory"], work.to_string_lossy().as_ref());
 
     let conversation = store
-        .create_conversation(&id, &agent(), launch(), "Hello")
+        .create_conversation(&id, &agent(), launch(), Vec::new(), "Hello")
         .unwrap();
     for status in ["active", "idle", "processing", "blocked"] {
         let mut settings = store.conversation(&conversation).unwrap().settings.clone();
@@ -128,7 +194,6 @@ fn project_rename_preserves_history_and_directory_snapshot() {
             .is_err()
     );
     settings.status = "archived".into();
-    settings.permission_mode = PermissionMode::AllowEverything;
     settings.session_id = Some("saved-session".into());
     store
         .update_conversation(&id, &conversation, settings)
@@ -141,7 +206,7 @@ fn project_rename_preserves_history_and_directory_snapshot() {
     assert!(!test.join("projects/example-project").exists());
     assert!(
         store
-            .create_conversation(&renamed, &agent(), launch(), "New")
+            .create_conversation(&renamed, &agent(), launch(), Vec::new(), "New")
             .unwrap()
             .len()
             > 8
@@ -167,14 +232,6 @@ fn project_rename_preserves_history_and_directory_snapshot() {
             .session_id
             .as_deref(),
         Some("saved-session")
-    );
-    assert_eq!(
-        reloaded
-            .conversation(&conversation)
-            .unwrap()
-            .settings
-            .permission_mode,
-        PermissionMode::AllowEverything
     );
     fs::write(
         test.join("projects/changed-project/foreign.txt"),
@@ -224,10 +281,10 @@ fn reconcile_takes_in_outside_changes_but_not_busy_conversations() {
     let mut store = open_store(&test);
     let project = store.save_project(None, "Outside", &work).unwrap();
     let quiet = store
-        .create_conversation(&project, &agent(), launch(), "Quiet")
+        .create_conversation(&project, &agent(), launch(), Vec::new(), "Quiet")
         .unwrap();
     let busy = store
-        .create_conversation(&project, &agent(), launch(), "Busy")
+        .create_conversation(&project, &agent(), launch(), Vec::new(), "Busy")
         .unwrap();
     let none = std::collections::HashSet::new();
     assert!(
@@ -266,7 +323,7 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
     let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
     let conversation = store
-        .create_conversation(&id, &agent(), launch(), "Hello")
+        .create_conversation(&id, &agent(), launch(), Vec::new(), "Hello")
         .unwrap();
     store
         .record_event(
@@ -280,10 +337,12 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
         )
         .unwrap();
     store
-        .record_raw(
+        .record_event(
             &conversation,
-            "incoming",
-            &serde_json::json!({"jsonrpc":"2.0", "method":"session/update"}),
+            &TranscriptEvent::new(
+                "traffic",
+                serde_json::json!({"at":1,"direction":"from_agent","text":"{}"}),
+            ),
         )
         .unwrap();
     store
@@ -436,7 +495,7 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
     assert_eq!(thread.activity[0].kind, "tool:tool-1");
     assert_eq!(thread.activity[0].title, "Read (completed)");
     assert_eq!(thread.activity[0].detail, "done");
-    assert_eq!(thread.activity[0].tool, "read");
+    assert_eq!(thread.activity[0].tool, crate::conversation::ToolKind::Read);
     assert_eq!(thread.activity[0].paths, ["/work/a.md"]);
     // Recorded during the first turn, before the next user message.
     assert_eq!(thread.activity[0].turn, Some(0));
@@ -455,7 +514,7 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
     );
     assert!(
         reloaded
-            .create_conversation(&id, &agent(), launch(), "No start")
+            .create_conversation(&id, &agent(), launch(), Vec::new(), "No start")
             .is_err()
     );
 }
@@ -467,7 +526,7 @@ fn write_failure_retains_events_and_explicit_retry_appends_once() {
     let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
     let conversation = store
-        .create_conversation(&id, &agent(), launch(), "Hello")
+        .create_conversation(&id, &agent(), launch(), Vec::new(), "Hello")
         .unwrap();
     let saved = TranscriptEvent::new("message", serde_json::json!({"role":"user","text":"saved"}));
     store.record_event(&conversation, &saved).unwrap();
@@ -491,7 +550,10 @@ fn write_failure_retains_events_and_explicit_retry_appends_once() {
     );
     assert!(
         store
-            .record_raw(&conversation, "incoming", &serde_json::json!({"ok":true}))
+            .record_event(
+                &conversation,
+                &TranscriptEvent::new("traffic", serde_json::json!({"ok":true}))
+            )
             .is_err()
     );
     assert_eq!(
@@ -551,7 +613,7 @@ fn failed_settings_write_preserves_pending_state_until_retry() {
     let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
     let conversation = store
-        .create_conversation(&id, &agent(), launch(), "Hello")
+        .create_conversation(&id, &agent(), launch(), Vec::new(), "Hello")
         .unwrap();
     let settings_path = test
         .join("projects/project/conversations")
@@ -611,7 +673,7 @@ fn bad_transcript_keeps_prior_history_and_exposes_error() {
     let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
     let conversation = store
-        .create_conversation(&id, &agent(), launch(), "Hello")
+        .create_conversation(&id, &agent(), launch(), Vec::new(), "Hello")
         .unwrap();
     store
         .record_event(
@@ -765,7 +827,7 @@ fn forks_copy_visible_history_through_the_fork_point_only() {
     let mut store = open_store(&test);
     let project = store.save_project(None, "Project", &work).unwrap();
     let source = store
-        .create_conversation(&project, &agent(), launch(), "Plan")
+        .create_conversation(&project, &agent(), launch(), Vec::new(), "Plan")
         .unwrap();
     let event = |kind: &str, data: Value| TranscriptEvent::new(kind, data);
     for event in [
@@ -793,8 +855,7 @@ fn forks_copy_visible_history_through_the_fork_point_only() {
         store.record_event(&source, &event).unwrap();
     }
     let mut settings = store.conversation(&source).unwrap().settings.clone();
-    settings.permission_mode = PermissionMode::AllowEverything;
-    settings.execution.model = "xai/grok".into();
+    settings.execution.selections.model = "xai/grok".into();
     settings.session_id = Some("source-session".into());
     store
         .update_conversation(&project, &source, settings)
@@ -806,11 +867,7 @@ fn forks_copy_visible_history_through_the_fork_point_only() {
     let restored = open_store(&test);
     let saved = restored.conversation(&fork).unwrap();
     assert_eq!(saved.settings.title, "Plan (fork)");
-    assert_eq!(saved.settings.execution.model, "xai/grok");
-    assert_eq!(
-        saved.settings.permission_mode,
-        PermissionMode::AllowEverything
-    );
+    assert_eq!(saved.settings.execution.selections.model, "xai/grok");
     assert_eq!(saved.settings.session_id, None);
     assert_eq!(
         saved.settings.forked_from.as_ref().unwrap().conversation_id,

@@ -1,9 +1,13 @@
 //! Messages between the conversation engine and its clients, one JSON object
 //! per line. Nothing here assumes the client shares the engine's machine.
 use crate::{
-    agents::{AgentDefinition, AgentEntry, PermissionMode},
-    data::{Message, Thread, Workspace},
-    harness,
+    agents::{AgentDefinition, AgentEntry},
+    conversation::{
+        AgentCommand, Attachment, Category, Features, McpServer, PermissionOption, SessionOption,
+        TodoStep, TrafficEntry, TurnState,
+    },
+    data::{Message, Thread, ToolReport, Workspace},
+    harness, install,
     storage::ExecutionConfig,
 };
 use serde::{Deserialize, Serialize};
@@ -15,7 +19,7 @@ use std::{
 
 /// Bumped whenever a message changes shape. `hello`, `welcome`, `status`,
 /// `stop_all` and `shutdown` must keep working across versions.
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -58,6 +62,16 @@ pub enum EngineMessage {
         id: u64,
         result: Result<Value, String>,
     },
+    /// A line of output from a running install, to the client that asked.
+    Output {
+        request: u64,
+        line: String,
+    },
+    /// A line of a watched conversation's ACP traffic.
+    Traffic {
+        id: String,
+        entry: TrafficEntry,
+    },
     /// The engine is exiting on purpose.
     Bye,
 }
@@ -70,18 +84,36 @@ pub enum EngineMessage {
 )]
 pub enum Command {
     /// Sends to `conversation_id`, or starts a conversation with `agent_id`.
-    /// Replies with the conversation ID.
+    /// During a turn the message is queued, or with `now` delivered at once
+    /// (scope R30). Replies with the conversation ID.
     Send {
         project_id: String,
         conversation_id: Option<String>,
         agent_id: Option<String>,
-        permission_mode: Option<PermissionMode>,
         prompt: String,
+        #[serde(default)]
+        attachments: Vec<Attachment>,
+        #[serde(default)]
+        now: bool,
+    },
+    /// Takes a queued message back out of the queue. Replies with its text.
+    TakeQueued {
+        id: String,
+        queued: u64,
+    },
+    /// Delivers a queued message now.
+    SendQueuedNow {
+        id: String,
+        queued: u64,
     },
     Stop {
         id: String,
     },
     ForceStop {
+        id: String,
+    },
+    /// Ends the agent's process and continues the turn in a new one.
+    Restart {
         id: String,
     },
     Retry {
@@ -99,13 +131,11 @@ pub enum Command {
         id: String,
         message: usize,
     },
-    SetPermissionMode {
+    /// Sets a model, effort, mode or other option for this conversation only.
+    SetOption {
         id: String,
-        mode: PermissionMode,
-    },
-    SwitchSetting {
-        id: String,
-        effort: bool,
+        category: Category,
+        option: String,
         value: String,
     },
     AnswerPermission {
@@ -162,6 +192,27 @@ pub enum Command {
     CancelProbe {
         probe: u64,
     },
+    /// The commands an install would run here. Replies with `Vec<install::Planned>`.
+    PlanInstall {
+        target: install::Target,
+    },
+    /// Runs an install, sending its output as `Output` lines for this request.
+    Install {
+        target: install::Target,
+    },
+    /// Logs an agent in with `method`, or out without one. A terminal method
+    /// opens the user's terminal. Replies once the agent answered.
+    Login {
+        harness: String,
+        command: String,
+        arguments: Vec<String>,
+        method: Option<crate::conversation::AuthMethod>,
+    },
+    /// Starts sending one conversation's ACP traffic, or stops with `None`.
+    /// Replies with what is recorded so far.
+    WatchTraffic {
+        id: Option<String>,
+    },
     SetSettings {
         settings: EngineSettings,
     },
@@ -182,6 +233,9 @@ pub enum Command {
 pub struct EngineSettings {
     pub keep_running: bool,
     pub retry_limit: usize,
+    /// MCP servers every agent on this machine gets (scope R28).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<McpServer>,
 }
 
 /// A client's place in the engine's delta stream.
@@ -265,14 +319,34 @@ pub struct Live {
     pub progress: Option<String>,
     pub permission: Vec<PendingPermission>,
     pub execution: Option<ExecutionConfig>,
-    /// The ACP config options the agent offers now, or offered in its last session.
-    pub options: Vec<Value>,
-    pub permission_mode: Option<PermissionMode>,
+    /// What the agent offers now, or offered in its last session.
+    pub options: Vec<SessionOption>,
+    pub commands: Vec<AgentCommand>,
+    pub features: Features,
+    pub todo: Vec<TodoStep>,
+    pub turn: TurnState,
+    /// Messages waiting for the running turn to end (scope R31).
+    pub queued: Vec<Queued>,
+    /// Since when no ACP traffic arrived during the turn, in milliseconds.
+    pub quiet_since: Option<u64>,
+    /// The agent reported that it needs a login (scope R47).
+    pub auth_required: bool,
+    /// The agent's last stderr lines after it crashed (scope R50).
+    pub stderr: String,
     pub last_read_through: Option<usize>,
     /// The streaming assistant message of the running turn.
     pub assistant: Option<usize>,
     pub last_prompt: String,
     pub worked: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Queued {
+    pub id: u64,
+    pub text: String,
+    /// Names of its files; the engine keeps their content.
+    #[serde(default)]
+    pub files: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -283,14 +357,11 @@ pub struct PendingPermission {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct PermissionOption {
-    pub option_id: String,
-    pub name: String,
-    pub kind: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "delta", rename_all = "snake_case")]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "deltas are moved once, to or from the wire"
+)]
 pub enum Delta {
     Live {
         id: String,
@@ -302,18 +373,28 @@ pub enum Delta {
         id: String,
         text: String,
         #[serde(default)]
+        message: Option<String>,
+        #[serde(default)]
+        at: u64,
+    },
+    Thought {
+        id: String,
+        text: String,
+        #[serde(default)]
+        message: Option<String>,
+        #[serde(default)]
         at: u64,
     },
     Tool {
         id: String,
-        tool_id: String,
-        title: String,
-        status: String,
-        detail: String,
-        kind: String,
-        paths: Vec<String>,
+        report: ToolReport,
         #[serde(default)]
         at: u64,
+    },
+    /// The agent named the conversation (scope R27).
+    Title {
+        id: String,
+        title: String,
     },
     Usage {
         id: String,
@@ -357,6 +438,10 @@ pub enum Delta {
     Notice {
         message: String,
     },
+    /// An agent asked to open this page, such as for its login.
+    OpenUrl {
+        url: String,
+    },
 }
 
 /// When the engine received a delta, or now for an engine that doesn't say.
@@ -382,38 +467,44 @@ pub fn apply(projects: &mut [Workspace], live: &mut HashMap<String, Live>, delta
         Delta::Live { id, live: state } => {
             live.insert(id.clone(), state.clone());
         }
-        Delta::Text { id, text, at } => {
+        Delta::Text {
+            id,
+            text,
+            message,
+            at,
+        }
+        | Delta::Thought {
+            id,
+            text,
+            message,
+            at,
+        } => {
             let state = live.entry(id.clone()).or_default();
             state.worked = true;
             if let Some(thread) = locate(projects, id) {
-                thread.timing.text(text.chars().count(), received(*at));
-                if let Some(message) = state.assistant.and_then(|i| thread.messages.get_mut(i)) {
-                    message.text.push_str(text);
-                } else {
-                    state.assistant = Some(thread.messages.len());
-                    thread.push_message(Message {
-                        role: "assistant".into(),
-                        text: text.clone(),
-                        created_at: crate::recency::now().to_string(),
-                        ..Default::default()
-                    });
+                let thought = matches!(delta, Delta::Thought { .. });
+                thread.stream(
+                    &mut state.assistant,
+                    message.as_deref(),
+                    text,
+                    thought,
+                    received(*at),
+                );
+                if !thought {
+                    thread.prepare_search();
                 }
-                thread.prepare_search();
             }
         }
-        Delta::Tool {
-            id,
-            tool_id,
-            title,
-            status,
-            detail,
-            kind,
-            paths,
-            at,
-        } => {
+        Delta::Tool { id, report, at } => {
             live.entry(id.clone()).or_default().worked = true;
             if let Some(thread) = locate(projects, id) {
-                thread.apply_tool(tool_id, title, status, detail, kind, paths, received(*at));
+                thread.apply_tool(report, received(*at));
+            }
+        }
+        Delta::Title { id, title } => {
+            if let Some(thread) = locate(projects, id) {
+                title.clone_into(&mut thread.title);
+                thread.prepare_search();
             }
         }
         Delta::Usage { id, used, size } => {
@@ -480,14 +571,22 @@ mod tests {
         }];
         let mut live = HashMap::new();
         for delta in [
+            Delta::Thought {
+                id: "c".into(),
+                text: "Greet them.".into(),
+                message: None,
+                at: 0,
+            },
             Delta::Text {
                 id: "c".into(),
                 text: "Good ".into(),
+                message: None,
                 at: 0,
             },
             Delta::Text {
                 id: "c".into(),
                 text: "morning".into(),
+                message: None,
                 at: 0,
             },
         ] {
@@ -501,6 +600,7 @@ mod tests {
         let messages = &projects[0].threads[0].messages;
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].text, "Good morning");
+        assert_eq!(messages[0].thought, "Greet them.");
         assert!(projects[0].threads[0].unread());
         apply(
             &mut projects,

@@ -1,21 +1,14 @@
 //! Harnesses Adeline can run: the ACP registry plus built-in OMP, where their
-//! executables are installed, and short prompt-free probes of their options.
+//! executables are installed and in which version, and whether Node.js is there.
 #[cfg(feature = "gui")]
 use gpui_kit::{App, Global};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashMap},
     fs,
-    io::Write,
     path::{Path, PathBuf},
-    process::{Child, ChildStdin, Command, Stdio},
-    time::Duration,
-};
-use tokio::{
-    io::{AsyncBufReadExt as _, BufReader, Lines},
-    sync::oneshot,
-    task::block_in_place,
+    process::{Command, Stdio},
 };
 
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
@@ -33,6 +26,12 @@ pub struct Harness {
     #[serde(default)]
     package: Option<String>,
     pub arguments: Vec<String>,
+    /// Environment variables the registry sets for the agent.
+    #[serde(default)]
+    pub environment: Vec<(String, String)>,
+    /// The registry's current version, for update offers (scope R12).
+    #[serde(default)]
+    pub version: String,
 }
 
 fn omp() -> Harness {
@@ -40,10 +39,38 @@ fn omp() -> Harness {
         id: OMP.into(),
         name: "OMP".into(),
         website: "https://github.com/can1357/oh-my-pi".into(),
-        executables: vec!["omp".into()],
+        executables: vec![crate::profiles::OMP.command.into()],
         package: None,
-        arguments: vec!["acp".into()],
+        arguments: crate::profiles::OMP
+            .arguments
+            .iter()
+            .map(|&arg| arg.to_owned())
+            .collect(),
+        environment: Vec::new(),
+        version: String::new(),
     }
+}
+
+/// Supported agents launch the way their profile says, whatever the
+/// registry guesses from package names.
+fn with_profile(mut harness: Harness) -> Harness {
+    if let Some(profile) = crate::profiles::find(&harness.id, "") {
+        harness.executables = vec![profile.command.to_owned()];
+        harness.arguments = profile.arguments.iter().map(|&a| a.to_owned()).collect();
+        if let Some(package) = profile.install.package {
+            harness.package = Some(package.to_owned());
+        }
+    }
+    harness
+}
+
+/// Whether Node.js is there for npm installs, and which package manager
+/// could install it (scope R11).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Node {
+    pub npm: Option<PathBuf>,
+    /// `winget` on Windows or `brew` on macOS, when found.
+    pub manager: Option<PathBuf>,
 }
 
 /// Every known harness and where each installed one lives. The engine
@@ -52,6 +79,11 @@ fn omp() -> Harness {
 pub struct Catalog {
     pub harnesses: Vec<Harness>,
     pub installed: HashMap<String, PathBuf>,
+    /// The installed version of npm-installed agents.
+    #[serde(default)]
+    pub versions: HashMap<String, String>,
+    #[serde(default)]
+    pub node: Node,
     /// Detection has finished at least once.
     pub detected: bool,
     #[serde(skip)]
@@ -109,11 +141,15 @@ impl Catalog {
         id: &str,
         command: &str,
         arguments: &[String],
-    ) -> Result<(String, Vec<String>), String> {
+    ) -> Result<crate::storage::Launch, String> {
         if id == CUSTOM {
             let path = resolve(command)
                 .ok_or_else(|| format!("Command {command} was not found on this machine."))?;
-            return Ok((path.to_string_lossy().into_owned(), arguments.to_vec()));
+            return Ok(crate::storage::Launch {
+                command: path.to_string_lossy().into_owned(),
+                arguments: arguments.to_vec(),
+                environment: Vec::new(),
+            });
         }
         let harness = self
             .get(id)
@@ -124,11 +160,31 @@ impl Catalog {
             .cloned()
             .or_else(|| locate(harness))
             .ok_or_else(|| format!("{} is not installed.", harness.name))?;
-        Ok((
-            path.to_string_lossy().into_owned(),
-            harness.arguments.clone(),
-        ))
+        Ok(crate::storage::Launch {
+            command: path.to_string_lossy().into_owned(),
+            arguments: harness.arguments.clone(),
+            environment: harness.environment.clone(),
+        })
     }
+
+    /// The installed and the newer registry version, when an update exists.
+    pub fn update(&self, id: &str) -> Option<(&str, &str)> {
+        let installed = self.versions.get(id)?;
+        let latest = self.get(id)?.version.as_str();
+        newer(latest, installed).then_some((installed.as_str(), latest))
+    }
+}
+
+/// Whether version `a` is newer than `b`, comparing dotted numbers.
+pub fn newer(a: &str, b: &str) -> bool {
+    let parts = |v: &str| -> Vec<u64> {
+        v.trim_start_matches('v')
+            .split(['.', '-', '+'])
+            .map_while(|part| part.parse().ok())
+            .collect()
+    };
+    let (a, b) = (parts(a), parts(b));
+    !a.is_empty() && !b.is_empty() && a > b
 }
 
 /// The client's catalog until the engine sends its own. Demo mode, which has
@@ -145,17 +201,38 @@ pub fn init(demo: bool, cx: &mut App) {
 
 /// Finds installed harnesses, after fetching a fresh registry when `fetch`
 /// is set. Blocking: the engine runs it on its blocking pool.
-pub fn detect(fetch: bool, known: Vec<Harness>) -> (Vec<Harness>, HashMap<String, PathBuf>) {
+pub fn detect(fetch: bool, known: Vec<Harness>) -> Catalog {
     let harnesses = if fetch && download().is_ok() {
         load()
     } else {
         known
     };
-    let installed = harnesses
+    let dirs = search_path();
+    let installed: HashMap<String, PathBuf> = harnesses
         .iter()
         .filter_map(|harness| Some((harness.id.clone(), locate(harness)?)))
         .collect();
-    (harnesses, installed)
+    let versions = harnesses
+        .iter()
+        .filter(|harness| installed.contains_key(&harness.id))
+        .filter_map(|harness| {
+            let package = harness.package.as_deref()?;
+            Some((harness.id.clone(), package_version(package, &dirs)?))
+        })
+        .collect();
+    let node = Node {
+        npm: find("npm", &dirs),
+        manager: find(if cfg!(windows) { "winget" } else { "brew" }, &dirs)
+            .filter(|_| cfg!(any(windows, target_os = "macos"))),
+    };
+    Catalog {
+        harnesses,
+        installed,
+        versions,
+        node,
+        detected: true,
+        demo: false,
+    }
 }
 
 fn cache() -> Option<PathBuf> {
@@ -223,7 +300,12 @@ pub fn load() -> Vec<Harness> {
             .and_then(|bytes| std::str::from_utf8(bytes).ok())
             .and_then(|text| parse_registry(text).ok())
     };
-    let mut harnesses = cached.or_else(bundled).unwrap_or_default();
+    let mut harnesses: Vec<_> = cached
+        .or_else(bundled)
+        .unwrap_or_default()
+        .into_iter()
+        .map(with_profile)
+        .collect();
     if !harnesses.iter().any(|harness| harness.id == OMP) {
         harnesses.push(omp());
     }
@@ -336,6 +418,7 @@ fn parse_registry(text: &str) -> Result<Vec<Harness>, String> {
         let distribution = &agent["distribution"];
         let mut executables = Vec::new();
         let mut arguments = Vec::new();
+        let mut environment = Vec::new();
         let mut source = None;
         if let Some(binaries) = distribution["binary"].as_object() {
             let binary = binaries
@@ -347,6 +430,7 @@ fn parse_registry(text: &str) -> Result<Vec<Harness>, String> {
                 executables.push(file.strip_suffix(".exe").unwrap_or(file).to_owned());
             }
             arguments = strings(&binary["args"]);
+            environment = pairs(&binary["env"]);
         }
         for runner in ["npx", "uvx"] {
             let Some(package) = distribution[runner]["package"].as_str() else {
@@ -369,6 +453,9 @@ fn parse_registry(text: &str) -> Result<Vec<Harness>, String> {
             if arguments.is_empty() {
                 arguments = strings(&distribution[runner]["args"]);
             }
+            if environment.is_empty() {
+                environment = pairs(&distribution[runner]["env"]);
+            }
         }
         executables.push(id.to_owned());
         executables.dedup();
@@ -388,9 +475,20 @@ fn parse_registry(text: &str) -> Result<Vec<Harness>, String> {
             executables,
             package: source,
             arguments,
+            environment,
+            version: agent["version"].as_str().unwrap_or_default().to_owned(),
         });
     }
     Ok(harnesses)
+}
+
+fn pairs(value: &Value) -> Vec<(String, String)> {
+    value
+        .as_object()
+        .into_iter()
+        .flatten()
+        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_owned())))
+        .collect()
 }
 
 fn strings(value: &Value) -> Vec<String> {
@@ -417,12 +515,36 @@ fn search_path() -> Vec<PathBuf> {
         ("HOME", ".bun/bin"),
         ("HOME", ".cargo/bin"),
         ("HOME", ".opencode/bin"),
+        ("ProgramFiles", "nodejs"),
+        ("LOCALAPPDATA", "Microsoft/WindowsApps"),
     ] {
         if let Some(base) = std::env::var_os(variable) {
             dirs.push(PathBuf::from(base).join(folder));
         }
     }
+    // Homebrew, which an app started from Finder has no PATH entry for.
+    if cfg!(target_os = "macos") {
+        dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
+    }
     dirs
+}
+
+/// A program found on PATH or in the usual install folders.
+pub fn program(name: &str) -> Option<PathBuf> {
+    find(name, &search_path())
+}
+
+/// The installed version of an npm package, from its `package.json`.
+fn package_version(package: &str, dirs: &[PathBuf]) -> Option<String> {
+    dirs.iter().find_map(|dir| {
+        [dir.join("node_modules"), dir.join("../lib/node_modules")]
+            .iter()
+            .find_map(|modules| {
+                let text = fs::read(modules.join(package).join("package.json")).ok()?;
+                let manifest: Value = serde_json::from_slice(&text).ok()?;
+                manifest["version"].as_str().map(str::to_owned)
+            })
+    })
 }
 
 fn find(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
@@ -586,12 +708,6 @@ pub fn resolve(command: &str) -> Option<PathBuf> {
     }
 }
 
-/// Whether Adeline knows how to give this harness system instructions.
-/// A Custom harness counts by the identity it reports in its handshake.
-pub fn supports_instructions(harness: &str, identity: &str) -> bool {
-    harness == OMP || ["omp", "oh-my-pi"].contains(&identity.to_lowercase().as_str())
-}
-
 /// The system guidance a supported harness receives.
 pub fn guidance(name: &str, instructions: &str) -> String {
     let lead = format!(
@@ -602,320 +718,6 @@ pub fn guidance(name: &str, instructions: &str) -> String {
     } else {
         format!("{lead}\n{instructions}")
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    Model,
-    Effort,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Choice {
-    pub value: String,
-    pub name: String,
-    /// The server's group, else the `provider/` prefix, else empty.
-    pub group: String,
-}
-
-/// One select-type config option a harness offers.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Setting {
-    pub id: String,
-    pub current: String,
-    pub choices: Vec<Choice>,
-}
-
-impl Setting {
-    pub fn offers(&self, value: &str) -> bool {
-        self.choices.iter().any(|choice| choice.value == value)
-    }
-
-    pub fn name_of<'a>(&'a self, value: &'a str) -> &'a str {
-        self.choices
-            .iter()
-            .find(|choice| choice.value == value)
-            .map_or(value, |choice| choice.name.as_str())
-    }
-}
-
-/// Finds the model or effort option among ACP `configOptions`.
-pub fn setting(options: &[Value], kind: Kind) -> Option<Setting> {
-    let option = options.iter().find(|option| {
-        let id = option["id"].as_str().unwrap_or_default();
-        let category = option["category"].as_str().unwrap_or_default();
-        option["type"].as_str().is_none_or(|kind| kind == "select")
-            && match kind {
-                Kind::Model => category == "model" || (category.is_empty() && id == "model"),
-                Kind::Effort => {
-                    category == "thought_level"
-                        || (category.is_empty()
-                            && ["thinking", "effort", "reasoning_effort", "thought_level"]
-                                .contains(&id))
-                }
-            }
-    })?;
-    let mut choices = Vec::new();
-    let mut grouped = false;
-    for entry in option["options"].as_array().into_iter().flatten() {
-        if let Some(items) = entry["options"].as_array() {
-            grouped = true;
-            let group = entry["name"]
-                .as_str()
-                .or_else(|| entry["group"].as_str())
-                .unwrap_or_default();
-            choices.extend(items.iter().filter_map(|item| choice(item, group)));
-        } else {
-            choices.extend(choice(entry, ""));
-        }
-    }
-    if !grouped && choices.iter().all(|choice| choice.value.contains('/')) {
-        for choice in &mut choices {
-            choice.group = choice
-                .value
-                .split('/')
-                .next()
-                .unwrap_or_default()
-                .to_owned();
-        }
-    }
-    Some(Setting {
-        id: option["id"].as_str()?.to_owned(),
-        current: option["currentValue"]
-            .as_str()
-            .unwrap_or_default()
-            .to_owned(),
-        choices,
-    })
-}
-
-fn choice(item: &Value, group: &str) -> Option<Choice> {
-    let value = item["value"].as_str()?.to_owned();
-    Some(Choice {
-        name: item["name"].as_str().unwrap_or(&value).to_owned(),
-        value,
-        group: group.to_owned(),
-    })
-}
-
-/// What a probe learned: the reported identity and offered options.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Probed {
-    pub identity: String,
-    pub options: Vec<Value>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ProbeError {
-    pub message: String,
-    /// Advertised ACP login methods, when authentication is missing.
-    pub login: Vec<String>,
-}
-
-/// A running probe. Dropping it stops the probe's process.
-pub struct Probe {
-    /// Never sent; dropping it wakes the probe task to cancel.
-    _cancel: oneshot::Sender<()>,
-}
-
-/// Starts `command` in a temporary folder, runs the ACP handshake and opens a
-/// session without prompting, sets `model` when given, then stops it. Runs as a
-/// task on the current tokio runtime.
-pub fn probe(
-    command: PathBuf,
-    arguments: Vec<String>,
-    model: Option<String>,
-) -> (Probe, async_channel::Receiver<Result<Probed, ProbeError>>) {
-    let (cancel, mut cancelled) = oneshot::channel();
-    let (sender, receiver) = async_channel::bounded(1);
-    tokio::spawn(async move {
-        let folder = std::env::temp_dir().join(crate::files::unique("adeline-probe"));
-        let result = match block_in_place(|| fs::create_dir_all(&folder)) {
-            Ok(()) => {
-                run_probe(
-                    &command,
-                    &arguments,
-                    model.as_deref(),
-                    &folder,
-                    &mut cancelled,
-                )
-                .await
-            }
-            Err(e) => Err(failure(format!("Could not create a probe folder: {e}"))),
-        };
-        block_in_place(|| {
-            let _ = fs::remove_dir_all(&folder);
-        });
-        if cancelled.try_recv() != Err(oneshot::error::TryRecvError::Closed) {
-            let _ = sender.try_send(result);
-        }
-    });
-    (Probe { _cancel: cancel }, receiver)
-}
-
-fn failure(message: String) -> ProbeError {
-    ProbeError {
-        message,
-        login: Vec::new(),
-    }
-}
-
-struct Session<'a> {
-    child: Child,
-    stdin: ChildStdin,
-    lines: Lines<BufReader<crate::platform::Reader>>,
-    cancelled: &'a mut oneshot::Receiver<()>,
-    next: u64,
-    command: String,
-}
-
-impl Drop for Session<'_> {
-    fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = block_in_place(|| self.child.wait());
-    }
-}
-
-impl Session<'_> {
-    async fn request(&mut self, method: &str, params: &Value) -> Result<Value, ProbeError> {
-        self.next += 1;
-        let id = self.next;
-        let message = json!({"jsonrpc":"2.0","id":id,"method":method,"params":params});
-        let stdin = &mut self.stdin;
-        block_in_place(|| writeln!(stdin, "{message}").and_then(|()| stdin.flush()))
-            .map_err(|_| self.silent())?;
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
-        loop {
-            let line = tokio::select! {
-                _ = &mut *self.cancelled => return Err(failure("Probe cancelled.".into())),
-                line = tokio::time::timeout_at(deadline, self.lines.next_line()) => line,
-            };
-            let line = match line {
-                Ok(Ok(Some(line))) => line,
-                Ok(_) => return Err(self.silent()),
-                Err(_) if id == 1 => return Err(self.silent()),
-                Err(_) => {
-                    return Err(failure(format!(
-                        "{} did not answer ACP {method} within 30 seconds.",
-                        self.command
-                    )));
-                }
-            };
-            let Ok(reply) = serde_json::from_str::<Value>(&line) else {
-                if id == 1 {
-                    return Err(self.silent());
-                }
-                continue;
-            };
-            if reply["id"].as_u64() != Some(id) || reply.get("method").is_some() {
-                continue;
-            }
-            if let Some(error) = reply.get("error") {
-                return Err(failure(
-                    error["message"]
-                        .as_str()
-                        .unwrap_or("Unknown ACP error")
-                        .to_owned(),
-                ));
-            }
-            return Ok(reply["result"].clone());
-        }
-    }
-
-    fn silent(&self) -> ProbeError {
-        failure(format!(
-            "{} did not answer the ACP handshake. Check that it speaks ACP over stdio, for example with its `acp` argument.",
-            self.command
-        ))
-    }
-}
-
-async fn run_probe(
-    command: &Path,
-    arguments: &[String],
-    model: Option<&str>,
-    folder: &Path,
-    cancelled: &mut oneshot::Receiver<()>,
-) -> Result<Probed, ProbeError> {
-    let shown = command.file_name().map_or_else(
-        || command.display().to_string(),
-        |name| name.to_string_lossy().into_owned(),
-    );
-    let mut process = hidden(Command::new(command));
-    process.args(arguments).current_dir(folder);
-    let (child, stdin, stdout, _) =
-        block_in_place(|| crate::platform::spawn_piped(&mut process, false))
-            .map_err(|e| failure(format!("Could not start {shown}: {e}")))?;
-    let mut session = Session {
-        child,
-        stdin,
-        lines: BufReader::new(stdout).lines(),
-        cancelled,
-        next: 0,
-        command: shown,
-    };
-    let info = session.request(
-        "initialize",
-        &json!({"protocolVersion":1,"clientCapabilities":{},"clientInfo":{"name":"adeline","title":"Adeline","version":env!("CARGO_PKG_VERSION")}}),
-    ).await?;
-    let login: Vec<String> = info["authMethods"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|method| {
-            let name = method["name"].as_str()?;
-            Some(match method["description"].as_str() {
-                Some(description) if !description.is_empty() => format!("{name}: {description}"),
-                _ => name.to_owned(),
-            })
-        })
-        .collect();
-    let identity = info["agentInfo"]["name"]
-        .as_str()
-        .or_else(|| info["agentInfo"]["title"].as_str())
-        .unwrap_or_default()
-        .to_owned();
-    let session_result = session
-        .request(
-            "session/new",
-            &json!({"cwd":folder.to_string_lossy(),"mcpServers":[]}),
-        )
-        .await
-        .map_err(|mut error| {
-            if crate::acp::needs_login(&error.message) {
-                error.login = login;
-            }
-            error
-        })?;
-    let mut options = session_result["configOptions"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    // Some harnesses (Codex) list effort only once a model has been set, so
-    // always set one: the chosen model, else the harness's current one.
-    if let (Some(setting), Some(session_id)) = (
-        setting(&options, Kind::Model),
-        session_result["sessionId"].as_str(),
-    ) && let Some(model) = model
-        .filter(|model| setting.offers(model))
-        .or_else(|| {
-            setting
-                .offers(&setting.current)
-                .then_some(setting.current.as_str())
-        })
-        .or_else(|| setting.choices.first().map(|choice| choice.value.as_str()))
-    {
-        let result = session
-            .request(
-                "session/set_config_option",
-                &json!({"sessionId":session_id,"configId":setting.id,"value":model}),
-            )
-            .await?;
-        if let Some(updated) = result["configOptions"].as_array() {
-            options.clone_from(updated);
-        }
-    }
-    Ok(Probed { identity, options })
 }
 
 #[cfg(test)]
@@ -1014,46 +816,29 @@ mod tests {
     }
 
     #[test]
-    fn options_group_by_server_groups_or_provider_prefix() {
-        let options = vec![
-            json!({"id":"mode","category":"mode","type":"select","options":[{"value":"plan"}]}),
-            json!({"id":"model","category":"model","type":"select","currentValue":"openai/gpt",
-                   "options":[{"value":"openai/gpt","name":"GPT"},{"value":"xai/grok","name":"Grok"}]}),
-            json!({"id":"effort","category":"thought_level","type":"select","currentValue":"low",
-                   "options":[{"group":"fast","name":"Fast","options":[{"value":"low","name":"Low"}]}]}),
-        ];
-        let model = setting(&options, Kind::Model).unwrap();
-        assert_eq!(model.current, "openai/gpt");
-        assert_eq!(model.choices[1].group, "xai");
-        assert_eq!(model.name_of("xai/grok"), "Grok");
-        let effort = setting(&options, Kind::Effort).unwrap();
-        assert_eq!(effort.id, "effort");
-        assert_eq!(effort.choices[0].group, "Fast");
-        assert!(setting(&options[..1], Kind::Model).is_none());
-        let legacy = [json!({"id":"thinking","options":[{"value":"high"}]})];
-        assert!(setting(&legacy, Kind::Effort).unwrap().offers("high"));
-    }
-
-    #[test]
-    fn instruction_support_follows_harness_or_reported_identity() {
-        assert!(supports_instructions(OMP, ""));
-        assert!(supports_instructions(CUSTOM, "omp"));
-        assert!(!supports_instructions("gemini", "gemini-cli"));
+    fn registry_env_version_and_profiles_shape_the_launch() {
+        let harnesses: Vec<_> = parse_registry(
+            r#"{"agents":[
+            {"id":"claude-acp","name":"Claude Agent","version":"0.85.1",
+             "distribution":{"npx":{"package":"@agentclientprotocol/claude-agent-acp@0.85.1","env":{"FOO":"1"}}}}
+        ]}"#,
+        )
+        .unwrap()
+        .into_iter()
+        .map(with_profile)
+        .collect();
+        assert_eq!(harnesses[0].version, "0.85.1");
+        assert_eq!(
+            harnesses[0].environment,
+            [("FOO".to_owned(), "1".to_owned())]
+        );
+        assert_eq!(harnesses[0].executables, ["claude-agent-acp"]);
+        assert!(newer("0.86.0", "0.85.1") && !newer("0.85.1", "0.85.1") && !newer("1.0", ""));
+        assert!(newer("1.10.0", "1.9.9"));
         assert!(
             guidance("Josh", "Be brief.").starts_with(
                 "You are an agent named Josh, running inside Adeline ADE (Agentic Development Environment)\nBe brief."
             )
-        );
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn missing_custom_command_fails_the_probe_with_a_clear_error() {
-        let (_probe, results) = probe(PathBuf::from("adeline-no-such-command"), Vec::new(), None);
-        let error = results.recv().await.unwrap().unwrap_err();
-        assert!(
-            error.message.contains("Could not start"),
-            "{}",
-            error.message
         );
     }
 }

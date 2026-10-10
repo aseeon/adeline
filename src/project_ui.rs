@@ -547,7 +547,20 @@ impl Adeline {
             BrowserPurpose::ProjectFolder => {
                 self.set_project_folder(Path::new(&path), window, cx);
             }
-            BrowserPurpose::Attach { .. } => self.attach_path(&path, window, cx),
+            BrowserPurpose::Attach { directory: true } => self.attach_path(&path, window, cx),
+            // A remote file stays on its machine; the engine reads it there.
+            BrowserPurpose::Attach { directory: false } => {
+                let name = Path::new(&path)
+                    .file_name()
+                    .map_or_else(|| path.clone(), |name| name.to_string_lossy().into_owned());
+                let file = conversation::Attachment {
+                    mime: conversation::mime_for(&name).to_owned(),
+                    name,
+                    path: Some(path.into()),
+                    ..Default::default()
+                };
+                self.attach(file, cx);
+            }
         }
     }
 

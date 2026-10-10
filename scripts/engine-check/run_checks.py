@@ -147,7 +147,7 @@ def stop_engine():
 
 def send_command(prompt, conversation=None, agent="fake-auto"):
     return {"op": "send", "project_id": PROJECT, "conversation_id": conversation,
-            "agent_id": None if conversation else agent, "permission_mode": None, "prompt": prompt}
+            "agent_id": None if conversation else agent, "prompt": prompt, "attachments": [], "now": False}
 
 
 def new_conversation(client, prompt, agent="fake-auto"):
@@ -172,6 +172,20 @@ def transcript(conversation, strict=False):
             if strict:
                 raise
     return events
+
+
+def sent(conversation, method):
+    """The requests of one method Adeline sent the agent, from the saved ACP traffic."""
+    messages = []
+    for event in transcript(conversation):
+        if event["kind"] == "traffic" and event["data"]["direction"] == "to_agent":
+            try:
+                message = json.loads(event["data"]["text"])
+            except ValueError:
+                continue
+            if message.get("method") == method:
+                messages.append(message)
+    return messages
 
 
 def fresh_snapshot():
@@ -206,11 +220,11 @@ def concurrently(*calls):
 # ---------------------------------------------------------------------------
 # Setup
 
-def write_agent(folder, name, mode):
+def write_agent(folder, name):
     path = config / "agents" / folder
     path.mkdir(parents=True, exist_ok=True)
     text = (f"version: 1\nname: {json.dumps(name)}\nharness: custom\ncommand: {json.dumps(sys.executable)}\n"
-            f"arguments: [{json.dumps(str(HERE / 'fake_agent.py'))}]\npermission_mode: {mode}\n")
+            f"arguments: [{json.dumps(str(HERE / 'fake_agent.py'))}]\n")
     (path / "agent.yml.tmp").write_text(text, encoding="utf-8")
     os.replace(path / "agent.yml.tmp", path / "agent.yml")
 
@@ -234,8 +248,8 @@ def setup():
     os.environ.update(USERPROFILE=str(home), HOME=str(home), ADELINE_FAKE_PIDS=str(pids),
                       ADELINE_FAKE_STATE=str(temp / "fake-state"))
     (config / "settings.yml").write_text("modes:\n  chats:\n    retry_limit: 3\n", encoding="utf-8")
-    write_agent("fake", "Fake", "Ask")
-    write_agent("fake-auto", "Fake Auto", "AllowEverything")
+    write_agent("fake", "Fake")
+    write_agent("fake-auto", "Fake Auto")
     write_project(PROJECT, PROJECT, work)
     return temp
 
@@ -349,7 +363,7 @@ def check_containment():
         expect(live["error"] is None, f"retry after crash failed: {live['error']}")
 
 
-@check("AC10 two clients: shared changes, one of two simultaneous sends wins")
+@check("AC10 two clients: shared changes, simultaneous sends run one after the other")
 def check_concurrent_send():
     start_engine()
     with Client() as a, Client() as b:
@@ -358,12 +372,15 @@ def check_concurrent_send():
         b.wait_delta(lambda d: d.get("delta") == "thread" and d["thread"]["id"] == conversation, 2)
         mark_a, mark_b = a.mark(), b.mark()
         results = concurrently(*[lambda c=c: c.request(send_command("SLOW 2", conversation)) for c in (a, b)])
-        errors = [r["Err"] for r in results if "Err" in r]
-        expect(len(errors) == 1 and "already processing" in errors[0], f"simultaneous sends gave {results}")
-        is_text = lambda d: d.get("delta") == "text" and d["id"] == conversation
-        a.wait_delta(is_text, 10, mark_a)
-        b.wait_delta(is_text, 10, mark_b)
-        wait_turn(a, conversation, mark_a)
+        expect(all("Ok" in r for r in results), f"simultaneous sends gave {results}")
+        # One starts the turn; both clients see the other waiting in the queue (scope R31).
+        queued = lambda l: l["processing"] and len(l["queued"]) == 1
+        index, _ = a.wait_live(conversation, queued, 10, mark_a)
+        b.wait_live(conversation, queued, 10, mark_b)
+        a.wait_live(conversation, lambda l: not l["queued"] and not l["processing"], 20, index)
+        time.sleep(0.5)  # The traffic reaches the transcript in batches.
+        prompts = [m["params"]["prompt"][0]["text"] for m in sent(conversation, "session/prompt")]
+        expect(prompts[-2:] == ["SLOW 2", "SLOW 2"], f"prompts sent: {prompts}")
 
 
 @check("AC11 permission race, repeated Stop, archive racing send")
@@ -375,7 +392,7 @@ def check_conflicts():
         _, live = a.wait_live(conversation, lambda l: l["permission"], 15, mark)
         b.wait_live(conversation, lambda l: l["permission"], 5, mark_b)
         request = live["permission"][0]
-        allow = next(o["option_id"] for o in request["options"] if o["kind"] == "allow_once")
+        allow = next(o["id"] for o in request["options"] if o["kind"] == "allow_once")
         answer = {"op": "answer_permission", "id": conversation, "request_id": request["request_id"],
                   "option_id": allow}
         results = concurrently(lambda: a.request(answer), lambda: b.request(answer))
@@ -589,11 +606,11 @@ def check_file_watching():
                 {e["id"]: e["definition"] for e in d["entries"]}), 10, after)
 
         mark = client.mark()
-        write_agent("watched", "Watched", "Ask")
+        write_agent("watched", "Watched")
         agent_delta(lambda agents: "watched" in agents, mark)
         mark = client.mark()
-        write_agent("watched", "Watched", "AllowEverything")
-        agent_delta(lambda agents: agents.get("watched", {}).get("permission_mode") == "AllowEverything", mark)
+        write_agent("watched", "Watched again")
+        agent_delta(lambda agents: agents.get("watched", {}).get("name") == "Watched again", mark)
         mark = client.mark()
         shutil.rmtree(config / "agents" / "watched")
         agent_delta(lambda agents: "watched" not in agents, mark)
@@ -619,11 +636,6 @@ def check_file_watching():
 def check_fork():
     start_engine()
 
-    def sent(conversation, method):
-        return [e["data"]["message"] for e in transcript(conversation)
-                if e["kind"] == "raw" and e["data"]["direction"] == "outgoing"
-                and e["data"]["message"].get("method") == method]
-
     def text_copy(conversation):
         return any(e["kind"] == "fork_text_copy" for e in transcript(conversation))
 
@@ -638,7 +650,7 @@ def check_fork():
         send_in(client, source, "second")
         fork = client.call({"op": "fork", "id": source, "message": 3})
         kinds = {e["kind"] for e in transcript(fork)}
-        expect(not kinds & {"raw", "lifecycle", "session", "permission_decision"}, f"fork copied {kinds}")
+        expect(not kinds & {"traffic", "lifecycle", "session", "permission_decision"}, f"fork copied {kinds}")
         settings = (config / "projects" / PROJECT / "conversations" / fork / "conversation.yml").read_text()
         expect("(fork)" in settings and "session_id: null" in settings, settings)
         expect(not sent(fork, "initialize"), "forking started an agent")

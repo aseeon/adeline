@@ -113,6 +113,8 @@ pub struct Connection {
     inbox: Option<async_channel::Receiver<Incoming>>,
     next: u64,
     pending: HashMap<u64, Callback>,
+    /// Requests that stream output lines before their reply.
+    outputs: HashMap<u64, Box<dyn FnMut(String, &mut App)>>,
     queued: Vec<(u64, Command)>,
     blocking: Slot,
     epoch: u64,
@@ -140,6 +142,7 @@ impl Connection {
             inbox: None,
             next: 0,
             pending: HashMap::new(),
+            outputs: HashMap::new(),
             queued: Vec::new(),
             blocking: Arc::default(),
             epoch: 0,
@@ -617,6 +620,7 @@ fn fail_pending(machine: &str, error: &str, cx: &mut App) {
         return;
     };
     let pending: Vec<_> = connection.pending.drain().map(|(_, done)| done).collect();
+    connection.outputs.clear();
     connection.queued.clear();
     for done in pending {
         done(Err(error.to_owned()), cx);
@@ -788,13 +792,27 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
             }
         }
         Incoming::Message(EngineMessage::Reply { id, result }) => {
-            let done = get_mut(machine, cx)
-                .expect("connection")
-                .pending
-                .remove(&id);
+            let connection = get_mut(machine, cx).expect("connection");
+            connection.outputs.remove(&id);
+            let done = connection.pending.remove(&id);
             if let Some(done) = done {
                 done(result, cx);
             }
+        }
+        Incoming::Message(EngineMessage::Output { request, line }) => {
+            let output = get_mut(machine, cx)
+                .expect("connection")
+                .outputs
+                .remove(&request);
+            if let Some(mut output) = output {
+                output(line, cx);
+                if let Some(connection) = get_mut(machine, cx) {
+                    connection.outputs.insert(request, output);
+                }
+            }
+        }
+        Incoming::Message(EngineMessage::Traffic { id, entry }) => {
+            update_owner(cx, move |app, cx| app.traffic_arrived(&id, entry, cx));
         }
         Incoming::Message(EngineMessage::Bye) => {
             get_mut(machine, cx).expect("connection").bye = true;
@@ -915,6 +933,23 @@ pub fn request(machine: &str, command: Command, done: Callback, cx: &mut App) {
             connect(machine, cx);
         }
         _ => connection.queued.push((id, command)),
+    }
+}
+
+/// Sends a command whose output lines go to `output` before `done` gets its reply.
+pub fn request_with_output(
+    machine: &str,
+    command: Command,
+    output: Box<dyn FnMut(String, &mut App)>,
+    done: Callback,
+    cx: &mut App,
+) {
+    let next = get(machine, cx).map(|c| c.next + 1);
+    request(machine, command, done, cx);
+    if let (Some(id), Some(connection)) = (next, get_mut(machine, cx))
+        && connection.pending.contains_key(&id)
+    {
+        connection.outputs.insert(id, output);
     }
 }
 
@@ -1100,7 +1135,7 @@ pub fn probe(
     cx: &mut App,
 ) -> (
     Probe,
-    async_channel::Receiver<Result<harness::Probed, harness::ProbeError>>,
+    async_channel::Receiver<Result<crate::acp::Probed, crate::acp::ProbeError>>,
 ) {
     let (probe, sender) = match get_mut(machine, cx) {
         Some(connection) => {
@@ -1124,9 +1159,10 @@ pub fn probe(
             let result = result
                 .and_then(|value| serde_json::from_value(value).map_err(|e| e.to_string()))
                 .unwrap_or_else(|message| {
-                    Err(harness::ProbeError {
+                    Err(crate::acp::ProbeError {
                         message,
-                        login: Vec::new(),
+                        auth: Vec::new(),
+                        version: false,
                     })
                 });
             let _ = results.try_send(result);

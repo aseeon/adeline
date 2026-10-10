@@ -170,7 +170,9 @@ impl Adeline {
             }
             Action::Close => {
                 self.cancel_project_delete(cx);
-                self.menu = None;
+                if self.menu.take().is_some() {
+                    self.refocus_after_menu(window, cx);
+                }
                 self.modal = None;
                 window.close_dialog(cx);
             }
@@ -288,6 +290,9 @@ impl Adeline {
             Action::Chat(ix) => {
                 self.selected = Some(ix);
                 self.activity.reset();
+                self.attachment_error = None;
+                self.slash = None;
+                self.watch_traffic(cx);
                 self.projects[self.project].threads[ix].mark_read();
                 if !self.demo_mode {
                     self.mark_conversation_read(cx);
@@ -338,7 +343,96 @@ impl Adeline {
                     .update(cx, |view, cx| view.sync(self, false, cx));
             }
             Action::ToggleLeftPanel => self.left_panel_open[0] = !self.left_panel_open[0],
-            Action::ToggleSidePanel => self.side_panel_open[0] = !self.side_panel_open[0],
+            Action::ToggleSidePanel => {
+                self.side_panel_open[0] = !self.side_panel_open[0];
+                self.watch_traffic(cx);
+            }
+            Action::TrafficView => {
+                self.side_panel_open[0] = true;
+                self.traffic_tab = true;
+                self.watch_traffic(cx);
+            }
+            Action::PanelTab(tab) => {
+                self.traffic_tab = tab == 1;
+                self.watch_traffic(cx);
+            }
+            Action::CopyTraffic => {
+                cx.write_to_clipboard(ClipboardItem::new_string(self.traffic_text()));
+            }
+            Action::TodoList => {
+                if self.menu == Some("todo") {
+                    self.menu = None;
+                } else if self
+                    .current_live()
+                    .is_some_and(|live| !live.todo.is_empty())
+                {
+                    self.menu = Some("todo");
+                }
+                self.header_region.update(cx, |_, cx| cx.notify());
+            }
+            Action::ShowThinking => {
+                if let Err(error) = config::update(|settings| {
+                    settings.modes.chats.show_thinking = !settings.modes.chats.show_thinking;
+                }) {
+                    window.push_notification(error, cx);
+                }
+                self.transcript
+                    .update(cx, |view, cx| view.sync(self, false, cx));
+            }
+            Action::ToggleThought(key) => {
+                if !self.open_thoughts.remove(&key) {
+                    self.open_thoughts.insert(key);
+                }
+                self.transcript
+                    .update(cx, |view, cx| view.sync(self, false, cx));
+            }
+            Action::OptionMenu(category) => {
+                let menu = match category {
+                    conversation::Category::Model => "model",
+                    conversation::Category::Effort => "effort",
+                    conversation::Category::Mode => "mode",
+                    conversation::Category::Other => "more",
+                };
+                if self.selected.is_some() && !self.conversation_processing() {
+                    self.open_commands(menu, window, cx);
+                }
+            }
+            Action::SetOption {
+                category,
+                option,
+                value,
+            } => self.set_option(category, option, value, cx),
+            Action::EditQueued(queued) => self.take_queued(queued, true, window, cx),
+            Action::EditLastQueued => {
+                if let Some(last) = self
+                    .current_live()
+                    .and_then(|live| live.queued.last())
+                    .map(|q| q.id)
+                {
+                    self.take_queued(last, true, window, cx);
+                }
+            }
+            Action::RemoveQueued(queued) => self.take_queued(queued, false, window, cx),
+            Action::SendQueuedNow(queued) => self.send_queued_now(queued, cx),
+            Action::DismissError(message) => {
+                if let Some(index) = self.selected {
+                    let thread = &self.workspace().threads[index];
+                    let turn = thread.messages.iter().rposition(|m| m.role == "user");
+                    self.dismissed_errors
+                        .insert((thread.id.clone(), turn, message));
+                    self.transcript
+                        .update(cx, |view, cx| view.sync(self, false, cx));
+                }
+            }
+            Action::RemoveAttachment(ix) => {
+                if ix < self.attachments.len() {
+                    self.attachments.remove(ix);
+                }
+                self.attachment_error = None;
+            }
+            Action::PreviewImage(message, ix) => self.preview_image(message, ix, window, cx),
+            Action::Login(method) => self.login(&method, cx),
+            Action::Restart => self.restart_agent(cx),
             Action::Complete => {
                 if !self.demo_mode {
                     self.complete_conversation(false, cx);
@@ -365,22 +459,11 @@ impl Adeline {
                     .any(|entry| entry.id == id)
                 {
                     self.selected_agent = Some(id);
-                    // A new chat takes the newly chosen agent's permission default.
-                    self.new_chat_permission = None;
                 } else {
                     self.notify_toast("The selected agent is no longer available.", cx);
                 }
             }
             Action::Speed(ix) => self.speed = ix,
-            Action::Permission(ix) => {
-                if self.selected.is_none() {
-                    self.new_chat_permission = Some(agents::PermissionMode::ALL[ix]);
-                } else if self.demo_mode {
-                    self.permission = ix;
-                } else {
-                    self.set_conversation_permission(ix, cx);
-                }
-            }
             Action::ToggleMode(section) => {
                 if let Err(error) =
                     config::update(|settings| settings.general.features.toggle(section))
@@ -392,7 +475,8 @@ impl Adeline {
                 }
                 cx.refresh_windows();
             }
-            Action::Send => self.send(window, cx),
+            Action::Send => self.send(false, window, cx),
+            Action::SendNow => self.send(true, window, cx),
             Action::Stop => self.stop_conversation(cx),
             Action::ForceStop => self.force_conversation(cx),
             Action::StopAll => self.stop_all(cx),
@@ -450,14 +534,14 @@ impl Adeline {
                     self.projects[self.project].threads[thread].status = "idle".into();
                 }
             }
-            Action::AddFile | Action::AddDirectory
+            Action::AddFile | Action::AttachFile | Action::AddDirectory
                 if self.workspace().machine != machines::LOCAL && !self.demo_mode =>
             {
                 // A remote project's files are on its machine.
                 let directory = matches!(action, Action::AddDirectory);
                 self.open_browser(project_ui::BrowserPurpose::Attach { directory }, cx);
             }
-            Action::AddFile | Action::AddDirectory => {
+            Action::AddFile | Action::AttachFile | Action::AddDirectory => {
                 let directory = matches!(action, Action::AddDirectory);
                 let selection = cx.prompt_for_paths(PathPromptOptions {
                     files: !directory,
@@ -477,7 +561,11 @@ impl Adeline {
                     let _ = this.update_in(cx, |app, window, cx| match result {
                         Ok(Ok(Some(paths))) => {
                             for path in paths {
-                                app.attach_path(&path.display().to_string(), window, cx);
+                                if directory {
+                                    app.attach_path(&path.display().to_string(), window, cx);
+                                } else {
+                                    app.attach_local(path, cx);
+                                }
                             }
                         }
                         Ok(Ok(None)) => {}
@@ -531,12 +619,12 @@ impl Adeline {
         Some(thread.messages.get(message)?.text.clone())
     }
 
-    fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn send(&mut self, now: bool, window: &mut Window, cx: &mut Context<Self>) {
         if self.section != Section::Chats {
             return;
         }
         if !self.demo_mode {
-            self.send_real(window, cx);
+            self.send_real(now, window, cx);
             return;
         }
         let prompt = self.composer.read(cx).value().trim().to_owned();
@@ -565,11 +653,29 @@ impl Adeline {
             self.selected = Some(0);
             0
         };
+        let id = self.projects[self.project].threads[ix].id.clone();
+        // A running demo chat queues the message, like a real one.
+        if let Some(live) = self.runtime.conversations.get_mut(&id)
+            && live.processing
+            && !now
+        {
+            let next = live.queued.iter().map(|q| q.id).max().unwrap_or(0) + 1;
+            live.queued.push(protocol::Queued {
+                id: next,
+                text: prompt,
+                files: self.attachments.drain(..).map(|a| a.name).collect(),
+            });
+            self.composer
+                .update(cx, |state, cx| state.set_value("", window, cx));
+            return;
+        }
+        let attachments = std::mem::take(&mut self.attachments);
         let thread = &mut self.projects[self.project].threads[ix];
         thread.push_message(Message {
             role: "user".into(),
             text: prompt,
             read: true,
+            attachments,
             ..Default::default()
         });
         thread.push_message(Message { role: "assistant".into(), text: "I've added this to our local demo chat. We can work through the next step here. This preview uses sample responses and doesn't run commands or connect to external services.".into(), read: true, ..Default::default() });

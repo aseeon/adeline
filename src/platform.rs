@@ -163,6 +163,41 @@ fn ours<'a>(ps: &str, listed: &'a str) -> Vec<&'a str> {
         .collect()
 }
 
+/// Kills a process and everything it started, such as the `node` behind an
+/// npm shim: `taskkill /T` on Windows, the process group elsewhere.
+#[expect(
+    clippy::disallowed_methods,
+    reason = "Runs on the engine's runtime, never on the UI thread"
+)]
+pub fn kill_tree(child: &mut Child) -> io::Result<()> {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        let status = Command::new("taskkill")
+            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .creation_flags(0x0800_0000)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status();
+        if status.is_ok_and(|status| status.success()) {
+            return Ok(());
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        // Agents lead their own process group (`spawn_piped`).
+        let _ = Command::new("kill")
+            .args(["-KILL", "--", &format!("-{}", child.id())])
+            .status();
+    }
+    match child.kill() {
+        // Already gone counts as killed.
+        Err(error) if error.kind() == io::ErrorKind::InvalidInput => Ok(()),
+        result => result,
+    }
+}
+
 /// Starts a background process that outlives the caller, outside its console and job.
 #[expect(
     clippy::disallowed_methods,

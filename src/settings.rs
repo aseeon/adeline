@@ -20,7 +20,7 @@ const SUBGROUPS: [&[&str]; 5] = [
     &["Features", "Appearance", "Keymap"],
     &["Chats"],
     &["Phosphor Icons", "GPUI", "Chivo & Chivo Mono"],
-    &[],
+    &["MCP servers"],
     &["Engine"],
 ];
 const KEEP_RUNNING: &str = "Keep conversation engine running";
@@ -49,6 +49,9 @@ const KEYMAP: [&str; 8] = [
     "Activate focused control (built in)",
 ];
 type SettingOption = (&'static str, &'static str, bool, Action);
+const SILENCE_LABEL: &str = "Silence notice after (minutes)";
+const SILENCE_DESCRIPTION: &str = "0 turns the notice off.";
+const MCP_DESCRIPTION: &str = "Every agent on this machine gets these MCP servers when a session starts, before its own. A server whose transport an agent doesn't support is skipped with a note in the chat.";
 const THINKING_LABEL: &str = "Thinking animation";
 const THINKING_DESCRIPTION: &str = "How the row under your message moves while the agent works.";
 
@@ -75,6 +78,12 @@ impl Adeline {
                 "Hide tool calls and results in chats. Permission requests stay visible.",
                 config::current().modes.chats.hide_tool_calls,
                 Action::HideToolCalls,
+            ),
+            (
+                "Show thinking",
+                "Stream the agent's reasoning into the chat.",
+                config::current().modes.chats.show_thinking,
+                Action::ShowThinking,
             ),
             (
                 "Submit on Enter",
@@ -708,6 +717,9 @@ struct SettingsWindow {
     font_size_errors: [Option<String>; 2],
     retry_limit: Entity<InputState>,
     retry_limit_error: Option<String>,
+    silence_minutes: Entity<InputState>,
+    silence_error: Option<String>,
+    mcp_error: Option<String>,
     /// Stop engine is waiting for the engine's agents to exit.
     engine_stopping: bool,
     thinking_picker: Entity<SelectState<SearchableVec<String>>>,
@@ -838,6 +850,16 @@ impl SettingsWindow {
             window,
             cx,
         );
+        let silence_minutes = text_input(
+            config::current()
+                .modes
+                .chats
+                .silence_notice_minutes
+                .to_string(),
+            "10",
+            window,
+            cx,
+        );
         let thinking = config::current().modes.chats.thinking_animation;
         let thinking_picker = cx.new(|cx| {
             SelectState::new(
@@ -928,6 +950,27 @@ impl SettingsWindow {
                 cx.notify();
             }),
         );
+        subscriptions.push(cx.subscribe(
+            &silence_minutes,
+            |this, input, event: &InputEvent, cx| {
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                this.silence_error = match input.read(cx).value().trim().parse::<u32>() {
+                    Ok(minutes) => config::update(|settings| {
+                        settings.modes.chats.silence_notice_minutes = minutes;
+                    })
+                    .err(),
+                    Err(_) => {
+                        Some("Enter a whole number of minutes. 0 turns the notice off.".into())
+                    }
+                };
+                let _ = this.owner.entity.update(cx, |app, cx| {
+                    app.transcript.update(cx, |_, cx| cx.notify());
+                });
+                cx.notify();
+            },
+        ));
         subscriptions.push(cx.subscribe_in(
             &machine_picker,
             window,
@@ -1086,6 +1129,9 @@ impl SettingsWindow {
             font_size_errors: [None, None],
             retry_limit,
             retry_limit_error: None,
+            silence_minutes,
+            silence_error: None,
+            mcp_error: None,
             engine_stopping: false,
             thinking_picker,
             thinking_error: None,
@@ -1801,6 +1847,123 @@ impl SettingsWindow {
             page = page.child(div().flex().justify_end().mt_2().child(button.small()));
         }
         page
+    }
+
+    fn silence_row(&self, cx: &Context<Self>) -> Div {
+        div()
+            .w_full()
+            .px_4()
+            .py_3()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .child(
+                Field::new()
+                    .label(SILENCE_LABEL)
+                    .description(SILENCE_DESCRIPTION)
+                    .child(
+                        div()
+                            .w_24()
+                            .child(Input::new(&self.silence_minutes).aria_label(SILENCE_LABEL)),
+                    ),
+            )
+            .when_some(self.silence_error.clone(), |row, message| {
+                row.child(error(message, cx))
+            })
+    }
+
+    /// Saves this machine's global MCP servers in its engine settings.
+    fn save_mcp_servers(&mut self, servers: Vec<conversation::McpServer>, cx: &mut App) {
+        let settings = protocol::EngineSettings {
+            mcp_servers: servers,
+            ..engine_settings_of(&self.machine, cx)
+        };
+        self.mcp_error = None;
+        client::request(
+            &self.machine,
+            protocol::Command::SetSettings { settings },
+            Box::new(|_, _| {}),
+            cx,
+        );
+    }
+
+    /// Settings › Agents › MCP servers: this machine's global list (DD11).
+    fn mcp_settings(&self, cx: &Context<Self>) -> Div {
+        let view = cx.entity().downgrade();
+        let servers = engine_settings_of(&self.machine, cx).mcp_servers;
+        let edit_view = view.clone();
+        let edit: Rc<dyn Fn(Option<usize>, &mut Window, &mut App)> =
+            Rc::new(move |ix, window, cx| {
+                let Some(settings) = edit_view.upgrade() else {
+                    return;
+                };
+                let machine = settings.read(cx).machine.clone();
+                let server = ix.and_then(|ix| {
+                    engine_settings_of(&machine, cx)
+                        .mcp_servers
+                        .get(ix)
+                        .cloned()
+                });
+                let saving = edit_view.clone();
+                mcp_ui::open_editor(
+                    server.as_ref(),
+                    Rc::new(move |server, _, cx| {
+                        let Some(settings) = saving.upgrade() else {
+                            return Ok(());
+                        };
+                        let machine = settings.read(cx).machine.clone();
+                        let mut servers = engine_settings_of(&machine, cx).mcp_servers;
+                        if servers
+                            .iter()
+                            .enumerate()
+                            .any(|(other, s)| s.name == server.name && Some(other) != ix)
+                        {
+                            return Err(format!("{} is already listed.", server.name));
+                        }
+                        match ix {
+                            Some(ix) if ix < servers.len() => servers[ix] = server,
+                            _ => servers.push(server),
+                        }
+                        settings.update(cx, |this, cx| this.save_mcp_servers(servers, cx));
+                        Ok(())
+                    }),
+                    window,
+                    cx,
+                );
+            });
+        let remove: Rc<dyn Fn(usize, &mut Window, &mut App)> = Rc::new(move |ix, _, cx| {
+            let _ = view.update(cx, |this, cx| {
+                let mut servers = engine_settings_of(&this.machine, cx).mcp_servers;
+                if ix < servers.len() {
+                    servers.remove(ix);
+                }
+                this.save_mcp_servers(servers, cx);
+            });
+        });
+        let connected = client::state(&self.machine, cx).is_some_and(client::State::usable);
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(div().text_lg().child("MCP servers"))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(MCP_DESCRIPTION),
+            )
+            .child(if connected || self.demo {
+                mcp_ui::server_list("settings-mcp", &servers, &edit, &remove, cx).into_any_element()
+            } else {
+                div()
+                    .text_sm()
+                    .child("Connect this machine's engine to change its MCP servers.")
+                    .into_any_element()
+            })
+            .when_some(self.mcp_error.clone(), |page, message| {
+                page.child(error(message, cx))
+            })
     }
 
     fn thinking_animation_row(&self, cx: &Context<Self>) -> Div {
@@ -2519,6 +2682,7 @@ impl Render for SettingsWindow {
             }
             let icon = match group {
                 1 => "chat.svg",
+                3 => "link.svg",
                 2 => "file.svg",
                 4 => "devices.svg",
                 _ => "robot.svg",
@@ -2716,7 +2880,11 @@ impl Render for SettingsWindow {
                     &query,
                     &["Modes", "Chats", THINKING_LABEL, THINKING_DESCRIPTION],
                 );
-                if !options.is_empty() || thinking_matches {
+                let silence_matches = matches_query(
+                    &query,
+                    &["Modes", "Chats", SILENCE_LABEL, SILENCE_DESCRIPTION, "hang"],
+                );
+                if !options.is_empty() || thinking_matches || silence_matches {
                     found = true;
                     if searching || self.subgroup.is_none() {
                         content = content.child(div().text_lg().child("Chats"));
@@ -2736,6 +2904,12 @@ impl Render for SettingsWindow {
                         .collect();
                     if thinking_matches {
                         rows.push(self.thinking_animation_row(cx));
+                    }
+                    if matches_query(
+                        &query,
+                        &["Modes", "Chats", SILENCE_LABEL, SILENCE_DESCRIPTION, "hang"],
+                    ) {
+                        rows.push(self.silence_row(cx));
                     }
                     content = content.children(card(rows, cx));
                 }
@@ -2786,7 +2960,18 @@ impl Render for SettingsWindow {
                 );
             }
         }
-        if (self.group == 3 || searching) && !self.machines_page {
+        let mcp_page = !self.machines_page
+            && self.agent_page.is_none()
+            && if searching {
+                matches_query(&query, &["Agents", "MCP servers", MCP_DESCRIPTION])
+            } else {
+                self.group == 3 && self.subgroup == Some(0)
+            };
+        if mcp_page {
+            found = true;
+            content = content.child(self.mcp_settings(cx));
+        }
+        if !self.machines_page && (searching || (self.group == 3 && !mcp_page)) {
             let machine = self.machine.clone();
             let matching_agent = self
                 .owner

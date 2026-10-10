@@ -5,13 +5,14 @@
 //! commands from several clients can't interleave or deadlock.
 use crate::{
     acp,
-    agents::{self, AgentCatalog, PermissionMode},
+    agents::{self, AgentCatalog},
     config,
+    conversation::{Attachment, AuthMethod, Category, PermissionKind, StopReason, TurnState},
     data::{Message, Thread, Workspace},
-    harness, ipc,
+    harness, install, ipc,
     protocol::{
         ActiveConversation, ClientMessage, Command, Delta, EngineMessage, EngineSettings, Live,
-        PROTOCOL, PendingPermission, PermissionOption, Snapshot, Status,
+        PROTOCOL, PendingPermission, Queued, Snapshot, Status,
     },
     storage::{self, ProjectStore},
 };
@@ -29,6 +30,8 @@ const IDLE_EXIT: Duration = Duration::from_secs(60);
 /// Deltas kept for clients that reconnect after a short drop.
 const RECENT_DELTAS: usize = 20_000;
 const STOP_GRACE: Duration = Duration::from_secs(5);
+/// No traffic for this long during a turn shows the agent as quiet.
+const QUIET_AFTER_MS: u64 = 5_000;
 const ALREADY_PROCESSING: &str =
     "This conversation is already processing (sent from another window)";
 const PERMISSION_STOPPED: &str = "Stopped while waiting for permission: no Adeline window was open to answer it. Retry continues the turn.";
@@ -236,6 +239,7 @@ fn load_settings() -> EngineSettings {
     let defaults = EngineSettings {
         keep_running: false,
         retry_limit: 5,
+        mcp_servers: Vec::new(),
     };
     let Ok(path) = settings_path() else {
         return defaults;
@@ -350,13 +354,29 @@ enum Input {
         store: ProjectStore,
         started: Instant,
     },
-    Harnesses(Vec<harness::Harness>, HashMap<String, PathBuf>),
+    Harnesses(harness::Catalog),
     ProbeDone {
         client: u64,
         request: u64,
         probe: u64,
-        result: Option<Result<harness::Probed, harness::ProbeError>>,
+        result: Option<Result<acp::Probed, acp::ProbeError>>,
     },
+    /// A line of a running install's output.
+    Output {
+        client: u64,
+        request: u64,
+        line: String,
+    },
+    /// An install, login or logout finished.
+    Done {
+        client: u64,
+        request: u64,
+        result: Result<Value, String>,
+        /// Look for installed agents again.
+        detect: bool,
+    },
+    /// A login asked to open a page.
+    OpenUrl(String),
 }
 
 async fn serve(daemon: bool) -> i32 {
@@ -492,7 +512,22 @@ struct Engine {
     idle_since: Option<Instant>,
     stop_all: Option<StopAll>,
     deleting: HashMap<String, Vec<(u64, u64)>>,
-    probes: HashMap<(u64, u64), harness::Probe>,
+    probes: HashMap<(u64, u64), acp::Session>,
+    /// Logins and logouts in progress, by client and request.
+    logins: HashMap<(u64, u64), acp::Session>,
+    /// The conversation each client watches the ACP traffic of.
+    watching: HashMap<u64, String>,
+    /// Queued messages' files, by queued message ID.
+    queued_files: HashMap<u64, Vec<Attachment>>,
+    next_queued: u64,
+    /// The files of each conversation's last prompt, for Retry.
+    attachments: HashMap<String, Vec<Attachment>>,
+    /// A Send now waiting for the agent's steering answer, per conversation.
+    steering: HashMap<String, (String, Vec<Attachment>)>,
+    /// Conversations whose queue goes out once their cancelled turn settles.
+    send_after_stop: HashSet<String>,
+    /// When each running conversation's agent last sent anything, in ms.
+    last_traffic: HashMap<String, u64>,
     permission_stopped: HashSet<String>,
     /// Forks whose copied history went out as text but no turn has finished yet.
     text_copy_pending: HashSet<String>,
@@ -569,8 +604,10 @@ fn live_for(conversation: &storage::StoredConversation) -> Live {
         agent_id: conversation.settings.agent_id.clone(),
         storage_failed: conversation.storage_error.is_some(),
         execution: Some(conversation.settings.execution.clone()),
-        options: conversation.settings.config_options.clone(),
-        permission_mode: Some(conversation.settings.permission_mode),
+        options: conversation.settings.options.clone(),
+        commands: conversation.settings.commands.clone(),
+        features: conversation.settings.features.clone(),
+        todo: conversation.settings.todo.clone(),
         last_read_through: thread
             .messages
             .iter()
@@ -697,6 +734,14 @@ impl Engine {
             stop_all: None,
             deleting: HashMap::new(),
             probes: HashMap::new(),
+            logins: HashMap::new(),
+            watching: HashMap::new(),
+            queued_files: HashMap::new(),
+            next_queued: 0,
+            attachments: HashMap::new(),
+            steering: HashMap::new(),
+            send_after_stop: HashSet::new(),
+            last_traffic: HashMap::new(),
             permission_stopped: HashSet::new(),
             text_copy_pending: HashSet::new(),
             queued: HashMap::new(),
@@ -832,6 +877,17 @@ impl Engine {
         let running = self.drivers.contains_key(id);
         let live = self.live.entry(id.to_owned()).or_default();
         live.running = running;
+        live.turn = if !live.permission.is_empty()
+            || live.auth_required
+            || live.replacement
+            || live.storage_failed
+        {
+            TurnState::NeedsAction
+        } else if live.processing {
+            TurnState::Running
+        } else {
+            TurnState::Idle
+        };
         let live = live.clone();
         self.broadcast_message(&EngineMessage::Delta(Delta::Live {
             id: id.to_owned(),
@@ -892,6 +948,8 @@ impl Engine {
             Input::Message { client, message } => self.message(client, message),
             Input::Disconnected { client } => {
                 self.probes.retain(|(owner, _), _| *owner != client);
+                self.logins.retain(|(owner, _), _| *owner != client);
+                self.watching.remove(&client);
                 if self.clients.remove(&client).is_some_and(|c| c.subscribed) {
                     log(format!("Client {client} disconnected"));
                     self.clients_changed();
@@ -902,12 +960,30 @@ impl Engine {
                 self.watch_due = Some(Instant::now() + Duration::from_millis(300));
             }
             Input::ProjectsLoaded { store, started } => self.reconcile(store, started),
-            Input::Harnesses(harnesses, installed) => {
-                self.harnesses.harnesses = harnesses;
-                self.harnesses.installed = installed;
-                self.harnesses.detected = true;
+            Input::Harnesses(catalog) => {
+                self.harnesses = catalog;
                 self.broadcast(Delta::Harnesses(self.harnesses.clone()));
                 self.refresh_icons();
+            }
+            Input::Output {
+                client,
+                request,
+                line,
+            } => self.send_to(client, &EngineMessage::Output { request, line }),
+            Input::Done {
+                client,
+                request,
+                result,
+                detect,
+            } => {
+                self.logins.remove(&(client, request));
+                self.reply(client, request, result);
+                if detect {
+                    self.detect_harnesses(false);
+                }
+            }
+            Input::OpenUrl(url) => {
+                self.broadcast_message(&EngineMessage::Delta(Delta::OpenUrl { url }));
             }
             Input::ProbeDone {
                 client,
@@ -991,17 +1067,28 @@ impl Engine {
                 project_id,
                 conversation_id,
                 agent_id,
-                permission_mode,
                 prompt,
+                attachments,
+                now,
             } => self
                 .send(
                     &project_id,
                     conversation_id,
                     agent_id.as_deref(),
-                    permission_mode,
                     &prompt,
+                    attachments,
+                    now,
                 )
                 .map(Value::String),
+            Command::TakeQueued { id, queued } => {
+                conversation(self, &id).and_then(|()| self.take_queued(&id, queued))
+            }
+            Command::SendQueuedNow { id, queued } => conversation(self, &id).and_then(|()| {
+                let (text, files) = self.take_queued_parts(&id, queued)?;
+                self.send_now(&id, text, files);
+                self.send_live(&id);
+                Ok(Value::Null)
+            }),
             Command::Stop { id } => conversation(self, &id).map(|()| {
                 self.stop(&id);
                 Value::Null
@@ -1013,6 +1100,21 @@ impl Engine {
                 Value::Null
             }),
             Command::Retry { id } => conversation(self, &id).and_then(|()| self.retry(&id)),
+            Command::Restart { id } => conversation(self, &id).map(|()| {
+                if let Some(slot) = self.drivers.get(&id) {
+                    let _ = slot.driver.send(acp::Command::ForceStop);
+                    let live = self.live.entry(id.clone()).or_default();
+                    live.shutting_down = true;
+                    live.progress = Some("Restarting the agent…".into());
+                    live.quiet_since = None;
+                    self.queued.insert(
+                        id.clone(),
+                        "Continue the interrupted turn from the saved session. Preserve completed work; do not repeat completed tool actions.".into(),
+                    );
+                    self.send_live(&id);
+                }
+                Value::Null
+            }),
             Command::RetryStorage { id } => {
                 conversation(self, &id).and_then(|()| self.retry_storage(&id))
             }
@@ -1022,12 +1124,13 @@ impl Engine {
             Command::Fork { id, message } => {
                 conversation(self, &id).and_then(|()| self.fork(&id, message))
             }
-            Command::SetPermissionMode { id, mode } => {
-                conversation(self, &id).map(|()| self.set_permission_mode(&id, mode))
-            }
-            Command::SwitchSetting { id, effort, value } => {
-                conversation(self, &id).and_then(|()| self.switch_setting(&id, effort, value))
-            }
+            Command::SetOption {
+                id,
+                category,
+                option,
+                value,
+            } => conversation(self, &id)
+                .and_then(|()| self.set_option(&id, category, &option, value)),
             Command::AnswerPermission {
                 id,
                 request_id,
@@ -1107,12 +1210,54 @@ impl Engine {
                 command,
                 arguments,
                 model,
-            } => {
-                return self.probe(client, request, probe, &harness, &command, arguments, model);
-            }
+            } => return self.probe(client, request, probe, &harness, &command, arguments, model),
             Command::CancelProbe { probe } => {
                 self.probes.remove(&(client, probe));
                 Ok(Value::Null)
+            }
+            Command::PlanInstall { target } => install::plan(&target, &self.harnesses)
+                .and_then(|steps| serde_json::to_value(steps).map_err(|e| e.to_string())),
+            Command::Install { target } => {
+                let steps = match install::plan(&target, &self.harnesses) {
+                    Ok(steps) => steps,
+                    Err(error) => return Some(Err(error)),
+                };
+                let input = self.input.clone();
+                tokio::spawn(async move {
+                    let output_input = input.clone();
+                    let output = Arc::new(move |line: String| {
+                        let _ = output_input.send(Input::Output {
+                            client,
+                            request,
+                            line,
+                        });
+                    });
+                    let result = install::run(steps, output).await.map(|()| Value::Null);
+                    let _ = input.send(Input::Done {
+                        client,
+                        request,
+                        result,
+                        detect: true,
+                    });
+                });
+                return None;
+            }
+            Command::Login {
+                harness,
+                command,
+                arguments,
+                method,
+            } => return self.login(client, request, &harness, &command, arguments, method),
+            Command::WatchTraffic { id } => {
+                let recorded = id
+                    .as_ref()
+                    .and_then(|id| self.store.lock().ok().map(|store| store.traffic(id, 2000)))
+                    .unwrap_or_default();
+                match id {
+                    Some(id) => self.watching.insert(client, id),
+                    None => self.watching.remove(&client),
+                };
+                Ok(Value::Array(recorded))
             }
             Command::SetSettings { settings } => self.set_settings(settings),
             Command::Status => {
@@ -1160,6 +1305,35 @@ impl Engine {
     }
 
     fn tick(&mut self) {
+        let failed = self
+            .store
+            .lock()
+            .map(|mut store| store.flush_due())
+            .unwrap_or_default();
+        for (id, error) in failed {
+            self.storage_failure(&id, &error);
+            self.send_live(&id);
+        }
+        // A running turn with no traffic for a while reads as quiet (scope R32, R34).
+        let now = crate::recency::now_ms();
+        let quiet: Vec<String> = self
+            .live
+            .iter()
+            .filter(|(id, live)| {
+                live.processing
+                    && live.quiet_since.is_none()
+                    && self
+                        .last_traffic
+                        .get(*id)
+                        .is_some_and(|at| now.saturating_sub(*at) >= QUIET_AFTER_MS)
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in quiet {
+            let since = self.last_traffic.get(&id).copied();
+            self.live.entry(id.clone()).or_default().quiet_since = since;
+            self.send_live(&id);
+        }
         if self.watch_due.is_some_and(|due| Instant::now() >= due) {
             self.watch_due = None;
             self.reload_watched();
@@ -1302,6 +1476,25 @@ impl Engine {
         }
     }
 
+    /// Queues a streamed event; it reaches disk within 250 ms (scope R41).
+    fn queue_visible(&mut self, id: &str, kind: &str, data: Value) -> bool {
+        self.touched.insert(id.to_owned(), Instant::now());
+        let result = self
+            .store
+            .lock()
+            .map_err(|e| e.to_string())
+            .and_then(|mut store| store.queue_event(id, storage::TranscriptEvent::new(kind, data)));
+        if let Err(error) = result {
+            if !self.live.get(id).is_some_and(|live| live.storage_failed) {
+                self.storage_failure(id, &error);
+            }
+            false
+        } else {
+            true
+        }
+    }
+
+    /// Saves an event, and everything queued before it, before returning.
     fn record_visible(&mut self, id: &str, kind: &str, data: Value) -> bool {
         self.touched.insert(id.to_owned(), Instant::now());
         let store = self.store.clone();
@@ -1380,68 +1573,21 @@ impl Engine {
         let Some(settings) = self.conversation_settings(id) else {
             return false;
         };
-        let store = self.store.clone();
-        let record: acp::Recorder = Arc::new(move |id: &str, direction: &str, value: &Value| {
-            let mut store = store.lock().map_err(|e| e.to_string())?;
-            if direction == "session" {
-                let (project_id, mut settings) = store
-                    .projects
-                    .iter()
-                    .find_map(|p| {
-                        p.conversations
-                            .iter()
-                            .find(|c| c.id == id)
-                            .map(|c| (p.id.clone(), c.settings.clone()))
-                    })
-                    .ok_or_else(|| "Conversation is missing from storage.".to_owned())?;
-                if value["replaced"].as_bool() == Some(true) {
-                    let old = value["old_session_id"]
-                        .as_str()
-                        .map(str::to_owned)
-                        .or_else(|| settings.session_id.take());
-                    if let Some(old) = old {
-                        settings.previous_session_ids.push(old);
-                    }
-                }
-                settings.session_id = value["session_id"].as_str().map(str::to_owned);
-                let event_result = store
-                    .record_event(id, &storage::TranscriptEvent::new("session", value.clone()));
-                let settings_result = store.update_conversation(&project_id, id, settings);
-                event_result.and(settings_result)
-            } else if matches!(direction, "visible_text" | "visible_tool" | "visible_usage") {
-                let kind = match direction {
-                    "visible_text" => "assistant_chunk",
-                    "visible_tool" => "tool",
-                    _ => "usage",
-                };
-                store.record_event(id, &storage::TranscriptEvent::new(kind, value.clone()))
-            } else {
-                store.record_raw(id, direction, value)
-            }
-        });
         let driver = acp::Driver::spawn(
             id.to_owned(),
             settings.execution,
             settings.session_id,
-            settings.permission_mode,
             self.events.clone(),
-            record,
         );
         self.drivers.insert(id.to_owned(), Slot { driver, turn: 0 });
         self.live.entry(id.to_owned()).or_default().running = true;
         true
     }
 
-    /// Why this conversation's agent cannot start: an old snapshot, or a
-    /// harness that is no longer installed.
+    /// Why this conversation's agent cannot start: a harness that is no
+    /// longer installed.
     fn cannot_start(&self, id: &str) -> Option<String> {
         let execution = self.live.get(id)?.execution.as_ref()?;
-        if execution.legacy() {
-            return Some(
-                "This conversation was created by an older Adeline version; start a new chat."
-                    .into(),
-            );
-        }
         let command = Path::new(&execution.command);
         (command.is_absolute() && !command.is_file()).then(|| {
             format!(
@@ -1452,13 +1598,38 @@ impl Engine {
         })
     }
 
+    /// Why the agent can't take these files: images it can't receive, or
+    /// files over the size limit (scope R23).
+    fn refuse_attachments(&self, id: Option<&str>, attachments: &[Attachment]) -> Option<String> {
+        for file in attachments {
+            if file.size > crate::conversation::ATTACHMENT_LIMIT {
+                return Some(format!(
+                    "{} is {} MB. Files over 20 MB can't be attached.",
+                    file.name,
+                    file.size.div_ceil(1024 * 1024)
+                ));
+            }
+        }
+        let live = id.and_then(|id| self.live.get(id))?;
+        if attachments.iter().any(Attachment::image) && live.features.known && !live.features.images
+        {
+            let name = live
+                .execution
+                .as_ref()
+                .map_or("This agent", |execution| execution.name.as_str());
+            return Some(format!("{name} can't receive images."));
+        }
+        None
+    }
+
     fn send(
         &mut self,
         project_id: &str,
         conversation_id: Option<String>,
         agent_id: Option<&str>,
-        permission_mode: Option<PermissionMode>,
         prompt: &str,
+        attachments: Vec<Attachment>,
+        now: bool,
     ) -> Result<String, String> {
         if self.stop_all.is_some() {
             return Err("The conversation engine is stopping its agents.".into());
@@ -1467,8 +1638,24 @@ impl Engine {
             return Err("This project is being deleted.".into());
         }
         let prompt = prompt.trim().to_owned();
-        if prompt.is_empty() {
+        if prompt.is_empty() && attachments.is_empty() {
             return Err("Enter a message to send.".into());
+        }
+        // Files picked on this machine are read here, so their size is known here.
+        let attachments: Vec<Attachment> = attachments
+            .into_iter()
+            .map(|mut file| {
+                if let Some(path) = &file.path
+                    && file.data.is_empty()
+                    && let Ok(metadata) = blocking(|| std::fs::metadata(path))
+                {
+                    file.size = metadata.len();
+                }
+                file
+            })
+            .collect();
+        if let Some(error) = self.refuse_attachments(conversation_id.as_deref(), &attachments) {
+            return Err(error);
         }
         let id = if let Some(id) = conversation_id {
             let Some(thread) = self.locate(&id) else {
@@ -1478,35 +1665,41 @@ impl Engine {
                 return Err("This conversation is archived.".into());
             }
             let live = self.live.entry(id.clone()).or_default();
-            if live.processing {
-                return Err(ALREADY_PROCESSING.into());
-            }
-            if live.shutting_down {
-                return Err("Wait for the agent to stop before sending.".into());
-            }
             if live.storage_failed || live.recovering_storage {
                 return Err("Retry storage before sending.".into());
             }
             if live.replacement {
                 return Err("Start a replacement session before sending.".into());
             }
+            // The composer is never blocked by a running turn (scope R30).
+            if live.processing {
+                if now {
+                    self.send_now(&id, prompt, attachments);
+                } else {
+                    self.queue(&id, prompt, attachments);
+                }
+                self.send_live(&id);
+                return Ok(id);
+            }
+            if live.shutting_down {
+                return Err("Wait for the agent to stop before sending.".into());
+            }
             id
         } else {
-            let mut agent = agent_id
+            let agent = agent_id
                 .and_then(|id| self.agents.entries.iter().find(|entry| entry.id == id))
                 .map(|entry| entry.definition.clone())
                 .ok_or("Create or select an agent before sending.")?;
             let launch = self
                 .harnesses
                 .launch(&agent.harness, &agent.command, &agent.arguments)?;
-            if let Some(mode) = permission_mode {
-                agent.permission_mode = mode;
-            }
+            let mut servers = self.settings.mcp_servers.clone();
+            servers.extend(agent.mcp_servers.iter().cloned());
             let store = self.store.clone();
             let title = crate::short(&prompt, 100);
             let (id, thread, live) = blocking(|| {
                 let mut store = store.lock().map_err(|e| e.to_string())?;
-                let id = store.create_conversation(project_id, &agent, launch, &title)?;
+                let id = store.create_conversation(project_id, &agent, launch, servers, &title)?;
                 let saved = store
                     .conversation(&id)
                     .ok_or_else(|| "Created conversation is missing.".to_owned())?;
@@ -1523,30 +1716,136 @@ impl Engine {
             self.send_live(&id);
             return Err(error);
         }
-        prompt.clone_into(&mut self.live.entry(id.clone()).or_default().last_prompt);
-        let saved = self.record_visible(
-            &id,
-            "message",
-            json!({"role":"user","text":prompt,"read":true}),
-        );
-        self.broadcast(Delta::Message {
-            id: id.clone(),
-            message: Message {
-                role: "user".into(),
-                text: prompt.clone(),
-                read: true,
-                created_at: crate::recency::now().to_string(),
-                ..Default::default()
-            },
-        });
-        if saved {
-            self.start_prompt(&id, prompt, false);
-        }
+        self.deliver(&id, prompt, attachments);
         self.send_live(&id);
         Ok(id)
     }
 
-    fn start_prompt(&mut self, id: &str, prompt: String, retry: bool) {
+    /// Records the user's message and starts its turn.
+    fn deliver(&mut self, id: &str, prompt: String, attachments: Vec<Attachment>) {
+        prompt.clone_into(&mut self.live.entry(id.to_owned()).or_default().last_prompt);
+        let message = Message {
+            role: "user".into(),
+            text: prompt.clone(),
+            read: true,
+            created_at: crate::recency::now().to_string(),
+            attachments: attachments.clone(),
+            ..Default::default()
+        };
+        let saved = self.record_visible(
+            id,
+            "message",
+            serde_json::to_value(&message).unwrap_or_default(),
+        );
+        self.broadcast(Delta::Message {
+            id: id.to_owned(),
+            message,
+        });
+        self.attachments.insert(id.to_owned(), attachments.clone());
+        if saved {
+            self.start_prompt(id, prompt, attachments, false);
+        }
+    }
+
+    /// Adds a message to the queue of the running turn (scope R31).
+    fn queue(&mut self, id: &str, text: String, files: Vec<Attachment>) {
+        self.next_queued += 1;
+        let queued = Queued {
+            id: self.next_queued,
+            text,
+            files: files.iter().map(|file| file.name.clone()).collect(),
+        };
+        self.queued_files.insert(queued.id, files);
+        self.live
+            .entry(id.to_owned())
+            .or_default()
+            .queued
+            .push(queued);
+    }
+
+    /// Delivers a message during a turn: through steering when the agent
+    /// offers it, else by stopping the turn and sending it next (scope R48).
+    fn send_now(&mut self, id: &str, text: String, files: Vec<Attachment>) {
+        let steering = self
+            .live
+            .get(id)
+            .is_some_and(|live| live.features.steering && live.processing);
+        if steering
+            && !self.steering.contains_key(id)
+            && let Some(slot) = self.drivers.get(id)
+        {
+            let mut prompt = vec![acp::Part::Text(text.clone())];
+            prompt.extend(files.iter().cloned().map(acp::Part::File));
+            if slot.driver.send(acp::Command::Steer { prompt }).is_ok() {
+                self.steering.insert(id.to_owned(), (text, files));
+                return;
+            }
+        }
+        // The message goes first, then the cancel settles and the queue is sent.
+        self.next_queued += 1;
+        let queued = Queued {
+            id: self.next_queued,
+            text,
+            files: files.iter().map(|file| file.name.clone()).collect(),
+        };
+        self.queued_files.insert(queued.id, files);
+        self.live
+            .entry(id.to_owned())
+            .or_default()
+            .queued
+            .insert(0, queued);
+        self.send_after_stop.insert(id.to_owned());
+        self.stop(id);
+    }
+
+    fn take_queued_parts(
+        &mut self,
+        id: &str,
+        queued: u64,
+    ) -> Result<(String, Vec<Attachment>), String> {
+        let live = self.live.entry(id.to_owned()).or_default();
+        let index = live
+            .queued
+            .iter()
+            .position(|item| item.id == queued)
+            .ok_or("That message was already sent.")?;
+        let item = live.queued.remove(index);
+        let files = self.queued_files.remove(&queued).unwrap_or_default();
+        Ok((item.text, files))
+    }
+
+    fn take_queued(&mut self, id: &str, queued: u64) -> Result<Value, String> {
+        let (text, _) = self.take_queued_parts(id, queued)?;
+        self.send_live(id);
+        Ok(Value::String(text))
+    }
+
+    /// Sends every queued message as one prompt, separated by blank lines.
+    fn send_queue(&mut self, id: &str) {
+        let queued = std::mem::take(&mut self.live.entry(id.to_owned()).or_default().queued);
+        if queued.is_empty() {
+            return;
+        }
+        let text = queued
+            .iter()
+            .map(|item| item.text.as_str())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let files = queued
+            .iter()
+            .flat_map(|item| self.queued_files.remove(&item.id).unwrap_or_default())
+            .collect();
+        self.deliver(id, text, files);
+    }
+
+    fn start_prompt(
+        &mut self,
+        id: &str,
+        prompt: String,
+        attachments: Vec<Attachment>,
+        retry: bool,
+    ) {
         if self.cannot_start(id).is_some() || !self.set_runtime_status(id, "processing") {
             return;
         }
@@ -1572,25 +1871,35 @@ impl Engine {
         }
         live.processing = true;
         live.error = None;
+        live.stderr.clear();
+        live.auth_required = false;
         live.progress = None;
         live.assistant = None;
+        live.quiet_since = None;
         live.permission.clear();
         if !retry {
             live.worked = false;
             live.last_prompt.clone_from(&prompt);
         }
+        self.last_traffic
+            .insert(id.to_owned(), crate::recency::now_ms());
         if let Some((session, context)) = self.fork_history(id)
             && let Some(slot) = self.drivers.get(id)
         {
             let _ = slot.driver.send(acp::Command::Fork { session, context });
         }
         let retries = u32::try_from(self.settings.retry_limit).unwrap_or(u32::MAX);
+        let mut parts = Vec::new();
+        if !prompt.is_empty() {
+            parts.push(acp::Part::Text(prompt));
+        }
+        parts.extend(attachments.into_iter().map(acp::Part::File));
         // The worker numbers turns; a prompt it rejects keeps the old number.
         let Some(slot) = self.drivers.get_mut(id) else {
             return;
         };
         if let Err(error) = slot.driver.send(acp::Command::Prompt {
-            text: prompt,
+            prompt: parts,
             retries,
         }) {
             self.drivers.remove(id);
@@ -1602,9 +1911,29 @@ impl Engine {
         }
     }
 
+    /// Saves something the agent reported about its session to the conversation.
+    fn save_session_state(
+        &mut self,
+        id: &str,
+        change: impl FnOnce(&mut storage::ConversationSettings),
+    ) {
+        if let Some(mut settings) = self.conversation_settings(id) {
+            let before = settings.clone();
+            change(&mut settings);
+            if settings != before {
+                self.save_conversation_settings(id, settings);
+            }
+        }
+    }
+
     fn driver_event(&mut self, event: acp::Event) {
         let id = event.conversation_id.clone();
         if self.locate(&id).is_none() {
+            return;
+        }
+        // Traffic is the agent's, whatever turn it belongs to.
+        if let acp::EventKind::Traffic(entry) = event.kind {
+            self.traffic(&id, &entry);
             return;
         }
         let Some(slot) = self.drivers.get_mut(&id) else {
@@ -1619,31 +1948,81 @@ impl Engine {
             || self.stop_all.is_some()
             || matches!(self.status_of(&id).as_str(), "completed" | "archived");
         match event.kind {
+            acp::EventKind::Traffic(_) | acp::EventKind::Probed => return,
             acp::EventKind::Session {
                 session_id,
                 replaced,
             } => {
-                self.record_visible(
-                    &id,
-                    "lifecycle",
-                    json!({"event":"session_ready","session_id":session_id,"replacement":replaced}),
-                );
+                let saved = self.conversation_settings(&id).is_some_and(|mut settings| {
+                    if replaced && let Some(old) = settings.session_id.take() {
+                        settings.previous_session_ids.push(old);
+                    }
+                    settings.session_id = Some(session_id.clone());
+                    self.save_conversation_settings(&id, settings)
+                });
+                if saved {
+                    self.record_visible(
+                        &id,
+                        "lifecycle",
+                        json!({"event":"session_ready","session_id":session_id,"replacement":replaced}),
+                    );
+                }
+            }
+            acp::EventKind::Agent { features, .. } => {
+                self.live.entry(id.clone()).or_default().features = features.clone();
+                self.save_session_state(&id, |settings| settings.features = features);
             }
             acp::EventKind::Options(options) => {
                 let live = self.live.entry(id.clone()).or_default();
                 if live.options != options {
                     live.options.clone_from(&options);
-                    if let Some(mut settings) = self.conversation_settings(&id) {
-                        settings.config_options = options;
-                        self.save_conversation_settings(&id, settings);
-                    }
+                    self.save_session_state(&id, |settings| settings.options = options);
                 }
             }
-            acp::EventKind::Text(text) => {
-                // Streamed text is durably recorded by the worker before dispatch.
+            acp::EventKind::Commands(commands) => {
+                self.live
+                    .entry(id.clone())
+                    .or_default()
+                    .commands
+                    .clone_from(&commands);
+                self.save_session_state(&id, |settings| settings.commands = commands);
+            }
+            acp::EventKind::Todo(todo) => {
+                self.live
+                    .entry(id.clone())
+                    .or_default()
+                    .todo
+                    .clone_from(&todo);
+                self.save_session_state(&id, |settings| settings.todo = todo);
+            }
+            acp::EventKind::Title(title) => {
+                self.save_session_state(&id, |settings| title.clone_into(&mut settings.title));
+                self.broadcast(Delta::Title {
+                    id: id.clone(),
+                    title,
+                });
+                return;
+            }
+            acp::EventKind::Text { message, text } => {
+                self.queue_visible(
+                    &id,
+                    "assistant_chunk",
+                    json!({"text":text,"message":message}),
+                );
                 self.broadcast(Delta::Text {
                     id,
                     text,
+                    message,
+                    at: crate::recency::now_ms(),
+                });
+                return;
+            }
+            acp::EventKind::Thought { message, text } => {
+                self.queue_visible(&id, "thought_chunk", json!({"text":text,"message":message}));
+                self.broadcast(Delta::Thought {
+                    id,
+                    text,
+                    message,
                     at: crate::recency::now_ms(),
                 });
                 return;
@@ -1656,19 +2035,28 @@ impl Engine {
                 kind,
                 paths,
             } => {
-                self.broadcast(Delta::Tool {
-                    id,
-                    tool_id,
+                let report = crate::data::ToolReport {
+                    id: tool_id,
                     title,
                     status,
                     detail,
                     kind,
                     paths,
+                };
+                self.queue_visible(
+                    &id,
+                    "tool",
+                    serde_json::to_value(&report).unwrap_or_default(),
+                );
+                self.broadcast(Delta::Tool {
+                    id,
+                    report,
                     at: crate::recency::now_ms(),
                 });
                 return;
             }
             acp::EventKind::Usage { used, size } => {
+                self.queue_visible(&id, "usage", json!({"used":used,"size":size}));
                 self.broadcast(Delta::Usage { id, used, size });
                 return;
             }
@@ -1680,22 +2068,10 @@ impl Engine {
                 if closing {
                     return;
                 }
-                let options: Vec<_> = options
-                    .into_iter()
-                    .map(|option| PermissionOption {
-                        option_id: option.option_id,
-                        name: option.name,
-                        kind: option.kind,
-                    })
-                    .collect();
-                let choices: Vec<_> = options
-                    .iter()
-                    .map(|option| json!({"id":option.option_id,"name":option.name,"kind":option.kind}))
-                    .collect();
                 if self.record_visible(
                     &id,
                     "permission_request",
-                    json!({"request_id":request_id,"title":title,"options":choices}),
+                    json!({"request_id":request_id,"title":title,"options":options}),
                 ) {
                     self.live
                         .entry(id.clone())
@@ -1711,6 +2087,69 @@ impl Engine {
                         self.stop_for_permission(&id);
                     }
                 }
+            }
+            acp::EventKind::Steered { delivered } => {
+                if let Some((text, files)) = self.steering.remove(&id) {
+                    if delivered {
+                        let message = Message {
+                            role: "user".into(),
+                            text,
+                            read: true,
+                            created_at: crate::recency::now().to_string(),
+                            attachments: files,
+                            ..Default::default()
+                        };
+                        self.record_visible(
+                            &id,
+                            "message",
+                            serde_json::to_value(&message).unwrap_or_default(),
+                        );
+                        self.live.entry(id.clone()).or_default().assistant = None;
+                        self.broadcast(Delta::Message {
+                            id: id.clone(),
+                            message,
+                        });
+                    } else {
+                        // The agent didn't take it: it goes out when the turn ends.
+                        self.next_queued += 1;
+                        let queued = Queued {
+                            id: self.next_queued,
+                            text,
+                            files: files.iter().map(|file| file.name.clone()).collect(),
+                        };
+                        self.queued_files.insert(queued.id, files);
+                        self.live
+                            .entry(id.clone())
+                            .or_default()
+                            .queued
+                            .insert(0, queued);
+                        if !self.live.get(&id).is_some_and(|live| live.processing) {
+                            self.send_queue(&id);
+                        }
+                    }
+                }
+            }
+            acp::EventKind::SkippedServers(names) => {
+                let agent = self
+                    .live
+                    .get(&id)
+                    .and_then(|live| live.execution.as_ref())
+                    .map_or_else(|| "This agent".to_owned(), |e| e.name.clone());
+                for name in names {
+                    let message = format!("Skipped {name}: {agent} doesn't support HTTP servers.");
+                    self.record_visible(&id, "note", json!({"message":message}));
+                }
+                if let Some((project_id, thread)) = self.thread_from_store(&id) {
+                    self.broadcast(Delta::Thread { project_id, thread });
+                }
+            }
+            acp::EventKind::OpenUrl(url) => {
+                self.broadcast_message(&EngineMessage::Delta(Delta::OpenUrl { url }));
+                return;
+            }
+            acp::EventKind::Auth(_) => {}
+            acp::EventKind::Crashed(stderr) => {
+                self.live.entry(id.clone()).or_default().stderr = stderr;
             }
             acp::EventKind::Retrying {
                 attempt,
@@ -1739,6 +2178,7 @@ impl Engine {
                 live.processing = false;
                 live.progress = None;
                 live.permission.clear();
+                live.auth_required = kind == acp::FailureKind::Authentication;
                 if saved {
                     live.error = Some(message);
                     if !closing {
@@ -1751,17 +2191,27 @@ impl Engine {
             }
             acp::EventKind::Finished { stop_reason } => {
                 self.text_copy_pending.remove(&id);
+                let reason = match stop_reason {
+                    StopReason::EndTurn => "end_turn",
+                    StopReason::MaxTokens => "max_tokens",
+                    StopReason::MaxTurnRequests => "max_turn_requests",
+                    StopReason::Refusal => "refusal",
+                    StopReason::Cancelled => "cancelled",
+                    StopReason::Signal => "signal",
+                };
                 self.record_visible(
                     &id,
                     "lifecycle",
-                    json!({"event":"turn_finished","reason":stop_reason}),
+                    json!({"event":"turn_finished","reason":reason}),
                 );
                 let live = self.live.entry(id.clone()).or_default();
                 live.processing = false;
                 live.progress = None;
+                live.quiet_since = None;
                 live.permission.clear();
                 if !closing && !live.storage_failed {
                     self.set_runtime_status(&id, "idle");
+                    self.send_queue(&id);
                 }
             }
             acp::EventKind::Stopped => {
@@ -1772,6 +2222,7 @@ impl Engine {
                 live.processing = false;
                 live.permission.clear();
                 live.progress = None;
+                live.quiet_since = None;
                 if for_permission {
                     live.worked = true;
                     live.error = Some(PERMISSION_STOPPED.into());
@@ -1790,6 +2241,9 @@ impl Engine {
                     }
                 } else if saved && !closing && !live.storage_failed {
                     self.set_runtime_status(&id, "idle");
+                    if self.send_after_stop.remove(&id) {
+                        self.send_queue(&id);
+                    }
                 }
             }
             acp::EventKind::ShutdownStuck => {
@@ -1802,10 +2256,13 @@ impl Engine {
                 let saved =
                     self.record_visible(&id, "lifecycle", json!({"event":"process_stopped"}));
                 self.drivers.remove(&id);
+                self.steering.remove(&id);
+                self.last_traffic.remove(&id);
                 let finished = matches!(self.status_of(&id).as_str(), "completed" | "archived");
                 let live = self.live.entry(id.clone()).or_default();
                 live.processing = false;
                 live.shutting_down = false;
+                live.quiet_since = None;
                 if live.shutdown_stuck && saved && !live.storage_failed {
                     live.error = None;
                 }
@@ -1821,14 +2278,16 @@ impl Engine {
                 if let Some(prompt) = self.queued.remove(&id)
                     && self.stop_all.is_none()
                 {
-                    self.start_prompt(&id, prompt, true);
+                    let files = self.attachments.get(&id).cloned().unwrap_or_default();
+                    self.start_prompt(&id, prompt, files, true);
+                } else if self.send_after_stop.remove(&id) && self.stop_all.is_none() {
+                    self.send_queue(&id);
                 }
                 self.send_live(&id);
                 self.finish_deletions();
                 self.finish_stop_all();
                 return;
             }
-            acp::EventKind::StorageError(error) => self.storage_failure(&id, &error),
             acp::EventKind::TextCopy => {
                 self.text_copy_pending.insert(id.clone());
                 if self.record_visible(&id, "fork_text_copy", json!({}))
@@ -1858,6 +2317,41 @@ impl Engine {
         if was_processing && !processing && self.subscribers() == 0 && !self.daemon() {
             self.shutdown_conversation(&id);
             self.send_live(&id);
+        }
+    }
+
+    /// Keeps a line of ACP traffic and shows it to clients watching it.
+    fn traffic(&mut self, id: &str, entry: &crate::conversation::TrafficEntry) {
+        self.queue_visible(
+            id,
+            "traffic",
+            serde_json::to_value(entry).unwrap_or_default(),
+        );
+        if entry.direction != crate::conversation::Direction::ToAgent {
+            self.last_traffic.insert(id.to_owned(), entry.at);
+            if self
+                .live
+                .get(id)
+                .is_some_and(|live| live.quiet_since.is_some())
+            {
+                self.live.entry(id.to_owned()).or_default().quiet_since = None;
+                self.send_live(id);
+            }
+        }
+        let watchers: Vec<u64> = self
+            .watching
+            .iter()
+            .filter(|(_, watched)| *watched == id)
+            .map(|(client, _)| *client)
+            .collect();
+        for client in watchers {
+            self.send_to(
+                client,
+                &EngineMessage::Traffic {
+                    id: id.to_owned(),
+                    entry: entry.clone(),
+                },
+            );
         }
     }
 
@@ -1981,12 +2475,18 @@ impl Engine {
         if live.storage_failed || live.recovering_storage || live.replacement {
             return Err("This conversation can't retry right now.".into());
         }
-        let prompt = if live.worked {
+        let worked = live.worked;
+        let prompt = if worked {
             "Continue the interrupted turn from the saved session. Preserve completed work; do not repeat completed tool actions.".to_owned()
         } else {
             live.last_prompt.clone()
         };
-        if prompt.is_empty() {
+        let files = if worked {
+            Vec::new()
+        } else {
+            self.attachments.get(id).cloned().unwrap_or_default()
+        };
+        if prompt.is_empty() && files.is_empty() {
             return Err("There is nothing to retry.".into());
         }
         if let Some(error) = self.cannot_start(id) {
@@ -2001,7 +2501,7 @@ impl Engine {
         } else if live.shutting_down {
             return Err("Agent shutdown is stuck. Use Force Stop first.".into());
         } else {
-            self.start_prompt(id, prompt, true);
+            self.start_prompt(id, prompt, files, true);
         }
         self.send_live(id);
         Ok(Value::Null)
@@ -2053,7 +2553,6 @@ impl Engine {
         live.storage_failed = false;
         live.worked |= recovered_work;
         live.recovering_storage = live.processing;
-        live.permission_mode = Some(settings.permission_mode);
         live.error = if live.recovering_storage {
             Some("History is saved. Waiting for the stopped turn to settle.".into())
         } else if !matches!(settings.status.as_str(), "completed" | "archived")
@@ -2063,17 +2562,11 @@ impl Engine {
         } else {
             None
         };
-        if let Some(slot) = self.drivers.get(id) {
-            if slot.driver.send(acp::Command::ResumeStorage).is_ok() {
-                let _ = slot
-                    .driver
-                    .send(acp::Command::SetPermissionMode(settings.permission_mode));
-            } else {
-                self.drivers.remove(id);
-                let live = self.live.entry(id.to_owned()).or_default();
-                live.processing = false;
-                live.recovering_storage = false;
-            }
+        // The cancelled turn settles by itself; with no agent there is nothing to wait for.
+        if !self.drivers.contains_key(id) {
+            let live = self.live.entry(id.to_owned()).or_default();
+            live.processing = false;
+            live.recovering_storage = false;
         }
         if !matches!(settings.status.as_str(), "completed" | "archived") {
             self.set_runtime_status(id, "blocked");
@@ -2188,20 +2681,22 @@ impl Engine {
         Some((session, context))
     }
 
-    fn switch_setting(&mut self, id: &str, effort: bool, value: String) -> Result<Value, String> {
+    /// Changes a model, effort, mode or other option for this conversation
+    /// only, never for its agent definition (scope R17, R18).
+    fn set_option(
+        &mut self,
+        id: &str,
+        category: Category,
+        option: &str,
+        value: String,
+    ) -> Result<Value, String> {
         if self.live.get(id).is_some_and(|l| l.processing) {
-            return Err("Wait for the turn to finish before switching.".into());
+            return Err("Switch after this turn finishes.".into());
         }
         let mut settings = self
             .conversation_settings(id)
             .ok_or("This conversation no longer exists.")?;
-        let kind = if effort {
-            settings.execution.effort.clone_from(&value);
-            harness::Kind::Effort
-        } else {
-            settings.execution.model.clone_from(&value);
-            harness::Kind::Model
-        };
+        settings.execution.selections.set(category, option, &value);
         let execution = settings.execution.clone();
         if !self.save_conversation_settings(id, settings) {
             self.send_live(id);
@@ -2210,35 +2705,18 @@ impl Engine {
         self.record_visible(
             id,
             "lifecycle",
-            json!({"event":"setting_switched","kind":format!("{kind:?}"),"value":value}),
+            json!({"event":"setting_switched","category":category,"option":option,"value":value}),
         );
         self.live.entry(id.to_owned()).or_default().execution = Some(execution);
         if let Some(slot) = self.drivers.get(id) {
-            let _ = slot.driver.send(acp::Command::SetOption { kind, value });
+            let _ = slot.driver.send(acp::Command::SetOption {
+                category,
+                id: option.to_owned(),
+                value,
+            });
         }
         self.send_live(id);
         Ok(Value::Null)
-    }
-
-    fn set_permission_mode(&mut self, id: &str, mode: PermissionMode) -> Value {
-        let Some(mut settings) = self.conversation_settings(id) else {
-            return Value::Null;
-        };
-        settings.permission_mode = mode;
-        if self.save_conversation_settings(id, settings) {
-            self.live.entry(id.to_owned()).or_default().permission_mode = Some(mode);
-            if self.record_visible(id, "permission_mode", json!({"mode":mode}))
-                && let Some(slot) = self.drivers.get(id)
-                && let Err(error) = slot.driver.send(acp::Command::SetPermissionMode(mode))
-            {
-                self.drivers.remove(id);
-                self.live.entry(id.to_owned()).or_default().error = Some(error.clone());
-                self.record_visible(id, "error", json!({"message":error}));
-                self.set_runtime_status(id, "blocked");
-            }
-        }
-        self.send_live(id);
-        Value::Null
     }
 
     fn answer_permission(
@@ -2255,16 +2733,11 @@ impl Engine {
         }) else {
             return Err("Permission already answered".into());
         };
-        let Some(choice) = request.options.iter().find(|choice| {
-            choice.option_id == option
-                && matches!(
-                    choice.kind.as_str(),
-                    "allow_once" | "allow_always" | "reject_once"
-                )
-        }) else {
+        let Some(choice) = request.options.iter().find(|choice| choice.id == option) else {
             return Err("That choice is no longer offered.".into());
         };
-        let decision = json!({"request_id":request_id,"option_id":option,"kind":choice.kind,"name":choice.name});
+        let denied = choice.kind == PermissionKind::RejectOnce;
+        let decision = json!({"request_id":request_id,"option_id":option,"kind":choice.kind,"name":choice.name,"denied":denied});
         if !self.record_visible(id, "permission_decision", decision) {
             self.send_live(id);
             return Err("History could not be saved.".into());
@@ -2418,9 +2891,42 @@ impl Engine {
         let known = self.harnesses.harnesses.clone();
         let input = self.input.clone();
         tokio::task::spawn_blocking(move || {
-            let (harnesses, installed) = harness::detect(fetch, known);
-            let _ = input.send(Input::Harnesses(harnesses, installed));
+            let _ = input.send(Input::Harnesses(harness::detect(fetch, known)));
         });
+    }
+
+    /// What an agent would run with on this machine, for probes and logins.
+    fn standalone(
+        &self,
+        harness_id: &str,
+        command: &str,
+        arguments: Vec<String>,
+    ) -> Result<storage::ExecutionConfig, String> {
+        let launch = if harness_id == harness::CUSTOM || Path::new(command).is_absolute() {
+            blocking(|| harness::resolve(command))
+                .map(|path| storage::Launch {
+                    command: path.to_string_lossy().into_owned(),
+                    arguments,
+                    environment: Vec::new(),
+                })
+                .ok_or_else(|| format!("Command {command} was not found on this machine."))?
+        } else if self.harnesses.installed.contains_key(harness_id) {
+            self.harnesses.launch(harness_id, "", &[])?
+        } else {
+            return Err(format!(
+                "{} is not installed.",
+                self.harnesses.label(harness_id, "")
+            ));
+        };
+        Ok(storage::ExecutionConfig {
+            name: self.harnesses.label(harness_id, ""),
+            harness: harness_id.to_owned(),
+            command: launch.command,
+            arguments: launch.arguments,
+            environment: launch.environment,
+            directory: std::env::temp_dir(),
+            ..Default::default()
+        })
     }
 
     fn probe(
@@ -2433,34 +2939,20 @@ impl Engine {
         arguments: Vec<String>,
         model: Option<String>,
     ) -> Option<Result<Value, String>> {
-        let launch = if harness_id == harness::CUSTOM {
-            blocking(|| harness::resolve(command))
-                .map(|path| (path, arguments))
-                .ok_or_else(|| format!("Command {command} was not found on this machine."))
-        } else {
-            match (
-                self.harnesses.installed.get(harness_id),
-                self.harnesses.get(harness_id),
-            ) {
-                (Some(path), Some(harness)) => Ok((path.clone(), harness.arguments.clone())),
-                _ => Err(format!(
-                    "{} is not installed.",
-                    self.harnesses.label(harness_id, "")
-                )),
-            }
-        };
-        let (command, arguments) = match launch {
-            Ok(launch) => launch,
+        let mut config = match self.standalone(harness_id, command, arguments) {
+            Ok(config) => config,
             Err(message) => {
-                let failed: Result<harness::Probed, _> = Err(harness::ProbeError {
+                let failed: Result<acp::Probed, _> = Err(acp::ProbeError {
                     message,
-                    login: Vec::new(),
+                    auth: Vec::new(),
+                    version: false,
                 });
                 return Some(serde_json::to_value(failed).map_err(|e| e.to_string()));
             }
         };
-        let (handle, results) = harness::probe(command, arguments, model);
-        self.probes.insert((client, probe), handle);
+        config.selections.model = model.unwrap_or_default();
+        let (session, results) = acp::probe(config);
+        self.probes.insert((client, probe), session);
         let input = self.input.clone();
         tokio::spawn(async move {
             let result = results.recv().await.ok();
@@ -2469,6 +2961,57 @@ impl Engine {
                 request,
                 probe,
                 result,
+            });
+        });
+        None
+    }
+
+    /// Logs an agent in or out. A terminal method opens the user's own
+    /// terminal; the others go through the agent (scope R14).
+    fn login(
+        &mut self,
+        client: u64,
+        request: u64,
+        harness_id: &str,
+        command: &str,
+        arguments: Vec<String>,
+        method: Option<AuthMethod>,
+    ) -> Option<Result<Value, String>> {
+        let config = match self.standalone(harness_id, command, arguments) {
+            Ok(config) => config,
+            Err(error) => return Some(Err(error)),
+        };
+        if let Some(terminal) = method.as_ref().and_then(|method| method.terminal.clone()) {
+            let result = blocking(|| {
+                install::open_terminal(
+                    Path::new(&config.command),
+                    &terminal.arguments,
+                    &terminal.environment,
+                )
+            });
+            return Some(result.map(|()| Value::Null));
+        }
+        let (session, results, urls) = acp::login(config, method.map(|method| method.id));
+        self.logins.insert((client, request), session);
+        let input = self.input.clone();
+        tokio::spawn(async move {
+            let url_input = input.clone();
+            let opener = tokio::spawn(async move {
+                while let Ok(url) = urls.recv().await {
+                    let _ = url_input.send(Input::OpenUrl(url));
+                }
+            });
+            let result = results
+                .recv()
+                .await
+                .unwrap_or_else(|_| Err("The login stopped.".into()))
+                .map(|()| Value::Null);
+            opener.abort();
+            let _ = input.send(Input::Done {
+                client,
+                request,
+                result,
+                detect: false,
             });
         });
         None

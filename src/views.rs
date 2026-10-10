@@ -24,6 +24,7 @@ impl Adeline {
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(title),
             )
+            .children(thread.and_then(|_| self.todo_button(cx)))
             .when_some(thread, |header, thread| {
                 header.child(chat_render::context_meter(thread.context, cx).mr_2())
             })
@@ -227,6 +228,18 @@ impl Adeline {
         (title, entries)
     }
 
+    /// A closed menu leaves focus on its search box, which is gone; the
+    /// message box takes it, so shortcuts keep working.
+    pub(super) fn refocus_after_menu(&self, window: &mut Window, cx: &mut App) {
+        let menu_focused = self
+            .command_popup
+            .as_ref()
+            .is_some_and(|state| state.focus_handle(cx).is_focused(window));
+        if menu_focused || window.focused(cx).is_none() {
+            window.focus(&self.composer.focus_handle(cx), cx);
+        }
+    }
+
     pub(super) fn command_popover(
         &self,
         menu: &'static str,
@@ -271,6 +284,7 @@ impl Adeline {
                         app.act(action, window, cx);
                     } else if app.menu == Some(menu) {
                         app.menu = None;
+                        app.refocus_after_menu(window, cx);
                         app.header_region.update(cx, |_, cx| cx.notify());
                         app.control_pane.update(cx, |_, cx| cx.notify());
                         app.composer_region.update(cx, |_, cx| cx.notify());
@@ -339,6 +353,7 @@ impl Adeline {
                                             Action::ShowCompleted
                                                 | Action::ShowArchived
                                                 | Action::HideToolCalls
+                                                | Action::ShowThinking
                                                 | Action::SubmitOnEnter
                                         ) {
                                             popover
@@ -372,7 +387,15 @@ impl Adeline {
         }
         if matches!(
             menu,
-            "agent" | "agents" | "app" | "mode-settings" | "model" | "effort" | "files"
+            "agent"
+                | "agents"
+                | "app"
+                | "mode-settings"
+                | "model"
+                | "effort"
+                | "mode"
+                | "more"
+                | "files"
         ) {
             let state = cx.new(|cx| CommandState::new(window, cx));
             window.focus(&state.focus_handle(cx), cx);

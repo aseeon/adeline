@@ -1329,6 +1329,695 @@
         ],
         "threadId": "demo-adeline-running-2"
       }
+    ],
+    "live": [
+      {
+        "threadId": "adeline-search",
+        "live": {
+          "agent_id": "claude",
+          "running": true,
+          "processing": true,
+          "turn": "running",
+          "options": [
+            {
+              "id": "model",
+              "name": "Model",
+              "description": "",
+              "category": "model",
+              "kind": {
+                "type": "select",
+                "current": "opus",
+                "choices": [
+                  {
+                    "value": "opus",
+                    "name": "Opus",
+                    "description": "Most capable for complex work"
+                  },
+                  {
+                    "value": "sonnet",
+                    "name": "Sonnet",
+                    "description": "Fast and capable for everyday tasks"
+                  },
+                  {
+                    "value": "haiku",
+                    "name": "Haiku",
+                    "description": "Fastest for quick answers"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "effort",
+              "name": "Effort",
+              "description": "",
+              "category": "effort",
+              "kind": {
+                "type": "select",
+                "current": "high",
+                "choices": [
+                  {
+                    "value": "low",
+                    "name": "Low",
+                    "description": ""
+                  },
+                  {
+                    "value": "medium",
+                    "name": "Medium",
+                    "description": ""
+                  },
+                  {
+                    "value": "high",
+                    "name": "High",
+                    "description": ""
+                  },
+                  {
+                    "value": "max",
+                    "name": "Max",
+                    "description": ""
+                  }
+                ]
+              }
+            },
+            {
+              "id": "adeline/session-mode",
+              "name": "Mode",
+              "description": "",
+              "category": "mode",
+              "kind": {
+                "type": "select",
+                "current": "default",
+                "choices": [
+                  {
+                    "value": "default",
+                    "name": "Default",
+                    "description": "Ask before editing files or running commands"
+                  },
+                  {
+                    "value": "acceptEdits",
+                    "name": "Accept edits",
+                    "description": "Edit files without asking; ask before commands"
+                  },
+                  {
+                    "value": "bypassPermissions",
+                    "name": "Bypass permissions",
+                    "description": "Run everything without asking"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "fast",
+              "name": "Fast mode",
+              "description": "Faster output from the same model",
+              "category": "other",
+              "kind": {
+                "type": "boolean",
+                "current": false
+              }
+            },
+            {
+              "id": "output-style",
+              "name": "Output style",
+              "description": "",
+              "category": "other",
+              "kind": {
+                "type": "select",
+                "current": "default",
+                "choices": [
+                  {
+                    "value": "default",
+                    "name": "Default",
+                    "description": ""
+                  },
+                  {
+                    "value": "explanatory",
+                    "name": "Explanatory",
+                    "description": ""
+                  },
+                  {
+                    "value": "learning",
+                    "name": "Learning",
+                    "description": ""
+                  }
+                ]
+              }
+            }
+          ],
+          "features": {
+            "images": true,
+            "embedded_files": true,
+            "load": true,
+            "resume": true,
+            "fork": true,
+            "close": true,
+            "steering": true,
+            "logout": true,
+            "mcp_http": true,
+            "mcp_sse": true,
+            "known": true
+          },
+          "commands": [
+            {
+              "name": "review",
+              "description": "Review the current changes"
+            },
+            {
+              "name": "compact",
+              "description": "Summarize the conversation to free context",
+              "hint": "what to keep"
+            },
+            {
+              "name": "init",
+              "description": "Write a CLAUDE.md for this project"
+            }
+          ],
+          "todo": [
+            {
+              "text": "Find what each keystroke rebuilds",
+              "status": "completed"
+            },
+            {
+              "text": "Cache message text on update",
+              "status": "completed"
+            },
+            {
+              "text": "Check matches across two messages",
+              "status": "in_progress"
+            },
+            {
+              "text": "Measure typing with a large build log",
+              "status": "pending"
+            }
+          ],
+          "queued": [
+            {
+              "id": 1,
+              "text": "Also keep the match count visible while typing."
+            },
+            {
+              "id": 2,
+              "text": "Here is the slow log, for the timing check.",
+              "files": [
+                "build.log"
+              ]
+            }
+          ],
+          "execution": {
+            "name": "Claude Code",
+            "harness": "claude-acp",
+            "command": "claude-agent-acp",
+            "directory": "."
+          }
+        },
+        "traffic": [
+          {
+            "at": 1790000000000,
+            "direction": "to_agent",
+            "text": "{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"initialize\",\"params\":{\"protocolVersion\":1,\"clientCapabilities\":{\"fs\":{\"readTextFile\":false,\"writeTextFile\":false},\"terminal\":false}}}",
+            "note": "none"
+          },
+          {
+            "at": 1790000000700,
+            "direction": "from_agent",
+            "text": "{\"jsonrpc\":\"2.0\",\"id\":0,\"result\":{\"protocolVersion\":1,\"agentInfo\":{\"name\":\"claude-agent-acp\",\"version\":\"0.31.0\"},\"agentCapabilities\":{\"loadSession\":true,\"promptCapabilities\":{\"image\":true,\"embeddedContext\":true}}}}",
+            "note": "none"
+          },
+          {
+            "at": 1790000001400,
+            "direction": "stderr",
+            "text": "Loaded 3 MCP servers",
+            "note": "none"
+          },
+          {
+            "at": 1790000002100,
+            "direction": "to_agent",
+            "text": "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"session/prompt\",\"params\":{\"sessionId\":\"demo\",\"prompt\":[{\"type\":\"text\",\"text\":\"Search feels slow...\"}]}}",
+            "note": "none"
+          },
+          {
+            "at": 1790000002800,
+            "direction": "from_agent",
+            "text": "warning: telemetry disabled",
+            "note": "not_json"
+          },
+          {
+            "at": 1790000003500,
+            "direction": "from_agent",
+            "text": "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"demo\",\"update\":{\"sessionUpdate\":\"plan\",\"entries\":[{\"content\":\"Find what each keystroke rebuilds\",\"status\":\"completed\",\"priority\":\"high\"}]}}}",
+            "note": "none"
+          },
+          {
+            "at": 1790000004200,
+            "direction": "from_agent",
+            "text": "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"demo\",\"update\":{\"sessionUpdate\":\"usage_breakdown\",\"cached\":51200}}}",
+            "note": "unknown"
+          },
+          {
+            "at": 1790000004900,
+            "direction": "from_agent",
+            "text": "{\"jsonrpc\":\"2.0\",\"method\":\"session/update\",\"params\":{\"sessionId\":\"demo\",\"update\":{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"I found that each keystroke rebuilds a combined text buffer.\"}}}}",
+            "note": "none"
+          }
+        ]
+      },
+      {
+        "threadId": "demo-adeline-running-2",
+        "live": {
+          "agent_id": "claude",
+          "running": true,
+          "processing": true,
+          "turn": "running",
+          "quiet_since": 12,
+          "options": [
+            {
+              "id": "model",
+              "name": "Model",
+              "description": "",
+              "category": "model",
+              "kind": {
+                "type": "select",
+                "current": "opus",
+                "choices": [
+                  {
+                    "value": "opus",
+                    "name": "Opus",
+                    "description": "Most capable for complex work"
+                  },
+                  {
+                    "value": "sonnet",
+                    "name": "Sonnet",
+                    "description": "Fast and capable for everyday tasks"
+                  },
+                  {
+                    "value": "haiku",
+                    "name": "Haiku",
+                    "description": "Fastest for quick answers"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "effort",
+              "name": "Effort",
+              "description": "",
+              "category": "effort",
+              "kind": {
+                "type": "select",
+                "current": "high",
+                "choices": [
+                  {
+                    "value": "low",
+                    "name": "Low",
+                    "description": ""
+                  },
+                  {
+                    "value": "medium",
+                    "name": "Medium",
+                    "description": ""
+                  },
+                  {
+                    "value": "high",
+                    "name": "High",
+                    "description": ""
+                  },
+                  {
+                    "value": "max",
+                    "name": "Max",
+                    "description": ""
+                  }
+                ]
+              }
+            },
+            {
+              "id": "adeline/session-mode",
+              "name": "Mode",
+              "description": "",
+              "category": "mode",
+              "kind": {
+                "type": "select",
+                "current": "default",
+                "choices": [
+                  {
+                    "value": "default",
+                    "name": "Default",
+                    "description": "Ask before editing files or running commands"
+                  },
+                  {
+                    "value": "acceptEdits",
+                    "name": "Accept edits",
+                    "description": "Edit files without asking; ask before commands"
+                  },
+                  {
+                    "value": "bypassPermissions",
+                    "name": "Bypass permissions",
+                    "description": "Run everything without asking"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "fast",
+              "name": "Fast mode",
+              "description": "Faster output from the same model",
+              "category": "other",
+              "kind": {
+                "type": "boolean",
+                "current": false
+              }
+            },
+            {
+              "id": "output-style",
+              "name": "Output style",
+              "description": "",
+              "category": "other",
+              "kind": {
+                "type": "select",
+                "current": "default",
+                "choices": [
+                  {
+                    "value": "default",
+                    "name": "Default",
+                    "description": ""
+                  },
+                  {
+                    "value": "explanatory",
+                    "name": "Explanatory",
+                    "description": ""
+                  },
+                  {
+                    "value": "learning",
+                    "name": "Learning",
+                    "description": ""
+                  }
+                ]
+              }
+            }
+          ],
+          "features": {
+            "images": true,
+            "embedded_files": true,
+            "load": true,
+            "resume": true,
+            "fork": true,
+            "close": true,
+            "steering": true,
+            "logout": true,
+            "mcp_http": true,
+            "mcp_sse": true,
+            "known": true
+          },
+          "commands": [
+            {
+              "name": "review",
+              "description": "Review the current changes"
+            },
+            {
+              "name": "compact",
+              "description": "Summarize the conversation to free context",
+              "hint": "what to keep"
+            },
+            {
+              "name": "init",
+              "description": "Write a CLAUDE.md for this project"
+            }
+          ],
+          "execution": {
+            "name": "Claude Code",
+            "harness": "claude-acp",
+            "command": "claude-agent-acp",
+            "directory": "."
+          }
+        }
+      },
+      {
+        "threadId": "adeline-docs",
+        "live": {
+          "agent_id": "claude",
+          "options": [
+            {
+              "id": "model",
+              "name": "Model",
+              "description": "",
+              "category": "model",
+              "kind": {
+                "type": "select",
+                "current": "opus",
+                "choices": [
+                  {
+                    "value": "opus",
+                    "name": "Opus",
+                    "description": "Most capable for complex work"
+                  },
+                  {
+                    "value": "sonnet",
+                    "name": "Sonnet",
+                    "description": "Fast and capable for everyday tasks"
+                  },
+                  {
+                    "value": "haiku",
+                    "name": "Haiku",
+                    "description": "Fastest for quick answers"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "effort",
+              "name": "Effort",
+              "description": "",
+              "category": "effort",
+              "kind": {
+                "type": "select",
+                "current": "high",
+                "choices": [
+                  {
+                    "value": "low",
+                    "name": "Low",
+                    "description": ""
+                  },
+                  {
+                    "value": "medium",
+                    "name": "Medium",
+                    "description": ""
+                  },
+                  {
+                    "value": "high",
+                    "name": "High",
+                    "description": ""
+                  },
+                  {
+                    "value": "max",
+                    "name": "Max",
+                    "description": ""
+                  }
+                ]
+              }
+            },
+            {
+              "id": "adeline/session-mode",
+              "name": "Mode",
+              "description": "",
+              "category": "mode",
+              "kind": {
+                "type": "select",
+                "current": "default",
+                "choices": [
+                  {
+                    "value": "default",
+                    "name": "Default",
+                    "description": "Ask before editing files or running commands"
+                  },
+                  {
+                    "value": "acceptEdits",
+                    "name": "Accept edits",
+                    "description": "Edit files without asking; ask before commands"
+                  },
+                  {
+                    "value": "bypassPermissions",
+                    "name": "Bypass permissions",
+                    "description": "Run everything without asking"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "fast",
+              "name": "Fast mode",
+              "description": "Faster output from the same model",
+              "category": "other",
+              "kind": {
+                "type": "boolean",
+                "current": false
+              }
+            },
+            {
+              "id": "output-style",
+              "name": "Output style",
+              "description": "",
+              "category": "other",
+              "kind": {
+                "type": "select",
+                "current": "default",
+                "choices": [
+                  {
+                    "value": "default",
+                    "name": "Default",
+                    "description": ""
+                  },
+                  {
+                    "value": "explanatory",
+                    "name": "Explanatory",
+                    "description": ""
+                  },
+                  {
+                    "value": "learning",
+                    "name": "Learning",
+                    "description": ""
+                  }
+                ]
+              }
+            }
+          ],
+          "features": {
+            "images": true,
+            "embedded_files": true,
+            "load": true,
+            "resume": true,
+            "fork": true,
+            "close": true,
+            "steering": true,
+            "logout": true,
+            "mcp_http": true,
+            "mcp_sse": true,
+            "known": true
+          },
+          "commands": [
+            {
+              "name": "review",
+              "description": "Review the current changes"
+            },
+            {
+              "name": "compact",
+              "description": "Summarize the conversation to free context",
+              "hint": "what to keep"
+            },
+            {
+              "name": "init",
+              "description": "Write a CLAUDE.md for this project"
+            }
+          ],
+          "execution": {
+            "name": "Claude Code",
+            "harness": "claude-acp",
+            "command": "claude-agent-acp",
+            "directory": "."
+          }
+        }
+      },
+      {
+        "threadId": "adeline-layout",
+        "live": {
+          "agent_id": "codex",
+          "options": [
+            {
+              "id": "model",
+              "name": "Model",
+              "description": "",
+              "category": "model",
+              "kind": {
+                "type": "select",
+                "current": "gpt-5.5",
+                "choices": [
+                  {
+                    "value": "gpt-5.5",
+                    "name": "GPT-5.5",
+                    "description": "Frontier model for complex coding"
+                  },
+                  {
+                    "value": "gpt-5.5-mini",
+                    "name": "GPT-5.5 mini",
+                    "description": "Faster and cheaper"
+                  }
+                ]
+              }
+            },
+            {
+              "id": "reasoning_effort",
+              "name": "Reasoning effort",
+              "description": "",
+              "category": "effort",
+              "kind": {
+                "type": "select",
+                "current": "medium",
+                "choices": [
+                  {
+                    "value": "low",
+                    "name": "Low",
+                    "description": ""
+                  },
+                  {
+                    "value": "medium",
+                    "name": "Medium",
+                    "description": ""
+                  },
+                  {
+                    "value": "high",
+                    "name": "High",
+                    "description": ""
+                  }
+                ]
+              }
+            },
+            {
+              "id": "adeline/session-mode",
+              "name": "Mode",
+              "description": "",
+              "category": "mode",
+              "kind": {
+                "type": "select",
+                "current": "auto",
+                "choices": [
+                  {
+                    "value": "read-only",
+                    "name": "Read only",
+                    "description": "Ask before any edit or command"
+                  },
+                  {
+                    "value": "auto",
+                    "name": "Auto",
+                    "description": "Edit and run commands in the project; ask outside it"
+                  },
+                  {
+                    "value": "full-access",
+                    "name": "Full access",
+                    "description": "Edit and run anything without asking"
+                  }
+                ]
+              }
+            }
+          ],
+          "features": {
+            "images": true,
+            "embedded_files": true,
+            "load": true,
+            "resume": true,
+            "fork": true,
+            "close": true,
+            "steering": false,
+            "logout": true,
+            "mcp_http": true,
+            "mcp_sse": true,
+            "known": true
+          },
+          "execution": {
+            "name": "Codex",
+            "harness": "codex-acp",
+            "command": "codex-acp",
+            "directory": "."
+          },
+          "error": "The agent's login expired. Log in, then retry."
+        }
+      }
     ]
   },
   "workspace": {
@@ -2485,13 +3174,23 @@
             "role": "user",
             "text": "Search feels slow when a conversation includes a large build log. Keep typing responsive while matching the entire history.",
             "read": true,
-            "createdAt": "2026-09-25T11:58:00Z"
+            "createdAt": "2026-09-25T11:58:00Z",
+            "attachments": [
+              {
+                "name": "search-profile.txt",
+                "mime": "text/plain",
+                "size": 18432
+              }
+            ]
           },
           {
             "role": "assistant",
             "text": "I found that each keystroke rebuilds a combined text buffer. I am moving that work to the message update path and checking that matches spanning two messages still work.",
             "read": true,
-            "createdAt": "2026-09-25T12:00:00Z"
+            "createdAt": "2026-09-25T12:00:00Z",
+            "thought": "The search box filters on every keystroke. Rebuilding one buffer from all messages each time is linear in the history, which explains the stall with a large log. Caching each message's normalized text keeps the work proportional to what changed.",
+            "thoughtStarted": 1790000000000,
+            "thoughtEnded": 1790000014000
           }
         ],
         "activity": [],

@@ -12,18 +12,16 @@ pub const VERSION: u32 = 1;
 /// The agent's icon, copied from its harness when the agent is added.
 pub const AVATAR: &str = "avatar.svg";
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PermissionMode {
-    #[default]
-    Ask,
-    /// Approve read-only tool calls automatically; ask for everything else.
-    AllowReads,
-    AllowEverything,
-}
+/// A field older files carry and this version ignores: read, never written.
+/// Earlier agent files saved a `permission_mode`, which the agent's own modes
+/// replace (scope R22).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Dropped;
 
-impl PermissionMode {
-    /// Menu order; UI indices refer to this.
-    pub const ALL: [Self; 3] = [Self::Ask, Self::AllowReads, Self::AllowEverything];
+impl<'de> Deserialize<'de> for Dropped {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(deserializer).map(|_| Self)
+    }
 }
 
 /// Whether system instructions add to or replace the harness's own guidance.
@@ -56,12 +54,18 @@ pub struct AgentDefinition {
     /// Empty when the harness offers no effort option.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub effort: String,
-    #[serde(default)]
-    pub permission_mode: PermissionMode,
+    /// The mode new conversations start in; empty keeps the agent's default.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub mode: String,
+    #[serde(default, rename = "permission_mode", skip_serializing)]
+    pub dropped_permission_mode: Dropped,
     #[serde(default)]
     pub system_instructions: String,
     #[serde(default)]
     pub instructions_mode: InstructionsMode,
+    /// MCP servers for this agent, added to the global ones (scope R28).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<crate::conversation::McpServer>,
 }
 
 impl Default for AgentDefinition {
@@ -75,9 +79,11 @@ impl Default for AgentDefinition {
             arguments: Vec::new(),
             model: String::new(),
             effort: String::new(),
-            permission_mode: PermissionMode::Ask,
+            mode: String::new(),
+            dropped_permission_mode: Dropped,
             system_instructions: String::new(),
             instructions_mode: InstructionsMode::Append,
+            mcp_servers: Vec::new(),
         }
     }
 }
@@ -545,13 +551,13 @@ mod tests {
             "harness: gemini",
             "model: gemini-3-pro",
             "effort: high",
-            "permission_mode: Ask",
             "system_instructions:",
             "instructions_mode: Overwrite",
         ] {
             assert!(yaml.contains(field), "{field} in {yaml}");
         }
         assert!(!yaml.contains("command"));
+        assert!(!yaml.contains("permission_mode"));
         assert_eq!(open_catalog(&root, false).entries[0].definition, gemini);
         let mut with_command = gemini;
         with_command.name = "Other".into();
@@ -572,6 +578,29 @@ mod tests {
                 .iter()
                 .any(|entry| entry.definition == no_model)
         );
+    }
+
+    #[test]
+    fn a_saved_permission_mode_loads_and_is_dropped_on_save() {
+        let root = TempDir::new("adeline-agents");
+        fs::create_dir_all(file(&root, "josh").parent().unwrap()).unwrap();
+        fs::write(
+            file(&root, "josh"),
+            "version: 1
+name: Josh
+harness: omp
+permission_mode: AllowEverything
+",
+        )
+        .unwrap();
+        let mut catalog = open_catalog(&root, false);
+        let loaded = catalog.entries[0].definition.clone();
+        assert_eq!(loaded.name, "Josh");
+        catalog
+            .save(Some("josh"), loaded.clone(), Some(&loaded), false)
+            .unwrap();
+        let yaml = fs::read_to_string(file(&root, "josh")).unwrap();
+        assert!(!yaml.contains("permission_mode"), "{yaml}");
     }
 
     #[test]

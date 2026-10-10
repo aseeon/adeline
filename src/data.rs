@@ -1,5 +1,6 @@
 //! The UI's model of projects, chats, messages and tool activity, plus the
 //! bundled demo workspace (`assets/workspace.json`).
+use crate::conversation::{Attachment, ToolKind, ToolStatus};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -96,7 +97,7 @@ impl Timing {
         self.answer(at);
         self.last_text = None;
     }
-    fn answer(&mut self, at: u64) {
+    pub fn answer(&mut self, at: u64) {
         if let Some(turn) = self.turns.last_mut() {
             turn.1 = turn.1.max(at);
         }
@@ -114,11 +115,48 @@ impl Timing {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Message {
+    /// The agent's message ID, when it gives one. Chunks with another ID
+    /// start a new message.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub id: String,
     pub role: String,
     pub text: String,
+    /// What the agent thought before replying (scope R24).
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub thought: String,
+    /// When the thought began and last grew, in milliseconds since the epoch.
+    #[serde(skip_serializing_if = "is_zero")]
+    pub thought_started: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub thought_ended: u64,
     pub created_at: String,
     pub read: bool,
+    /// Bundled demo pictures shown in the message.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<String>,
+    /// Files sent with a prompt.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if signature"
+)]
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+/// One report of a tool call, as the agent layer sends it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolReport {
+    pub id: String,
+    pub title: String,
+    pub status: ToolStatus,
+    pub detail: String,
+    pub kind: ToolKind,
+    pub paths: Vec<String>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
@@ -127,14 +165,13 @@ pub struct Activity {
     pub title: String,
     pub detail: String,
     pub running: bool,
-    /// For a tool call, the protocol's tool kind: `read`, `edit`, `execute`, ...
-    pub tool: String,
+    /// For a tool call, what kind of tool it is.
+    pub tool: ToolKind,
     /// Files a tool call reads or changes.
     pub paths: Vec<String>,
     /// The user message whose turn made this tool call.
     pub turn: Option<usize>,
-    /// For a tool call: `pending`, `in_progress`, `completed` or `failed`.
-    pub status: String,
+    pub status: ToolStatus,
     /// When the tool call started and finished, in milliseconds since the
     /// epoch; 0 when unknown or still running.
     pub started: u64,
@@ -147,7 +184,7 @@ impl Activity {
     /// The title without the status the runtime appends to it.
     pub fn name(&self) -> &str {
         self.title
-            .strip_suffix(&format!(" ({})", self.status))
+            .strip_suffix(&format!(" ({})", self.status.label()))
             .unwrap_or(&self.title)
     }
     /// How long a finished tool call took, in milliseconds.
@@ -187,9 +224,20 @@ struct Working {
     thread_id: String,
     activity: Vec<Activity>,
 }
+/// A demo chat's live state: queue, TODO list, options and the rest.
+#[derive(Deserialize)]
+struct DemoLive {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    live: crate::protocol::Live,
+    #[serde(default)]
+    traffic: Vec<crate::conversation::TrafficEntry>,
+}
 #[derive(Deserialize)]
 struct Scene {
     working: Vec<Working>,
+    #[serde(default)]
+    live: Vec<DemoLive>,
 }
 #[derive(Deserialize)]
 struct Fixture {
@@ -198,9 +246,52 @@ struct Fixture {
     scene: Scene,
 }
 
+fn fixture() -> Fixture {
+    serde_json::from_str(include_str!("../assets/workspace.json")).expect("valid bundled demo")
+}
+
+/// The demo chats' live state, by chat ID, as the engine would report it.
+pub fn demo_live() -> std::collections::HashMap<String, crate::protocol::Live> {
+    let now = crate::recency::now_ms();
+    fixture()
+        .scene
+        .live
+        .into_iter()
+        .map(|demo| {
+            let mut live = demo.live;
+            // A demo's quiet turn has been silent for the minutes it says.
+            if let Some(minutes) = live.quiet_since {
+                live.quiet_since = Some(now.saturating_sub(minutes * 60_000));
+            }
+            (demo.thread_id, live)
+        })
+        .collect()
+}
+
+/// A demo chat's ACP traffic, for the traffic tab.
+pub fn demo_traffic(id: &str) -> Vec<crate::conversation::TrafficEntry> {
+    let now = crate::recency::now_ms();
+    fixture()
+        .scene
+        .live
+        .into_iter()
+        .find(|demo| demo.thread_id == id)
+        .map(|demo| {
+            let count = demo.traffic.len() as u64;
+            demo.traffic
+                .into_iter()
+                .enumerate()
+                .map(|(ix, mut entry)| {
+                    entry.at = now - (count - ix as u64) * 1_300;
+                    entry
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 pub fn load() -> Vec<Workspace> {
-    let data: Fixture =
-        serde_json::from_str(include_str!("../assets/workspace.json")).expect("valid bundled demo");
+    let data = fixture();
     let mut projects = vec![data.workspace];
     projects.extend(data.projects.into_iter().map(|p| p.workspace));
     // One demo project on each demo machine.
@@ -282,20 +373,54 @@ impl Thread {
                 .get(message + 1)
                 .is_none_or(|next| next.role == "user")
     }
-    /// Adds a tool call, or updates it from a later report, at `at` milliseconds.
-    #[expect(clippy::too_many_arguments, reason = "the fields of one tool report")]
-    pub fn apply_tool(
+    /// Adds streamed reply or thought text to the turn's reply. `assistant`
+    /// is the reply being written; a new message ID starts another one.
+    pub fn stream(
         &mut self,
-        tool_id: &str,
-        title: &str,
-        status: &str,
-        detail: &str,
-        kind: &str,
-        paths: &[String],
+        assistant: &mut Option<usize>,
+        message: Option<&str>,
+        text: &str,
+        thought: bool,
         at: u64,
     ) {
+        let current = assistant.filter(|&index| {
+            self.messages.get(index).is_some_and(|m| {
+                m.role == "assistant"
+                    && message.is_none_or(|id| m.id.is_empty() || m.id == id)
+                    // A thought after reply text starts the next reply.
+                    && !(thought && !m.text.is_empty() && message.is_none())
+            })
+        });
+        let index = if let Some(index) = current {
+            index
+        } else {
+            *assistant = Some(self.messages.len());
+            self.push_message(Message {
+                id: message.unwrap_or_default().to_owned(),
+                role: "assistant".into(),
+                created_at: at.to_string(),
+                ..Default::default()
+            });
+            self.messages.len() - 1
+        };
+        let entry = &mut self.messages[index];
+        if thought {
+            entry.thought.push_str(text);
+            if entry.thought_started == 0 {
+                entry.thought_started = at;
+            }
+            entry.thought_ended = at;
+            self.timing.answer(at);
+        } else {
+            entry.text.push_str(text);
+            self.timing.text(text.chars().count(), at);
+        }
+    }
+
+    /// Adds a tool call, or updates it from a later report, at `at` milliseconds.
+    pub fn apply_tool(&mut self, report: &ToolReport, at: u64) {
         let turn = self.messages.iter().rposition(|m| m.role == "user");
-        let key = format!("tool:{tool_id}");
+        let key = format!("tool:{}", report.id);
         let item = if let Some(index) = self.activity.iter().position(|a| a.kind == key) {
             index
         } else {
@@ -314,20 +439,20 @@ impl Thread {
             self.activity.len() - 1
         };
         let activity = &mut self.activity[item];
-        activity.title = format!("{title} ({status})");
-        detail.clone_into(&mut activity.detail);
-        status.clone_into(&mut activity.status);
-        activity.running = matches!(status, "pending" | "in_progress");
+        activity.title = format!("{} ({})", report.title, report.status.label());
+        report.detail.clone_into(&mut activity.detail);
+        activity.status = report.status;
+        activity.running = report.status.running();
         if activity.running {
             activity.finished = 0;
         } else if activity.finished == 0 {
             activity.finished = at;
         }
-        if !kind.is_empty() {
-            kind.clone_into(&mut activity.tool);
+        if report.kind != ToolKind::Other || activity.tool == ToolKind::Other {
+            activity.tool = report.kind;
         }
-        if !paths.is_empty() {
-            activity.paths = paths.to_vec();
+        if !report.paths.is_empty() {
+            activity.paths.clone_from(&report.paths);
         }
         activity.turn = activity.turn.or(turn);
         self.timing.tool(at);
@@ -345,9 +470,9 @@ impl Thread {
         let mut tools = 0;
         for call in self.turn_tools(turn) {
             tools += 1;
-            let files = match call.tool.as_str() {
-                "read" => &mut read,
-                "edit" | "delete" | "move" => &mut edited,
+            let files = match call.tool {
+                ToolKind::Read => &mut read,
+                kind if kind.edits() => &mut edited,
                 _ => continue,
             };
             files.extend(call.paths.iter().map(String::as_str));
@@ -648,9 +773,9 @@ mod tests {
             role: role.into(),
             ..Default::default()
         };
-        let call = |id: &str, tool: &str, paths: &[&str], turn: usize| Activity {
+        let call = |id: &str, tool: ToolKind, paths: &[&str], turn: usize| Activity {
             kind: format!("tool:{id}"),
-            tool: tool.into(),
+            tool,
             paths: paths.iter().map(|&p| p.to_owned()).collect(),
             turn: Some(turn),
             ..Default::default()
@@ -664,10 +789,10 @@ mod tests {
                 message("assistant"),
             ],
             activity: vec![
-                call("1", "read", &["a.md"], 0),
-                call("2", "read", &["a.md", "b.md"], 2),
-                call("3", "edit", &["b.md"], 2),
-                call("4", "execute", &[], 2),
+                call("1", ToolKind::Read, &["a.md"], 0),
+                call("2", ToolKind::Read, &["a.md", "b.md"], 2),
+                call("3", ToolKind::Edit, &["b.md"], 2),
+                call("4", ToolKind::Execute, &[], 2),
                 Activity {
                     kind: "error".into(),
                     turn: Some(2),

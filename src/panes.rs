@@ -133,7 +133,7 @@ impl Adeline {
                     .size_range(config::text_pixels(140.)..config::text_pixels(520.))
                     .flex_grow_0()
                     .flex_shrink_1()
-                    .child(self.activity_panel(cx)),
+                    .child(self.right_panel(cx)),
             );
         row()
             .size_full()

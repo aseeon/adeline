@@ -23,6 +23,12 @@ They talk over a same-user named pipe on Windows and a Unix socket elsewhere (`i
 5. `acp.rs` runs one ACP stdio agent process per conversation. Its events come back to `Engine::driver_event`.
 6. The engine broadcasts a `protocol::Delta`, and `Adeline::apply_delta` (`runtime_ui.rs`) updates the UI's model (`data.rs`).
 
+## Agents and ACP
+
+`acp.rs` speaks ACP through the official `agent-client-protocol` SDK, which owns JSON-RPC framing, request IDs and the typed schema. Its `Worker` is a state machine fed by `Input`s (SDK requests and notifications, replies, process exit, `Command`s from the engine) and is unit-tested through a fake `Link` in `acp_tests.rs`. It translates the SDK's types into Adeline's own model in `conversation.rs` (session options by category, TODO steps, tool calls, permission options, features, attachments, MCP servers, traffic entries); nothing outside `acp.rs` sees an SDK type. Every line in and out, and the agent's stderr, is reported as a `TrafficEntry`, which the engine keeps in the transcript and streams to clients watching the traffic tab.
+
+`profiles.rs` knows each supported agent (Claude, Codex, Pi, opencode, OMP): its command, install steps, how it takes system instructions, which modes are plan modes, and how its turns end. `harness.rs` finds installed agents and their versions, and `install.rs` plans and runs installs and opens login terminals. The engine runs those for a client (`PlanInstall`, `Install`, `Login`), so a remote machine installs on itself.
+
 A new conversation feature usually touches every step: `Action`, `act`, `runtime_ui`, `Command`/`Delta` in `protocol.rs`, `Engine::command`, and often `acp.rs` and `storage.rs`.
 
 ## Machines

@@ -110,7 +110,7 @@ def prompt(message):
         attempt = int(path.read_text() or 0) + 1 if path.exists() else 1
         path.write_text(str(attempt))
         if attempt <= int(match[1]):
-            send({"id": message["id"], "error": {"code": -32000, "message": f"upstream timeout (attempt {attempt})"}})
+            send({"id": message["id"], "error": {"code": -32603, "message": f"upstream timeout (attempt {attempt})"}})
             return
         path.unlink()
     if match := re.search(r"SLOW (\d+(?:\.\d+)?)", text):
@@ -152,7 +152,7 @@ def handle(message):
             reply({"sessionId": str(uuid.uuid4()), "configOptions": [MODEL_OPTION]})
         case "session/fork":
             if attempts_file(params.get("sessionId", "") + ".no-fork").exists():
-                send({"id": message["id"], "error": {"code": -32000, "message": "cannot fork this session"}})
+                send({"id": message["id"], "error": {"code": -32603, "message": "cannot fork this session"}})
             else:
                 reply({"sessionId": str(uuid.uuid4()), "configOptions": [MODEL_OPTION]})
         case "session/resume" | "session/load":

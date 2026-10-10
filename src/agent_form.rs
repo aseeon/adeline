@@ -1,18 +1,23 @@
-//! The Add Agent and Edit Agent form: harness, model and effort come from the
-//! harness itself through a background probe.
+//! The Add Agent and Edit Agent form. Model, effort and mode come from the
+//! agent itself through a background probe. Under the harness picker it
+//! installs, updates and logs in supported agents (DD6, DD16).
 use super::*;
-use agents::{AgentDefinition, InstructionsMode, PermissionMode};
+use crate::conversation::{AuthMethod, Category, McpServer};
+use crate::install::{Planned, Target};
+use acp::{ProbeError, Probed};
+use agents::{AgentDefinition, InstructionsMode};
 use gpui_kit::component::{
     Disableable as _, Sizable as _,
     button::{Button, ButtonVariants},
     form::{Field, Form},
     input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    link::Link,
     radio::RadioGroup,
     select::{SearchableVec, Select, SelectEvent, SelectGroup, SelectItem, SelectState},
     spinner::Spinner,
     text::TextView,
 };
-use harness::{CUSTOM, Catalog, Kind, ProbeError, Probed};
+use harness::{CUSTOM, Catalog};
 use std::{cell::RefCell, rc::Rc};
 
 /// A harness in the picker, with its installed dot.
@@ -47,12 +52,13 @@ impl SelectItem for HarnessItem {
     }
 }
 
-/// A model or effort the harness offers: its name, with the ID as secondary text.
+/// A model, effort or mode the agent offers: its name, with the ID or the
+/// description as secondary text.
 #[derive(Clone)]
 struct ChoiceItem {
     value: SharedString,
     name: SharedString,
-    detail: bool,
+    detail: SharedString,
 }
 
 impl SelectItem for ChoiceItem {
@@ -67,7 +73,7 @@ impl SelectItem for ChoiceItem {
             .w_full()
             .gap_2()
             .child(div().truncate().child(self.name.clone()))
-            .when(self.detail && self.value != self.name, |row| {
+            .when(!self.detail.is_empty() && self.detail != self.name, |row| {
                 row.child(
                     div()
                         .flex_1()
@@ -75,7 +81,7 @@ impl SelectItem for ChoiceItem {
                         .truncate()
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
-                        .child(self.value.clone()),
+                        .child(self.detail.clone()),
                 )
             })
     }
@@ -92,7 +98,7 @@ impl SelectItem for ChoiceItem {
 
 type HarnessPicker = SelectState<SearchableVec<HarnessItem>>;
 type ModelPicker = SelectState<SearchableVec<SelectGroup<ChoiceItem>>>;
-type EffortPicker = SelectState<Vec<ChoiceItem>>;
+type ChoicePicker = SelectState<Vec<ChoiceItem>>;
 
 /// A harness icon and name, with a green dot when installed and red when not,
 /// followed by where it was found.
@@ -148,6 +154,17 @@ enum Probing {
     Failed(ProbeError),
 }
 
+/// An install or update in the DD6 area: confirm, run with live output, recheck.
+enum Install {
+    /// Asking for the commands this machine would run.
+    Planning,
+    Confirm(Target, Vec<Planned>),
+    Running(Vec<String>),
+    Failed(Target, Vec<String>, String),
+    /// Unavailable, with the reason (no package manager for Node.js).
+    Unavailable(String),
+}
+
 pub(super) struct AgentForm {
     /// The machine the agent belongs to, whose engine probes it.
     pub(super) machine: String,
@@ -160,17 +177,21 @@ pub(super) struct AgentForm {
     command: Entity<InputState>,
     arguments: Rc<RefCell<Vec<Entity<InputState>>>>,
     model: Entity<ModelPicker>,
-    effort: Entity<EffortPicker>,
+    effort: Entity<ChoicePicker>,
+    mode: Entity<ChoicePicker>,
     model_text: Entity<InputState>,
     effort_text: Entity<InputState>,
     instructions: Entity<TextareaState>,
     instructions_mode: InstructionsMode,
-    permission_mode: PermissionMode,
+    mcp_servers: Vec<McpServer>,
     probing: Probing,
-    /// The probe's model and effort lists; kept while a model change re-probes.
+    /// The probe's lists; kept while a model change re-probes.
     offered: Option<Probed>,
     probe: Option<client::Probe>,
     probe_generation: u64,
+    install: Option<Install>,
+    /// A login or logout running from this form, and what it last said.
+    login: Option<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -211,6 +232,27 @@ fn harness_items(cx: &App) -> SearchableVec<HarnessItem> {
     SearchableVec::new(items)
 }
 
+/// Choices of one of the probe's options, for a picker.
+fn choices(probed: &Probed, category: Category) -> Vec<ChoiceItem> {
+    conversation::option(&probed.options, category)
+        .map(|option| {
+            option
+                .choices()
+                .iter()
+                .map(|choice| ChoiceItem {
+                    value: choice.value.clone().into(),
+                    name: choice.name.clone().into(),
+                    detail: if category == Category::Model {
+                        choice.value.clone().into()
+                    } else {
+                        choice.description.clone().into()
+                    },
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 impl AgentForm {
     pub(super) fn new(
         machine: String,
@@ -230,6 +272,7 @@ impl AgentForm {
             SelectState::new(SearchableVec::new(Vec::new()), None, window, cx).searchable(true)
         });
         let effort = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
+        let mode = cx.new(|cx| SelectState::new(Vec::new(), None, window, cx));
         let model_text = input(&definition.model, "Model ID", window, cx);
         let effort_text = input(&definition.effort, "Effort", window, cx);
         let instructions = cx.new(|cx| {
@@ -252,6 +295,8 @@ impl AgentForm {
                 |this, _, _: &SelectEvent<_>, window, cx| {
                     this.status = None;
                     this.offered = None;
+                    this.install = None;
+                    this.login = None;
                     this.start_probe(window, cx);
                 },
             ),
@@ -261,6 +306,10 @@ impl AgentForm {
                 this.start_probe(window, cx);
             }),
             cx.subscribe(&effort, |this, _, _: &SelectEvent<_>, cx| {
+                this.status = None;
+                cx.notify();
+            }),
+            cx.subscribe(&mode, |this, _, _: &SelectEvent<_>, cx| {
                 this.status = None;
                 cx.notify();
             }),
@@ -305,7 +354,7 @@ impl AgentForm {
             machine,
             id,
             instructions_mode: definition.instructions_mode,
-            permission_mode: definition.permission_mode,
+            mcp_servers: definition.mcp_servers.clone(),
             original: definition,
             external_changed: false,
             status: None,
@@ -315,6 +364,7 @@ impl AgentForm {
             arguments,
             model,
             effort,
+            mode,
             model_text,
             effort_text,
             instructions,
@@ -322,6 +372,8 @@ impl AgentForm {
             offered: None,
             probe: None,
             probe_generation: 0,
+            install: None,
+            login: None,
             _subscriptions: subscriptions,
         };
         form.start_probe(window, cx);
@@ -363,6 +415,15 @@ impl AgentForm {
             .collect()
     }
 
+    /// The agent's display name for sentences: its profile's, else the harness label.
+    fn agent_label(&self, cx: &App) -> String {
+        let id = self.harness_id(cx).unwrap_or_default();
+        profiles::find(&id, &self.identity(cx)).map_or_else(
+            || cx.global::<Catalog>().label(&id, &self.identity(cx)),
+            |profile| profile.name.to_owned(),
+        )
+    }
+
     /// Starts a fresh probe for the selected harness, stopping any earlier one.
     fn start_probe(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.probe = None;
@@ -389,9 +450,10 @@ impl AgentForm {
         };
         if catalog.demo() {
             self.probing = Probing::Failed(ProbeError {
-                message: "Demo mode does not start harnesses. Type the model and effort instead."
+                message: "Demo mode does not start agents. Type the model and effort instead."
                     .into(),
-                login: Vec::new(),
+                auth: Vec::new(),
+                version: false,
             });
             return;
         }
@@ -438,38 +500,36 @@ impl AgentForm {
                 };
                 let model = wanted(self.model.read(cx).selected_value(), &self.original.model);
                 let effort = wanted(self.effort.read(cx).selected_value(), &self.original.effort);
-                let models = harness::setting(&probed.options, Kind::Model);
-                let efforts = harness::setting(&probed.options, Kind::Effort);
+                let mode = wanted(self.mode.read(cx).selected_value(), &self.original.mode);
                 let mut groups: Vec<SelectGroup<ChoiceItem>> = Vec::new();
-                for choice in models.iter().flat_map(|setting| &setting.choices) {
-                    let item = ChoiceItem {
-                        value: choice.value.clone().into(),
-                        name: choice.name.clone().into(),
-                        detail: true,
-                    };
-                    match groups.last_mut() {
-                        Some(group) if group.title.as_ref() == choice.group => {
-                            group.items.push(item);
+                if let Some(option) = conversation::option(&probed.options, Category::Model) {
+                    for (choice, item) in option
+                        .choices()
+                        .iter()
+                        .zip(choices(&probed, Category::Model))
+                    {
+                        match groups.last_mut() {
+                            Some(group) if group.title.as_ref() == choice.group => {
+                                group.items.push(item);
+                            }
+                            _ => groups.push(SelectGroup::new(choice.group.clone()).item(item)),
                         }
-                        _ => groups.push(SelectGroup::new(choice.group.clone()).item(item)),
                     }
                 }
                 self.model.update(cx, |picker, cx| {
                     picker.set_items(SearchableVec::new(groups), window, cx);
                     picker.set_selected_value(&model.into(), window, cx);
                 });
-                let efforts: Vec<_> = efforts
-                    .iter()
-                    .flat_map(|setting| &setting.choices)
-                    .map(|choice| ChoiceItem {
-                        value: choice.value.clone().into(),
-                        name: choice.name.clone().into(),
-                        detail: false,
-                    })
-                    .collect();
+                let efforts = choices(&probed, Category::Effort);
                 self.effort.update(cx, |picker, cx| {
                     picker.set_items(efforts, window, cx);
                     picker.set_selected_value(&effort.into(), window, cx);
+                });
+                // Plan modes are already left out by the agent layer (scope R20).
+                let modes = choices(&probed, Category::Mode);
+                self.mode.update(cx, |picker, cx| {
+                    picker.set_items(modes, window, cx);
+                    picker.set_selected_value(&mode.into(), window, cx);
                 });
                 self.offered = Some(probed.clone());
                 self.probing = Probing::Ready(probed);
@@ -482,32 +542,40 @@ impl AgentForm {
         cx.notify();
     }
 
-    fn setting(&self, kind: Kind) -> Option<harness::Setting> {
+    fn offers(&self, category: Category) -> bool {
         self.offered
             .as_ref()
-            .and_then(|probed| harness::setting(&probed.options, kind))
+            .is_some_and(|probed| conversation::option(&probed.options, category).is_some())
     }
 
-    /// The model or effort to save: the picked offer, the free text after a
-    /// failed probe, or the saved value while nothing is known yet.
-    fn chosen(&self, kind: Kind, cx: &App) -> String {
-        let (picker, text, saved) = match kind {
-            Kind::Model => (
+    /// The value to save: the picked offer, the free text after a failed
+    /// probe, or the saved value while nothing is known yet.
+    fn chosen(&self, category: Category, cx: &App) -> String {
+        let (picker, text, saved) = match category {
+            Category::Model => (
                 self.model.read(cx).selected_value().cloned(),
-                &self.model_text,
+                Some(&self.model_text),
                 &self.original.model,
             ),
-            Kind::Effort => (
+            Category::Effort => (
                 self.effort.read(cx).selected_value().cloned(),
-                &self.effort_text,
+                Some(&self.effort_text),
                 &self.original.effort,
+            ),
+            _ => (
+                self.mode.read(cx).selected_value().cloned(),
+                None,
+                &self.original.mode,
             ),
         };
         if matches!(self.probing, Probing::Failed(_)) {
-            return text.read(cx).value().trim().to_owned();
+            return text.map_or_else(
+                || saved.clone(),
+                |text| text.read(cx).value().trim().to_owned(),
+            );
         }
         if self.offered.is_some() {
-            return if self.setting(kind).is_some() {
+            return if self.offers(category) {
                 picker.map(|value| value.to_string()).unwrap_or_default()
             } else {
                 String::new()
@@ -540,11 +608,12 @@ impl AgentForm {
             } else {
                 Vec::new()
             },
-            model: self.chosen(Kind::Model, cx),
-            effort: self.chosen(Kind::Effort, cx),
-            permission_mode: self.permission_mode,
+            model: self.chosen(Category::Model, cx),
+            effort: self.chosen(Category::Effort, cx),
+            mode: self.chosen(Category::Mode, cx),
             system_instructions: self.instructions.read(cx).value().to_string(),
             instructions_mode: self.instructions_mode,
+            mcp_servers: self.mcp_servers.clone(),
             harness,
             ..Default::default()
         }
@@ -571,18 +640,18 @@ impl AgentForm {
             return Err("This harness is not installed.".into());
         }
         match &self.probing {
-            Probing::Loading => return Err("Wait for the harness options to load.".into()),
+            Probing::Loading => return Err("Wait for the agent's options to load.".into()),
             Probing::Idle if id == CUSTOM => return Err("Command is required.".into()),
             Probing::Failed(_) => return Ok(()),
             _ => {}
         }
-        for (kind, label, saved) in [
-            (Kind::Model, "model", &self.original.model),
-            (Kind::Effort, "effort", &self.original.effort),
+        for (category, label, saved) in [
+            (Category::Model, "model", &self.original.model),
+            (Category::Effort, "effort", &self.original.effort),
         ] {
-            if self.setting(kind).is_some() && self.chosen(kind, cx).is_empty() {
-                return Err(if self.not_offered(kind, cx) {
-                    format!("Saved {label} {saved} is not offered by the harness. Choose another.")
+            if self.offers(category) && self.chosen(category, cx).is_empty() {
+                return Err(if self.not_offered(category, cx) {
+                    format!("Saved {label} {saved} is not offered by the agent. Choose another.")
                 } else {
                     format!("Choose a {label}.")
                 });
@@ -592,16 +661,18 @@ impl AgentForm {
     }
 
     /// The saved value of an unchanged harness is missing from its offers.
-    fn not_offered(&self, kind: Kind, cx: &App) -> bool {
-        let saved = match kind {
-            Kind::Model => &self.original.model,
-            Kind::Effort => &self.original.effort,
+    fn not_offered(&self, category: Category, cx: &App) -> bool {
+        let saved = match category {
+            Category::Model => &self.original.model,
+            Category::Effort => &self.original.effort,
+            _ => &self.original.mode,
         };
         !saved.is_empty()
             && self.harness_id(cx).as_deref() == Some(self.original.harness.as_str())
-            && self
-                .setting(kind)
-                .is_some_and(|setting| !setting.offers(saved))
+            && self.offered.as_ref().is_some_and(|probed| {
+                conversation::option(&probed.options, category)
+                    .is_some_and(|option| !option.offers(saved))
+            })
     }
 
     pub(super) fn dirty(&self, cx: &App) -> bool {
@@ -637,12 +708,13 @@ impl AgentForm {
         self.harness.update(cx, |picker, cx| {
             picker.set_selected_value(&definition.harness.clone().into(), window, cx);
         });
+        for picker in [&self.effort, &self.mode] {
+            picker.update(cx, |picker, cx| picker.set_selected_index(None, window, cx));
+        }
         self.model
             .update(cx, |picker, cx| picker.set_selected_index(None, window, cx));
-        self.effort
-            .update(cx, |picker, cx| picker.set_selected_index(None, window, cx));
-        self.permission_mode = definition.permission_mode;
         self.instructions_mode = definition.instructions_mode;
+        self.mcp_servers.clone_from(&definition.mcp_servers);
         self.original = definition;
         self.external_changed = false;
         self.status = None;
@@ -650,43 +722,414 @@ impl AgentForm {
         self.start_probe(window, cx);
     }
 
+    /// Asks the engine which commands install `target` on its machine (DD6 step 2).
+    fn plan_install(&mut self, target: Target, cx: &mut Context<Self>) {
+        self.install = Some(Install::Planning);
+        let view = cx.entity().downgrade();
+        let request_target = target.clone();
+        client::request(
+            &self.machine,
+            protocol::Command::PlanInstall {
+                target: request_target,
+            },
+            Box::new(move |result, cx| {
+                let _ = view.update(cx, |form, cx| {
+                    form.install = Some(
+                        match result.and_then(|value| {
+                            serde_json::from_value(value).map_err(|e| e.to_string())
+                        }) {
+                            Ok(steps) => Install::Confirm(target, steps),
+                            Err(error) => Install::Unavailable(error),
+                        },
+                    );
+                    cx.notify();
+                });
+            }),
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// Runs the confirmed install with its output streaming in (DD6 step 3).
+    fn run_install(&mut self, target: Target, cx: &mut Context<Self>) {
+        self.install = Some(Install::Running(Vec::new()));
+        let output_view = cx.entity().downgrade();
+        let view = output_view.clone();
+        let failed_target = target.clone();
+        client::request_with_output(
+            &self.machine,
+            protocol::Command::Install { target },
+            Box::new(move |line, cx| {
+                let _ = output_view.update(cx, |form, cx| {
+                    if let Some(Install::Running(lines)) = &mut form.install {
+                        lines.push(line);
+                    }
+                    cx.notify();
+                });
+            }),
+            Box::new(move |result, cx| {
+                let _ = view.update(cx, |form, cx| {
+                    let lines = match form.install.take() {
+                        Some(Install::Running(lines)) => lines,
+                        _ => Vec::new(),
+                    };
+                    // Success: the engine checks again, and the harness list follows.
+                    form.install = result
+                        .err()
+                        .map(|error| Install::Failed(failed_target.clone(), lines, error));
+                    cx.notify();
+                });
+            }),
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// Logs in with an agent's method, or out without one (DD16).
+    fn run_login(
+        &mut self,
+        method: Option<AuthMethod>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(harness) = self.harness_id(cx) else {
+            return;
+        };
+        let custom = harness == CUSTOM;
+        let terminal = method.as_ref().is_some_and(|m| m.terminal.is_some());
+        let logout = method.is_none();
+        self.login = Some(
+            if logout {
+                "Logging out…"
+            } else {
+                "Logging in…"
+            }
+            .into(),
+        );
+        let view = cx.entity().downgrade();
+        let window_handle = window.window_handle();
+        client::request(
+            &self.machine,
+            protocol::Command::Login {
+                harness,
+                command: if custom {
+                    self.command.read(cx).value().to_string()
+                } else {
+                    String::new()
+                },
+                arguments: if custom {
+                    self.arguments(cx)
+                } else {
+                    Vec::new()
+                },
+                method,
+            },
+            Box::new(move |result, cx| {
+                let _ = cx.update_window(window_handle, |_, window, cx| {
+                    let _ = view.update(cx, |form, cx| {
+                        form.login = Some(match result {
+                            Ok(_) if terminal => {
+                                "Finish logging in in the terminal, then check again.".into()
+                            }
+                            Ok(_) if logout => "Logged out".into(),
+                            Ok(_) => "Logged in".into(),
+                            Err(error) => error,
+                        });
+                        if !terminal {
+                            form.start_probe(window, cx);
+                        }
+                    });
+                });
+            }),
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// The area under the harness picker: found on path, the install, update,
+    /// Node.js and logout offers, and an install's live output (DD6, DD16).
     fn harness_status(&self, id: &str, cx: &mut Context<Self>) -> Option<AnyElement> {
-        let catalog = cx.global::<Catalog>();
         if id == CUSTOM {
             return None;
         }
+        if let Some(install) = &self.install {
+            return Some(self.install_area(install, cx));
+        }
+        let catalog = cx.global::<Catalog>();
+        let profile = profiles::find(id, "");
+        let name = profile.map_or_else(|| catalog.label(id, ""), |p| p.name.to_owned());
+        let logout = self
+            .offered
+            .as_ref()
+            .is_some_and(|probed| probed.features.logout);
+        let login_note = self.login.clone().map(|note| muted(note, cx));
         match catalog.is_installed(id) {
-            Some(true) => catalog.installed.get(id).map(|path| {
-                row()
-                    .gap_2()
-                    .min_w_0()
-                    .child(installed_dot(true))
-                    .child(found_on(&path.display().to_string(), cx))
-                    .into_any_element()
-            }),
-            None => Some(muted("Checking whether this harness is installed…", cx)),
+            Some(true) => {
+                let update = catalog
+                    .update(id)
+                    .map(|(installed, latest)| (installed.to_owned(), latest.to_owned()));
+                let path = catalog
+                    .installed
+                    .get(id)
+                    .map(|path| path.display().to_string());
+                Some(
+                    col()
+                        .gap_2()
+                        .child(
+                            row()
+                                .gap_2()
+                                .min_w_0()
+                                .child(installed_dot(true))
+                                .children(path.map(|path| found_on(&path, cx)))
+                                .when(logout, |row| {
+                                    row.child(
+                                        Button::new("agent-logout")
+                                            .ghost()
+                                            .xsmall()
+                                            .label("Log out")
+                                            .on_click(cx.listener(|this, _, window, cx| {
+                                                this.run_login(None, window, cx);
+                                            })),
+                                    )
+                                }),
+                        )
+                        .when_some(
+                            update.filter(|_| profile.is_some()),
+                            |column, (installed, latest)| {
+                                let target = Target::Agent {
+                                    harness: id.to_owned(),
+                                };
+                                column.child(
+                                    row()
+                                        .gap_2()
+                                        .text_sm()
+                                        .child(format!(
+                                            "Installed {installed}. Version {latest} is available."
+                                        ))
+                                        .child(
+                                            Button::new("agent-update")
+                                                .small()
+                                                .label("Update…")
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.plan_install(target.clone(), cx);
+                                                })),
+                                        ),
+                                )
+                            },
+                        )
+                        .children(login_note)
+                        .into_any_element(),
+                )
+            }
+            None => Some(muted("Checking whether this agent is installed…", cx)),
             Some(false) => {
                 let website = catalog
                     .get(id)
                     .map(|harness| harness.website.clone())
                     .unwrap_or_default();
-                Some(
+                let node_missing =
+                    profile.is_some_and(|p| p.install.needs_node) && catalog.node.npm.is_none();
+                let mut status = col().gap_2().child(
                     row()
                         .gap_2()
                         .text_sm()
                         .child(installed_dot(false))
                         .child("Not installed")
-                        .when(!website.is_empty(), |row| {
+                        .when(profile.is_some() && !node_missing, |row| {
+                            let target = Target::Agent {
+                                harness: id.to_owned(),
+                            };
                             row.child(
-                                Button::new("agent-harness-website")
-                                    .link()
+                                Button::new("agent-install")
                                     .small()
-                                    .label(website.clone())
-                                    .on_click(move |_, _, cx| cx.open_url(&website)),
+                                    .label("Install…")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.plan_install(target.clone(), cx);
+                                    })),
                             )
                         })
-                        .into_any_element(),
+                        .when(!website.is_empty(), |row| {
+                            row.child(
+                                Link::new("agent-harness-website")
+                                    .href(website.clone())
+                                    .child(website.clone()),
+                            )
+                        }),
+                );
+                if node_missing {
+                    status = status.child(
+                        row()
+                            .gap_2()
+                            .text_sm()
+                            .child(format!("{name} needs Node.js."))
+                            .when(catalog.node.manager.is_some(), |row| {
+                                row.child(
+                                    Button::new("node-install")
+                                        .small()
+                                        .label("Install Node.js…")
+                                        .on_click(cx.listener(|this, _, _, cx| {
+                                            this.plan_install(Target::Node, cx);
+                                        })),
+                                )
+                            }),
+                    );
+                    if catalog.node.manager.is_none() {
+                        status = status.child(
+                            row()
+                                .gap_2()
+                                .text_sm()
+                                .text_color(cx.theme().muted_foreground)
+                                .child(install::node_missing())
+                                .child(
+                                    Link::new("nodejs-link")
+                                        .href("https://nodejs.org")
+                                        .child("nodejs.org"),
+                                ),
+                        );
+                    }
+                }
+                Some(status.into_any_element())
+            }
+        }
+    }
+
+    fn install_area(&self, install: &Install, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme();
+        let output = |lines: &[String]| {
+            div()
+                .id("install-output")
+                .w_full()
+                .max_h(rems(14.))
+                .overflow_y_scroll()
+                .p_2()
+                .rounded(theme.radius)
+                .bg(theme.muted)
+                .font_family(theme.mono_font_family.clone())
+                .text_xs()
+                .child(lines.join("\n"))
+        };
+        let machine = (self.machine != machines::LOCAL).then(|| machines::name(&self.machine));
+        match install {
+            Install::Planning => row()
+                .gap_2()
+                .text_sm()
+                .child(Spinner::new().small())
+                .child("Checking what to run…")
+                .into_any_element(),
+            Install::Unavailable(reason) => col()
+                .gap_2()
+                .text_sm()
+                .child(div().text_color(theme.danger).child(reason.clone()))
+                .when(
+                    reason.contains("Node.js") && reason.contains("nodejs.org"),
+                    |column| {
+                        column.child(
+                            Link::new("nodejs-link")
+                                .href("https://nodejs.org")
+                                .child("nodejs.org"),
+                        )
+                    },
                 )
+                .child(
+                    Button::new("install-close")
+                        .small()
+                        .ghost()
+                        .label("Close")
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.install = None;
+                            cx.notify();
+                        })),
+                )
+                .into_any_element(),
+            Install::Confirm(target, steps) => {
+                let target = target.clone();
+                col()
+                    .gap_2()
+                    .p_3()
+                    .rounded_md()
+                    .border_1()
+                    .border_color(theme.border)
+                    .child(div().text_sm().child(match machine {
+                        Some(machine) => format!("Adeline will run this on {machine}:"),
+                        None => "Adeline will run this:".to_owned(),
+                    }))
+                    .child(output(
+                        &steps.iter().map(Planned::display).collect::<Vec<_>>(),
+                    ))
+                    .child(
+                        row()
+                            .gap_2()
+                            .justify_end()
+                            .child(
+                                Button::new("install-cancel")
+                                    .small()
+                                    .label("Cancel")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.install = None;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("install-confirm")
+                                    .small()
+                                    .primary()
+                                    .label(if matches!(target, Target::Node) {
+                                        "Install Node.js"
+                                    } else {
+                                        "Install"
+                                    })
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.run_install(target.clone(), cx);
+                                    })),
+                            ),
+                    )
+                    .into_any_element()
+            }
+            Install::Running(lines) => col()
+                .gap_2()
+                .child(
+                    row()
+                        .gap_2()
+                        .text_sm()
+                        .child(Spinner::new().small())
+                        .child("Installing"),
+                )
+                .child(output(lines))
+                .into_any_element(),
+            Install::Failed(target, lines, error) => {
+                let target = target.clone();
+                col()
+                    .gap_2()
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.danger)
+                            .child(format!("The install failed: {error}")),
+                    )
+                    .child(output(lines))
+                    .child(
+                        row()
+                            .gap_2()
+                            .child(
+                                Button::new("install-retry")
+                                    .small()
+                                    .label("Retry")
+                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                        this.run_install(target.clone(), cx);
+                                    })),
+                            )
+                            .child(
+                                Button::new("install-dismiss")
+                                    .small()
+                                    .ghost()
+                                    .label("Close")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.install = None;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .into_any_element()
             }
         }
     }
@@ -694,10 +1137,7 @@ impl AgentForm {
     fn probe_status(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
         match &self.probing {
             Probing::Loading => {
-                let name = self.harness_id(cx).map_or_else(
-                    || "the harness".to_owned(),
-                    |id| cx.global::<Catalog>().label(&id, &self.identity(cx)),
-                );
+                let name = self.agent_label(cx);
                 Some(
                     row()
                         .w_full()
@@ -729,16 +1169,30 @@ impl AgentForm {
                             .text_color(cx.theme().danger)
                             .child(error.message.clone()),
                     );
-                if !error.login.is_empty() {
-                    column = column.child(div().text_sm().child(
-                        "Sign in through the harness outside Adeline with one of its login methods, then retry:",
-                    ));
-                    for method in &error.login {
-                        column = column.child(div().text_sm().pl_3().child(format!("• {method}")));
+                if !error.auth.is_empty() {
+                    let mut buttons = row().flex_wrap().gap_2();
+                    for method in &error.auth {
+                        let label = if method.terminal.is_some() {
+                            format!("{} in terminal…", method.name)
+                        } else {
+                            method.name.clone()
+                        };
+                        let chosen = method.clone();
+                        buttons = buttons.child(
+                            Button::new(SharedString::from(format!("probe-login-{}", method.id)))
+                                .small()
+                                .label(label)
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.run_login(Some(chosen.clone()), window, cx);
+                                })),
+                        );
                     }
+                    column = column
+                        .child(buttons)
+                        .children(self.login.clone().map(|note| muted(note, cx)));
                 }
-                Some(
-                    column
+                if !error.version {
+                    column = column
                         .child(muted(
                             "You can also type the model and effort below and save.",
                             cx,
@@ -750,9 +1204,9 @@ impl AgentForm {
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.start_probe(window, cx);
                                 })),
-                        )
-                        .into_any_element(),
-                )
+                        );
+                }
+                Some(column.into_any_element())
             }
             Probing::Idle | Probing::Ready(_) => None,
         }
@@ -839,6 +1293,63 @@ impl AgentForm {
             .on_click(move |_, window, cx| window.focus(&focus, cx))
             .into_any_element()
     }
+
+    /// "Additional MCP servers": this agent's own, added to the global ones.
+    fn mcp_field(&self, cx: &mut Context<Self>) -> AnyElement {
+        let view = cx.entity().downgrade();
+        let edit_view = view.clone();
+        let edit: Rc<dyn Fn(Option<usize>, &mut Window, &mut App)> =
+            Rc::new(move |ix, window, cx| {
+                let Some(form) = edit_view.upgrade() else {
+                    return;
+                };
+                let server = ix.and_then(|ix| form.read(cx).mcp_servers.get(ix).cloned());
+                let saving = edit_view.clone();
+                mcp_ui::open_editor(
+                    server.as_ref(),
+                    Rc::new(move |server, _, cx| {
+                        saving
+                            .update(cx, |form, cx| {
+                                match ix {
+                                    Some(ix) if ix < form.mcp_servers.len() => {
+                                        form.mcp_servers[ix] = server;
+                                    }
+                                    _ => form.mcp_servers.push(server),
+                                }
+                                form.status = None;
+                                cx.notify();
+                            })
+                            .map_err(|error| error.to_string())
+                    }),
+                    window,
+                    cx,
+                );
+            });
+        let remove: Rc<dyn Fn(usize, &mut Window, &mut App)> = Rc::new(move |ix, _, cx| {
+            let _ = view.update(cx, |form, cx| {
+                if ix < form.mcp_servers.len() {
+                    form.mcp_servers.remove(ix);
+                }
+                cx.notify();
+            });
+        });
+        Form::new()
+            .child(
+                Field::new()
+                    .label("Additional MCP servers")
+                    .description(
+                        "Sent to this agent at session start, after the MCP servers in Settings.",
+                    )
+                    .child(mcp_ui::server_list(
+                        "agent-mcp",
+                        &self.mcp_servers,
+                        &edit,
+                        &remove,
+                        cx,
+                    )),
+            )
+            .into_any_element()
+    }
 }
 
 fn muted(text: impl Into<SharedString>, cx: &App) -> AnyElement {
@@ -904,10 +1415,10 @@ impl Render for AgentForm {
                         .child(Input::new(&self.effort_text).aria_label("Effort")),
                 );
         } else if usable && self.offered.is_some() {
-            if self.setting(Kind::Model).is_some() {
+            if self.offers(Category::Model) {
                 let marker = self
-                    .not_offered(Kind::Model, cx)
-                    .then(|| format!("{} — not offered by harness", self.original.model));
+                    .not_offered(Category::Model, cx)
+                    .then(|| format!("{} — not offered by the agent", self.original.model));
                 form = form.child(
                     Field::new()
                         .label("Model")
@@ -920,10 +1431,10 @@ impl Render for AgentForm {
                         .when_some(marker, |field, marker| field.description(marker)),
                 );
             }
-            if self.setting(Kind::Effort).is_some() {
+            if self.offers(Category::Effort) {
                 let marker = self
-                    .not_offered(Kind::Effort, cx)
-                    .then(|| format!("{} — not offered by harness", self.original.effort));
+                    .not_offered(Category::Effort, cx)
+                    .then(|| format!("{} — not offered by the agent", self.original.effort));
                 form = form.child(
                     Field::new()
                         .label("Effort")
@@ -936,58 +1447,55 @@ impl Render for AgentForm {
                         .when_some(marker, |field, marker| field.description(marker)),
                 );
             }
-        }
-        let permission = PermissionMode::ALL
-            .iter()
-            .position(|mode| *mode == self.permission_mode)
-            .unwrap_or(0);
-        form = form.child(
-            Field::new().label("Default permission mode").child(
-                RadioGroup::horizontal("agent-permission")
-                    .children(["Ask", "Allow reads", "Allow everything"])
-                    .selected_index(Some(permission))
-                    .on_change(cx.listener(|this, index: &usize, _, cx| {
-                        this.permission_mode = PermissionMode::ALL[*index];
-                        cx.notify();
-                    })),
-            ),
-        );
-        body = body.child(form);
-        if let Some(id) = id.as_deref() {
-            if harness::supports_instructions(id, &self.identity(cx)) {
-                let mode = match self.instructions_mode {
-                    InstructionsMode::Append => 0,
-                    InstructionsMode::Overwrite => 1,
-                };
-                body = body.child(
-                    Form::new()
+            // Absent when the agent offers no modes (scope R19).
+            if self.offers(Category::Mode) {
+                form = form.child(
+                    Field::new()
+                        .label("Default mode")
+                        .description("New chats start in this mode. The agent's modes decide when it asks for permission.")
                         .child(
-                            Field::new()
-                                .label("System instructions (optional, Markdown)")
-                                .child(self.instructions_field(window, cx)),
-                        )
-                        .child(
-                            Field::new().label("Instructions").child(
-                                RadioGroup::horizontal("agent-instructions-mode")
-                                    .children(["Append to the harness's guidance", "Overwrite it"])
-                                    .selected_index(Some(mode))
-                                    .on_change(cx.listener(|this, index: &usize, _, cx| {
-                                        this.instructions_mode = if *index == 0 {
-                                            InstructionsMode::Append
-                                        } else {
-                                            InstructionsMode::Overwrite
-                                        };
-                                        cx.notify();
-                                    })),
-                            ),
+                            Select::new(&self.mode)
+                                .placeholder("The agent's default")
+                                .accessibility_label("Default mode"),
                         ),
                 );
-            } else if usable {
-                body = body.child(muted(
-                    "This harness does not accept system instructions from Adeline.",
-                    cx,
-                ));
             }
+        }
+        body = body.child(form);
+        if usable || custom {
+            body = body.child(self.mcp_field(cx));
+        }
+        // The field is absent for agents without a mechanism (scope R29).
+        if let Some(id) = id.as_deref()
+            && profiles::instructions(id, &self.identity(cx)) != profiles::Instructions::None
+        {
+            let mode = match self.instructions_mode {
+                InstructionsMode::Append => 0,
+                InstructionsMode::Overwrite => 1,
+            };
+            body = body.child(
+                Form::new()
+                    .child(
+                        Field::new()
+                            .label("System instructions (optional, Markdown)")
+                            .child(self.instructions_field(window, cx)),
+                    )
+                    .child(
+                        Field::new().label("Instructions").child(
+                            RadioGroup::horizontal("agent-instructions-mode")
+                                .children(["Append to the agent's guidance", "Overwrite it"])
+                                .selected_index(Some(mode))
+                                .on_change(cx.listener(|this, index: &usize, _, cx| {
+                                    this.instructions_mode = if *index == 0 {
+                                        InstructionsMode::Append
+                                    } else {
+                                        InstructionsMode::Overwrite
+                                    };
+                                    cx.notify();
+                                })),
+                        ),
+                    ),
+            );
         }
         body
     }

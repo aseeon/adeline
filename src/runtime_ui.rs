@@ -88,20 +88,10 @@ impl Adeline {
             .and_then(|live| live.execution.clone())
     }
 
-    /// The open chat's permission mode, or the one a new chat will start with.
-    pub(super) fn current_permission_mode(&self) -> Option<agents::PermissionMode> {
-        if self.selected.is_none() {
-            return self.new_chat_permission.or_else(|| {
-                self.selected_definition()
-                    .map(|agent| agent.permission_mode)
-            });
-        }
-        if self.demo_mode {
-            return Some(agents::PermissionMode::ALL[self.permission]);
-        }
+    /// What the engine reports about the open chat.
+    pub(super) fn current_live(&self) -> Option<&Live> {
         self.current_id()
             .and_then(|id| self.runtime.conversations.get(&id))
-            .and_then(|live| live.permission_mode)
     }
 
     pub(super) fn conversation_processing(&self) -> bool {
@@ -148,12 +138,27 @@ impl Adeline {
         cx.notify();
     }
 
-    pub(super) fn send_real(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Sends the composer's message and files. During a turn it is queued,
+    /// or with `now` delivered at once (scope R30).
+    pub(super) fn send_real(&mut self, now: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !self.has_open_project() {
             return;
         }
         let prompt = self.composer.read(cx).value().trim().to_owned();
-        if prompt.is_empty() {
+        let attachments = self.attachments.clone();
+        if prompt.is_empty() && attachments.is_empty() {
+            // Send now with an empty composer sends the queue's first message.
+            if now
+                && let Some(id) = self.current_id()
+                && let Some(first) = self
+                    .runtime
+                    .conversations
+                    .get(&id)
+                    .and_then(|l| l.queued.first())
+            {
+                let queued = first.id;
+                self.command(Command::SendQueuedNow { id, queued }, cx);
+            }
             return;
         }
         let conversation_id = self.current_id();
@@ -177,50 +182,228 @@ impl Adeline {
             project_id,
             conversation_id,
             agent_id,
-            permission_mode: if new { self.new_chat_permission } else { None },
             prompt: prompt.clone(),
+            attachments,
+            now,
         };
         self.request(command, cx, move |app, result, window, cx| match result {
             Ok(id) => {
-                if new {
-                    app.new_chat_permission = None;
-                    if app.selected.is_none() && app.workspace().key() == key {
-                        app.selected = app
-                            .workspace()
-                            .threads
-                            .iter()
-                            .position(|thread| Some(thread.id.as_str()) == id.as_str());
-                    }
+                if new && app.selected.is_none() && app.workspace().key() == key {
+                    app.selected = app
+                        .workspace()
+                        .threads
+                        .iter()
+                        .position(|thread| Some(thread.id.as_str()) == id.as_str());
                 }
                 // The composer keeps anything typed since sending.
                 if app.composer.read(cx).value().trim() == prompt {
                     app.composer
                         .update(cx, |state, cx| state.set_value("", window, cx));
                 }
+                app.attachments.clear();
+                app.attachment_error = None;
                 app.refresh_runtime_views(cx);
             }
-            Err(error) => app.notify_toast(&error, cx),
+            Err(error) => {
+                app.attachment_error =
+                    Some(error.clone()).filter(|e| e.contains("attach") || e.contains("images"));
+                app.notify_toast(&error, cx);
+                app.composer_region.update(cx, |_, cx| cx.notify());
+            }
         });
     }
 
     /// The open conversation's offered options, live or from its last session.
-    pub(super) fn conversation_options(&self) -> Vec<Value> {
+    pub(super) fn conversation_options(&self) -> Vec<conversation::SessionOption> {
         self.current_id()
             .and_then(|id| self.runtime.conversations.get(&id))
             .map(|live| live.options.clone())
             .unwrap_or_default()
     }
 
-    /// Switches the open conversation's model or effort. It never changes the agent.
-    pub(super) fn switch_setting(
+    /// Sets a model, effort, mode or other option for the open conversation
+    /// only. It never changes the agent definition (scope R17).
+    pub(super) fn set_option(
         &mut self,
-        kind: harness::Kind,
+        category: conversation::Category,
+        option: String,
         value: String,
         cx: &mut Context<Self>,
     ) {
+        let Some(id) = self.current_id() else {
+            return;
+        };
+        if self.demo_mode {
+            if let Some(live) = self.runtime.conversations.get_mut(&id) {
+                if let Some(found) = live.options.iter_mut().find(|o| o.id == option)
+                    && let conversation::OptionKind::Select { current, .. } = &mut found.kind
+                {
+                    current.clone_from(&value);
+                }
+                if let Some(found) = live.options.iter_mut().find(|o| o.id == option)
+                    && let conversation::OptionKind::Boolean { current } = &mut found.kind
+                {
+                    *current = value == "true";
+                }
+            }
+            self.refresh_runtime_views(cx);
+            return;
+        }
+        self.command(
+            Command::SetOption {
+                id,
+                category,
+                option,
+                value,
+            },
+            cx,
+        );
+    }
+
+    /// Takes a queued message out; with `edit`, back into the composer (scope R31).
+    pub(super) fn take_queued(
+        &mut self,
+        queued: u64,
+        edit: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(id) = self.current_id() else {
+            return;
+        };
+        if self.demo_mode {
+            let live = self.runtime.conversations.entry(id).or_default();
+            if let Some(index) = live.queued.iter().position(|q| q.id == queued) {
+                let item = live.queued.remove(index);
+                if edit {
+                    self.composer
+                        .update(cx, |state, cx| state.set_value(item.text, window, cx));
+                    window.focus(&self.composer.focus_handle(cx), cx);
+                }
+            }
+            self.refresh_runtime_views(cx);
+            return;
+        }
+        self.request(
+            Command::TakeQueued { id, queued },
+            cx,
+            move |app, result, window, cx| match result {
+                Ok(Value::String(text)) if edit => {
+                    app.composer
+                        .update(cx, |state, cx| state.set_value(text, window, cx));
+                    window.focus(&app.composer.focus_handle(cx), cx);
+                }
+                Ok(_) => {}
+                Err(error) => app.notify_toast(&error, cx),
+            },
+        );
+    }
+
+    pub(super) fn send_queued_now(&mut self, queued: u64, cx: &mut Context<Self>) {
         if let Some(id) = self.current_id() {
-            let effort = kind == harness::Kind::Effort;
-            self.command(Command::SwitchSetting { id, effort, value }, cx);
+            self.command(Command::SendQueuedNow { id, queued }, cx);
+        }
+    }
+
+    /// Logs the open chat's agent in with one of its methods (scope R47).
+    pub(super) fn login(&mut self, method: &str, cx: &mut Context<Self>) {
+        let Some(id) = self.current_id() else {
+            return;
+        };
+        let Some(live) = self.runtime.conversations.get(&id) else {
+            return;
+        };
+        let Some(method) = live.features.auth.iter().find(|m| m.id == method).cloned() else {
+            return;
+        };
+        let Some(execution) = live.execution.clone() else {
+            return;
+        };
+        let name = execution.name.clone();
+        let terminal = method.terminal.is_some();
+        self.request(
+            Command::Login {
+                harness: execution.harness,
+                command: execution.command,
+                arguments: execution.arguments,
+                method: Some(method),
+            },
+            cx,
+            move |app, result, _, cx| {
+                match result {
+                    Ok(_) if terminal => {
+                        app.notify_toast("Finish logging in in the terminal, then retry.", cx);
+                    }
+                    Ok(_) => {
+                        app.logged_in.insert(id.clone());
+                        app.notify_toast(&format!("Logged in to {name}."), cx);
+                    }
+                    Err(error) => app.notify_toast(&error, cx),
+                }
+                app.refresh_runtime_views(cx);
+            },
+        );
+    }
+
+    /// Starts or stops receiving the open chat's ACP traffic for the traffic tab.
+    pub(super) fn watch_traffic(&mut self, cx: &mut Context<Self>) {
+        let watched = self
+            .current_id()
+            .filter(|_| self.traffic_tab && self.side_panel_is_open());
+        self.traffic.clear();
+        if self.demo_mode {
+            if let Some(id) = &watched {
+                self.traffic = demo_traffic(id);
+            }
+            return;
+        }
+        self.request(
+            Command::WatchTraffic {
+                id: watched.clone(),
+            },
+            cx,
+            move |app, result, _, cx| {
+                if app.current_id() == watched
+                    && let Ok(Value::Array(entries)) = result
+                {
+                    app.traffic = entries
+                        .into_iter()
+                        .filter_map(|entry| serde_json::from_value(entry).ok())
+                        .collect();
+                    app.traffic_scroll.scroll_to_bottom();
+                    app.control_pane.update(cx, |_, cx| cx.notify());
+                }
+            },
+        );
+    }
+
+    /// A line of the watched chat's traffic arrived.
+    pub(super) fn traffic_arrived(
+        &mut self,
+        id: &str,
+        entry: conversation::TrafficEntry,
+        cx: &mut Context<Self>,
+    ) {
+        if self.current_id().as_deref() != Some(id) {
+            return;
+        }
+        // Following the end unless the reader scrolled up.
+        let offset = self.traffic_scroll.offset().y;
+        let bottom = self.traffic_scroll.max_offset().y;
+        let following = -offset >= bottom - px(8.);
+        self.traffic.push(entry);
+        if self.traffic.len() > 5000 {
+            self.traffic.drain(..1000);
+        }
+        if following {
+            self.traffic_scroll.scroll_to_bottom();
+        }
+        self.control_pane.update(cx, |_, cx| cx.notify());
+    }
+
+    pub(super) fn restart_agent(&mut self, cx: &mut Context<Self>) {
+        if let Some(id) = self.current_id() {
+            self.command(Command::Restart { id }, cx);
         }
     }
 
@@ -486,13 +669,6 @@ impl Adeline {
     pub(super) fn replace_session(&mut self, cx: &mut Context<Self>) {
         if let Some(id) = self.current_id() {
             self.command(Command::ReplaceSession { id }, cx);
-        }
-    }
-
-    pub(super) fn set_conversation_permission(&mut self, mode: usize, cx: &mut Context<Self>) {
-        if let Some(id) = self.current_id() {
-            let mode = agents::PermissionMode::ALL[mode];
-            self.command(Command::SetPermissionMode { id, mode }, cx);
         }
     }
 
@@ -796,9 +972,17 @@ impl Adeline {
             Delta::Notice { message } => {
                 self.notify_toast(&self.about_machine(machine, &message), cx);
             }
+            // A login page the agent wants open, in this computer's browser.
+            Delta::OpenUrl { url } => {
+                if url.starts_with("https://") || url.starts_with("http://") {
+                    cx.open_url(&url);
+                }
+            }
             delta => {
                 let id = match &delta {
-                    Delta::Live { id, .. } | Delta::Text { id, .. } => Some(id.clone()),
+                    Delta::Live { id, .. } | Delta::Text { id, .. } | Delta::Thought { id, .. } => {
+                        Some(id.clone())
+                    }
                     _ => None,
                 };
                 protocol::apply(
@@ -1103,137 +1287,5 @@ impl Adeline {
                 .children(button)
                 .into_any_element(),
         )
-    }
-
-    pub(super) fn runtime_footer(&self, index: usize, cx: &Context<Self>) -> AnyElement {
-        let thread = &self.workspace().threads[index];
-        let mut content = col().w_full().gap_3().pb_4();
-        let processing = self
-            .runtime
-            .conversations
-            .get(&thread.id)
-            .is_some_and(|live| live.processing);
-        // The running turn's steps show live; finished turns fold them into
-        // the summary under their reply.
-        let turn = thread.messages.iter().rposition(|m| m.role == "user");
-        if processing
-            && let Some(turn) = turn
-            && !config::current().modes.chats.hide_tool_calls
-        {
-            let steps: Vec<_> = thread.turn_tools(turn).collect();
-            if !steps.is_empty() {
-                content = content.child(chat_render::tool_steps(steps, cx));
-            }
-        }
-        for activity in thread.activity.iter().filter(|a| a.kind == "error") {
-            content = content.child(text(activity.title.clone(), 13., theme::foreground()));
-        }
-        if let Some(live) = self.runtime.conversations.get(&thread.id) {
-            if live.processing && live.storage_failed {
-                content = content.child(text(
-                    "Stopping the turn before storage can be retried…",
-                    13.,
-                    theme::muted_foreground(),
-                ));
-            } else if live.processing && live.permission.is_empty() && live.assistant.is_none() {
-                content = content.child(
-                    chat_render::agent_header(
-                        self.agent_icon(&thread.provider, cx),
-                        thread.provider.clone(),
-                        cx,
-                    )
-                    .child(chat_render::thinking_label(live.progress.clone(), cx)),
-                );
-            }
-            if let Some(request) = live.permission.first() {
-                let mut options = row().flex_wrap().gap_2();
-                for option in &request.options {
-                    if option.kind == "reject_always" {
-                        continue;
-                    }
-                    let label = match option.kind.as_str() {
-                        "allow_once" => format!("Allow once: {}", option.name),
-                        "allow_always" => {
-                            format!("{} (harness remembers this choice)", option.name)
-                        }
-                        "reject_once" => format!("Deny once: {}", option.name),
-                        _ => continue,
-                    };
-                    let action = Action::PermissionResponse(option.option_id.clone());
-                    let button = Button::new(SharedString::from(format!(
-                        "permission-{}",
-                        option.option_id
-                    )))
-                    .small()
-                    .label(label)
-                    .on_click(cx.listener(move |app, _, window, cx| {
-                        app.act(action.clone(), window, cx);
-                    }));
-                    options = options.child(if option.kind == "allow_once" {
-                        button.primary()
-                    } else {
-                        button.outline()
-                    });
-                }
-                content = content.child(
-                    col()
-                        .id("permission-request")
-                        .role(Role::Group)
-                        .aria_label("Permission request")
-                        .w_full()
-                        .gap_3()
-                        .p_4()
-                        .bg(cx.theme().group_box)
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .rounded_lg()
-                        .child(
-                            div()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .child(request.title.clone()),
-                        )
-                        .child(options),
-                );
-            }
-            if let Some(error) = &live.error {
-                content = content.child(text(error.clone(), 13., theme::foreground()));
-            }
-            if live.storage_failed {
-                content = content.child(self.button(
-                    "retry-storage",
-                    "Retry storage",
-                    Action::RetryStorage,
-                    cx,
-                ));
-            } else if live.replacement && !live.shutting_down {
-                content = content.child(self.button(
-                    "replace-session",
-                    "Start new session with saved context",
-                    Action::ReplaceSession,
-                    cx,
-                ));
-            } else if live.error.is_some()
-                && !live.shutting_down
-                && !live.processing
-                && !live.recovering_storage
-                && !live.last_prompt.is_empty()
-                && !matches!(thread.status.as_str(), "completed" | "archived")
-            {
-                content =
-                    content.child(self.button("retry-prompt", "Retry", Action::RetryPrompt, cx));
-            }
-            if live.shutting_down {
-                content = content.child(text(
-                    "Waiting for the agent to stop…",
-                    13.,
-                    theme::muted_foreground(),
-                ));
-            }
-            if live.shutdown_stuck {
-                content =
-                    content.child(self.button("force-stop", "Force Stop", Action::ForceStop, cx));
-            }
-        }
-        content.into_any_element()
     }
 }
