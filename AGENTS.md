@@ -33,3 +33,5 @@ Bump `PROTOCOL` in `src/protocol.rs` in the commit that changes the shape of any
 # UI testing
 
 On Windows, test UI by extending `scripts/engine-check/ui_check.py`, which drives the real window through UI Automation (pywinauto), `--demo` included. See `scripts/engine-check/README.md`. Fall back to computer use only for what UI Automation cannot reach. The `scripts/engine-check/` suite is Windows only, so on macOS use computer use for UI checks.
+
+Navigate the app with keyboard shortcuts (listed in `docs/shortcuts.md`) wherever one exists, in UI Automation and computer use alike, rather than moving the pointer and clicking. Each time a test has to click because no shortcut reaches a control, tell the user which shortcut is missing, then add it.
