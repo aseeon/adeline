@@ -3,7 +3,7 @@
 //! remote ones over SSH (`remote.rs`). Each connection's changes arrive in
 //! order on its own channel; replies run their callbacks in that order.
 use crate::{
-    Adeline, harness, ipc,
+    Adeline, askpass, harness, ipc,
     machines::{self, LOCAL},
     protocol::{
         ClientMessage, Command, Delta, EngineMessage, EngineSettings, PROTOCOL, Resume, Snapshot,
@@ -166,7 +166,7 @@ struct Secret {
 pub struct Connections {
     list: Vec<Connection>,
     owner: Option<WeakEntity<Adeline>>,
-    prompts: VecDeque<remote::Prompt>,
+    prompts: VecDeque<askpass::Prompt>,
     askpass: String,
     secrets: HashMap<String, Vec<Secret>>,
     // The machine whose harnesses are the `harness::Catalog` global.
@@ -281,7 +281,7 @@ pub fn init(demo: bool, initial: Option<Initial>, snapshot: Option<&Snapshot>, c
         return;
     }
     let (prompts, inbox) = async_channel::unbounded();
-    match runtime().block_on(async { remote::serve_askpass(prompts) }) {
+    match runtime().block_on(async { askpass::serve_askpass(prompts) }) {
         Ok(address) => connections.askpass = address,
         Err(error) => crate::log::log(&error),
     }
@@ -1011,7 +1011,7 @@ pub fn focus(machine: &str, cx: &mut App) {
     }
 }
 
-fn on_prompt(prompt: remote::Prompt, cx: &mut App) {
+fn on_prompt(prompt: askpass::Prompt, cx: &mut App) {
     let connections = cx.global_mut::<Connections>();
     // An earlier session of this connect already had this answer.
     if !prompt.host_key()

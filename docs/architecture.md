@@ -23,6 +23,8 @@ They talk over a same-user named pipe on Windows and a Unix socket elsewhere (`i
 5. `acp.rs` runs one ACP stdio agent process per conversation. Its events come back to `Engine::driver_event`.
 6. The engine broadcasts a `protocol::Delta`, and `Adeline::apply_delta` (`runtime_ui.rs`) updates the UI's model (`data.rs`).
 
+`engine.rs` keeps dispatch, state and broadcasting. Turns live in `engine/turns.rs`, agent events in `engine/events.rs`, projects, agents and settings in `engine/projects.rs`, and the `adeline engine` CLI in `engine/cli.rs`.
+
 ## Agents and ACP
 
 `acp.rs` speaks ACP through the official `agent-client-protocol` SDK, which owns JSON-RPC framing, request IDs and the typed schema. Its `Worker` is a state machine fed by `Input`s (SDK requests and notifications, replies, process exit, `Command`s from the engine) and is unit-tested through a fake `Link` in `acp_tests.rs`. It translates the SDK's types into Adeline's own model in `conversation.rs` (session options by category, TODO steps, tool calls, permission options, features, attachments, MCP servers, traffic entries); nothing outside `acp.rs` sees an SDK type. Every line in and out, and the agent's stderr, is reported as a `TrafficEntry`, which the engine keeps in the transcript and streams to clients watching the traffic tab.
@@ -42,7 +44,7 @@ One client shows the projects of every checked machine (`machines.rs`: saved rem
 3. `adeline bridge` joins the SSH session to that machine's engine pipe or socket, starting the engine like a local client would. No network port opens anywhere.
 4. The client checks the welcome: the saved engine identity, and `PROTOCOL`. The Adeline version doesn't matter, so a 0.1.7 client uses a 0.1.6 engine with the same protocol. A newer protocol asks for a local update. An older one is replaced (step 2's install, when the installed Adeline is older) and its engine restarted, after the user consents.
 
-`ssh` runs this executable as `SSH_ASKPASS` with `ADELINE_ASKPASS` set (`main` checks it first), and the helper hands each prompt to the UI over an owner-only pipe or socket. A password typed during one connect answers the same prompt in that connect's later `ssh` runs and is then forgotten.
+`ssh` runs this executable as `SSH_ASKPASS` with `ADELINE_ASKPASS` set (`main` checks it first), and the helper in `askpass.rs` hands each prompt to the UI over an owner-only pipe or socket. A password typed during one connect answers the same prompt in that connect's later `ssh` runs and is then forgotten.
 
 The engine numbers every delta it broadcasts and keeps the latest ones. A reconnecting client sends its place (`Hello.resume`) and gets `Resumed` plus only the deltas it missed, or a full snapshot if the engine restarted or the gap is too long. A dropped remote machine keeps its last state on screen, read-only, while `client.rs` reconnects with growing delays.
 

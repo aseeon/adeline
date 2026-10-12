@@ -19,6 +19,7 @@ mod activity;
 #[cfg(feature = "gui")]
 mod agent_form;
 mod agents;
+mod askpass;
 #[cfg(feature = "gui")]
 mod chat;
 #[cfg(feature = "gui")]
@@ -852,7 +853,7 @@ fn main() {
     // `ssh` runs this executable to ask for a password or a host key.
     if let Some(address) = std::env::var_os("ADELINE_ASKPASS") {
         let prompt = args.first().map_or("", String::as_str);
-        std::process::exit(remote::askpass_main(&address.to_string_lossy(), prompt));
+        std::process::exit(askpass::askpass_main(&address.to_string_lossy(), prompt));
     }
     match args.first().map(String::as_str) {
         Some("engine") => std::process::exit(engine::main(&args[1..])),
