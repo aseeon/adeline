@@ -37,7 +37,7 @@ mod composer;
 mod list;
 mod transcript;
 pub(super) use composer::Composer;
-pub(super) use list::ChatList;
+pub(super) use list::{COLLAPSED_WIDTH, ChatList};
 pub(super) use transcript::Transcript;
 
 pub(super) fn size_probe(
@@ -51,14 +51,20 @@ pub(super) fn size_probe(
     .size_full()
 }
 
-pub(super) fn region<V: Render>(view: &Entity<V>, window: &Window) -> AnyElement {
+pub(super) fn region<V: Render>(
+    view: &Entity<V>,
+    style: StyleRefinement,
+    window: &Window,
+) -> AnyElement {
     if window.is_a11y_active() {
         view.clone().into_any_element()
     } else {
-        view.clone()
-            .cached(StyleRefinement::default().size_full())
-            .into_any_element()
+        view.clone().cached(style).into_any_element()
     }
+}
+
+pub(super) fn full() -> StyleRefinement {
+    StyleRefinement::default().size_full()
 }
 
 fn invalidate_range(state: &ListState, range: std::ops::Range<usize>) {

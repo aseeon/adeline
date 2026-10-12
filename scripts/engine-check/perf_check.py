@@ -4,7 +4,7 @@ Needs a profiling build, which logs every frame to ADELINE_FRAME_LOG:
 
     cargo build --profile dist --locked --features profiler --target-dir target/profiling
 
-Then `python scripts/engine-check/perf_check.py [--exe PATH] [--only NAME] [--a11y]` runs
+Then `python scripts/engine-check/perf_check.py [--exe PATH] [--only NAME,...] [--a11y]` runs
 each scenario with the window in front and prints per-scenario frame stats. The window must
 stay focused: GPUI caps unfocused windows to ~30 fps.
 
@@ -35,12 +35,16 @@ kernel32 = ctypes.windll.kernel32
 spans = []
 
 
+def wanted(name):
+    return not OPTIONS.only or any(part in name.lower() for part in OPTIONS.only.lower().split(","))
+
+
 def now_ms():
     return time.time() * 1000
 
 
 def scenario(name, function):
-    if OPTIONS.only and OPTIONS.only.lower() not in name.lower():
+    if not wanted(name):
         return
     time.sleep(0.5)
     start, cpu = now_ms(), cpu_ms()
@@ -211,7 +215,7 @@ def main():
         time.sleep(0.3)
         process.kill()
 
-    if not OPTIONS.only or "stream" in OPTIONS.only.lower():
+    if wanted("stream"):
         rc.stop_engine()
         process = launch(logs[1])
         try:

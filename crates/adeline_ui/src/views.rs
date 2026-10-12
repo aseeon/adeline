@@ -7,13 +7,22 @@ use gpui_kit::component::command::{Command, CommandItem, CommandState};
 use gpui_kit::component::dialog::Dialog;
 use gpui_kit::component::switch::Switch;
 
+pub(super) struct ChatHeader(pub WeakEntity<Adeline>);
+impl Render for ChatHeader {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.0
+            .update(cx, |app, cx| app.chat_header(cx).into_any_element())
+            .unwrap_or_else(|_| div().into_any_element())
+    }
+}
+
 impl Adeline {
-    pub(super) fn chats(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
+    fn chat_header(&self, cx: &Context<Self>) -> Div {
         let thread = self.selected.map(|ix| &self.workspace().threads[ix]);
         let title = thread.map_or_else(|| "New chat".to_owned(), |thread| thread.title.clone());
         // Status, message count and age live in the conversation list; the
         // header adds only what the list can't show.
-        let header = chat::chat_column()
+        chat::chat_column()
             .h(rems(chat::CHAT_HEADER_HEIGHT))
             .flex()
             .items_center()
@@ -65,7 +74,11 @@ impl Adeline {
                                 }
                             })),
                     )
-            });
+            })
+    }
+
+    pub(super) fn chats(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
+        let thread = self.selected.map(|ix| &self.workspace().threads[ix]);
         let theme = cx.theme();
         // The transcript fills the pane so its scrollbar runs the full height. The
         // header and composer float over it and stop short of the scrollbar;
@@ -101,7 +114,7 @@ impl Adeline {
             .relative()
             .size_full()
             .min_w_0()
-            .child(chat::region(&self.transcript, window))
+            .child(chat::region(&self.transcript, chat::full(), window))
             .child(fade)
             .child(
                 div()
@@ -111,7 +124,13 @@ impl Adeline {
                     .right(scrollbar)
                     .pl(scrollbar)
                     .bg(theme.background)
-                    .child(header),
+                    .child(chat::region(
+                        &self.chat_header,
+                        StyleRefinement::default()
+                            .w_full()
+                            .h(rems(chat::CHAT_HEADER_HEIGHT)),
+                        window,
+                    )),
             )
             .child(
                 div()

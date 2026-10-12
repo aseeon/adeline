@@ -51,8 +51,55 @@ pub(super) enum TabSize {
     Hidden,
 }
 
+pub(super) struct ProjectBar(pub WeakEntity<Adeline>);
+impl Render for ProjectBar {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.0
+            .update(cx, |app, cx| {
+                app.project_toolbar(window, cx).into_any_element()
+            })
+            .unwrap_or_else(|_| div().into_any_element())
+    }
+}
+
 impl Adeline {
     pub(super) fn header(&self, window: &Window, cx: &Context<Self>) -> Div {
+        let theme = cx.theme();
+        // Absolute, so the tabs add nothing to the min width of Kit's bar row,
+        // which never shrinks: in flow, many tabs pushed the window controls
+        // off-screen and the strip never folded or scrolled.
+        let toolbar = chat::region(
+            &self.project_bar,
+            StyleRefinement::default().absolute().inset_0(),
+            window,
+        );
+        let top = TitleBar::new()
+            .h(titlebar::MAIN_HEIGHT)
+            .when(!cfg!(target_os = "macos"), |bar| bar.pl_0())
+            .border_b_0()
+            .bg(theme.title_bar.alpha(titlebar::GLASS))
+            .child(toolbar);
+        // Windows and Linux: the line under the project tabs runs on under Kit's
+        // window controls. It is drawn after the title bar so their hover fill
+        // stops above it. It starts past the app icon, which has no left padding
+        // on these platforms.
+        let line = (!cfg!(target_os = "macos")).then(|| {
+            div()
+                .absolute()
+                .left(rems(2.75))
+                .right_0()
+                .bottom_0()
+                .h(px(1.))
+                .bg(theme.border)
+        });
+        col()
+            .relative()
+            .flex_shrink_0()
+            .child(titlebar::without_text_selection(top))
+            .children(line)
+    }
+
+    fn project_toolbar(&self, window: &Window, cx: &Context<Self>) -> Stateful<Div> {
         let theme = cx.theme();
         let bar = theme::bar_colors(theme);
         let open: Vec<usize> = (0..self.projects.len())
@@ -118,13 +165,9 @@ impl Adeline {
             .rounded_none()
             .px(rems(0.875))
             .text_color(theme.muted_foreground);
-        // Absolute, so the tabs add nothing to the min width of Kit's bar row,
-        // which never shrinks: in flow, many tabs pushed the window controls
-        // off-screen and the strip never folded or scrolled.
-        let toolbar = row()
+        row()
             .id("project-toolbar")
-            .absolute()
-            .inset_0()
+            .size_full()
             .child(
                 row()
                     .h_full()
@@ -133,31 +176,7 @@ impl Adeline {
                     .justify_center()
                     .child(titlebar::app_icon(window)),
             )
-            .child(self.project_strip(tabs, projects, measure, cx));
-        let top = TitleBar::new()
-            .h(titlebar::MAIN_HEIGHT)
-            .when(!cfg!(target_os = "macos"), |bar| bar.pl_0())
-            .border_b_0()
-            .bg(theme.title_bar.alpha(titlebar::GLASS))
-            .child(toolbar);
-        // Windows and Linux: the line under the project tabs runs on under Kit's
-        // window controls. It is drawn after the title bar so their hover fill
-        // stops above it. It starts past the app icon, which has no left padding
-        // on these platforms.
-        let line = (!cfg!(target_os = "macos")).then(|| {
-            div()
-                .absolute()
-                .left(rems(2.75))
-                .right_0()
-                .bottom_0()
-                .h(px(1.))
-                .bg(theme.border)
-        });
-        col()
-            .relative()
-            .flex_shrink_0()
-            .child(titlebar::without_text_selection(top))
-            .children(line)
+            .child(self.project_strip(tabs, projects, measure, cx))
     }
 
     fn project_strip(

@@ -318,6 +318,9 @@ struct Adeline {
     composer_region: Entity<chat::Composer>,
     header_region: Entity<chat::Header>,
     control_pane: Entity<panes::ControlPane>,
+    side_panel: Entity<conversation_ui::SidePanel>,
+    chat_header: Entity<views::ChatHeader>,
+    project_bar: Entity<project_bar::ProjectBar>,
 }
 impl Adeline {
     fn new(
@@ -416,6 +419,9 @@ impl Adeline {
         let composer_region = cx.new(|cx| chat::Composer::new(owner.clone(), &composer, cx));
         let control_pane = cx.new(|_| panes::ControlPane::new(owner.clone()));
         let header_region = cx.new(|_| chat::Header(owner.clone()));
+        let side_panel = cx.new(|_| conversation_ui::SidePanel(owner.clone()));
+        let chat_header = cx.new(|_| views::ChatHeader(owner.clone()));
+        let project_bar = cx.new(|_| project_bar::ProjectBar(owner.clone()));
         subscriptions.push(cx.observe_self(Self::notify_cached_views));
         let mut app = Self {
             main_window: window
@@ -496,6 +502,9 @@ impl Adeline {
             composer_region,
             header_region,
             control_pane,
+            side_panel,
+            chat_header,
+            project_bar,
         };
         app.load_settings();
         if demo_mode || app.agent_catalog().entries.len() == 1 {
@@ -589,6 +598,10 @@ impl Adeline {
 
     fn notify_cached_views(&mut self, cx: &mut Context<Self>) {
         self.transcript.update(cx, |_, cx| cx.notify());
+        self.chat_list.update(cx, |_, cx| cx.notify());
+        self.side_panel.update(cx, |_, cx| cx.notify());
+        self.chat_header.update(cx, |_, cx| cx.notify());
+        self.project_bar.update(cx, |_, cx| cx.notify());
     }
 
     fn has_open_project(&self) -> bool {

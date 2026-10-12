@@ -90,10 +90,11 @@ impl Adeline {
                 .aria_label("Collapsed conversation list")
                 .relative()
                 .h_full()
+                .w(rems(chat::COLLAPSED_WIDTH))
                 .flex_shrink_0()
                 .bg(cx.theme().background)
                 .text_color(cx.theme().foreground)
-                .child(self.chat_list.clone())
+                .child(chat::region(&self.chat_list, chat::full(), window))
                 .child(fading_line(cx).absolute().top_0().right_0())
         });
         let panels = h_resizable("chat-panels")
@@ -115,7 +116,7 @@ impl Adeline {
                             .size_full()
                             .bg(cx.theme().background)
                             .text_color(cx.theme().foreground)
-                            .child(self.chat_list.clone()),
+                            .child(chat::region(&self.chat_list, chat::full(), window)),
                     ),
             )
             .child(
@@ -132,7 +133,7 @@ impl Adeline {
                     .size_range(fonts::text_pixels(140.)..fonts::text_pixels(520.))
                     .flex_grow_0()
                     .flex_shrink_1()
-                    .child(self.right_panel(cx)),
+                    .child(chat::region(&self.side_panel, chat::full(), window)),
             );
         row()
             .size_full()

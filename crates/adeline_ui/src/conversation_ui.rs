@@ -19,6 +19,15 @@ use gpui_kit::component::{
 };
 use std::sync::Arc;
 
+pub(super) struct SidePanel(pub WeakEntity<Adeline>);
+impl Render for SidePanel {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.0
+            .update(cx, |app, cx| app.right_panel(cx))
+            .unwrap_or_else(|_| div().into_any_element())
+    }
+}
+
 // A traffic row shows the start of long JSON; "Copy message" takes the whole line.
 const TRAFFIC_LINES: usize = 12;
 const TRAFFIC_CHARS: usize = 2000;
