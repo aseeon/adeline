@@ -7,6 +7,17 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Section {
+    Chats,
+    Docs,
+    Workflows,
+    Services,
+    Groupchats,
+    Issues,
+    Whiteboard,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
@@ -44,8 +55,7 @@ impl Default for Features {
     }
 }
 impl Features {
-    pub fn enabled(&self, section: super::Section) -> bool {
-        use super::Section;
+    pub fn enabled(&self, section: Section) -> bool {
         match section {
             Section::Chats => true,
             Section::Docs => self.docs,
@@ -56,8 +66,7 @@ impl Features {
             Section::Whiteboard => self.whiteboard,
         }
     }
-    pub fn toggle(&mut self, section: super::Section) {
-        use super::Section;
+    pub fn toggle(&mut self, section: Section) {
         let enabled = match section {
             Section::Chats => return,
             Section::Docs => &mut self.docs,
@@ -83,9 +92,9 @@ impl Default for Appearance {
     fn default() -> Self {
         Self {
             theme: "claude-plus.yml".into(),
-            interface_font: crate::fonts::DEFAULT.into(),
+            interface_font: DEFAULT_FONT.into(),
             font_size: 14,
-            code_font: crate::fonts::CODE_DEFAULT.into(),
+            code_font: DEFAULT_CODE_FONT.into(),
             code_font_size: 14,
         }
     }
@@ -243,13 +252,9 @@ pub fn with<T>(f: impl FnOnce(&Settings) -> T) -> T {
 pub fn error() -> Option<String> {
     ACTIVE.with(|s| s.borrow().error.clone())
 }
-pub fn font() -> String {
-    with(|s| crate::fonts::resolve(&s.general.appearance.interface_font, crate::fonts::DEFAULT))
+pub fn set_error(message: String) {
+    ACTIVE.with(|s| s.borrow_mut().error = Some(message));
 }
-pub fn code_font() -> String {
-    with(|s| crate::fonts::resolve(&s.general.appearance.code_font, crate::fonts::CODE_DEFAULT))
-}
-
 pub fn code_font_size() -> u16 {
     with(|s| {
         s.general
@@ -259,23 +264,8 @@ pub fn code_font_size() -> u16 {
     })
 }
 
-// Virtual rows must be measured again when any of these changes.
-#[derive(PartialEq)]
-pub struct Typography {
-    interface: String,
-    interface_size: u16,
-    code: String,
-    code_size: u16,
-}
-
-pub fn typography() -> Typography {
-    Typography {
-        interface: font(),
-        interface_size: font_size(),
-        code: code_font(),
-        code_size: code_font_size(),
-    }
-}
+pub const DEFAULT_FONT: &str = "Chivo";
+pub const DEFAULT_CODE_FONT: &str = "Chivo Mono";
 pub const MIN_FONT_SIZE: u16 = 10;
 pub const MAX_FONT_SIZE: u16 = 24;
 
@@ -288,71 +278,6 @@ pub fn font_size() -> u16 {
     })
 }
 
-#[cfg(feature = "gui")]
-pub fn text_pixels(base: f32) -> gpui_kit::Pixels {
-    gpui_kit::px(base * f32::from(font_size()) / 14.)
-}
-#[cfg(feature = "gui")]
-pub fn bind_keys(cx: &mut gpui_kit::App) {
-    use super::*;
-    let keys = current().general.keymap;
-    let mut bindings = Vec::new();
-    macro_rules! bind {
-        ($keys:expr, $action:expr) => {
-            for key in &$keys {
-                match KeyBinding::load(
-                    key,
-                    Box::new($action),
-                    None,
-                    false,
-                    None,
-                    &gpui_kit::DummyKeyboardMapper,
-                ) {
-                    Ok(binding) => bindings.push(binding),
-                    Err(error) => ACTIVE.with(|s| {
-                        s.borrow_mut().error = Some(format!("Invalid shortcut {key}: {error}"))
-                    }),
-                }
-            }
-        };
-    }
-    bind!(keys.open_settings, OpenSettings);
-    bind!(keys.new_chat, NewThread);
-    bind!(keys.focus_search, Search);
-    bind!(keys.send_message, SendMessage);
-    bind!(keys.close_dialog_or_popup, Cancel);
-    bind!(keys.next_control, NextFocus);
-    bind!(keys.previous_control, PreviousFocus);
-    bindings.push(KeyBinding::new("cmd-q", Quit, None));
-    // The conversation controls' shortcuts (docs/shortcuts.md), Ctrl and Cmd alike.
-    for modifier in ["ctrl", "cmd"] {
-        let key = |rest: &str| format!("{modifier}-{rest}");
-        bindings.extend([
-            KeyBinding::new(&key("shift-enter"), SendNow, None),
-            KeyBinding::new(&key("."), StopTurn, None),
-            KeyBinding::new(&key("shift-r"), RestartAgent, None),
-            KeyBinding::new(&key("shift-a"), AttachFile, None),
-            KeyBinding::new(&key("shift-l"), TrafficView, None),
-            KeyBinding::new(&key("shift-t"), TodoList, None),
-        ]);
-    }
-    // The option menus. Ctrl+Shift+M, E and O are global hotkeys of common
-    // Windows tools (AMD Adrenalin among them), so Windows and Linux use Alt.
-    let menu = |letter: &str| {
-        if cfg!(target_os = "macos") {
-            format!("cmd-shift-{letter}")
-        } else {
-            format!("alt-{letter}")
-        }
-    };
-    bindings.extend([
-        KeyBinding::new(&menu("m"), ModelMenu, None),
-        KeyBinding::new(&menu("e"), EffortMenu, None),
-        KeyBinding::new(&menu("o"), ModeMenu, None),
-        KeyBinding::new(&menu("p"), MoreMenu, None),
-    ]);
-    cx.bind_keys(bindings);
-}
 pub fn write_yaml(path: &Path, value: &impl Serialize) -> anyhow::Result<()> {
     let text = serde_yaml_ng::to_string(value)?;
     crate::files::replace(path, text.as_bytes())
@@ -419,11 +344,7 @@ mod tests {
         ACTIVE.with(|state| {
             let mut state = state.borrow_mut();
             state.settings.general.appearance = legacy;
-            state.settings.general.appearance.code_font = "Missing code family".into();
-            state.settings.general.appearance.interface_font = "Missing interface family".into();
         });
-        assert_eq!(font(), "Chivo");
-        assert_eq!(code_font(), "Chivo Mono");
         for (requested, expected) in [(0, 10), (14, 14), (20, 20), (65535, 24)] {
             ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.code_font_size = requested);
             assert_eq!(font_size(), 18);
@@ -471,17 +392,11 @@ mod tests {
         for (requested, expected) in [(0, 10), (14, 14), (18, 18), (65535, 24)] {
             ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.font_size = requested);
             assert_eq!(font_size(), expected);
-            #[cfg(feature = "gui")]
-            {
-                assert_eq!(text_pixels(14.), gpui_kit::px(f32::from(expected)));
-                assert_eq!(text_pixels(21.), gpui_kit::px(f32::from(expected) * 1.5));
-            }
         }
         ACTIVE.with(|s| s.borrow_mut().settings = original);
     }
     #[test]
     fn legacy_features_use_new_defaults_and_explicit_choices_persist() {
-        use crate::Section;
         let mut settings: Settings = serde_yaml_ng::from_str(
             "general:\n  features:\n    close_picker_after_selection: false\n",
         )

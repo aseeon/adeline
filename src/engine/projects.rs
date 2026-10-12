@@ -119,7 +119,7 @@ impl Engine {
         command: &str,
         arguments: Vec<String>,
     ) -> Result<storage::ExecutionConfig, String> {
-        let launch = if harness_id == harness::CUSTOM || Path::new(command).is_absolute() {
+        let launch = if harness_id == crate::profiles::CUSTOM || Path::new(command).is_absolute() {
             block_in_place(|| harness::resolve(command))
                 .map(|path| storage::Launch {
                     command: path,

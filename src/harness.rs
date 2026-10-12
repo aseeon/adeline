@@ -2,8 +2,6 @@
 //! executables are installed and in which version, and whether Node.js is there.
 //! The engine detects them, on its blocking pool; clients get a copy.
 use anyhow::Context as _;
-#[cfg(feature = "gui")]
-use gpui_kit::{App, Global};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -13,9 +11,10 @@ use std::{
     process::{Command, Stdio},
 };
 
+use crate::profiles::CUSTOM;
+
 const REGISTRY_URL: &str = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 pub const OMP: &str = "omp";
-pub const CUSTOM: &str = "custom";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Harness {
@@ -82,9 +81,6 @@ pub struct Catalog {
     #[serde(skip)]
     pub demo: bool,
 }
-
-#[cfg(feature = "gui")]
-impl Global for Catalog {}
 
 impl Catalog {
     pub fn get(&self, id: &str) -> Option<&Harness> {
@@ -170,16 +166,6 @@ pub fn newer(a: &str, b: &str) -> bool {
     };
     let (a, b) = (parts(a), parts(b));
     !a.is_empty() && !b.is_empty() && a > b
-}
-
-#[cfg(feature = "gui")]
-pub fn init(demo: bool, cx: &mut App) {
-    cx.set_global(Catalog {
-        harnesses: if demo { load() } else { Vec::new() },
-        detected: demo,
-        demo,
-        ..Default::default()
-    });
 }
 
 pub fn detect(fetch: bool, known: Vec<Harness>) -> Catalog {

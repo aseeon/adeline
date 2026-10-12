@@ -258,6 +258,12 @@ pub struct Status {
     pub headless: bool,
 }
 
+impl Status {
+    pub fn build(&self) -> &'static str {
+        if self.headless { "headless" } else { "full" }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ActiveConversation {
     pub project: String,

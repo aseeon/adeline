@@ -193,6 +193,15 @@ impl MessageRole {
     }
 }
 
+pub fn title_from(prompt: &str) -> String {
+    const MAX: usize = 100;
+    if prompt.chars().count() > MAX {
+        format!("{}…", prompt.chars().take(MAX).collect::<String>())
+    } else {
+        prompt.into()
+    }
+}
+
 pub fn current_step(steps: &[TodoStep]) -> Option<&TodoStep> {
     steps
         .iter()
@@ -370,7 +379,6 @@ impl Attachment {
     }
 }
 
-#[cfg(feature = "gui")]
 pub fn read_attachment(path: &std::path::Path) -> anyhow::Result<Attachment> {
     use anyhow::Context as _;
     let name = path.file_name().map_or_else(

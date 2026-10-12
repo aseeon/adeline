@@ -104,7 +104,7 @@ All text fields (message box, search fields, dialog fields) get the kit's editin
 
 ## macOS menu bar
 
-The menus (`src/menu_bar.rs`) show the keymap's shortcuts: Settings… (Cmd+,), New Chat (Cmd+N), Quit Adeline (Cmd+Q), and the system Edit items (Undo, Redo, Cut, Copy, Paste, Select All).
+The menus (`src/ui/menu_bar.rs`) show the keymap's shortcuts: Settings… (Cmd+,), New Chat (Cmd+N), Quit Adeline (Cmd+Q), and the system Edit items (Undo, Redo, Cut, Copy, Paste, Select All).
 
 ## Actions without a shortcut
 

@@ -6,6 +6,7 @@
 //! are relative to it.
 use crate::{
     ipc,
+    machines::split_port,
     protocol::{ClientMessage, Command, EngineMessage, PROTOCOL, Status},
 };
 use anyhow::Context as _;
@@ -202,35 +203,6 @@ fn short_id(id: &str) -> &str {
     } else {
         id.get(..8).unwrap_or(id)
     }
-}
-
-fn split_port(destination: &str) -> (&str, Option<&str>) {
-    match destination.rsplit_once(':') {
-        Some((host, port))
-            if !host.is_empty()
-                && !host.contains(':')
-                && !port.is_empty()
-                && port.bytes().all(|b| b.is_ascii_digit()) =>
-        {
-            (host, Some(port))
-        }
-        _ => (destination, None),
-    }
-}
-
-pub fn check_destination(destination: &str) -> anyhow::Result<()> {
-    let (host, _) = split_port(destination);
-    if host.is_empty()
-        || host.starts_with('-')
-        || host.contains(char::is_whitespace)
-        || host.ends_with('@')
-        || host.starts_with('@')
-    {
-        anyhow::bail!(
-            "\"{destination}\" isn't a destination. Use user@host, user@host:port, or a Host alias from ~/.ssh/config."
-        );
-    }
-    Ok(())
 }
 
 fn ssh(destination: &str, remote_command: &str, askpass: &Askpass) -> tokio::process::Command {
@@ -723,21 +695,6 @@ pub fn bridge_main() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn destinations_split_off_a_numeric_port() {
-        assert_eq!(
-            split_port("me@home.example.com:2222"),
-            ("me@home.example.com", Some("2222"))
-        );
-        assert_eq!(split_port("desktop.lan"), ("desktop.lan", None));
-        assert_eq!(split_port("alias"), ("alias", None));
-        check_destination("me@host:22").unwrap();
-        check_destination("desktop").unwrap();
-        assert!(check_destination("-oProxyCommand=x").is_err());
-        assert!(check_destination("me@").is_err());
-        assert!(check_destination("two words").is_err());
-    }
 
     #[test]
     fn probes_name_release_platforms() {

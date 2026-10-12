@@ -8,7 +8,7 @@
 //! milliseconds, a project's `opened_at` epoch seconds.
 use crate::files::{self, checked_id, error as file_error};
 use crate::{
-    agents::{self, AgentDefinition, InstructionsMode},
+    agents::{AgentDefinition, InstructionsMode},
     conversation::{
         AgentCommand, Features, McpServer, MessageRole, Selections, SessionOption, ThreadStatus,
         TodoStep,
@@ -22,6 +22,14 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
+};
+
+mod disk;
+mod paths;
+use disk::{flush_events, flush_settings, load_conversation, write_conversation};
+use paths::{
+    check_contents, ensure_regular_file, is_link, outside_project_storage, safe_conversation_path,
+    safe_directory, valid_working_directory,
 };
 
 pub const VERSION: u32 = 2;
@@ -444,7 +452,7 @@ impl ProjectStore {
                         .with_context(|| folder.join("project.yml").display().to_string())?;
                     let definition: ProjectDefinition = serde_yaml_ng::from_str(&text)
                         .with_context(|| folder.join("project.yml").display().to_string())?;
-                    if agents::normalize_name(&definition.name)? != id
+                    if files::normalize_name(&definition.name)? != id
                         || !definition.directory.is_absolute()
                     {
                         bail!(
@@ -511,7 +519,7 @@ impl ProjectStore {
         name: &str,
         directory: &Path,
     ) -> Result<String> {
-        let id = agents::normalize_name(name)
+        let id = files::normalize_name(name)
             .map_err(|_invalid| anyhow!("Project name does not produce a valid folder name."))?;
         valid_working_directory(directory)?;
         let root = self.root.as_ref().map_err(|e| anyhow!("{e}"))?;
@@ -983,318 +991,9 @@ impl ProjectStore {
     }
 }
 
-fn write_conversation(
-    base: &Path,
-    settings: ConversationSettings,
-    events: Vec<TranscriptEvent>,
-) -> Result<StoredConversation> {
-    let id = loop {
-        let id = files::unique(&format!("{:x}", crate::recency::now_ms()));
-        match fs::create_dir(base.join(&id)) {
-            Ok(()) => break id,
-            Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(e).with_context(|| base.display().to_string()),
-        }
-    };
-    let folder = base.join(&id);
-    let mut transcript = Vec::new();
-    for event in &events {
-        serde_json::to_writer(&mut transcript, event)?;
-        transcript.push(b'\n');
-    }
-    let result = serde_yaml_ng::to_string(&settings)
-        .map_err(anyhow::Error::from)
-        .and_then(|text| files::write_new(&folder.join("conversation.yml"), text.as_bytes()))
-        .and_then(|()| files::write_new(&folder.join("transcript.jsonl"), &transcript));
-    if let Err(error) = result {
-        let _ = fs::remove_file(folder.join("conversation.yml"));
-        let _ = fs::remove_file(folder.join("transcript.jsonl"));
-        let _ = fs::remove_dir(&folder);
-        return Err(error);
-    }
-    Ok(StoredConversation {
-        id,
-        settings,
-        events,
-        unsaved_events: Vec::new(),
-        storage_error: None,
-        unsaved_since: None,
-        persisted_len: transcript.len() as u64,
-        needs_rollback: false,
-        pending_settings: None,
-        load_error: false,
-        interrupted: false,
-    })
-}
-
-fn flush_settings(conversation: &mut StoredConversation, path: &Path) -> Result<()> {
-    let Some(settings) = &conversation.pending_settings else {
-        return Ok(());
-    };
-    let result = (|| {
-        safe_conversation_path(path)?;
-        ensure_regular_file(path)?;
-        let text =
-            serde_yaml_ng::to_string(settings).with_context(|| path.display().to_string())?;
-        files::replace(path, text.as_bytes())
-    })();
-    match result {
-        Ok(()) => {
-            conversation.pending_settings = None;
-            Ok(())
-        }
-        Err(error) => {
-            conversation.storage_error = Some(format!("{error:#}"));
-            Err(error)
-        }
-    }
-}
-
-fn flush_events(conversation: &mut StoredConversation, path: &Path) -> Result<()> {
-    let result = (|| {
-        safe_conversation_path(path)?;
-        ensure_regular_file(path)?;
-        let mut file = OpenOptions::new()
-            .read(true)
-            .write(true)
-            .open(path)
-            .with_context(|| path.display().to_string())?;
-        let len = file
-            .metadata()
-            .with_context(|| path.display().to_string())?
-            .len();
-        if len < conversation.persisted_len {
-            bail!(
-                "{}: saved transcript was truncated; reload before writing.",
-                path.display()
-            );
-        }
-        if conversation.needs_rollback {
-            file.set_len(conversation.persisted_len)
-                .with_context(|| path.display().to_string())?;
-            file.sync_all()
-                .with_context(|| path.display().to_string())?;
-            conversation.needs_rollback = false;
-        } else if len != conversation.persisted_len {
-            bail!(
-                "{}: transcript changed on disk; reload before writing.",
-                path.display()
-            );
-        }
-        file.seek(SeekFrom::Start(conversation.persisted_len))
-            .with_context(|| path.display().to_string())?;
-        let write_result = (|| {
-            for event in &conversation.unsaved_events {
-                serde_json::to_writer(&mut file, event)
-                    .with_context(|| path.display().to_string())?;
-                file.write_all(b"\n")
-                    .with_context(|| path.display().to_string())?;
-            }
-            file.sync_all()
-                .with_context(|| path.display().to_string())?;
-            file.stream_position()
-                .with_context(|| path.display().to_string())
-        })();
-        match write_result {
-            Ok(len) => conversation.persisted_len = len,
-            Err(error) => {
-                conversation.needs_rollback = true;
-                return Err(error);
-            }
-        }
-        conversation.events.append(&mut conversation.unsaved_events);
-        conversation.storage_error = None;
-        Ok(())
-    })();
-    if let Err(error) = &result {
-        conversation.storage_error = Some(format!("{error:#}"));
-    }
-    result
-}
-
-fn load_conversation(folder: &Path) -> Result<Option<StoredConversation>> {
-    let metadata = fs::symlink_metadata(folder).with_context(|| folder.display().to_string())?;
-    if is_link(&metadata) {
-        bail!(
-            "{}: linked conversation folders are not loaded.",
-            folder.display()
-        );
-    }
-    if !metadata.file_type().is_dir() {
-        return Ok(None);
-    }
-    let id = folder
-        .file_name()
-        .with_context(|| format!("{}: missing folder name.", folder.display()))?
-        .to_string_lossy()
-        .into_owned();
-    checked_id(&id)?;
-    let settings_path = folder.join("conversation.yml");
-    ensure_regular_file(&settings_path)?;
-    let text =
-        fs::read_to_string(&settings_path).with_context(|| settings_path.display().to_string())?;
-    let yaml: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&text).with_context(|| settings_path.display().to_string())?;
-    // An earlier format stays on disk untouched and is not shown.
-    if yaml
-        .get("version")
-        .and_then(serde_yaml_ng::Value::as_u64)
-        .is_none_or(|version| version < u64::from(VERSION))
-    {
-        return Ok(None);
-    }
-    let mut settings: ConversationSettings =
-        serde_yaml_ng::from_value(yaml).with_context(|| settings_path.display().to_string())?;
-    let interrupted = settings.status == ThreadStatus::Processing;
-    if interrupted {
-        settings.status = ThreadStatus::Blocked;
-    }
-    if !settings.execution.directory.is_absolute() {
-        bail!(
-            "{}: saved working directory is not absolute.",
-            settings_path.display()
-        );
-    }
-    let transcript_path = folder.join("transcript.jsonl");
-    ensure_regular_file(&transcript_path)?;
-    let file =
-        File::open(&transcript_path).with_context(|| transcript_path.display().to_string())?;
-    let persisted_len = file
-        .metadata()
-        .with_context(|| transcript_path.display().to_string())?
-        .len();
-    let mut events = Vec::new();
-    let mut load_error = None;
-    for (index, line) in BufReader::new(file).lines().enumerate() {
-        match line
-            .map_err(|e| file_error(&transcript_path, e))
-            .and_then(|line| {
-                serde_json::from_str(&line)
-                    .map_err(|e| format!("{}:{}: {e}", transcript_path.display(), index + 1))
-            }) {
-            Ok(event) => events.push(event),
-            Err(error) => {
-                load_error = Some(error);
-                break;
-            }
-        }
-    }
-    Ok(Some(StoredConversation {
-        id,
-        settings,
-        events,
-        unsaved_events: Vec::new(),
-        load_error: load_error.is_some(),
-        storage_error: load_error,
-        unsaved_since: None,
-        persisted_len,
-        needs_rollback: false,
-        pending_settings: None,
-        interrupted,
-    }))
-}
-
 fn conversation_dir(root: &Path, project_id: &str, id: &str) -> PathBuf {
     root.join(project_id).join("conversations").join(id)
 }
 
-fn outside_project_storage(directory: &Path, root: &Path) -> Result<()> {
-    let root_path = fs::canonicalize(root).with_context(|| root.display().to_string())?;
-    if directory.starts_with(root)
-        || (directory.exists()
-            && fs::canonicalize(directory)
-                .with_context(|| directory.display().to_string())?
-                .starts_with(root_path))
-    {
-        bail!(
-            "{}: working directory cannot be inside Adeline's projects storage folder.",
-            directory.display()
-        );
-    }
-    Ok(())
-}
-
-fn valid_working_directory(directory: &Path) -> Result<()> {
-    if !directory.is_absolute() {
-        bail!("Choose an absolute working directory.");
-    }
-    if !directory.is_dir() {
-        bail!(
-            "{}: working directory does not exist or is not a directory.",
-            directory.display()
-        );
-    }
-    Ok(())
-}
-#[cfg(windows)]
-fn is_link(metadata: &fs::Metadata) -> bool {
-    use std::os::windows::fs::MetadataExt;
-    // Junctions are reparse points too, but FileType::is_symlink can miss them.
-    metadata.file_attributes() & 0x400 != 0
-}
-
-#[cfg(not(windows))]
-fn is_link(metadata: &fs::Metadata) -> bool {
-    metadata.file_type().is_symlink()
-}
-
-fn safe_directory(path: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(path).with_context(|| path.display().to_string())?;
-    if metadata.file_type().is_dir() && !is_link(&metadata) {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "{}: expected a real directory, not a link.",
-            path.display()
-        ))
-    }
-}
-fn safe_conversation_path(file: &Path) -> Result<()> {
-    for ancestor in file.ancestors().skip(1).take(4) {
-        safe_directory(ancestor)?;
-    }
-    Ok(())
-}
-
-fn ensure_regular_file(path: &Path) -> Result<()> {
-    let metadata = fs::symlink_metadata(path).with_context(|| path.display().to_string())?;
-    if metadata.file_type().is_file() && !is_link(&metadata) {
-        Ok(())
-    } else {
-        Err(anyhow!(
-            "{}: expected a regular file, not a link.",
-            path.display()
-        ))
-    }
-}
-
-fn check_contents(folder: &Path, allowed: &[&str]) -> Result<()> {
-    for entry in fs::read_dir(folder).with_context(|| folder.display().to_string())? {
-        let entry = entry.with_context(|| folder.display().to_string())?;
-        let path = entry.path();
-        let name = entry.file_name();
-        let metadata = fs::symlink_metadata(&path).with_context(|| path.display().to_string())?;
-        if !allowed
-            .iter()
-            .any(|allowed| name == std::ffi::OsStr::new(*allowed))
-            || is_link(&metadata)
-        {
-            bail!(
-                "{}: unexpected file or link prevents safe deletion.",
-                path.display()
-            );
-        }
-    }
-    for name in allowed {
-        if !folder.join(name).exists() {
-            bail!(
-                "{}: missing saved project data.",
-                folder.join(name).display()
-            );
-        }
-    }
-    Ok(())
-}
 #[cfg(test)]
-#[path = "storage_tests.rs"]
 mod tests;

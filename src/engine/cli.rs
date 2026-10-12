@@ -1,5 +1,5 @@
 //! The `adeline engine` command line: status, start and stop.
-use super::run;
+use super::serve::run;
 use crate::{
     ipc,
     protocol::{ClientMessage, Command, EngineMessage, PROTOCOL, Status},
@@ -75,7 +75,7 @@ async fn cli_status() -> i32 {
     println!("Conversation engine: running");
     println!("PID: {}", status.pid);
     println!("Version: {}", status.version);
-    println!("Build: {}", crate::build(status.headless));
+    println!("Build: {}", status.build());
     println!("Protocol: {}", status.protocol);
     println!("Daemon mode: {}", if status.daemon { "on" } else { "off" });
     println!(

@@ -35,10 +35,35 @@ pub fn random_id() -> String {
 }
 
 pub fn checked_id(id: &str) -> Result<()> {
-    if crate::agents::normalize_name(id).ok().as_deref() != Some(id) {
+    if normalize_name(id).ok().as_deref() != Some(id) {
         bail!("Invalid folder name: {id}");
     }
     Ok(())
+}
+
+pub fn normalize_name(name: &str) -> Result<String> {
+    let mut id = String::new();
+    for c in name.trim().chars().flat_map(char::to_lowercase) {
+        if c.is_alphanumeric() {
+            id.push(c);
+        } else if !id.is_empty() && !id.ends_with('-') {
+            id.push('-');
+        }
+    }
+    let id = id.trim_end_matches('-').to_owned();
+    let reserved = matches!(id.as_str(), "con" | "prn" | "aux" | "nul")
+        || ["com", "lpt"].iter().any(|prefix| {
+            id.strip_prefix(*prefix).is_some_and(|number| {
+                matches!(
+                    number,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+                )
+            })
+        });
+    if id.is_empty() || reserved || id.len() > 255 || id.encode_utf16().count() > 255 {
+        bail!("Name does not produce a valid agent folder name.");
+    }
+    Ok(id)
 }
 
 pub fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {

@@ -2,6 +2,8 @@
 //! generic ACP. Agents without a profile, including Custom agents
 //! and other registry agents, get generic behavior.
 
+pub const CUSTOM: &str = "custom";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Instructions {
     // No verified mechanism, so the agent form hides the field.
@@ -223,7 +225,7 @@ pub fn find(harness: &str, identity: &str) -> Option<&'static Profile> {
     let identity = identity.to_lowercase();
     ALL.iter().find(|profile| {
         profile.harness == harness
-            || (harness == crate::harness::CUSTOM
+            || (harness == CUSTOM
                 && !identity.is_empty()
                 && (identity == profile.command
                     || identity == profile.harness
@@ -258,11 +260,8 @@ mod tests {
     #[test]
     fn profiles_are_found_by_harness_or_reported_identity() {
         assert_eq!(find("claude-acp", "").unwrap().name, "Claude Code");
-        assert_eq!(
-            find(crate::harness::CUSTOM, "oh-my-pi").unwrap().harness,
-            "omp"
-        );
-        assert!(find(crate::harness::CUSTOM, "").is_none());
+        assert_eq!(find(CUSTOM, "oh-my-pi").unwrap().harness, "omp");
+        assert!(find(CUSTOM, "").is_none());
         assert!(find("gemini", "gemini-cli").is_none());
         assert_eq!(instructions("omp", ""), Instructions::Flags);
         assert_eq!(instructions("codex-acp", ""), Instructions::None);

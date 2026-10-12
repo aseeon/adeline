@@ -1,6 +1,6 @@
 //! User agent definitions, stored under the Adeline configuration directory.
 //! Files older than `VERSION` are left alone and not listed.
-use crate::files::{self, checked_id, error as file_error};
+use crate::files::{self, checked_id, error as file_error, normalize_name};
 use anyhow::{Context as _, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -92,7 +92,7 @@ impl AgentDefinition {
                 bail!("{field} is required.");
             }
         }
-        if self.harness == crate::harness::CUSTOM {
+        if self.harness == crate::profiles::CUSTOM {
             if self.command.trim().is_empty() {
                 bail!("Command is required.");
             }
@@ -119,31 +119,6 @@ fn looks_like_executable_path(command: &str) -> bool {
                 .iter()
                 .any(|candidate| extension.eq_ignore_ascii_case(candidate))
         })
-}
-
-pub(crate) fn normalize_name(name: &str) -> Result<String> {
-    let mut id = String::new();
-    for c in name.trim().chars().flat_map(char::to_lowercase) {
-        if c.is_alphanumeric() {
-            id.push(c);
-        } else if !id.is_empty() && !id.ends_with('-') {
-            id.push('-');
-        }
-    }
-    let id = id.trim_end_matches('-').to_owned();
-    let reserved = matches!(id.as_str(), "con" | "prn" | "aux" | "nul")
-        || ["com", "lpt"].iter().any(|prefix| {
-            id.strip_prefix(*prefix).is_some_and(|number| {
-                matches!(
-                    number,
-                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
-                )
-            })
-        });
-    if id.is_empty() || reserved || id.len() > 255 || id.encode_utf16().count() > 255 {
-        bail!("Name does not produce a valid agent folder name.");
-    }
-    Ok(id)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -504,7 +479,7 @@ mod tests {
     fn agent(name: &str) -> AgentDefinition {
         AgentDefinition {
             name: name.into(),
-            harness: crate::harness::CUSTOM.into(),
+            harness: crate::profiles::CUSTOM.into(),
             identity: "omp".into(),
             command: "omp.exe".into(),
             arguments: vec!["acp".into()],

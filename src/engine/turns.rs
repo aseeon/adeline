@@ -2,7 +2,7 @@
 use super::{ALREADY_PROCESSING, Engine, history_text, live_for};
 use crate::{
     acp,
-    conversation::{Attachment, MessageRole, ThreadStatus},
+    conversation::{self, Attachment, MessageRole, ThreadStatus},
     data::Message,
     protocol::{Delta, Queued},
 };
@@ -84,7 +84,7 @@ impl Engine {
                 .map_err(|e| format!("{e:#}"))?;
             let mut servers = self.settings.mcp_servers.clone();
             servers.extend(agent.mcp_servers.iter().cloned());
-            let title = crate::short(&prompt, 100);
+            let title = conversation::title_from(&prompt);
             let store = &mut self.store;
             let (id, thread, live) = block_in_place(|| {
                 let id = store
