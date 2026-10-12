@@ -8,7 +8,7 @@ use gpui_kit::component::dialog::Dialog;
 use gpui_kit::component::switch::Switch;
 
 impl Adeline {
-    pub(super) fn chats(&self, cx: &Context<Self>) -> AnyElement {
+    pub(super) fn chats(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let thread = self.selected.map(|ix| &self.workspace().threads[ix]);
         let title = thread.map_or_else(|| "New chat".to_owned(), |thread| thread.title.clone());
         // Status, message count and age live in the conversation list; the
@@ -101,9 +101,7 @@ impl Adeline {
             .relative()
             .size_full()
             .min_w_0()
-            // Not cached: a replayed transcript skips registering its text for
-            // selection, and Kit then drops the selection for a frame.
-            .child(self.transcript.clone())
+            .child(chat::region(&self.transcript, window))
             .child(fade)
             .child(
                 div()

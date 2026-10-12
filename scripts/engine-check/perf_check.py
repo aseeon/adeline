@@ -1,12 +1,17 @@
-"""Frame-time profile of the real window, through UI Automation.
+"""Frame-time profile of the real window.
 
 Needs a profiling build, which logs every frame to ADELINE_FRAME_LOG:
 
     cargo build --profile dist --locked --features profiler --target-dir target/profiling
 
-Then `python scripts/engine-check/perf_check.py [--exe PATH] [--only NAME]` runs each
-scenario with the window in front and prints per-scenario frame stats. The window must
+Then `python scripts/engine-check/perf_check.py [--exe PATH] [--only NAME] [--a11y]` runs
+each scenario with the window in front and prints per-scenario frame stats. The window must
 stay focused: GPUI caps unfocused windows to ~30 fps.
+
+A UI Automation client switches on the window's accessibility tree, and while it is on
+the window draws every region uncached. So a first launch finds the controls through UI
+Automation, and a second, measured launch is driven by their positions alone. `--a11y`
+switches the tree on in the measured launch too, as a screen reader would.
 """
 import argparse
 import csv
@@ -17,7 +22,7 @@ import sys
 import time
 from pathlib import Path
 
-from pywinauto import mouse
+from pywinauto import Desktop, mouse
 from pywinauto.keyboard import send_keys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -34,12 +39,12 @@ def now_ms():
     return time.time() * 1000
 
 
-def scenario(name, function, *args):
+def scenario(name, function):
     if OPTIONS.only and OPTIONS.only.lower() not in name.lower():
         return
     time.sleep(0.5)
     start, cpu = now_ms(), cpu_ms()
-    function(*args)
+    function()
     spans.append((name, start, now_ms(), cpu_ms() - cpu))
 
 
@@ -55,73 +60,109 @@ def rect(element):
     return r.left, r.top, r.right, r.bottom
 
 
-def idle(_window):
+def point(name):
+    x, y = LAYOUT[name]
+    return ORIGIN[0] + x, ORIGIN[1] + y
+
+
+def idle():
     time.sleep(3)
 
 
-def scroll(window):
-    left, top, right, _ = rect(ui.named(window, "Message"))
-    point = ((left + right) // 2, top - 250)
-    mouse.move(point)
+def scroll():
+    position = point("transcript")
+    mouse.move(position)
     for direction in (-1, 1):
         for _ in range(40):
-            mouse.scroll(point, direction)
+            mouse.scroll(position, direction)
             time.sleep(1 / 60)
 
 
-def switch_chats(window):
-    next(e for e in window.descendants() if e.element_info.control_type == "ListItem").click_input()
+def switch_chats():
+    mouse.click(coords=point("first chat"))
     time.sleep(0.5)
     for key in ["{DOWN}"] * 8 + ["{UP}"] * 8:
         send_keys(key)
         time.sleep(0.15)
 
 
-def type_text(window):
-    ui.named(window, "Message").click_input()
+def type_text():
+    mouse.click(coords=point("message"))
     send_keys("The quick brown fox jumps over the lazy dog. " * 4, with_spaces=True, pause=0.02)
     send_keys("^a{BACKSPACE}")
 
 
-def hover(window):
-    items = [rect(e) for e in window.descendants() if e.element_info.control_type == "ListItem"]
-    left, top, right, bottom = items[0][0], items[0][1], items[0][2], items[-1][3]
-    x = (left + right) // 2
+def hover():
+    x, top = point("first chat")
+    _, bottom = point("last chat")
     for _ in range(3):
         for y in list(range(top, bottom, 4)) + list(range(bottom, top, -4)):
             mouse.move((x, y))
             time.sleep(1 / 240)
 
 
-def resize(window):
-    handle = window.handle
-    left, top, right, bottom = rect(window)
+def resize():
+    left, top, right, bottom = ui.window_rect(HWND)
     width, height = right - left, bottom - top
     for step in list(range(0, 400, 8)) + list(range(400, 0, -8)):
-        user32.SetWindowPos(handle, 0, left, top, width - step, height, 0x0004)
+        user32.SetWindowPos(HWND, 0, left, top, width - step, height, 0x0004)
         time.sleep(1 / 120)
-    user32.SetWindowPos(handle, 0, left, top, width, height, 0x0004)
+    user32.SetWindowPos(HWND, 0, left, top, width, height, 0x0004)
 
 
-def stream(window):
-    ui.send(window, "STREAM 1500")
+def stream():
+    mouse.click(coords=point("message"))
+    send_keys("STREAM 1500{ENTER}", with_spaces=True)
     # A fresh home has no agent picked, so sending opens the agent picker instead.
     time.sleep(0.5)
     send_keys("Fake Auto{ENTER}", with_spaces=True)
-    ui.named(window, "Message").click_input()
+    mouse.click(coords=point("message"))
     send_keys("{ENTER}")
     time.sleep(17)
 
 
-def launch(log, *args):
-    os.environ["ADELINE_FRAME_LOG"] = str(log)
-    global PROCESS
+def survey(*args):
+    """Where the scenarios point, relative to the window, read through UI Automation
+    from a launch of its own."""
     process, window = ui.launch(*args)
-    PROCESS = process
-    window.set_focus()
-    ui.named(window, "Message", timeout=20)
-    time.sleep(2)
-    return process, window
+    try:
+        window.set_focus()
+        message = ui.named(window, "Message", timeout=20)
+        time.sleep(1)
+        w = window.rectangle()
+        middle = lambda r: ((r[0] + r[2]) // 2 - w.left, (r[1] + r[3]) // 2 - w.top)  # noqa: E731
+        items = [e for e in window.descendants() if e.element_info.control_type == "ListItem"]
+        layout = {"message": middle(rect(message)), "size": (w.width(), w.height())}
+        layout["transcript"] = (layout["message"][0], rect(message)[1] - w.top - 250)
+        if items:
+            layout["first chat"] = middle(rect(items[0]))
+            layout["last chat"] = middle(rect(items[-1]))
+        for e in items:
+            if e.element_info.name.startswith(LONG_CHAT + ","):
+                layout["long chat"] = middle(rect(e))
+        return layout
+    finally:
+        process.kill()
+
+
+def launch(log, *args):
+    """Launches without UI Automation unless --a11y asks for it: a UI Automation
+    client switches on the window's accessibility tree, and with it on, the window
+    draws every region uncached."""
+    global LAYOUT, ORIGIN, PROCESS, HWND
+    LAYOUT = survey(*args)
+    if not args:
+        rc.stop_engine()
+    os.environ["ADELINE_FRAME_LOG"] = str(log)
+    PROCESS, HWND = ui.launch_blind(*args)
+    time.sleep(3)
+    left, top, right, bottom = ui.window_rect(HWND)
+    assert (right - left, bottom - top) == LAYOUT["size"], "the window opened at another size"
+    ORIGIN = left, top
+    if OPTIONS.a11y:
+        Desktop(backend="uia").window(handle=HWND).descendants()
+    os.environ.pop("ADELINE_FRAME_LOG")
+    return PROCESS
 
 
 def percentile(values, fraction):
@@ -151,29 +192,30 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--exe", default=str(rc.HERE.parents[1] / "target" / "profiling" / "dist" / "adeline.exe"))
     parser.add_argument("--only")
+    parser.add_argument("--a11y", action="store_true", help="switch on the accessibility tree, as a screen reader does")
     OPTIONS = parser.parse_args()
     rc.EXE = Path(OPTIONS.exe)
     temp = rc.setup()
     logs = [temp / "frames-demo.csv", temp / "frames-engine.csv"]
 
-    process, window = launch(logs[0], "--demo")
+    process = launch(logs[0], "--demo")
     try:
-        ui.open_chat(window, LONG_CHAT)
-        scenario("idle", idle, window)
-        scenario("scroll", scroll, window)
-        scenario("switch chats", switch_chats, window)
-        scenario("typing", type_text, window)
-        scenario("hover list", hover, window)
-        scenario("resize", resize, window)
+        mouse.click(coords=point("long chat"))
+        scenario("idle", idle)
+        scenario("scroll", scroll)
+        scenario("switch chats", switch_chats)
+        scenario("typing", type_text)
+        scenario("hover list", hover)
+        scenario("resize", resize)
     finally:
         time.sleep(0.3)
         process.kill()
 
     if not OPTIONS.only or "stream" in OPTIONS.only.lower():
         rc.stop_engine()
-        process, window = launch(logs[1])
+        process = launch(logs[1])
         try:
-            scenario("stream", stream, window)
+            scenario("stream", stream)
         finally:
             time.sleep(0.3)
             process.kill()
@@ -185,6 +227,9 @@ def main():
 
 OPTIONS = None
 PROCESS = None
+HWND = None
+LAYOUT = None
+ORIGIN = None
 
 if __name__ == "__main__":
     main()

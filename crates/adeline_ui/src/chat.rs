@@ -51,6 +51,16 @@ pub(super) fn size_probe(
     .size_full()
 }
 
+pub(super) fn region<V: Render>(view: &Entity<V>, window: &Window) -> AnyElement {
+    if window.is_a11y_active() {
+        view.clone().into_any_element()
+    } else {
+        view.clone()
+            .cached(StyleRefinement::default().size_full())
+            .into_any_element()
+    }
+}
+
 fn invalidate_range(state: &ListState, range: std::ops::Range<usize>) {
     let top = state.logical_scroll_top();
     state.splice(range.clone(), range.len());

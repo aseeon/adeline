@@ -81,7 +81,7 @@ impl Adeline {
     pub(super) fn side_panel_is_open(&self) -> bool {
         self.section == Section::Chats && self.side_panel_open
     }
-    pub(super) fn workspace_panels(&self, cx: &Context<Self>) -> AnyElement {
+    pub(super) fn workspace_panels(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         // A collapsed conversation list stays on screen as the chat rail.
         let rail = (!self.left_panel_is_open()).then(|| {
             div()
@@ -123,7 +123,7 @@ impl Adeline {
                 // minimum before the main panel drops below this one.
                 resizable_panel()
                     .size_range(MAIN_PANEL_MIN..Pixels::MAX)
-                    .child(self.chats(cx)),
+                    .child(self.chats(window, cx)),
             )
             .child(
                 resizable_panel()

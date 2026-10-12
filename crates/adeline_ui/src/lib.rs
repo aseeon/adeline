@@ -1,5 +1,11 @@
 //! The desktop UI: the `Adeline` root view, its `Action`s and the window it opens.
 //! Every UI event is an `Action`. The headless build leaves this crate out.
+//!
+//! The large regions are cached views: a frame redraws only the views notified
+//! since the last one, and their ancestors. Cached views read `Adeline`'s state,
+//! so `notify_cached_views` notifies them whenever `Adeline` is notified. GPUI
+//! leaves a replayed view out of the accessibility tree, so while assistive
+//! technology is connected `chat::region` draws them uncached.
 mod activity;
 mod agent_form;
 mod chat;
@@ -410,6 +416,7 @@ impl Adeline {
         let composer_region = cx.new(|cx| chat::Composer::new(owner.clone(), &composer, cx));
         let control_pane = cx.new(|_| panes::ControlPane::new(owner.clone()));
         let header_region = cx.new(|_| chat::Header(owner.clone()));
+        subscriptions.push(cx.observe_self(Self::notify_cached_views));
         let mut app = Self {
             main_window: window
                 .window_handle()
@@ -580,6 +587,10 @@ impl Adeline {
         cx.refresh_windows();
     }
 
+    fn notify_cached_views(&mut self, cx: &mut Context<Self>) {
+        self.transcript.update(cx, |_, cx| cx.notify());
+    }
+
     fn has_open_project(&self) -> bool {
         self.open_projects
             .get(self.project)
@@ -653,7 +664,7 @@ impl Adeline {
     }
 }
 impl Render for Adeline {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = if let Some(screen) = self.engine_screen(cx) {
             screen
         } else if !self.has_open_project() {
@@ -672,7 +683,7 @@ impl Render for Adeline {
                 )
                 .into_any_element()
         } else if self.section == Section::Chats {
-            self.workspace_panels(cx)
+            self.workspace_panels(window, cx)
         } else {
             div().size_full().into_any_element()
         };

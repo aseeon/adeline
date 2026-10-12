@@ -8,6 +8,8 @@ Start engine, and demo mode without an engine. Run from the repo root:
     python scripts/engine-check/ui_check.py
 """
 import contextlib
+import ctypes
+import ctypes.wintypes
 import os
 import re
 import socket
@@ -16,7 +18,9 @@ import sys
 import time
 import traceback
 
-from pywinauto import Desktop
+import win32clipboard
+from pywinauto import Desktop, mouse
+from pywinauto.controls.hwndwrapper import HwndWrapper
 from pywinauto.keyboard import send_keys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -24,6 +28,7 @@ import run_checks as rc  # noqa: E402
 from engine_client import Client  # noqa: E402
 
 results = []
+user32 = ctypes.windll.user32
 
 
 def wait(predicate, timeout=20, interval=0.2, what="condition"):
@@ -327,6 +332,125 @@ def check_demo_conversation():
         click(window, "Dismiss error")
         wait(lambda: gone(window, "Dismiss error"), 5, what="the error to go")
         assert engine_pid() is None, "demo mode started an engine"
+    finally:
+        process.kill()
+
+
+def clipboard():
+    win32clipboard.OpenClipboard()
+    try:
+        return win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+    except TypeError:
+        return ""
+    finally:
+        win32clipboard.CloseClipboard()
+
+
+def set_clipboard(text):
+    win32clipboard.OpenClipboard()
+    try:
+        win32clipboard.EmptyClipboard()
+        win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
+    finally:
+        win32clipboard.CloseClipboard()
+
+
+def top_window(pid):
+    found = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+    def visit(hwnd, _):
+        owner = ctypes.c_ulong()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
+        if owner.value == pid and user32.IsWindowVisible(hwnd) and window_rect(hwnd)[2] > window_rect(hwnd)[0]:
+            found.append(hwnd)
+        return True
+    user32.EnumWindows(visit, 0)
+    return found[0] if found else None
+
+
+def window_rect(hwnd):
+    r = ctypes.wintypes.RECT()
+    user32.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(r))
+    return r.left, r.top, r.right, r.bottom
+
+
+def launch_blind(*args):
+    """Launches without UI Automation. A UI Automation client switches on the window's
+    accessibility tree, and with it on, the window draws every region uncached."""
+    process = subprocess.Popen([str(rc.EXE), *args])
+    hwnd = wait(lambda: top_window(process.pid), 30, what="the Adeline window")
+    HwndWrapper(hwnd).set_focus()
+    return process, hwnd
+
+
+def relative(element, window):
+    r, w = element.rectangle(), window.rectangle()
+    return r.left - w.left, r.top - w.top, r.right - w.left, r.bottom - w.top
+
+
+def at(origin, x, y):
+    return origin[0] + x, origin[1] + y
+
+
+SELECTION_CHAT = "Make document edits safe when the preview is still updating"
+
+
+def select_and_copy(origin, layout):
+    mouse.click(coords=at(origin, *layout["chat"]))
+    time.sleep(1)
+    first, second = layout["replies"][:2]
+    # Reply text isn't in the UI Automation tree; it sits above each reply's own buttons.
+    # Selecting text has no keyboard path, so this drags across the second reply.
+    top, bottom = first[3] + 40, second[1] - 20
+    mouse.press(coords=at(origin, second[0] + 2, top))
+    for step in range(1, 21):
+        mouse.move(coords=at(origin, second[0] + 2 + step * 20, top + step * (bottom - top) // 20))
+        time.sleep(0.01)
+    mouse.release(coords=at(origin, second[0] + 402, bottom))
+    # Hovering the chat list redraws it and not the transcript.
+    for x, y in layout["items"][:6]:
+        mouse.move(coords=at(origin, x, y))
+        time.sleep(0.1)
+    time.sleep(0.5)
+    set_clipboard("sentinel")
+    send_keys("^c")
+    return wait(lambda: clipboard() != "sentinel" and clipboard(), 3, what="the selection to copy")
+
+
+@check("View caching: a transcript selection survives redraws of the regions around it")
+def check_transcript_selection():
+    rc.stop_engine()
+    process, window = launch("--demo")
+    try:
+        window.set_focus()
+        named(window, "Message", timeout=20)
+        items = [e for e in window.descendants() if e.element_info.control_type == "ListItem"]
+        chat = next(e for e in items if e.element_info.name.startswith(SELECTION_CHAT + ","))
+        open_chat(window, SELECTION_CHAT)
+        time.sleep(1)
+        replies = sorted((relative(e, window) for e in window.descendants()
+                          if e.element_info.name == "Reply" and e.element_info.control_type == "Button"),
+                         key=lambda r: r[1])
+        assert len(replies) >= 2, "the chat has fewer than two replies"
+        middle = lambda r: ((r[0] + r[2]) // 2, (r[1] + r[3]) // 2)  # noqa: E731
+        layout = {"chat": middle(relative(chat, window)), "replies": replies,
+                  "items": [middle(relative(e, window)) for e in items]}
+        size = window.rectangle().width(), window.rectangle().height()
+        r = window.rectangle()
+        assert len(select_and_copy((r.left, r.top), layout)) > 20
+        # With the accessibility tree on, the transcript stays in it while other regions redraw.
+        assert count(window, "Reply") >= 2, "the transcript left the accessibility tree"
+    finally:
+        process.kill()
+    process, hwnd = launch_blind("--demo")
+    try:
+        time.sleep(3)
+        left, top, right, bottom = window_rect(hwnd)
+        assert (right - left, bottom - top) == size, "the window opened at another size"
+        copied = select_and_copy((left, top), layout)
+        assert len(copied) > 20, f"copied {copied!r}"
+        return f"copied {len(copied)} characters"
     finally:
         process.kill()
 
@@ -812,7 +936,8 @@ def main():
     try:
         only = sys.argv[1] if len(sys.argv) > 1 else ""
         for run in (check_launch, check_quit_background, check_quit_idle, check_quit_stop_all,
-                    check_settings_engine, check_unavailable, check_demo, check_demo_conversation, check_fork,
+                    check_settings_engine, check_unavailable, check_demo, check_demo_conversation,
+                    check_transcript_selection, check_fork,
                     check_demo_machines, check_add_machine, check_drop, check_ssh_failures,
                     check_upgrade_and_browse, check_headless_cli, check_headless_remote):
             if only.lower() in run.label.lower():
