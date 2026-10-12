@@ -4,7 +4,7 @@
 //! Windows and Linux put Kit's caption buttons at its right end and macOS keeps its traffic
 //! lights at the left, with the app icon beside them.
 use super::*;
-use gpui_kit::component::{GlobalState, TitleBar};
+use gpui_kit::component::GlobalState;
 
 // 4px of headroom over the 32px project tabs.
 pub(super) const MAIN_HEIGHT: Pixels = px(36.);

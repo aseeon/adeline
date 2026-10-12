@@ -491,7 +491,7 @@ pub fn apply(projects: &mut [Workspace], live: &mut HashMap<String, Live>, delta
         Delta::Read { id, through } => {
             live.entry(id.clone()).or_default().last_read_through = Some(*through);
             if let Some(thread) = locate(projects, id) {
-                for message in thread.messages.iter_mut().take(through + 1) {
+                for message in thread.messages.iter_mut().take(through.saturating_add(1)) {
                     message.read = true;
                 }
                 thread.prepare_search();

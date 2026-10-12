@@ -325,7 +325,7 @@ pub fn init(demo: bool, initial: Option<Initial>, snapshot: Option<&Snapshot>, c
     match initial {
         Some(Initial { reader, writer, .. }) => {
             let (incoming, epoch, cancel) = open_inbox(LOCAL, cx);
-            let blocking = get(LOCAL, cx).expect("local connection").blocking.clone();
+            let blocking = Arc::clone(&get(LOCAL, cx).expect("local connection").blocking);
             runtime().spawn(run_io(reader, writer, incoming, blocking, cancel, None));
             listen(LOCAL, epoch, cx);
         }
@@ -451,7 +451,7 @@ pub fn connect(machine: &str, cx: &mut App) {
     }
     let (incoming, epoch, cancel) = open_inbox(machine, cx);
     let connection = get_mut(machine, cx).expect("connection");
-    let blocking = connection.blocking.clone();
+    let blocking = Arc::clone(&connection.blocking);
     connection.state = State::Connecting;
     if machine == LOCAL {
         runtime().spawn(async move {

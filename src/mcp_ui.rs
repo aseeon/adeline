@@ -6,9 +6,9 @@ use crate::conversation::{McpServer, McpTransport};
 use crate::views::text_input;
 use gpui_kit::component::{
     ActiveTheme as _, Sizable as _,
-    button::{Button, ButtonVariants as _},
+    button::ButtonVariants as _,
     form::{Field, Form},
-    input::{Input, InputState, Textarea, TextareaState},
+    input::Textarea,
     tab::{Tab, TabBar},
 };
 use std::rc::Rc;
@@ -253,7 +253,7 @@ pub(super) fn open_editor(
         }
     });
     window.open_dialog(cx, move |dialog, _, cx| {
-        let (ok, button) = (submit.clone(), submit.clone());
+        let (ok, button) = (Rc::clone(&submit), Rc::clone(&submit));
         views::styled_dialog(dialog, cx)
             .w(px(480.))
             .title(views::dialog_title(title))
@@ -313,7 +313,7 @@ pub(super) fn server_list(
         .border_1()
         .border_color(theme.border);
     for (ix, server) in servers.iter().enumerate() {
-        let (edit, remove) = (edit.clone(), remove.clone());
+        let (edit, remove) = (Rc::clone(edit), Rc::clone(remove));
         rows = rows.child(
             row()
                 .w_full()
@@ -353,7 +353,7 @@ pub(super) fn server_list(
     if !servers.is_empty() {
         list = list.child(rows);
     }
-    let edit = edit.clone();
+    let edit = Rc::clone(edit);
     list.child(
         div().child(
             Button::new(SharedString::from(format!("{id}-add")))
@@ -377,7 +377,7 @@ mod tests {
                 ("B".to_owned(), "two".to_owned())
             ]
         );
-        assert!(parse_pairs("JUST_A_NAME", '=', "variable").is_err());
+        parse_pairs("JUST_A_NAME", '=', "variable").unwrap_err();
         assert_eq!(
             parse_pairs("Authorization: Bearer x", ':', "header").unwrap()[0].1,
             "Bearer x"

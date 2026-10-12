@@ -33,7 +33,7 @@ fn worker() -> (Worker, async_channel::Receiver<Event>, Sent) {
         receiver,
     );
     let sent = Sent::default();
-    worker.link = Some(Link::Test(sent.clone()));
+    worker.link = Some(Link::Test(Arc::clone(&sent)));
     worker.features = Some(Features {
         known: true,
         ..Default::default()
@@ -410,7 +410,7 @@ fn unavailable_session_needs_consent_but_missing_auth_needs_login() {
     worker.reply(1, Err(error(-32000, "Authentication required")));
     assert!(!worker.restore_required);
     assert!(worker.active.is_none());
-    assert!(matches!(&events(&received)[..], [EventKind::Error {
+    assert!(matches!(&*events(&received), [EventKind::Error {
         kind: FailureKind::Authentication, message
     }] if message.contains("Log in")));
 }
@@ -741,7 +741,7 @@ async fn session_state_between_turns_is_reported() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn an_agent_on_another_protocol_version_gets_a_configuration_error() {
+async fn an_agent_on_another_protocol_version_gets_a_version_error() {
     let (worker, received, mut from_worker, to_worker) = connected();
     let commands = worker.sender.clone();
     tokio::spawn(worker.run());
@@ -758,7 +758,7 @@ async fn an_agent_on_another_protocol_version_gets_a_configuration_error() {
     })
     .await;
     assert!(matches!(seen.last(), Some(EventKind::Error {
-        kind: FailureKind::Configuration, message
+        kind: FailureKind::Version, message
     }) if message.contains("Adeline supports version 1")));
 }
 

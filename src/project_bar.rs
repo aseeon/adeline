@@ -227,7 +227,7 @@ impl Adeline {
                 }
             })
             .collect();
-        let tab_fit = self.tab_fit.clone();
+        let tab_fit = std::rc::Rc::clone(&self.tab_fit);
         let measure = canvas(
             move |bounds, window, _| tab_fit.measure(&fit, bounds.size.width, window),
             |_, (), _, _| {},

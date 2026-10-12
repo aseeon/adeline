@@ -102,15 +102,15 @@ pub async fn run(
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt as _;
-            command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
-        }
+            command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
+        };
         let (mut child, stdin, stdout, stderr) =
             tokio::task::block_in_place(|| crate::platform::spawn_piped(&mut command, true))
                 .map_err(|error| format!("Could not start {}: {error}", step.program))?;
         drop(stdin);
         let mut readers = Vec::new();
         for reader in std::iter::once(stdout).chain(stderr) {
-            let output = output.clone();
+            let output = std::sync::Arc::clone(&output);
             readers.push(tokio::spawn(async move {
                 let mut lines = tokio::io::BufReader::new(reader).lines();
                 while let Ok(Some(line)) = lines.next_line().await {

@@ -474,8 +474,9 @@ impl Adeline {
         let owner = cx.weak_entity();
         let chat_list = cx.new(|_| chat::ChatList::new(owner.clone()));
         let composer_height = std::rc::Rc::new(std::cell::Cell::new(px(0.)));
-        let transcript =
-            cx.new(|cx| chat::Transcript::new(owner.clone(), composer_height.clone(), cx));
+        let transcript = cx.new(|cx| {
+            chat::Transcript::new(owner.clone(), std::rc::Rc::clone(&composer_height), cx)
+        });
         let composer_region = cx.new(|cx| chat::Composer::new(owner.clone(), &composer, cx));
         let control_pane = cx.new(|_| panes::ControlPane::new(owner.clone()));
         let header_region = cx.new(|_| chat::Header(owner.clone()));

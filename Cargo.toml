@@ -1,6 +1,6 @@
 [package]
 name = "adeline"
-version = "0.1.12"
+version = "0.1.13"
 edition = "2024"
 description = "A native GPUI desktop workspace"
 license = "MIT"
@@ -14,7 +14,7 @@ serde_json = "1"
 serde_yaml_ng = "0.10"
 notify = "8"
 async-channel = "2"
-tokio = { version = "1.53", features = ["rt-multi-thread", "net", "io-util", "io-std", "process", "sync", "time", "macros"] }
+tokio = { version = "1.53", features = ["rt-multi-thread", "fs", "net", "io-util", "io-std", "process", "sync", "time", "macros"] }
 # ACP v1 through the official SDK. Adeline spawns agents itself (job objects,
 # process groups), so the SDK's `process` feature stays off.
 agent-client-protocol = { version = "=3.3.0", features = ["unstable_session_fork"] }
@@ -56,6 +56,14 @@ incremental = false
 [lints.rust]
 unsafe_code = "deny"
 unused_qualifications = "warn"
+# From the Pragmatic Rust Guidelines (M-STATIC-VERIFICATION).
+ambiguous_negative_literals = "warn"
+missing_debug_implementations = "warn"
+redundant_imports = "warn"
+redundant_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+unsafe_op_in_unsafe_fn = "warn"
+unused_lifetimes = "warn"
 
 [lints.clippy]
 # Default groups (correctness, suspicious, style, complexity, perf) stay on.
@@ -75,6 +83,27 @@ allow_attributes = "warn"
 allow_attributes_without_reason = "warn"
 undocumented_unsafe_blocks = "deny"
 unimplemented = "deny"
+
+# Restriction lints from the Pragmatic Rust Guidelines (M-STATIC-VERIFICATION).
+as_pointer_underscore = "warn"
+assertions_on_result_states = "warn"
+clone_on_ref_ptr = "warn"
+deref_by_slicing = "warn"
+disallowed_script_idents = "warn"
+empty_drop = "warn"
+empty_enum_variants_with_brackets = "warn"
+empty_structs_with_brackets = "warn"
+fn_to_numeric_cast_any = "warn"
+if_then_some_else_none = "warn"
+map_err_ignore = "warn"
+redundant_type_annotations = "warn"
+renamed_function_params = "warn"
+semicolon_outside_block = "warn"
+unnecessary_safety_comment = "warn"
+unnecessary_safety_doc = "warn"
+unneeded_field_pattern = "warn"
+unused_result_ok = "warn"
+too_long_first_doc_paragraph = "warn"
 
 # Pedantic lints that don't fit GPUI UI code.
 too_many_lines = "allow"         # render functions are long by nature

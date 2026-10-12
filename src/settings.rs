@@ -3,18 +3,18 @@
 //! only its Agents and Engine; the rest is this client's. Demo mode adds
 //! General › Features, whose toggles are still stubs.
 use super::*;
+use gpui_kit::AppContext as _;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, FocusableExt as _, Icon, IndexPath, Root, Selectable as _,
-    Sizable as _, TitleBar, WindowExt as _,
-    button::{Button, ButtonVariants},
+    ActiveTheme as _, Disableable as _, FocusableExt as _, IndexPath, Selectable as _,
+    Sizable as _, WindowExt as _,
+    button::Button,
     form::{Field, Form},
-    input::{Input, InputEvent, InputState},
+    input::Input,
     scroll::ScrollableElement as _,
     searchable_list::SearchableVec,
     select::{Select, SelectEvent, SelectState},
     switch::Switch,
 };
-use gpui_kit::{AppContext as _, base::actions::Cancel};
 use std::{cell::Cell, rc::Rc};
 use views::{card, text_input};
 
@@ -378,8 +378,8 @@ fn choose(
     window.open_dialog(cx, move |dialog, _, cx| {
         let mut footer = div().flex().justify_end().gap_2();
         for (index, &label) in labels.iter().enumerate() {
-            let selected = selected.clone();
-            let decided = decided.clone();
+            let selected = Rc::clone(&selected);
+            let decided = Rc::clone(&decided);
             let button = Button::new(format!("choice-{index}"))
                 .label(label)
                 .small()
@@ -396,10 +396,10 @@ fn choose(
                 button
             });
         }
-        let on_ok = selected.clone();
-        let ok_decided = decided.clone();
-        let on_close = selected.clone();
-        let close_decided = decided.clone();
+        let on_ok = Rc::clone(&selected);
+        let ok_decided = Rc::clone(&decided);
+        let on_close = Rc::clone(&selected);
+        let close_decided = Rc::clone(&decided);
         views::styled_dialog(dialog, cx)
             .title(views::dialog_title(title.clone()))
             .child(

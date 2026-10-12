@@ -10,9 +10,8 @@ use acp::{ProbeError, Probed};
 use agents::{AgentDefinition, InstructionsMode};
 use gpui_kit::component::{
     Disableable as _, Sizable as _,
-    button::{Button, ButtonVariants},
     form::{Field, Form},
-    input::{Input, InputEvent, InputState, Textarea, TextareaState},
+    input::Textarea,
     link::Link,
     radio::RadioGroup,
     select::{SearchableVec, Select, SelectEvent, SelectGroup, SelectItem, SelectState},

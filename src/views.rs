@@ -70,7 +70,7 @@ impl Adeline {
         // header and composer float over it and stop short of the scrollbar;
         // matching left padding keeps their columns centered on the messages.
         let scrollbar = theme::SCROLLBAR_TRACK;
-        let composer_height = self.composer_height.clone();
+        let composer_height = std::rc::Rc::clone(&self.composer_height);
         let transcript = self.transcript.clone();
         // The activity panel's stats island matches the composer's height.
         let owner = cx.weak_entity();
@@ -78,7 +78,7 @@ impl Adeline {
             if (composer_height.get() - size.height).abs() > px(0.5) {
                 composer_height.set(size.height);
                 transcript.update(cx, |_, cx| cx.notify());
-                owner.update(cx, |_, cx| cx.notify()).ok();
+                let _ = owner.update(cx, |_, cx| cx.notify());
             }
         });
         // Messages fade out just below the header's edge instead of meeting a line.

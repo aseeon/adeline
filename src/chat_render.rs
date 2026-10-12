@@ -8,7 +8,7 @@ use gpui_kit::base::SelectableText;
 use gpui_kit::component::plot::shape::{Arc as ArcShape, ArcData};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Selectable as _, Side, Sizable as _,
-    button::{Button, ButtonVariants as _},
+    button::ButtonVariants as _,
     command::{Command, CommandGroup, CommandItem},
     input::Textarea,
     menu::{DropdownMenu as _, PopupMenuItem},
@@ -407,7 +407,7 @@ impl Adeline {
             .border_color(theme.primary)
             .bg(theme.background)
             .on_hover({
-                let key = key.clone();
+                let key = Arc::clone(&key);
                 let list = list.clone();
                 move |hovered, _, cx| {
                     if !*hovered {
@@ -487,7 +487,7 @@ impl Adeline {
             .when(!selected, |tile| tile.hover(|style| style.bg(fill)))
             .on_hover({
                 let list = list.clone();
-                let key = key.clone();
+                let key = Arc::clone(&key);
                 move |hovered, _, cx| {
                     if *hovered {
                         let _ = list.update(cx, |list, cx| list.hover_collapsed(&key, true, cx));
@@ -568,7 +568,7 @@ impl Adeline {
             .iter()
             .map(|(agent, count)| {
                 let (path, _) = self.agent_icon(agent, cx);
-                (agent.clone(), self.agent_name(agent), path, *count)
+                (Arc::clone(agent), self.agent_name(agent), path, *count)
             })
             .collect();
         let total: usize = agents.iter().map(|(_, _, _, count)| count).sum();
@@ -600,13 +600,17 @@ impl Adeline {
                 );
                 for (agent, name, path, count) in agents.iter() {
                     let owner = owner.clone();
-                    let agent = agent.clone();
+                    let agent = Arc::clone(agent);
                     menu = menu.item(
                         PopupMenuItem::element(counted(name.clone(), *count))
                             .icon(Icon::default().path(path.clone()))
                             .on_click(move |_, window, cx| {
                                 let _ = owner.update(cx, |app, cx| {
-                                    app.act(Action::AgentFilter(Some(agent.clone())), window, cx);
+                                    app.act(
+                                        Action::AgentFilter(Some(Arc::clone(&agent))),
+                                        window,
+                                        cx,
+                                    );
                                 });
                             }),
                     );

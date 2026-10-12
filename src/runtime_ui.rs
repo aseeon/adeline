@@ -611,7 +611,7 @@ impl Adeline {
         let machines = Self::connected_machines(cx);
         let waiting = std::rc::Rc::new(std::cell::Cell::new(machines.len()));
         for machine in machines {
-            let waiting = waiting.clone();
+            let waiting = std::rc::Rc::clone(&waiting);
             self.machine_request(&machine, Command::StopAll, cx, move |app, result, _, cx| {
                 if let Err(error) = result {
                     app.notify_toast(&error, cx);

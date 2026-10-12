@@ -550,7 +550,7 @@ mod tests {
         let mut with_command = gemini;
         with_command.name = "Other".into();
         with_command.command = "gemini".into();
-        assert!(catalog.save(None, with_command, None, false).is_err());
+        catalog.save(None, with_command, None, false).unwrap_err();
         let custom = agent("Custom one");
         catalog.save(None, custom.clone(), None, false).unwrap();
         let yaml = fs::read_to_string(file(&root, "custom-one")).unwrap();
@@ -605,7 +605,7 @@ permission_mode: AllowEverything
         assert!(catalog.errors.is_empty());
         assert_eq!(fs::read_to_string(file(&root, "josh")).unwrap(), old);
         assert_eq!(fs::read_to_string(file(&root, "old")).unwrap(), older);
-        assert!(catalog.save(None, agent("Josh"), None, false).is_err());
+        catalog.save(None, agent("Josh"), None, false).unwrap_err();
         assert_eq!(fs::read_to_string(file(&root, "josh")).unwrap(), old);
     }
 
@@ -684,7 +684,9 @@ permission_mode: AllowEverything
             "josh-smith"
         );
         let before = fs::read(file(&root, "josh-smith")).unwrap();
-        assert!(catalog.save(None, agent("Josh Smith"), None, true).is_err());
+        catalog
+            .save(None, agent("Josh Smith"), None, true)
+            .unwrap_err();
         assert_eq!(fs::read(file(&root, "josh-smith")).unwrap(), before);
         for invalid in [" -- !!! ", "CON", "com1", "COM¹", "LPT9"] {
             assert!(
@@ -692,13 +694,11 @@ permission_mode: AllowEverything
                 "{invalid}"
             );
         }
-        assert!(
-            catalog
-                .save(None, agent(&"a".repeat(256)), None, false)
-                .is_err()
-        );
+        catalog
+            .save(None, agent(&"a".repeat(256)), None, false)
+            .unwrap_err();
         fs::create_dir(root.join("agents").join("JOSH")).unwrap();
-        assert!(catalog.save(None, agent("Josh"), None, true).is_err());
+        catalog.save(None, agent("Josh"), None, true).unwrap_err();
     }
 
     #[test]
@@ -772,17 +772,13 @@ permission_mode: AllowEverything
             serde_yaml_ng::to_string(&theirs).unwrap()
         );
         fs::write(file(&root, "josh"), "name: Broken\n").unwrap();
-        assert!(
-            catalog
-                .save(Some("josh"), mine.clone(), Some(&original), false)
-                .is_err()
-        );
+        catalog
+            .save(Some("josh"), mine.clone(), Some(&original), false)
+            .unwrap_err();
         fs::remove_file(file(&root, "josh")).unwrap();
-        assert!(
-            catalog
-                .save(Some("josh"), mine.clone(), Some(&original), false)
-                .is_err()
-        );
+        catalog
+            .save(Some("josh"), mine.clone(), Some(&original), false)
+            .unwrap_err();
         catalog
             .save(Some("josh"), mine.clone(), Some(&original), true)
             .unwrap();
@@ -818,11 +814,9 @@ permission_mode: AllowEverything
         let alice = agent("Alice");
         catalog.save(None, josh.clone(), None, false).unwrap();
         catalog.save(None, alice.clone(), None, false).unwrap();
-        assert!(
-            catalog
-                .save(Some("josh"), alice.clone(), Some(&josh), true)
-                .is_err()
-        );
+        catalog
+            .save(Some("josh"), alice.clone(), Some(&josh), true)
+            .unwrap_err();
         assert_eq!(
             fs::read_to_string(file(&root, "alice")).unwrap(),
             serde_yaml_ng::to_string(&alice).unwrap()
@@ -831,11 +825,9 @@ permission_mode: AllowEverything
         renamed.name = "Josh Smith".into();
         let extra = file(&root, "josh").parent().unwrap().join("notes.txt");
         fs::write(&extra, "keep this").unwrap();
-        assert!(
-            catalog
-                .save(Some("josh"), renamed.clone(), Some(&josh), false)
-                .is_err()
-        );
+        catalog
+            .save(Some("josh"), renamed.clone(), Some(&josh), false)
+            .unwrap_err();
         assert_eq!(fs::read_to_string(&extra).unwrap(), "keep this");
         assert!(!file(&root, "josh-smith").exists());
         fs::remove_file(extra).unwrap();

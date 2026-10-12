@@ -3,9 +3,10 @@
 //! Kept in `machines.yml`; other clients never see it. Demo mode keeps fake
 //! machines in memory and never touches the file. The last checked machine can't
 //! be unchecked, and removing a machine leaves its engine and data untouched.
+//! A file that can't be read or parsed is never overwritten.
 use serde::{Deserialize, Serialize};
 use std::{
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Mutex,
         atomic::{AtomicBool, Ordering},
@@ -31,6 +32,8 @@ struct Store {
     machines: Vec<Machine>,
     checked: Vec<String>,
     last_folder: Option<String>,
+    #[serde(skip)]
+    unreadable: Option<String>,
 }
 
 static STORE: Mutex<Option<Store>> = Mutex::new(None);
@@ -59,6 +62,20 @@ fn demo_store() -> Store {
         machines: vec![machine("matrix", "Matrix"), machine("vortex", "Vortex")],
         checked: vec![LOCAL.into(), "matrix".into(), "vortex".into()],
         last_folder: None,
+        unreadable: None,
+    }
+}
+
+fn load(path: &Path) -> Store {
+    let unreadable = |error: String| Store {
+        unreadable: Some(error),
+        ..Store::default()
+    };
+    match std::fs::read_to_string(path) {
+        Ok(text) => serde_yaml_ng::from_str(&text)
+            .unwrap_or_else(|e| unreadable(crate::files::error(path, e))),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Store::default(),
+        Err(e) => unreadable(crate::files::error(path, e)),
     }
 }
 
@@ -70,11 +87,13 @@ fn with<T>(change: impl FnOnce(&mut Store) -> T) -> T {
         if demo() {
             return demo_store();
         }
-        path()
-            .ok()
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .and_then(|text| serde_yaml_ng::from_str(&text).ok())
-            .unwrap_or_default()
+        path().map_or_else(
+            |e| Store {
+                unreadable: Some(e),
+                ..Store::default()
+            },
+            |path| load(&path),
+        )
     });
     // At least one machine stays checked, and only known ones count.
     let known: Vec<String> = store.machines.iter().map(|m| m.id.clone()).collect();
@@ -88,6 +107,9 @@ fn with<T>(change: impl FnOnce(&mut Store) -> T) -> T {
 fn save(store: &Store) -> Result<(), String> {
     if demo() {
         return Ok(());
+    }
+    if let Some(error) = &store.unreadable {
+        return Err(error.clone());
     }
     let path = path()?;
     crate::config::seed_yaml(&path, store).and_then(|()| crate::config::write_yaml(&path, store))
@@ -246,4 +268,24 @@ pub fn set_last_folder(id: &str) {
             let _ = save(store);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_unparsable_file_blocks_saving() {
+        let dir = crate::files::TempDir::new("adeline-machines");
+        let path = dir.join("machines.yml");
+        assert!(load(&path).unreadable.is_none());
+        std::fs::write(&path, "machines: [unclosed").unwrap();
+        let store = load(&path);
+        assert!(store.unreadable.is_some());
+        assert!(save(&store).is_err());
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "machines: [unclosed"
+        );
+    }
 }

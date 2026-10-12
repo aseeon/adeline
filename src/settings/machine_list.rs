@@ -145,7 +145,7 @@ impl SettingsWindow {
             let count = machine.destinations.len();
             for (at, destination) in machine.destinations.iter().enumerate() {
                 let button = |name: &'static str, label: &'static str, enabled: bool| {
-                    Button::new((name, ix * 100 + at))
+                    Button::new(format!("{name}-{ix}-{at}"))
                         .xsmall()
                         .ghost()
                         .label(label)

@@ -8,14 +8,9 @@
 //! `COLLAPSED_SEARCH` is NUL-prefixed because chat ids never are. `Transcript`'s
 //! `follow` and `reveal` leave redrawing the panel to the caller.
 use super::*;
-use crate::Action;
 use crate::chat_render::{LabelPlacement, section_label};
 use crate::prepared::{Criteria, Group, Outcome};
-use gpui_kit::component::{
-    ActiveTheme as _,
-    input::{InputEvent, TextareaState},
-    scroll::Scrollbar,
-};
+use gpui_kit::component::{ActiveTheme as _, scroll::Scrollbar};
 use std::sync::Arc;
 
 pub(super) const ROW_HEIGHT: f32 = 1.75;
@@ -301,7 +296,7 @@ impl ChatList {
             .iter()
             .map(|item| match item {
                 Item::Section(slot) => Arc::from(format!("\0{}", outcome.groups[*slot].0.title())),
-                Item::Chat(row) => self.records[*row].id.clone(),
+                Item::Chat(row) => Arc::clone(&self.records[*row].id),
                 Item::End => Arc::from("\0end"),
                 Item::Tail => Arc::from("\0tail"),
             })
@@ -400,7 +395,7 @@ impl ChatList {
     pub fn hover_collapsed(&mut self, id: &Arc<str>, hovered: bool, cx: &mut Context<Self>) {
         // Entering a tile unfurls it; only leaving its own flyout folds it.
         let next = if hovered {
-            Some(id.clone())
+            Some(Arc::clone(id))
         } else if self.collapsed_hover.as_ref() == Some(id) {
             None
         } else {
@@ -446,7 +441,7 @@ impl ChatList {
         let list = cx.weak_entity();
         // The open chat stays pinned under search while the others scroll.
         let pinned = selected.and_then(|row| {
-            let id = self.records.get(row)?.id.clone();
+            let id = Arc::clone(&self.records.get(row)?.id);
             let hovered = self.collapsed_hover.as_ref() == Some(&id);
             Some(collapsed_tile(
                 &self.owner,
@@ -461,7 +456,7 @@ impl ChatList {
         });
         let items: Arc<[(usize, Arc<str>)]> = rows
             .into_iter()
-            .filter_map(|row| Some((row, self.records.get(row)?.id.clone())))
+            .filter_map(|row| Some((row, Arc::clone(&self.records.get(row)?.id))))
             .collect();
         let count = items.len();
         let chats = uniform_list("chat-rail-items", count, {
@@ -638,7 +633,7 @@ impl Render for ChatList {
                 .into_any_element()
         } else {
             let owner = self.owner.clone();
-            let items = self.items.clone();
+            let items = Arc::clone(&self.items);
             let groups: Arc<[(Group, Vec<usize>)]> = self.outcome.groups.clone().into();
             let folded: Arc<[Group]> = self.folded.clone().into();
             let selected = self.selected;
@@ -793,11 +788,10 @@ impl Transcript {
             let view = view.clone();
             let near = window.rem_size() * 3.;
             cx.defer(move |cx| {
-                view.update(cx, |transcript, cx| {
+                let _ = view.update(cx, |transcript, cx| {
                     transcript.resume_near_end(near);
                     transcript.note_following(cx);
-                })
-                .ok();
+                });
             });
         });
         Self {
@@ -837,7 +831,7 @@ impl Transcript {
         let following = self.state.is_following_tail();
         if following != self.following {
             self.following = following;
-            self.owner.update(cx, |_, cx| cx.notify()).ok();
+            let _ = self.owner.update(cx, |_, cx| cx.notify());
         }
     }
 

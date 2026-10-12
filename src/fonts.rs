@@ -63,7 +63,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn removed_font_falls_back_without_changing_the_preference() {
+    fn removed_font_falls_back() {
         let requested = "Example Mono";
         assert_eq!(
             resolve_from(requested, &catalogue(vec![requested.into()]), DEFAULT),
@@ -72,10 +72,6 @@ mod tests {
         assert_eq!(
             resolve_from(requested, &catalogue(vec![]), DEFAULT),
             DEFAULT
-        );
-        assert_eq!(
-            resolve_from(requested, &catalogue(vec![requested.into()]), DEFAULT),
-            requested
         );
     }
 

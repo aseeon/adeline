@@ -294,7 +294,6 @@ pub fn text_pixels(base: f32) -> gpui_kit::Pixels {
 #[cfg(feature = "gui")]
 pub fn bind_keys(cx: &mut gpui_kit::App) {
     use super::*;
-    use gpui_kit::base::actions::Cancel;
     let keys = current().general.keymap;
     let mut bindings = Vec::new();
     macro_rules! bind {

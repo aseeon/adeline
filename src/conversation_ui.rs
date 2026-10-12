@@ -11,7 +11,7 @@ use crate::protocol::Live;
 use gpui_kit::component::{
     ActiveTheme as _, Sizable as _,
     alert::Alert,
-    button::{Button, ButtonVariants as _},
+    button::ButtonVariants as _,
     menu::{ContextMenuExt as _, PopupMenuItem},
     popover::Popover,
     scroll::Scrollbar,
@@ -503,12 +503,12 @@ impl Adeline {
             &file.data[..file.data.len().min(64)]
         );
         if let Some(image) = self.pictures.borrow().get(&key) {
-            return Some(image.clone());
+            return Some(Arc::clone(image));
         }
         let format = ImageFormat::from_mime_type(&file.mime)?;
         let bytes = conversation::unbase64(&file.data)?;
         let image = Arc::new(Image::from_bytes(format, bytes));
-        self.pictures.borrow_mut().insert(key, image.clone());
+        self.pictures.borrow_mut().insert(key, Arc::clone(&image));
         Some(image)
     }
 
@@ -1087,7 +1087,7 @@ impl Adeline {
                 .w(px(760.))
                 .title(views::dialog_title(file.name.clone()))
                 .child(
-                    img(ImageSource::Image(picture.clone()))
+                    img(ImageSource::Image(Arc::clone(&picture)))
                         .w_full()
                         .max_h(rems(36.))
                         .object_fit(ObjectFit::Contain),

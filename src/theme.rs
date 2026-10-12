@@ -570,21 +570,19 @@ mod tests {
             let mut loaded: ThemeFile = serde_yaml_ng::from_str(&yaml).unwrap();
             assert_eq!(loaded.validate().unwrap(), theme.validate().unwrap());
             loaded.colors.remove("primary");
-            assert!(loaded.validate().is_err());
+            loaded.validate().unwrap_err();
             loaded.colors.insert("primary".into(), "#GGFFFF".into());
-            assert!(loaded.validate().is_err());
-        }
-        assert!(serde_yaml_ng::from_str::<ThemeFile>("name: bad\nbrightness: Medium").is_err());
-        assert!(
-            serde_yaml_ng::from_str::<ThemeFile>(
-                "name: Flat theme\nbrightness: Dark\nbackground: '#0F1218'\n"
-            )
-            .is_err()
-        );
-        assert!(theme_path("../outside.yml").is_err());
-        assert!(theme_path("C:\\outside.yml").is_err());
-        assert!(theme_path("C:outside.yml").is_err());
-        assert!(theme_path("..\\outside.yml").is_err());
+            loaded.validate().unwrap_err()
+        };
+        serde_yaml_ng::from_str::<ThemeFile>("name: bad\nbrightness: Medium").unwrap_err();
+        serde_yaml_ng::from_str::<ThemeFile>(
+            "name: Flat theme\nbrightness: Dark\nbackground: '#0F1218'\n",
+        )
+        .unwrap_err();
+        theme_path("../outside.yml").unwrap_err();
+        theme_path("C:\\outside.yml").unwrap_err();
+        theme_path("C:outside.yml").unwrap_err();
+        theme_path("..\\outside.yml").unwrap_err();
         assert_eq!(parse_hex("#aBc123"), Some(0xabc123));
         assert_eq!(parse_hex("１２３"), None);
     }

@@ -460,7 +460,7 @@ impl Thread {
     pub fn search_record(&self) -> crate::prepared::SearchRecord {
         crate::prepared::SearchRecord {
             id: std::sync::Arc::from(self.id.as_str()),
-            text: self.search_text.clone(),
+            text: std::sync::Arc::clone(&self.search_text),
             completed: self.status == "completed",
             archived: self.status == "archived",
             blocked: self.status == "blocked",
@@ -560,7 +560,7 @@ mod tests {
             "\u{301} İstanbul",
             "",
         ] {
-            let snapshot = thread.search_text.clone();
+            let snapshot = std::sync::Arc::clone(&thread.search_text);
             thread.push_message(Message {
                 role: "assistant".into(),
                 text: body.into(),

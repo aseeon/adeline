@@ -198,6 +198,8 @@ pub enum FailureKind {
     Configuration,
     Authentication,
     Denied,
+    // The agent speaks another ACP version.
+    Version,
 }
 
 impl Driver {
@@ -223,7 +225,7 @@ impl Driver {
     pub fn send(&self, command: Command) -> Result<(), String> {
         self.sender
             .send(Input::Command(command))
-            .map_err(|_| "Agent worker has stopped.".into())
+            .map_err(|_closed| "Agent worker has stopped.".into())
     }
 }
 
@@ -881,8 +883,8 @@ impl Worker {
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
-            process.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
-        }
+            process.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
+        };
         match block_in_place(|| crate::platform::spawn_piped(&mut process, true)) {
             Ok((child, stdin, stdout, stderr)) => {
                 self.configured = false;
@@ -948,7 +950,7 @@ impl Worker {
         let epoch = self.epoch;
         let inputs = self.sender.clone();
         let traffic = self.traffic_sink();
-        let outgoing_traffic = traffic.clone();
+        let outgoing_traffic = Arc::clone(&traffic);
         let outgoing = outgoing.with(move |line: String| {
             outgoing_traffic(Direction::ToAgent, &line, TrafficNote::None);
             futures::future::ready(Ok::<_, std::io::Error>(line))
@@ -1013,12 +1015,9 @@ impl Worker {
         let traffic = self.traffic_sink();
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                let line = if line.len() > 1024 {
-                    line.chars().take(1024).collect()
-                } else {
-                    line
-                };
+            while let Ok(Some(mut line)) = lines.next_line().await {
+                // Keeps a runaway stderr line from flooding the traffic log.
+                line.truncate(line.floor_char_boundary(1024));
                 traffic(Direction::Stderr, &line, TrafficNote::None);
                 if inputs.send(Input::Stderr { epoch, line }).is_err() {
                     break;
@@ -1360,7 +1359,7 @@ impl Worker {
                     "{name} uses ACP version {}. Adeline supports version 1.",
                     response.protocol_version
                 ),
-                FailureKind::Configuration,
+                FailureKind::Version,
             );
             return;
         }
@@ -2339,10 +2338,7 @@ fn trimmed_traffic(line: &str) -> String {
     if line.len() <= LIMIT {
         line.to_owned()
     } else {
-        let mut end = LIMIT;
-        while !line.is_char_boundary(end) {
-            end -= 1;
-        }
+        let end = line.floor_char_boundary(LIMIT);
         format!("{}… [{} more bytes]", &line[..end], line.len() - end)
     }
 }
@@ -2755,7 +2751,7 @@ pub fn probe(
                 EventKind::Probed => break Ok(probed),
                 EventKind::Error { message, kind } => {
                     break Err(ProbeError {
-                        version: message.contains("Adeline supports version 1"),
+                        version: kind == FailureKind::Version,
                         auth: if kind == FailureKind::Authentication {
                             probed.features.auth.clone()
                         } else {

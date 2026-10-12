@@ -4,11 +4,8 @@
 use super::*;
 use crate::chat_render::{CHAT_HEADER_HEIGHT, agent_mark, message_time, tokens, tool_icon};
 use gpui_kit::component::{
-    ActiveTheme as _, Selectable as _, Sizable as _,
-    button::{Button, ButtonVariants as _},
-    scroll::Scrollbar,
-    spinner::Spinner,
-    tooltip::Tooltip,
+    ActiveTheme as _, Selectable as _, Sizable as _, button::ButtonVariants as _,
+    scroll::Scrollbar, spinner::Spinner, tooltip::Tooltip,
 };
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -249,7 +246,7 @@ impl Adeline {
                 self.activity.scroll.scroll_to_bottom();
             }
             *synced = current;
-        }
+        };
         let list = if entries.is_empty() {
             col().child(
                 div()

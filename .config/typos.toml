@@ -9,6 +9,9 @@ extend-exclude = [
     "output/",
     # The ACP registry copy, spelled as published.
     "assets/registry.json",
+    # Third-party agent skills, kept as published.
+    ".agents/skills/",
+    ".claude/skills/",
 ]
 
 [default]

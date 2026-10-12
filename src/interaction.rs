@@ -70,7 +70,10 @@ impl Adeline {
         }
         let changed = action.clone();
         let previous_modal = self.modal;
-        let root = window.window_handle().downcast::<Root>().unwrap();
+        let root = window
+            .window_handle()
+            .downcast::<Root>()
+            .expect("Kit root window");
         match action {
             Action::AppSettings => settings::open(root, cx.weak_entity(), cx),
             Action::AgentSettings => {

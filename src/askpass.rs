@@ -51,8 +51,12 @@ pub fn serve_askpass(prompts: async_channel::Sender<Prompt>) -> Result<String, S
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        let path = crate::config::directory()?.join(format!("askpass-{}.sock", std::process::id()));
-        let _ = std::fs::create_dir_all(path.parent().unwrap_or(&path));
+        // Owner-only before the socket exists, so no other user can connect first.
+        let dir = crate::config::directory()?.join("askpass");
+        std::fs::create_dir_all(&dir).map_err(|e| crate::files::error(&dir, e))?;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| crate::files::error(&dir, e))?;
+        let path = dir.join(format!("{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&path);
         let listener = tokio::net::UnixListener::bind(&path)
             .map_err(|e| format!("Cannot listen for SSH prompts: {e}"))?;

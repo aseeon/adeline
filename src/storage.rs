@@ -496,7 +496,7 @@ impl ProjectStore {
         directory: &Path,
     ) -> Result<String, String> {
         let id = agents::normalize_name(name)
-            .map_err(|_| "Project name does not produce a valid folder name.".to_owned())?;
+            .map_err(|_invalid| "Project name does not produce a valid folder name.".to_owned())?;
         valid_working_directory(directory)?;
         let root = self.root.as_ref().map_err(Clone::clone)?;
         if let Some(old) = original {

@@ -190,7 +190,7 @@ fn short_id(id: &str) -> &str {
     if id.is_empty() {
         "a new engine"
     } else {
-        &id[..id.len().min(8)]
+        id.get(..8).unwrap_or(id)
     }
 }
 
@@ -271,34 +271,39 @@ fn ssh(destination: &str, remote_command: &str, askpass: &Askpass) -> tokio::pro
     command
 }
 
-fn drain(stderr: Option<tokio::process::ChildStderr>) -> Arc<Mutex<String>> {
+type Errors = (Arc<Mutex<String>>, tokio::task::JoinHandle<()>);
+
+fn drain(stderr: Option<tokio::process::ChildStderr>) -> Errors {
     // Reading as it comes means a full pipe never stalls the child.
     let text = Arc::new(Mutex::new(String::new()));
-    if let Some(mut stderr) = stderr {
-        let sink = text.clone();
-        tokio::spawn(async move {
-            let mut buffer = [0; 4096];
-            while let Ok(read) = stderr.read(&mut buffer).await {
-                if read == 0 {
-                    break;
-                }
-                if let Ok(mut text) = sink.lock() {
-                    text.push_str(&String::from_utf8_lossy(&buffer[..read]));
-                    if text.len() > 16_384 {
-                        let cut = text.len() - 8_192;
-                        let cut = (cut..text.len())
-                            .find(|&i| text.is_char_boundary(i))
-                            .unwrap_or(0);
-                        text.drain(..cut);
-                    }
+    let sink = Arc::clone(&text);
+    let reader = tokio::spawn(async move {
+        let Some(mut stderr) = stderr else {
+            return;
+        };
+        let mut buffer = [0; 4096];
+        while let Ok(read) = stderr.read(&mut buffer).await {
+            if read == 0 {
+                break;
+            }
+            if let Ok(mut text) = sink.lock() {
+                text.push_str(&String::from_utf8_lossy(&buffer[..read]));
+                if text.len() > 16_384 {
+                    let cut = text.len() - 8_192;
+                    let cut = (cut..text.len())
+                        .find(|&i| text.is_char_boundary(i))
+                        .unwrap_or(0);
+                    text.drain(..cut);
                 }
             }
-        });
-    }
-    text
+        }
+    });
+    (text, reader)
 }
 
-fn taken(text: &Arc<Mutex<String>>) -> String {
+async fn finish((text, reader): Errors) -> String {
+    // Waits for the last output, but not for a process that holds the pipe open.
+    let _ = tokio::time::timeout(Duration::from_millis(500), reader).await;
     text.lock()
         .map(|text| text.trim().to_owned())
         .unwrap_or_default()
@@ -356,9 +361,7 @@ async fn run(
         .wait()
         .await
         .map_err(|e| Failure::Network(e.to_string()))?;
-    // Let the last error output arrive.
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    let stderr = taken(&errors);
+    let stderr = finish(errors).await;
     if status.code() == Some(255) {
         return Err(classify(&stderr));
     }
@@ -541,16 +544,33 @@ async fn binary(platform: &str) -> Result<Vec<u8>, Failure> {
 }
 
 async fn download(platform: &str) -> Result<Vec<u8>, String> {
-    let folder = std::env::temp_dir().join(format!("adeline-headless-{VERSION}-{platform}"));
+    // Cached per user: a shared temp folder would let another user plant the binary.
+    let cache = crate::config::directory()?.join("cache");
+    let folder = cache.join(format!("headless-{VERSION}-{platform}"));
     let exe = folder.join(if platform.starts_with("windows") {
         "adeline.exe"
     } else {
         "adeline"
     });
-    if let Ok(bytes) = std::fs::read(&exe) {
+    if let Ok(bytes) = tokio::fs::read(&exe).await {
         return Ok(bytes);
     }
-    std::fs::create_dir_all(&folder).map_err(|e| crate::files::error(&folder, e))?;
+    // Extracted elsewhere and renamed into place, so an interrupted download is never reused.
+    let staging = cache.join(crate::files::unique("headless"));
+    tokio::fs::create_dir_all(&staging)
+        .await
+        .map_err(|e| crate::files::error(&staging, e))?;
+    let fetched = fetch(platform, &staging).await;
+    if fetched.is_err() || tokio::fs::rename(&staging, &folder).await.is_err() {
+        let _ = tokio::fs::remove_dir_all(&staging).await;
+    }
+    fetched?;
+    tokio::fs::read(&exe)
+        .await
+        .map_err(|e| crate::files::error(&exe, e))
+}
+
+async fn fetch(platform: &str, folder: &std::path::Path) -> Result<(), String> {
     let zip = folder.join("adeline.zip");
     let url = format!("{RELEASES}/v{VERSION}/adeline-headless-{platform}.zip");
     local_tool(
@@ -587,8 +607,8 @@ async fn download(platform: &str) -> Result<Vec<u8>, String> {
         )
         .await?;
     }
-    let _ = std::fs::remove_file(&zip);
-    std::fs::read(&exe).map_err(|e| crate::files::error(&exe, e))
+    let _ = tokio::fs::remove_file(&zip).await;
+    Ok(())
 }
 
 async fn local_tool(name: &str, args: &[&std::ffi::OsStr]) -> Result<(), String> {
@@ -648,8 +668,7 @@ async fn bridge(
         }
     }
     let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    Err(classify(&taken(&errors)))
+    Err(classify(&finish(errors).await))
 }
 
 pub fn bridge_main() -> i32 {
@@ -707,8 +726,8 @@ mod tests {
         );
         assert_eq!(split_port("desktop.lan"), ("desktop.lan", None));
         assert_eq!(split_port("alias"), ("alias", None));
-        assert!(check_destination("me@host:22").is_ok());
-        assert!(check_destination("desktop").is_ok());
+        check_destination("me@host:22").unwrap();
+        check_destination("desktop").unwrap();
         assert!(check_destination("-oProxyCommand=x").is_err());
         assert!(check_destination("me@").is_err());
         assert!(check_destination("two words").is_err());

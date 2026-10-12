@@ -121,7 +121,7 @@ pub fn search<'a>(
             .binary_search_by(|(agent, _)| agent.as_ref().cmp(&record.agent))
         {
             Ok(slot) => outcome.agents[slot].1 += 1,
-            Err(slot) => outcome.agents.insert(slot, (record.agent.clone(), 1)),
+            Err(slot) => outcome.agents.insert(slot, (Arc::clone(&record.agent), 1)),
         }
         if !agent_matches {
             continue;

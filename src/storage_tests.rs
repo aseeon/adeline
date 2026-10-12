@@ -140,21 +140,19 @@ fn project_rename_preserves_history_and_directory_snapshot() {
     let work = working(&test, "work");
     let next = working(&test, "next");
     let mut store = open_store(&test);
-    assert!(
-        store
-            .save_project(None, "Bad", Path::new("relative"))
-            .is_err()
-    );
-    assert!(
-        store
-            .save_project(None, "Bad", &test.join("missing"))
-            .is_err()
-    );
+    store
+        .save_project(None, "Bad", Path::new("relative"))
+        .unwrap_err();
+    store
+        .save_project(None, "Bad", &test.join("missing"))
+        .unwrap_err();
     let id = store
         .save_project(None, "Example--Project!", &work)
         .unwrap();
     assert_eq!(id, "example-project");
-    assert!(store.save_project(None, "Example Project", &work).is_err());
+    store
+        .save_project(None, "Example Project", &work)
+        .unwrap_err();
     let project_file = test.join("projects/example-project/project.yml");
     let yaml = fs::read_to_string(&project_file).unwrap();
     let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
@@ -171,11 +169,9 @@ fn project_rename_preserves_history_and_directory_snapshot() {
         store
             .update_conversation(&id, &conversation, settings)
             .unwrap();
-        assert!(
-            store
-                .save_project(Some(&id), "Changed Project", &next)
-                .is_err()
-        );
+        store
+            .save_project(Some(&id), "Changed Project", &next)
+            .unwrap_err();
     }
     let snapshot = store
         .conversation(&conversation)
@@ -512,11 +508,9 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
             .text,
         "partial"
     );
-    assert!(
-        reloaded
-            .create_conversation(&id, &agent(), launch(), Vec::new(), "No start")
-            .is_err()
-    );
+    reloaded
+        .create_conversation(&id, &agent(), launch(), Vec::new(), "No start")
+        .unwrap_err();
 }
 
 #[test]
@@ -774,11 +768,9 @@ fn unsafe_config_contents_block_delete_without_touching_workdir() {
     let mut store = open_store(&test);
     let id = store.save_project(None, "Project", &work).unwrap();
     let project_folder = test.join("projects/project");
-    assert!(
-        store
-            .save_project(Some(&id), "Project", &project_folder)
-            .is_err()
-    );
+    store
+        .save_project(Some(&id), "Project", &project_folder)
+        .unwrap_err();
     let config_file = project_folder.join("project.yml");
     let original_yaml = fs::read_to_string(&config_file).unwrap();
     let malicious_yaml = serde_yaml_ng::to_string(&ProjectDefinition {
@@ -861,8 +853,8 @@ fn forks_copy_visible_history_through_the_fork_point_only() {
         .update_conversation(&project, &source, settings)
         .unwrap();
     // Message 1 ends its turn's first reply; message 2 is the retried reply.
-    assert!(store.fork_conversation(&source, 1).is_err());
-    assert!(store.fork_conversation(&source, 3).is_err());
+    store.fork_conversation(&source, 1).unwrap_err();
+    store.fork_conversation(&source, 3).unwrap_err();
     let fork = store.fork_conversation(&source, 2).unwrap();
     let restored = open_store(&test);
     let saved = restored.conversation(&fork).unwrap();

@@ -330,8 +330,8 @@ fn hidden(mut command: Command) -> Command {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
-    }
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
+    };
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -721,7 +721,7 @@ mod tests {
         assert_eq!(hostile.len(), 1);
         assert_eq!(hostile[0].executables, ["evil"]);
         assert!(resolve("Cargo.toml").unwrap().is_absolute());
-        assert!(parse_registry("not json").is_err());
+        parse_registry("not json").unwrap_err();
         let bundled = std::str::from_utf8(crate::embedded("registry.json").unwrap()).unwrap();
         assert!(parse_registry(bundled).unwrap().len() > 10);
     }

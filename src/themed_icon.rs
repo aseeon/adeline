@@ -1,8 +1,8 @@
 //! GPUI SVGs require a local color. Resolve inherited text color at paint
 //! time so parent hover/selection styles work without freezing a palette value.
 use gpui_kit::{
-    App, Bounds, Element, ElementId, GlobalElementId, Hsla, InspectorElementId, Interactivity,
-    LayoutId, Pixels, StyleRefinement, Svg, Window, prelude::*, svg,
+    App, Bounds, ElementId, GlobalElementId, Hsla, InspectorElementId, Interactivity, LayoutId,
+    Pixels, StyleRefinement, Svg, Window, prelude::*, svg,
 };
 
 pub(crate) struct ThemedIcon(Svg);
@@ -56,36 +56,44 @@ impl Element for ThemedIcon {
     fn request_layout(
         &mut self,
         id: Option<&GlobalElementId>,
-        inspector: Option<&InspectorElementId>,
+        inspector_id: Option<&InspectorElementId>,
         window: &mut Window,
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
-        self.0.request_layout(id, inspector, window, cx)
+        self.0.request_layout(id, inspector_id, window, cx)
     }
     fn prepaint(
         &mut self,
         id: Option<&GlobalElementId>,
-        inspector: Option<&InspectorElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        layout: &mut Self::RequestLayoutState,
+        request_layout: &mut Self::RequestLayoutState,
         window: &mut Window,
         cx: &mut App,
     ) -> Self::PrepaintState {
-        self.0.prepaint(id, inspector, bounds, layout, window, cx)
+        self.0
+            .prepaint(id, inspector_id, bounds, request_layout, window, cx)
     }
     fn paint(
         &mut self,
         id: Option<&GlobalElementId>,
-        inspector: Option<&InspectorElementId>,
+        inspector_id: Option<&InspectorElementId>,
         bounds: Bounds<Pixels>,
-        layout: &mut Self::RequestLayoutState,
+        request_layout: &mut Self::RequestLayoutState,
         prepaint: &mut Self::PrepaintState,
         window: &mut Window,
         cx: &mut App,
     ) {
         let explicit = self.resolve_color(window.text_style().color);
-        self.0
-            .paint(id, inspector, bounds, layout, prepaint, window, cx);
+        self.0.paint(
+            id,
+            inspector_id,
+            bounds,
+            request_layout,
+            prepaint,
+            window,
+            cx,
+        );
         // Cached elements must inherit afresh on the next frame, including
         // after pointer exit, selection changes, and theme changes.
         self.0.style().text.color = explicit;
