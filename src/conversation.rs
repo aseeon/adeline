@@ -5,7 +5,8 @@
 //! The TODO list is what ACP calls the `plan`. `StopReason::Signal` ends a turn
 //! on the profile's turn-end signal, without a prompt response. An `Attachment`
 //! carries its bytes base64-encoded, or a `path` on the engine's machine to read
-//! instead. Traffic times are epoch milliseconds.
+//! instead, and `read_attachment` reads a local file into one. Traffic times
+//! are epoch milliseconds.
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -327,6 +328,31 @@ impl Attachment {
     pub fn image(&self) -> bool {
         self.mime.starts_with("image/")
     }
+}
+
+#[cfg(feature = "gui")]
+pub fn read_attachment(path: &std::path::Path) -> Result<Attachment, String> {
+    let name = path.file_name().map_or_else(
+        || path.display().to_string(),
+        |n| n.to_string_lossy().into_owned(),
+    );
+    let mime = mime_for(&name).to_owned();
+    let size = std::fs::metadata(path)
+        .map_err(|e| crate::files::error(path, e))?
+        .len();
+    // Too big to read; `attach` reports it.
+    let data = if size > ATTACHMENT_LIMIT {
+        String::new()
+    } else {
+        base64(&std::fs::read(path).map_err(|e| crate::files::error(path, e))?)
+    };
+    Ok(Attachment {
+        name,
+        mime,
+        size,
+        data,
+        path: None,
+    })
 }
 
 pub fn mime_for(name: &str) -> &'static str {

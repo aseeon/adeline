@@ -225,10 +225,13 @@ struct State {
     error: Option<String>,
 }
 thread_local! { static ACTIVE: RefCell<State> = RefCell::new(State::default()); }
-pub fn directory() -> Result<PathBuf, String> {
+pub fn home() -> Result<PathBuf, String> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
-        .map(|p| PathBuf::from(p).join(".config/adeline"))
+        .map(PathBuf::from)
         .ok_or_else(|| "Could not find your home directory.".into())
+}
+pub fn directory() -> Result<PathBuf, String> {
+    Ok(home()?.join(".config/adeline"))
 }
 pub fn current() -> Settings {
     ACTIVE.with(|s| s.borrow().settings.clone())
@@ -395,30 +398,6 @@ fn update_at(path: &Path, change: impl FnOnce(&mut Settings)) -> Result<(), Stri
         }
     });
     Ok(())
-}
-#[cfg(feature = "gui")]
-impl super::Adeline {
-    pub(super) fn load_settings(&mut self) {
-        let s = current();
-        self.show_completed = s.modes.chats.show_completed_chats;
-        self.show_archived = s.modes.chats.show_archived_chats;
-        self.left_panel_open = s.modes.chats.show_left_panel;
-        self.side_panel_open = s.modes.chats.show_agent_activity;
-    }
-    pub(super) fn save_settings(&self, action: &super::Action) -> Result<(), String> {
-        use super::Action;
-        update(|s| match action {
-            Action::ShowCompleted => s.modes.chats.show_completed_chats = self.show_completed,
-            Action::ShowArchived => s.modes.chats.show_archived_chats = self.show_archived,
-            Action::ToggleLeftPanel => {
-                s.modes.chats.show_left_panel = self.left_panel_open;
-            }
-            Action::ToggleSidePanel => {
-                s.modes.chats.show_agent_activity = self.side_panel_open;
-            }
-            _ => (),
-        })
-    }
 }
 
 #[cfg(test)]

@@ -3,7 +3,7 @@
 //! and shows it.
 use super::*;
 use crate::conversation::{McpServer, McpTransport};
-use crate::settings::text_input;
+use crate::views::text_input;
 use gpui_kit::component::{
     ActiveTheme as _, Sizable as _,
     button::{Button, ButtonVariants as _},

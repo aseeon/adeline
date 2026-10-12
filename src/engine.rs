@@ -12,6 +12,7 @@ use crate::{
     conversation::{Attachment, AuthMethod, Category, PermissionKind, TurnState, closed},
     data::{Message, Thread, Workspace},
     harness, install, ipc,
+    log::log,
     protocol::{
         ActiveConversation, ClientMessage, Command, Delta, EngineMessage, EngineSettings, Live,
         PROTOCOL, PendingPermission, Queued, Snapshot, Status,
@@ -21,9 +22,8 @@ use crate::{
 use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
-    io::Write as _,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::{sync::mpsc, task::block_in_place};
@@ -186,40 +186,6 @@ async fn cli_stop() -> i32 {
     }
 }
 
-static LOG: Mutex<Option<PathBuf>> = Mutex::new(None);
-const LOG_CAP: u64 = 1024 * 1024;
-
-pub fn log(message: impl std::fmt::Display) {
-    let Ok(guard) = LOG.lock() else {
-        return;
-    };
-    let Some(dir) = guard.as_ref() else {
-        return;
-    };
-    let path = dir.join("engine.log");
-    if std::fs::metadata(&path).is_ok_and(|meta| meta.len() > LOG_CAP) {
-        for index in (1..3).rev() {
-            let _ = std::fs::rename(
-                dir.join(format!("engine.{index}.log")),
-                dir.join(format!("engine.{}.log", index + 1)),
-            );
-        }
-        let _ = std::fs::rename(&path, dir.join("engine.1.log"));
-    }
-    if let Ok(mut file) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-    {
-        let _ = writeln!(
-            file,
-            "{} [{}] {message}",
-            chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
-            std::process::id()
-        );
-    }
-}
-
 fn settings_path() -> Result<PathBuf, String> {
     Ok(ipc::engine_dir()?.join("settings.yml"))
 }
@@ -288,9 +254,7 @@ fn run(daemon: bool) -> i32 {
     if lock.try_lock().is_err() {
         return 0;
     }
-    if let Ok(mut guard) = LOG.lock() {
-        *guard = Some(dir.join("logs"));
-    }
+    crate::log::open(dir.join("logs"));
     log(format!(
         "Engine {} starting (protocol {PROTOCOL}{})",
         env!("CARGO_PKG_VERSION"),
@@ -589,11 +553,7 @@ fn live_for(conversation: &storage::StoredConversation) -> Live {
 fn list_directory(path: Option<PathBuf>) -> Result<crate::protocol::Listing, String> {
     let path = match path.filter(|path| !path.as_os_str().is_empty()) {
         Some(path) => path,
-        None => config::directory()?
-            .parent()
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .ok_or("Could not find your home directory.")?,
+        None => config::home()?,
     };
     let mut entries: Vec<_> = std::fs::read_dir(&path)
         .map_err(|e| crate::files::error(&path, e))?

@@ -38,6 +38,7 @@ mod install;
 #[cfg(feature = "gui")]
 mod interaction;
 mod ipc;
+mod log;
 mod machines;
 #[cfg(feature = "gui")]
 mod mcp_ui;
@@ -928,7 +929,7 @@ fn open(demo_mode: bool) {
                 let owner = view.downgrade();
                 let closing_owner = owner.clone();
                 window.on_window_should_close(cx, move |_, cx| {
-                    settings::request_close(handle, closing_owner.clone(), cx);
+                    interaction::request_close(handle, closing_owner.clone(), cx);
                     false
                 });
                 menu_bar::init(handle, owner, demo_mode, cx);

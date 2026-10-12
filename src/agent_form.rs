@@ -5,7 +5,7 @@
 use super::*;
 use crate::conversation::{AuthMethod, Category, McpServer};
 use crate::install::{Planned, Target};
-use crate::settings::text_input;
+use crate::views::text_input;
 use acp::{ProbeError, Probed};
 use agents::{AgentDefinition, InstructionsMode};
 use gpui_kit::component::{

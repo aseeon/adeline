@@ -528,10 +528,79 @@ impl Adeline {
         false
     }
 
+    pub(super) fn save_agent(
+        entity: &WeakEntity<Self>,
+        machine: &str,
+        original: Option<&str>,
+        definition: agents::AgentDefinition,
+        expected: Option<agents::AgentDefinition>,
+        overwrite: bool,
+        cx: &mut App,
+    ) -> Result<String, String> {
+        let (demo, select_first) = entity
+            .read_with(cx, |app, _| {
+                (
+                    app.demo_mode,
+                    original.is_none() && app.catalog(machine).entries.is_empty(),
+                )
+            })
+            .map_err(|error| error.to_string())?;
+        let saved = if demo {
+            entity
+                .update(cx, move |app, _| {
+                    app.catalog_mut(machine).save(
+                        original,
+                        definition,
+                        expected.as_ref(),
+                        overwrite,
+                    )
+                })
+                .map_err(|error| error.to_string())??
+        } else {
+            let command = Command::SaveAgent {
+                original: original.map(str::to_owned),
+                definition,
+                expected,
+                overwrite,
+            };
+            client::request_blocking(machine, command, cx)?
+                .as_str()
+                .map(str::to_owned)
+                .ok_or("The conversation engine returned no agent ID.")?
+        };
+        entity
+            .update(cx, |app, cx| {
+                app.agents_changed(original, Some(&saved), select_first, cx);
+            })
+            .map_err(|error| error.to_string())?;
+        Ok(saved)
+    }
+
+    pub(super) fn delete_agent(
+        entity: &WeakEntity<Self>,
+        machine: &str,
+        id: &str,
+        cx: &mut App,
+    ) -> Result<(), String> {
+        let demo = entity
+            .read_with(cx, |app, _| app.demo_mode)
+            .map_err(|error| error.to_string())?;
+        if demo {
+            entity
+                .update(cx, |app, _| app.catalog_mut(machine).delete(id))
+                .map_err(|error| error.to_string())??;
+        } else {
+            client::request_blocking(machine, Command::DeleteAgent { id: id.to_owned() }, cx)?;
+        }
+        entity
+            .update(cx, |app, cx| app.agents_changed(Some(id), None, false, cx))
+            .map_err(|error| error.to_string())
+    }
+
     fn close_main_window(&self, cx: &mut Context<Self>) {
         let handle = self.main_window;
         let owner = cx.weak_entity();
-        cx.defer(move |cx| settings::request_close(handle, owner, cx));
+        cx.defer(move |cx| interaction::request_close(handle, owner, cx));
     }
 
     pub(super) fn quit_stopping_all(&mut self, cx: &mut Context<Self>) {

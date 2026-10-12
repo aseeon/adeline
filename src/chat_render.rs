@@ -788,8 +788,7 @@ impl Adeline {
             let asset = image_asset(path);
             // Reserve height before decoding so a virtual row keeps its scroll anchor.
             let bytes = embedded(asset).expect("bundled message image");
-            let width = u32::from_be_bytes(bytes[16..20].try_into().unwrap());
-            let height = u32::from_be_bytes(bytes[20..24].try_into().unwrap());
+            let (width, height) = image_size(bytes);
             body = body.child(
                 img(ImageSource::Resource(Resource::Embedded(asset.into())))
                     .w_full()
@@ -1550,7 +1549,7 @@ impl Adeline {
                 .trigger(trigger)
                 .open(self.menu == Some(menu))
                 .p_0()
-                .shadow(project_bar::menu_shadow(cx))
+                .shadow(views::menu_shadow(cx))
                 .when_some(state.as_ref(), |popover, state| {
                     popover.track_focus(&state.focus_handle(cx))
                 })

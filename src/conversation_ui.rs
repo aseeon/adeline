@@ -605,29 +605,9 @@ impl Adeline {
     }
 
     pub(super) fn attach_local(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
-        let task = cx.background_executor().spawn(async move {
-            let name = path.file_name().map_or_else(
-                || path.display().to_string(),
-                |n| n.to_string_lossy().into_owned(),
-            );
-            let mime = conversation::mime_for(&name).to_owned();
-            let size = std::fs::metadata(&path)
-                .map_err(|e| files::error(&path, e))?
-                .len();
-            // Too big to read; `attach` reports it.
-            let data = if size > conversation::ATTACHMENT_LIMIT {
-                String::new()
-            } else {
-                conversation::base64(&std::fs::read(&path).map_err(|e| files::error(&path, e))?)
-            };
-            Ok::<_, String>(Attachment {
-                name,
-                mime,
-                size,
-                data,
-                path: None,
-            })
-        });
+        let task = cx
+            .background_executor()
+            .spawn(async move { conversation::read_attachment(&path) });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |app, cx| match result {
@@ -714,7 +694,7 @@ impl Adeline {
             .border_1()
             .border_color(theme.border)
             .bg(theme.popover)
-            .shadow(project_bar::menu_shadow(cx));
+            .shadow(views::menu_shadow(cx));
         for (ix, command) in commands.iter().enumerate() {
             let name = command.name.clone();
             list = list.child(

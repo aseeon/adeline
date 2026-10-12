@@ -43,7 +43,7 @@ pub(super) fn init(
     cx.on_action(move |_: &NewThread, cx| new_chat(cx));
     let stop_all = on_owner(Action::StopAll);
     cx.on_action(move |_: &StopAllAgents, cx| stop_all(cx));
-    cx.on_action(move |_: &Quit, cx| settings::request_close(handle, owner.clone(), cx));
+    cx.on_action(move |_: &Quit, cx| interaction::request_close(handle, owner.clone(), cx));
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());

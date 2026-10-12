@@ -1346,7 +1346,7 @@ impl Worker {
                 }
             }
             (request, reply) => {
-                engine_log(&format!("Unexpected ACP reply to {request:?}: {reply:?}"));
+                crate::log::log(format!("Unexpected ACP reply to {request:?}: {reply:?}"));
             }
         }
     }
@@ -2634,10 +2634,6 @@ fn broken_pipe(error: &sdk::Error) -> bool {
         .is_some_and(|code| {
             std::io::Error::from_raw_os_error(code).kind() == std::io::ErrorKind::BrokenPipe
         })
-}
-
-fn engine_log(message: &str) {
-    crate::engine::log(message);
 }
 
 fn with_context(context: &str, text: &str) -> String {

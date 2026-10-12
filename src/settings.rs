@@ -16,6 +16,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{AppContext as _, base::actions::Cancel};
 use std::{cell::Cell, rc::Rc};
+use views::{card, text_input};
 
 const GROUPS: [&str; 5] = ["General", "Modes", "Licenses", "Agents", "Engine"];
 const SUBGROUPS: [&[&str]; 5] = [
@@ -296,11 +297,7 @@ pub(super) fn open_agent(
     });
 }
 
-pub(super) fn can_close_for(
-    owner: WindowHandle<Root>,
-    entity: &WeakEntity<Adeline>,
-    cx: &mut App,
-) -> bool {
+pub(super) fn can_close(owner: WindowHandle<Root>, cx: &mut App) -> bool {
     for (root, settings) in windows_of::<SettingsWindow>(cx) {
         if settings.read(cx).owner.window.window_id() == owner.window_id()
             && settings.read(cx).agent_dirty(cx)
@@ -323,26 +320,7 @@ pub(super) fn can_close_for(
             return false;
         }
     }
-    cx.update_window(owner.into(), |_, window, cx| {
-        entity
-            .update(cx, |app, cx| {
-                let opening = app.modal != Some("quit");
-                let ready = app.request_quit(cx);
-                if !ready && opening {
-                    app.open_modal(window, cx);
-                }
-                ready
-            })
-            .unwrap_or(false)
-    })
-    .unwrap_or(false)
-}
-pub(super) fn request_close(owner: WindowHandle<Root>, entity: WeakEntity<Adeline>, cx: &mut App) {
-    cx.defer(move |cx| {
-        if can_close_for(owner, &entity, cx) {
-            let _ = owner.update(cx, |_, window, _| window.remove_window());
-        }
-    });
+    true
 }
 pub(super) fn close_for(owner: WindowHandle<Root>, cx: &mut App) {
     for (root, view) in windows_of::<SettingsWindow>(cx) {
@@ -369,71 +347,15 @@ fn persist_form(
     let original = form.id.clone();
     let machine = form.machine.clone();
     let expected = original.as_ref().map(|_| form.original.clone());
-    let (demo, select_first) = owner
-        .entity
-        .read_with(cx, |app, _| {
-            (
-                app.demo_mode,
-                original.is_none() && app.catalog(&machine).entries.is_empty(),
-            )
-        })
-        .map_err(|error| error.to_string())?;
-    let saved = if demo {
-        let original = original.clone();
-        let machine = machine.clone();
-        owner
-            .entity
-            .update(cx, move |app, _| {
-                app.catalog_mut(&machine).save(
-                    original.as_deref(),
-                    definition,
-                    expected.as_ref(),
-                    overwrite,
-                )
-            })
-            .map_err(|error| error.to_string())??
-    } else {
-        let command = protocol::Command::SaveAgent {
-            original: original.clone(),
-            definition,
-            expected,
-            overwrite,
-        };
-        client::request_blocking(&machine, command, cx)?
-            .as_str()
-            .map(str::to_owned)
-            .ok_or("The conversation engine returned no agent ID.")?
-    };
-    owner
-        .entity
-        .update(cx, |app, cx| {
-            app.agents_changed(original.as_deref(), Some(&saved), select_first, cx);
-        })
-        .map_err(|error| error.to_string())?;
-    Ok(saved)
-}
-
-fn delete_agent(owner: &Owner, machine: &str, id: &str, cx: &mut App) -> Result<(), String> {
-    let demo = owner
-        .entity
-        .read_with(cx, |app, _| app.demo_mode)
-        .map_err(|error| error.to_string())?;
-    if demo {
-        owner
-            .entity
-            .update(cx, |app, _| app.catalog_mut(machine).delete(id))
-            .map_err(|error| error.to_string())??;
-    } else {
-        client::request_blocking(
-            machine,
-            protocol::Command::DeleteAgent { id: id.to_owned() },
-            cx,
-        )?;
-    }
-    owner
-        .entity
-        .update(cx, |app, cx| app.agents_changed(Some(id), None, false, cx))
-        .map_err(|error| error.to_string())
+    Adeline::save_agent(
+        &owner.entity,
+        &machine,
+        original.as_deref(),
+        definition,
+        expected,
+        overwrite,
+        cx,
+    )
 }
 
 fn choose(
@@ -581,14 +503,18 @@ impl AgentWindow {
                     match choice {
                         0 => {
                             if view.save(window, cx) && close_owner {
-                                request_close(view.owner.window, view.owner.entity.clone(), cx);
+                                interaction::request_close(
+                                    view.owner.window,
+                                    view.owner.entity.clone(),
+                                    cx,
+                                );
                             }
                         }
                         1 => {
                             let owner = view.owner.clone();
                             window.remove_window();
                             if close_owner {
-                                request_close(owner.window, owner.entity, cx);
+                                interaction::request_close(owner.window, owner.entity, cx);
                             }
                         }
                         _ => {}
@@ -729,18 +655,6 @@ struct SettingsWindow {
     folded: [bool; 5],
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
-}
-pub(super) fn text_input(
-    value: &str,
-    placeholder: &'static str,
-    window: &mut Window,
-    cx: &mut App,
-) -> Entity<InputState> {
-    cx.new(|cx| {
-        let mut input = InputState::new(window, cx).placeholder(placeholder);
-        input.set_value(value.to_owned(), window, cx);
-        input
-    })
 }
 fn font_size_error() -> String {
     format!(
@@ -1282,7 +1196,7 @@ impl SettingsWindow {
             AfterAgent::CloseOwner => {
                 self.agent_form = None;
                 self.agent_subscriptions.clear();
-                request_close(self.owner.window, self.owner.entity.clone(), cx);
+                interaction::request_close(self.owner.window, self.owner.entity.clone(), cx);
             }
             AfterAgent::Child(group, child) => {
                 self.machines_page = false;
@@ -1469,7 +1383,7 @@ impl SettingsWindow {
                     }
                     let owner = view.owner.clone();
                     let machine = view.machine.clone();
-                    let result = delete_agent(&owner, &machine, &id, cx);
+                    let result = Adeline::delete_agent(&owner.entity, &machine, &id, cx);
                     match result {
                         Ok(()) => {
                             view.close_agent();
@@ -2442,20 +2356,6 @@ fn caps(text: &str, cx: &App) -> Div {
         .text_xs()
         .text_color(cx.theme().muted_foreground)
         .child(text.to_uppercase())
-}
-fn card(rows: Vec<Div>, cx: &App) -> Option<Div> {
-    (!rows.is_empty()).then(|| {
-        let theme = cx.theme();
-        col()
-            .w_full()
-            .rounded_lg()
-            .border_1()
-            .border_color(theme.border)
-            .bg(theme.foreground.alpha(0.025))
-            .children(rows.into_iter().enumerate().map(|(ix, row)| {
-                row.when(ix > 0, |row| row.border_t_1().border_color(theme.border))
-            }))
-    })
 }
 fn group_header(
     group: usize,

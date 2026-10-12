@@ -283,7 +283,7 @@ pub fn init(demo: bool, initial: Option<Initial>, snapshot: Option<&Snapshot>, c
     let (prompts, inbox) = async_channel::unbounded();
     match runtime().block_on(async { remote::serve_askpass(prompts) }) {
         Ok(address) => connections.askpass = address,
-        Err(error) => crate::engine::log(&error),
+        Err(error) => crate::log::log(&error),
     }
     cx.spawn(async move |cx| {
         while let Ok(prompt) = inbox.recv().await {

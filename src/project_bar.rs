@@ -27,23 +27,6 @@ const MENU_ROW_REM: f32 = 2.5;
 // The half row signals that more follow.
 const MENU_ROWS: f32 = 5.5;
 
-pub(super) fn menu_shadow(cx: &App) -> Vec<BoxShadow> {
-    // Replaces the popover's default shadow, so it redraws its hairline ring too.
-    let ring = cx.theme().foreground.alpha(0.1);
-    let ink = |a| hsla(0., 0., 0., a);
-    vec![
-        BoxShadow::new(px(0.), px(0.), ring)
-            .blur_radius(px(0.))
-            .spread_radius(px(1.)),
-        BoxShadow::new(px(0.), px(4.), ink(0.25))
-            .blur_radius(px(6.))
-            .spread_radius(px(-2.)),
-        BoxShadow::new(px(0.), px(16.), ink(0.45))
-            .blur_radius(px(24.))
-            .spread_radius(px(-4.)),
-    ]
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum ProjectSort {
     #[default]
@@ -650,7 +633,7 @@ impl Adeline {
             .open(self.menu == Some("projects"))
             .track_focus(&self.project_search.focus_handle(cx))
             .p_0()
-            .shadow(menu_shadow(cx))
+            .shadow(views::menu_shadow(cx))
             .on_open_change(move |open, window, cx| {
                 let _ = owner.update(cx, |app, cx| {
                     if *open {
@@ -1198,7 +1181,7 @@ impl Adeline {
             .trigger(trigger)
             .open(self.menu == Some("machines"))
             .p_0()
-            .shadow(menu_shadow(cx))
+            .shadow(views::menu_shadow(cx))
             .on_open_change(move |open, window, cx| {
                 let _ = owner.update(cx, |app, cx| {
                     if *open {

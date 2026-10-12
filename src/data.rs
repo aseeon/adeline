@@ -513,6 +513,11 @@ pub fn image_asset(path: &str) -> &'static str {
     }
 }
 
+pub fn image_size(png: &[u8]) -> (u32, u32) {
+    let read = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+    (read(16), read(20))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

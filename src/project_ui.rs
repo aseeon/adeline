@@ -760,7 +760,7 @@ impl Adeline {
             .project_error
             .clone()
             .map(|error| div().text_color(cx.theme().danger).child(error));
-        let footer = || row().justify_end().gap_2().pt_1();
+        let footer = views::dialog_footer;
         let mut content = col().gap_3().text_sm();
         // The newer dialogs name themselves for assistive technology.
         let mut label = None;
@@ -787,83 +787,6 @@ impl Adeline {
                         Action::Close,
                         cx,
                     )));
-            }
-            Some("upgrade") => {
-                let machine = self.upgrade_machine.clone().unwrap_or_default();
-                let name = machines::name(&machine);
-                label = Some(format!("Upgrade {name}?"));
-                let detail = match client::state(&machine, cx) {
-                    Some(client::State::UpgradeNeeded { version, active }) => format!(
-                        "{name} runs Adeline {version} with {active} active conversation{}. Upgrading restarts its engine with Adeline {}, which stops them.",
-                        if *active == 1 { "" } else { "s" },
-                        env!("CARGO_PKG_VERSION"),
-                    ),
-                    _ => format!(
-                        "{name} runs an older Adeline. Upgrading restarts its engine, which stops its agents."
-                    ),
-                };
-                content = content
-                    .child(views::dialog_title(format!("Upgrade {name}?")))
-                    .child(div().text_color(muted).child(detail))
-                    .child(
-                        footer()
-                            .child(self.button("upgrade-later", "Later", Action::Close, cx))
-                            .child(
-                                self.button(
-                                    "upgrade-now",
-                                    "Upgrade now (stops them)",
-                                    Action::ConfirmUpgrade,
-                                    cx,
-                                )
-                                .danger(),
-                            ),
-                    );
-            }
-            Some("prompt") => {
-                if let Some((machine, text, host_key)) = client::prompt(cx) {
-                    let title = if host_key {
-                        format!("Trust {}?", machines::name(&machine))
-                    } else {
-                        format!("Sign in to {}", machines::name(&machine))
-                    };
-                    let group = col()
-                        .id("ssh-prompt")
-                        .role(Role::Group)
-                        .aria_label(title.clone())
-                        .gap_3()
-                        .child(views::dialog_title(title))
-                        .child(
-                            div()
-                                .id("ssh-prompt-text")
-                                .role(Role::Status)
-                                .aria_label(text.clone())
-                                .text_xs()
-                                .font_family(cx.theme().mono_font_family.clone())
-                                .child(text),
-                        )
-                        .when(!host_key, |column| {
-                            column.child(Input::new(&self.prompt_input).aria_label("SSH answer"))
-                        })
-                        .child(
-                            footer()
-                                .child(self.button(
-                                    "prompt-cancel",
-                                    if host_key { "Reject" } else { "Cancel" },
-                                    Action::AnswerPrompt(false),
-                                    cx,
-                                ))
-                                .child(
-                                    self.button(
-                                        "prompt-ok",
-                                        if host_key { "Accept" } else { "Continue" },
-                                        Action::AnswerPrompt(true),
-                                        cx,
-                                    )
-                                    .primary(),
-                                ),
-                        );
-                    content = content.child(group);
-                }
             }
             Some("add-project" | "settings") => {
                 let creating = self.modal == Some("add-project");
@@ -936,20 +859,6 @@ impl Adeline {
                         .when(stopping && self.project_error.is_some(), |row| row.child(self.button("retry-delete", "Try again", Action::ConfirmDeleteProject, cx)))
                         .when(stopping && !stopped, |row| row.child(self.button("force-delete", "Force stop", Action::ForceDeleteProject, cx).danger()))
                         .when(!stopping, |row| row.child(self.button("confirm-delete", "Delete", Action::ConfirmDeleteProject, cx).danger())));
-            }
-            Some("quit") => {
-                let stopping = self.runtime.stopping_all;
-                content = content
-                    .child(views::dialog_title(if stopping { "Stopping agents…" } else { "Agents are still working" }))
-                    .child(note(if stopping {
-                        "Adeline closes once every agent has exited. Agents still running after 5 seconds are stopped."
-                    } else {
-                        "Stop all cancels running turns and closes every agent. Finish in background keeps them running after Adeline closes, and their replies are here when you reopen it."
-                    }))
-                    .when(!stopping, |column| column.child(footer()
-                        .child(self.button("quit-cancel", "Cancel", Action::Close, cx))
-                        .child(self.button("quit-background", "Finish in background", Action::FinishInBackground, cx))
-                        .child(self.button("quit-stop-all", "Stop all", Action::QuitStopAll, cx).danger())));
             }
             _ => {}
         }

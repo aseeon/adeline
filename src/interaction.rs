@@ -1,5 +1,6 @@
-//! `Adeline::act`, the dispatcher every `Action` goes through, and sending the
-//! composer's message.
+//! `Adeline::act`, the dispatcher every `Action` goes through, sending the
+//! composer's message, saving the preferences `act` toggles, and closing the
+//! main window, which asks before quitting with agents still working.
 use super::*;
 use std::fmt::Write as _;
 
@@ -93,7 +94,7 @@ impl Adeline {
             }
             Action::QuitApp => {
                 let owner = cx.weak_entity();
-                cx.defer(move |cx| settings::request_close(root, owner, cx));
+                cx.defer(move |cx| request_close(root, owner, cx));
             }
             Action::About => self.modal = Some("about"),
             Action::AddProject => {
@@ -553,6 +554,27 @@ impl Adeline {
         cx.notify();
     }
 
+    pub(super) fn load_settings(&mut self) {
+        let s = config::current();
+        self.show_completed = s.modes.chats.show_completed_chats;
+        self.show_archived = s.modes.chats.show_archived_chats;
+        self.left_panel_open = s.modes.chats.show_left_panel;
+        self.side_panel_open = s.modes.chats.show_agent_activity;
+    }
+    fn save_settings(&self, action: &Action) -> Result<(), String> {
+        config::update(|s| match action {
+            Action::ShowCompleted => s.modes.chats.show_completed_chats = self.show_completed,
+            Action::ShowArchived => s.modes.chats.show_archived_chats = self.show_archived,
+            Action::ToggleLeftPanel => {
+                s.modes.chats.show_left_panel = self.left_panel_open;
+            }
+            Action::ToggleSidePanel => {
+                s.modes.chats.show_agent_activity = self.side_panel_open;
+            }
+            _ => (),
+        })
+    }
+
     pub(super) fn attach_path(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
         let mut value = self.composer.read(cx).value().to_string();
         if !value.is_empty() && !value.ends_with(char::is_whitespace) {
@@ -632,6 +654,29 @@ impl Adeline {
         self.composer
             .update(cx, |state, cx| state.set_value("", window, cx));
     }
+}
+
+pub(super) fn request_close(owner: WindowHandle<Root>, entity: WeakEntity<Adeline>, cx: &mut App) {
+    cx.defer(move |cx| {
+        if settings::can_close(owner, cx) && can_quit(owner, &entity, cx) {
+            let _ = owner.update(cx, |_, window, _| window.remove_window());
+        }
+    });
+}
+fn can_quit(owner: WindowHandle<Root>, entity: &WeakEntity<Adeline>, cx: &mut App) -> bool {
+    cx.update_window(owner.into(), |_, window, cx| {
+        entity
+            .update(cx, |app, cx| {
+                let opening = app.modal != Some("quit");
+                let ready = app.request_quit(cx);
+                if !ready && opening {
+                    app.open_modal(window, cx);
+                }
+                ready
+            })
+            .unwrap_or(false)
+    })
+    .unwrap_or(false)
 }
 
 fn close_project_tab(open: &mut [bool], active: usize, closing: usize) -> Option<usize> {
