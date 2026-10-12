@@ -20,6 +20,10 @@ use gpui_kit::component::{
 };
 use std::sync::Arc;
 
+// A traffic row shows the start of long JSON; "Copy message" takes the whole line.
+const TRAFFIC_LINES: usize = 12;
+const TRAFFIC_CHARS: usize = 2000;
+
 pub(super) fn file_size(bytes: u64) -> String {
     if bytes >= 1024 * 1024 {
         format!("{:.1} MB", bytes as f64 / (1024. * 1024.))
@@ -187,7 +191,7 @@ impl Adeline {
             && !live.processing
             && !live.recovering_storage
             && !live.last_prompt.is_empty()
-            && !conversation::closed(&thread.status)
+            && !thread.status.closed()
         {
             content = content.child(self.button("retry-prompt", "Retry", Action::RetryPrompt, cx));
         }
@@ -584,9 +588,10 @@ impl Adeline {
         self.attachment_error = None;
         if file.size > conversation::ATTACHMENT_LIMIT {
             self.attachment_error = Some(format!(
-                "{} is {}. Files over 20 MB can't be attached.",
+                "{} is {}. Files over {} MB can't be attached.",
                 file.name,
-                file_size(file.size)
+                file_size(file.size),
+                conversation::ATTACHMENT_LIMIT / (1024 * 1024)
             ));
         } else if file.image()
             && let Some(live) = self.current_live()
@@ -613,7 +618,7 @@ impl Adeline {
             let _ = this.update(cx, |app, cx| match result {
                 Ok(file) => app.attach(file, cx),
                 Err(error) => {
-                    app.attachment_error = Some(error);
+                    app.attachment_error = Some(format!("{error:#}"));
                     app.composer_region.update(cx, |_, cx| cx.notify());
                 }
             });
@@ -1029,7 +1034,7 @@ impl Adeline {
                         .when_some(note, |text, note| {
                             text.child(div().text_color(theme.warning).child(note))
                         })
-                        .child(excerpt(&entry.text, 12, 2000)),
+                        .child(excerpt(&entry.text, TRAFFIC_LINES, TRAFFIC_CHARS)),
                 )
                 .context_menu(move |menu, _, _| {
                     let copy = copy.clone();

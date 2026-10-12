@@ -21,8 +21,8 @@
 use crate::{
     agents::{AgentDefinition, AgentEntry},
     conversation::{
-        AgentCommand, Attachment, Category, Features, McpServer, PermissionOption, SessionOption,
-        TodoStep, TrafficEntry, TurnState,
+        AgentCommand, Attachment, Category, Features, McpServer, MessageRole, PermissionOption,
+        SessionOption, ThreadStatus, TodoStep, TrafficEntry, TurnState,
     },
     data::{Message, Thread, ToolReport, Workspace},
     harness, install,
@@ -146,7 +146,7 @@ pub enum Command {
     },
     SetStatus {
         id: String,
-        status: String,
+        status: ThreadStatus,
     },
     MarkRead {
         id: String,
@@ -369,7 +369,7 @@ pub enum Delta {
     },
     Status {
         id: String,
-        status: String,
+        status: ThreadStatus,
     },
     Message {
         id: String,
@@ -451,7 +451,7 @@ pub fn apply(projects: &mut [Workspace], live: &mut HashMap<String, Live>, delta
                     received(*at),
                 );
                 if !thought {
-                    thread.prepare_search();
+                    thread.search_stale = true;
                 }
             }
         }
@@ -474,12 +474,15 @@ pub fn apply(projects: &mut [Workspace], live: &mut HashMap<String, Live>, delta
         }
         Delta::Status { id, status } => {
             if let Some(thread) = locate(projects, id) {
-                thread.status.clone_from(status);
+                thread.status = *status;
+                if thread.search_stale {
+                    thread.prepare_search();
+                }
             }
         }
         Delta::Message { id, message } => {
             if let Some(thread) = locate(projects, id) {
-                if message.role == "user" {
+                if message.role == MessageRole::User {
                     let sent = crate::recency::parse(&message.created_at)
                         .and_then(|at| u64::try_from(at).ok())
                         .map_or_else(crate::recency::now_ms, |at| at * 1000);
@@ -562,6 +565,16 @@ mod tests {
         assert_eq!(messages[0].text, "Good morning");
         assert_eq!(messages[0].thought, "Greet them.");
         assert!(projects[0].threads[0].unread());
+        assert!(!projects[0].threads[0].search_text.contains("morning"));
+        apply(
+            &mut projects,
+            &mut live,
+            &Delta::Status {
+                id: "c".into(),
+                status: ThreadStatus::Idle,
+            },
+        );
+        assert!(projects[0].threads[0].search_text.contains("good morning"));
         apply(
             &mut projects,
             &mut live,

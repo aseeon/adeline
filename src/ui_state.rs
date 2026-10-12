@@ -14,7 +14,7 @@ struct UiState {
 
 static STATE: Mutex<Option<UiState>> = Mutex::new(None);
 
-fn path() -> Result<PathBuf, String> {
+fn path() -> anyhow::Result<PathBuf> {
     Ok(crate::config::directory()?.join("ui-state.yml"))
 }
 
@@ -40,7 +40,7 @@ fn with<T>(change: impl FnOnce(&mut UiState) -> T) -> T {
     change(state)
 }
 
-fn save(state: &UiState) -> Result<(), String> {
+fn save(state: &UiState) -> anyhow::Result<()> {
     let path = path()?;
     crate::config::seed_yaml(&path, state).and_then(|()| crate::config::write_yaml(&path, state))
 }
@@ -69,7 +69,7 @@ pub fn opened_at(machine: &str, id: &str) -> Option<i64> {
     with(|state| state.opened_at.get(&key(machine, id)).copied())
 }
 
-pub fn record_opened(machine: &str, id: &str, at: i64) -> Result<(), String> {
+pub fn record_opened(machine: &str, id: &str, at: i64) -> anyhow::Result<()> {
     with(|state| {
         state.opened_at.insert(key(machine, id), at);
         save(state)

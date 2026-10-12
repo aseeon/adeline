@@ -23,6 +23,7 @@ use agent_client_protocol::{
     self as sdk, Agent, ConnectionTo, Dispatch, Handled, Lines, Responder, UntypedMessage,
     schema::{MaybeUndefined, ProtocolVersion, v1 as wire},
 };
+use anyhow::Context as _;
 use async_channel::Sender;
 use futures::StreamExt as _;
 use serde_json::{Value, json};
@@ -47,6 +48,18 @@ const MODE_OPTION: &str = "adeline/session-mode";
 pub const CONTINUE_TURN: &str = "Continue the interrupted turn from the saved session. Preserve completed work; do not repeat completed tool actions.";
 
 const STDERR_TAIL: usize = 12;
+// How often the worker checks its child process, deadlines and retries.
+const TICK: Duration = Duration::from_millis(100);
+// Exit reports arriving this soon after a lost connection belong to it.
+const LOST_WINDOW: Duration = Duration::from_millis(100);
+// How long an exiting agent gets to drain its last messages before it's killed.
+const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
+// Setup requests (initialize, session, options) that take longer count as a hung agent.
+const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+// Enough of a reply's start to spot an error the agent wrote as text.
+const OBSERVED_TEXT: usize = 2048;
+// Retry delays grow one second per attempt up to this many seconds.
+const MAX_RETRY_DELAY_SECS: u32 = 5;
 
 pub struct Driver {
     sender: UnboundedSender<Input>,
@@ -571,7 +584,7 @@ impl Worker {
     }
 
     async fn run(mut self) {
-        let mut tick = tokio::time::interval(Duration::from_millis(100));
+        let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             let input = tokio::select! {
@@ -642,7 +655,7 @@ impl Worker {
                 Ok(Some(_))
                     if self
                         .lost_at
-                        .is_some_and(|when| when.elapsed() < Duration::from_millis(100)) => {}
+                        .is_some_and(|when| when.elapsed() < LOST_WINDOW) => {}
                 Ok(Some(status)) if self.lost_pending.is_some() => {
                     let error = self.lost_pending.take().expect("checked above");
                     let stderr = self.stderr.make_contiguous().join("\n");
@@ -684,7 +697,7 @@ impl Worker {
                 Ok(Some(_)) => {
                     // Wait for the connection to drain the last messages.
                     self.shutdown_deadline
-                        .get_or_insert_with(|| Instant::now() + Duration::from_secs(5));
+                        .get_or_insert_with(|| Instant::now() + SHUTDOWN_GRACE);
                 }
                 Err(error) => {
                     self.link = None;
@@ -693,7 +706,7 @@ impl Worker {
                         kind: FailureKind::Temporary,
                     });
                     self.shutdown_deadline
-                        .get_or_insert_with(|| Instant::now() + Duration::from_secs(5));
+                        .get_or_insert_with(|| Instant::now() + SHUTDOWN_GRACE);
                 }
                 Ok(None) => (),
             }
@@ -802,7 +815,7 @@ impl Worker {
             Command::Shutdown => self.shutdown(),
             Command::ForceStop => {
                 self.closing = true;
-                self.shutdown_deadline = Some(Instant::now() + Duration::from_secs(5));
+                self.shutdown_deadline = Some(Instant::now() + SHUTDOWN_GRACE);
                 self.active = None;
                 self.cancel_permissions();
                 if let Some(child) = &mut self.child {
@@ -846,12 +859,12 @@ impl Worker {
             self.fail("The saved working directory is missing or not absolute. Restore it or change the project for a new conversation.".into(), FailureKind::Configuration);
             return;
         }
-        let command_path = Path::new(&self.config.command);
-        let existing_path =
-            command_path.is_file() || self.config.directory.join(command_path).is_file();
-        if self.config.command.trim().is_empty()
-            || (self.config.command.split_whitespace().count() != 1 && !existing_path)
-        {
+        let command = &self.config.command;
+        let existing_path = command.is_file() || self.config.directory.join(command).is_file();
+        let words = command
+            .to_str()
+            .map_or(1, |command| command.split_whitespace().count());
+        if words != 1 && !existing_path {
             self.fail("Agent command must name one executable; edit the agent definition for new conversations.".into(), FailureKind::Configuration);
             return;
         }
@@ -910,14 +923,14 @@ impl Worker {
                         let mut child = child;
                         let _ = crate::platform::kill_tree(&mut child);
                         self.fail(
-                            format!("Starting {} failed: {error}", self.config.command),
+                            format!("Starting {} failed: {error}", self.config.command.display()),
                             FailureKind::Configuration,
                         );
                     }
                 }
             }
             Err(error) => self.fail(
-                format!("Starting {} failed: {error}", self.config.command),
+                format!("Starting {} failed: {error}", self.config.command.display()),
                 FailureKind::Configuration,
             ),
         }
@@ -1093,7 +1106,7 @@ impl Worker {
         self.close_link();
         self.lost_pending = Some(message.clone());
         self.lost_at = Some(Instant::now());
-        self.shutdown_deadline = Some(Instant::now() + Duration::from_secs(5));
+        self.shutdown_deadline = Some(Instant::now() + SHUTDOWN_GRACE);
         self.fail(message, kind);
     }
 
@@ -1107,7 +1120,7 @@ impl Worker {
             request,
             Request::Prompt | Request::Close | Request::Steer | Request::Authenticate
         ) {
-            self.handshake = Some((id, request, Instant::now() + Duration::from_secs(30)));
+            self.handshake = Some((id, request, Instant::now() + HANDSHAKE_TIMEOUT));
         }
         Some(id)
     }
@@ -1299,7 +1312,7 @@ impl Worker {
                 kind,
             });
             self.shutdown_deadline
-                .get_or_insert_with(|| Instant::now() + Duration::from_secs(5));
+                .get_or_insert_with(|| Instant::now() + SHUTDOWN_GRACE);
         } else {
             if request == Request::Setup {
                 self.setup = None;
@@ -1336,7 +1349,7 @@ impl Worker {
             (Request::Close, _) => {
                 self.close_link();
                 self.shutdown_deadline
-                    .get_or_insert_with(|| Instant::now() + Duration::from_secs(5));
+                    .get_or_insert_with(|| Instant::now() + SHUTDOWN_GRACE);
             }
             (Request::Authenticate | Request::Logout, _) => {
                 self.emit(EventKind::Auth(Ok(())));
@@ -1345,7 +1358,13 @@ impl Worker {
                 }
             }
             (request, reply) => {
-                crate::log::log(format!("Unexpected ACP reply to {request:?}: {reply:?}"));
+                tracing::event!(
+                    name: "acp.reply.unexpected",
+                    tracing::Level::WARN,
+                    acp.request = ?request,
+                    acp.reply = ?reply,
+                    "Unexpected ACP reply to {{acp.request}}: {{acp.reply}}"
+                );
             }
         }
     }
@@ -1613,7 +1632,7 @@ impl Worker {
         let blocks = match self.content(&turn.prompt) {
             Ok(blocks) => blocks,
             Err(error) => {
-                self.fail(error, FailureKind::Configuration);
+                self.fail(format!("{error:#}"), FailureKind::Configuration);
                 return;
             }
         };
@@ -1627,7 +1646,7 @@ impl Worker {
         }
     }
 
-    fn content(&self, parts: &[Part]) -> Result<Vec<wire::ContentBlock>, String> {
+    fn content(&self, parts: &[Part]) -> anyhow::Result<Vec<wire::ContentBlock>> {
         let features = self.features.clone().unwrap_or_default();
         let mut blocks = Vec::new();
         for part in parts {
@@ -1639,7 +1658,7 @@ impl Worker {
                 }
                 Part::File(file) if file.image() => {
                     if !features.images {
-                        return Err(format!("{} can't receive images.", self.config.name));
+                        anyhow::bail!("{} can't receive images.", self.config.name);
                     }
                     let data = attachment_data(file)?;
                     blocks.push(wire::ContentBlock::Image(wire::ImageContent::new(
@@ -1696,7 +1715,7 @@ impl Worker {
             Ok(blocks) => blocks,
             Err(error) => {
                 self.emit(EventKind::Error {
-                    message: error,
+                    message: format!("{error:#}"),
                     kind: FailureKind::Configuration,
                 });
                 self.emit(EventKind::Steered { delivered: false });
@@ -1828,7 +1847,7 @@ impl Worker {
                 {
                     if let Some(turn) = &mut self.active {
                         turn.worked = true;
-                        if turn.observed_text.len() < 2048 {
+                        if turn.observed_text.len() < OBSERVED_TEXT {
                             turn.observed_text.push_str(&text);
                         }
                     }
@@ -2107,7 +2126,9 @@ impl Worker {
             let attempt = turn.attempt;
             let limit = turn.retries;
             turn.prompt_request = None;
-            turn.retry_at = Some(Instant::now() + Duration::from_secs(u64::from(attempt.min(5))));
+            turn.retry_at = Some(
+                Instant::now() + Duration::from_secs(u64::from(attempt.min(MAX_RETRY_DELAY_SECS))),
+            );
             self.emit(EventKind::Retrying {
                 attempt,
                 limit,
@@ -2173,7 +2194,7 @@ impl Worker {
         self.lost_pending = Some(message.clone());
         self.lost_at = Some(Instant::now());
         self.shutdown_deadline
-            .get_or_insert_with(|| Instant::now() + Duration::from_secs(5));
+            .get_or_insert_with(|| Instant::now() + SHUTDOWN_GRACE);
         if invalid_initialize && self.config.harness == harness::OMP {
             self.timeout_reported = true;
             self.fail(
@@ -2196,7 +2217,7 @@ impl Worker {
         self.probing = false;
         self.replacement = None;
         self.cancel();
-        self.shutdown_deadline = Some(Instant::now() + Duration::from_secs(5));
+        self.shutdown_deadline = Some(Instant::now() + SHUTDOWN_GRACE);
         if self.active.is_none() {
             self.close_session();
         }
@@ -2554,19 +2575,19 @@ fn tool_detail(raw_output: Option<&Value>, content: Option<&[wire::ToolCallConte
     detail
 }
 
-fn attachment_bytes(file: &Attachment) -> Result<Vec<u8>, String> {
+fn attachment_bytes(file: &Attachment) -> anyhow::Result<Vec<u8>> {
     if !file.data.is_empty() {
         return crate::conversation::unbase64(&file.data)
-            .ok_or_else(|| format!("{} could not be read.", file.name));
+            .with_context(|| format!("{} could not be read.", file.name));
     }
     let path = file
         .path
         .as_ref()
-        .ok_or_else(|| format!("{} has no content.", file.name))?;
-    block_in_place(|| std::fs::read(path)).map_err(|error| crate::files::error(path, error))
+        .with_context(|| format!("{} has no content.", file.name))?;
+    block_in_place(|| std::fs::read(path)).with_context(|| path.display().to_string())
 }
 
-fn attachment_data(file: &Attachment) -> Result<String, String> {
+fn attachment_data(file: &Attachment) -> anyhow::Result<String> {
     if file.data.is_empty() {
         attachment_bytes(file).map(|bytes| crate::conversation::base64(&bytes))
     } else {
@@ -2574,7 +2595,7 @@ fn attachment_data(file: &Attachment) -> Result<String, String> {
     }
 }
 
-fn linked_path(file: &Attachment) -> Result<std::path::PathBuf, String> {
+fn linked_path(file: &Attachment) -> anyhow::Result<std::path::PathBuf> {
     if let Some(path) = &file.path {
         return Ok(path.clone());
     }
@@ -2585,7 +2606,7 @@ fn linked_path(file: &Attachment) -> Result<std::path::PathBuf, String> {
         .map_or_else(|| "attachment".into(), |name| name.to_os_string());
     let path = folder.join(name);
     block_in_place(|| std::fs::create_dir_all(&folder).and_then(|()| std::fs::write(&path, bytes)))
-        .map_err(|error| crate::files::error(&path, error))?;
+        .with_context(|| path.display().to_string())?;
     Ok(path)
 }
 
@@ -2645,7 +2666,12 @@ fn contains_ascii(text: &str, needle: &str) -> bool {
 }
 
 fn classify_error(message: &str, code: Option<i64>) -> FailureKind {
-    if matches!(code, Some(401 | -32000))
+    use sdk::ErrorCode;
+    let code = code
+        .and_then(|code| i32::try_from(code).ok())
+        .map(ErrorCode::from);
+    // Some agents pass on their provider's HTTP 401.
+    if matches!(code, Some(ErrorCode::AuthRequired | ErrorCode::Other(401)))
         || ["auth", "api key", "login", "unauthorized", "logged in"]
             .iter()
             .any(|needle| contains_ascii(message, needle))
@@ -2655,17 +2681,19 @@ fn classify_error(message: &str, code: Option<i64>) -> FailureKind {
         || contains_ascii(message, "denied by user")
     {
         FailureKind::Denied
-    } else if matches!(code, Some(-32602..=-32600))
-        || [
-            "invalid model",
-            "unsupported",
-            "unknown acp",
-            "unknown option",
-            "unknown argument",
-            "unrecognized option",
-        ]
-        .iter()
-        .any(|needle| contains_ascii(message, needle))
+    } else if matches!(
+        code,
+        Some(ErrorCode::InvalidRequest | ErrorCode::MethodNotFound | ErrorCode::InvalidParams)
+    ) || [
+        "invalid model",
+        "unsupported",
+        "unknown acp",
+        "unknown option",
+        "unknown argument",
+        "unrecognized option",
+    ]
+    .iter()
+    .any(|needle| contains_ascii(message, needle))
     {
         FailureKind::Configuration
     } else {

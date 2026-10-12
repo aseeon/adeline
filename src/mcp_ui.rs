@@ -13,7 +13,7 @@ use gpui_kit::component::{
 };
 use std::rc::Rc;
 
-pub(super) type Save = Rc<dyn Fn(McpServer, &mut Window, &mut App) -> Result<(), String>>;
+pub(super) type Save = Rc<dyn Fn(McpServer, &mut Window, &mut App) -> Result<()>>;
 
 pub(super) struct McpEditor {
     name: Entity<InputState>,
@@ -49,14 +49,14 @@ fn pairs_text(pairs: &[(String, String)], separator: &str) -> String {
         .join("\n")
 }
 
-fn parse_pairs(text: &str, separator: char, what: &str) -> Result<Vec<(String, String)>, String> {
+fn parse_pairs(text: &str, separator: char, what: &str) -> Result<Vec<(String, String)>> {
     text.lines()
         .map(str::trim)
         .filter(|line| !line.is_empty())
         .map(|line| {
-            let (name, value) = line
-                .split_once(separator)
-                .ok_or_else(|| format!("Write each {what} as name{separator}value: {line}"))?;
+            let (name, value) = line.split_once(separator).ok_or_else(|| {
+                anyhow::anyhow!("Write each {what} as name{separator}value: {line}")
+            })?;
             Ok((name.trim().to_owned(), value.trim().to_owned()))
         })
         .collect()
@@ -126,15 +126,15 @@ impl McpEditor {
         }
     }
 
-    fn value(&self, cx: &App) -> Result<McpServer, String> {
+    fn value(&self, cx: &App) -> Result<McpServer> {
         let name = self.name.read(cx).value().trim().to_owned();
         if name.is_empty() {
-            return Err("Name is required.".into());
+            anyhow::bail!("Name is required.");
         }
         let transport = if self.http {
             let url = self.url.read(cx).value().trim().to_owned();
             if !url.starts_with("http://") && !url.starts_with("https://") {
-                return Err("Enter an http:// or https:// URL.".into());
+                anyhow::bail!("Enter an http:// or https:// URL.");
             }
             McpTransport::Http {
                 url,
@@ -143,7 +143,7 @@ impl McpEditor {
         } else {
             let command = self.command.read(cx).value().trim().to_owned();
             if command.is_empty() {
-                return Err("Command is required.".into());
+                anyhow::bail!("Command is required.");
             }
             McpTransport::Stdio {
                 command: command.into(),
@@ -244,7 +244,7 @@ pub(super) fn open_editor(
                 Ok(()) => true,
                 Err(error) => {
                     editor.update(cx, |editor, cx| {
-                        editor.error = Some(error);
+                        editor.error = Some(format!("{error:#}"));
                         cx.notify();
                     });
                     false

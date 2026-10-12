@@ -2,6 +2,7 @@
 //! pipe on Windows, a Unix socket elsewhere. Messages are JSON lines.
 //! `connect` fails with `NotFound` when no engine runs. `engine/id` is the
 //! engine's lasting identity: remote clients read it over SSH to tell engines apart.
+use anyhow::{Context as _, Result, bail};
 use serde::Serialize;
 use std::{io, path::PathBuf, time::Duration};
 use tokio::io::{
@@ -11,44 +12,54 @@ use tokio::io::{
 pub type Reader = Lines<BufReader<Box<dyn AsyncRead + Send + Unpin>>>;
 pub type Writer = Box<dyn AsyncWrite + Send + Unpin>;
 
-pub fn engine_dir() -> Result<PathBuf, String> {
+pub fn engine_dir() -> Result<PathBuf> {
     Ok(crate::config::directory()?.join("engine"))
 }
 
-pub fn engine_id() -> Result<String, String> {
+pub fn engine_id() -> Result<String> {
     let path = engine_dir()?.join("id");
     if let Ok(id) = std::fs::read_to_string(&path)
         && !id.trim().is_empty()
     {
         return Ok(id.trim().to_owned());
     }
-    std::fs::create_dir_all(engine_dir()?).map_err(|e| crate::files::error(&path, e))?;
+    std::fs::create_dir_all(engine_dir()?).with_context(|| path.display().to_string())?;
     crate::files::seed(&path, crate::files::random_id().as_bytes())?;
     std::fs::read_to_string(&path)
         .map(|id| id.trim().to_owned())
-        .map_err(|e| crate::files::error(&path, e))
+        .with_context(|| path.display().to_string())
 }
 
 pub fn log_path() -> String {
-    engine_dir().map_or_else(|error| error, |dir| dir.join("logs").display().to_string())
+    engine_dir().map_or_else(
+        |error| format!("{error:#}"),
+        |dir| dir.join("logs").display().to_string(),
+    )
 }
 
+// 64-bit FNV-1a: stable across Rust versions, unlike `DefaultHasher`, so every
+// Adeline version finds the same pipe.
 #[cfg(windows)]
-fn pipe_name() -> Result<String, String> {
+const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
+#[cfg(windows)]
+const FNV_PRIME: u64 = 0x0100_0000_01b3;
+
+#[cfg(windows)]
+fn pipe_name() -> Result<String> {
     // One pipe per configuration folder, which is one per OS user.
     let folder = crate::config::directory()?;
     let hash = folder
         .to_string_lossy()
         .to_lowercase()
         .bytes()
-        .fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
-            (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3)
+        .fold(FNV_OFFSET, |hash, byte| {
+            (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
         });
     Ok(format!(r"\\.\pipe\adeline-engine-{hash:016x}"))
 }
 
 #[cfg(unix)]
-fn socket_path() -> Result<PathBuf, String> {
+fn socket_path() -> Result<PathBuf> {
     Ok(engine_dir()?.join("engine.sock"))
 }
 
@@ -107,13 +118,13 @@ pub struct Listener {
 }
 
 impl Listener {
-    pub fn bind() -> Result<Self, String> {
+    pub fn bind() -> Result<Self> {
         // Callers hold the engine lock, so no other engine listens.
         #[cfg(windows)]
         {
             let name = pipe_name()?;
             let next = crate::platform::owner_only_pipe(&name, true)
-                .map_err(|e| format!("Cannot create the engine pipe: {e}"))?;
+                .context("Cannot create the engine pipe")?;
             Ok(Self { name, next })
         }
         #[cfg(unix)]
@@ -122,13 +133,13 @@ impl Listener {
             let path = socket_path()?;
             let dir = engine_dir()?;
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
-                .map_err(|e| crate::files::error(&dir, e))?;
+                .with_context(|| dir.display().to_string())?;
             // A socket left by a crashed engine; the lock proves it's stale.
             let _ = std::fs::remove_file(&path);
-            let listener = tokio::net::UnixListener::bind(&path)
-                .map_err(|e| format!("Cannot create the engine socket: {e}"))?;
+            let listener =
+                tokio::net::UnixListener::bind(&path).context("Cannot create the engine socket")?;
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-                .map_err(|e| crate::files::error(&path, e))?;
+                .with_context(|| path.display().to_string())?;
             Ok(Self { listener })
         }
     }
@@ -157,17 +168,24 @@ fn spawn_engine(daemon: bool) -> io::Result<()> {
     crate::platform::spawn_detached(&mut command).map(drop)
 }
 
-pub async fn connect_or_start(daemon: bool) -> Result<(Reader, Writer), String> {
+const START_TIMEOUT: Duration = Duration::from_secs(10);
+
+pub async fn connect_or_start(daemon: bool) -> Result<(Reader, Writer)> {
     if let Ok(connection) = connect().await {
         return Ok(connection);
     }
-    spawn_engine(daemon).map_err(|e| format!("Cannot start the conversation engine: {e}"))?;
+    spawn_engine(daemon).context("Cannot start the conversation engine")?;
     // Losing a start race is fine: the winner accepts instead.
-    for _ in 0..200 {
+    // A cold start on a slow disk can take several seconds.
+    let deadline = tokio::time::Instant::now() + START_TIMEOUT;
+    while tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;
         if let Ok(connection) = connect().await {
             return Ok(connection);
         }
     }
-    Err("The conversation engine did not accept a connection within 10 seconds.".into())
+    bail!(
+        "The conversation engine did not accept a connection within {} seconds.",
+        START_TIMEOUT.as_secs()
+    )
 }

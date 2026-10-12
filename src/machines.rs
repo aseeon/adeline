@@ -4,6 +4,7 @@
 //! machines in memory and never touches the file. The last checked machine can't
 //! be unchecked, and removing a machine leaves its engine and data untouched.
 //! A file that can't be read or parsed is never overwritten.
+use anyhow::{Context as _, bail};
 use serde::{Deserialize, Serialize};
 use std::{
     path::{Path, PathBuf},
@@ -47,7 +48,7 @@ pub fn demo() -> bool {
     DEMO.load(Ordering::Relaxed)
 }
 
-fn path() -> Result<PathBuf, String> {
+fn path() -> anyhow::Result<PathBuf> {
     Ok(crate::config::directory()?.join("machines.yml"))
 }
 
@@ -89,7 +90,7 @@ fn with<T>(change: impl FnOnce(&mut Store) -> T) -> T {
         }
         path().map_or_else(
             |e| Store {
-                unreadable: Some(e),
+                unreadable: Some(format!("{e:#}")),
                 ..Store::default()
             },
             |path| load(&path),
@@ -104,12 +105,12 @@ fn with<T>(change: impl FnOnce(&mut Store) -> T) -> T {
     change(store)
 }
 
-fn save(store: &Store) -> Result<(), String> {
+fn save(store: &Store) -> anyhow::Result<()> {
     if demo() {
         return Ok(());
     }
     if let Some(error) = &store.unreadable {
-        return Err(error.clone());
+        bail!("{error}");
     }
     let path = path()?;
     crate::config::seed_yaml(&path, store).and_then(|()| crate::config::write_yaml(&path, store))
@@ -156,7 +157,7 @@ pub fn is_checked(id: &str) -> bool {
     with(|store| store.checked.iter().any(|c| c == id))
 }
 
-pub fn set_checked(id: &str, checked: bool) -> Result<(), String> {
+pub fn set_checked(id: &str, checked: bool) -> anyhow::Result<()> {
     with(|store| {
         if checked {
             if !store.checked.iter().any(|c| c == id) {
@@ -164,7 +165,7 @@ pub fn set_checked(id: &str, checked: bool) -> Result<(), String> {
             }
         } else {
             if store.checked.len() == 1 && store.checked[0] == id {
-                return Err("At least one machine stays checked.".into());
+                bail!("At least one machine stays checked.");
             }
             store.checked.retain(|c| c != id);
         }
@@ -172,11 +173,11 @@ pub fn set_checked(id: &str, checked: bool) -> Result<(), String> {
     })
 }
 
-pub fn add(name: &str, destination: &str) -> Result<String, String> {
+pub fn add(name: &str, destination: &str) -> anyhow::Result<String> {
     let name = name.trim();
     let destination = destination.trim();
     if name.is_empty() {
-        return Err("Enter a name for the machine.".into());
+        bail!("Enter a name for the machine.");
     }
     crate::remote::check_destination(destination)?;
     with(|store| {
@@ -186,7 +187,7 @@ pub fn add(name: &str, destination: &str) -> Result<String, String> {
             .any(|m| m.name.eq_ignore_ascii_case(name))
             || name.eq_ignore_ascii_case(&self::name(LOCAL))
         {
-            return Err(format!("A machine named \"{name}\" already exists."));
+            bail!("A machine named \"{name}\" already exists.");
         }
         let id = format!("m-{}", &crate::files::random_id()[..12]);
         store.machines.push(Machine {
@@ -200,7 +201,7 @@ pub fn add(name: &str, destination: &str) -> Result<String, String> {
     })
 }
 
-pub fn edit(id: &str, edit: impl FnOnce(&mut Machine) -> Result<(), String>) -> Result<(), String> {
+pub fn edit(id: &str, edit: impl FnOnce(&mut Machine) -> anyhow::Result<()>) -> anyhow::Result<()> {
     with(|store| {
         let others: Vec<String> = store
             .machines
@@ -212,28 +213,25 @@ pub fn edit(id: &str, edit: impl FnOnce(&mut Machine) -> Result<(), String>) -> 
             .machines
             .iter_mut()
             .find(|m| m.id == id)
-            .ok_or("That machine is no longer saved.")?;
+            .context("That machine is no longer saved.")?;
         let mut changed = machine.clone();
         edit(&mut changed)?;
         changed.name = changed.name.trim().to_string();
         if changed.name.is_empty() {
-            return Err("Enter a name for the machine.".into());
+            bail!("Enter a name for the machine.");
         }
         if others.contains(&changed.name.to_lowercase()) {
-            return Err(format!(
-                "A machine named \"{}\" already exists.",
-                changed.name
-            ));
+            bail!("A machine named \"{}\" already exists.", changed.name);
         }
         if changed.destinations.is_empty() {
-            return Err("A machine needs at least one destination.".into());
+            bail!("A machine needs at least one destination.");
         }
         *machine = changed;
         save(store)
     })
 }
 
-pub fn remove(id: &str) -> Result<(), String> {
+pub fn remove(id: &str) -> anyhow::Result<()> {
     with(|store| {
         store.machines.retain(|m| m.id != id);
         store.checked.retain(|c| c != id);

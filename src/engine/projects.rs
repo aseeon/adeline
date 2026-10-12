@@ -5,7 +5,6 @@ use crate::{
     conversation::AuthMethod,
     data::Workspace,
     harness, install,
-    log::log,
     protocol::{Delta, EngineMessage, EngineSettings},
     storage::{self, ProjectStore},
 };
@@ -29,7 +28,9 @@ impl Engine {
         }
         let store = &mut self.store;
         let (id, workspace) = block_in_place(|| {
-            let id = store.save_project(original, name, directory)?;
+            let id = store
+                .save_project(original, name, directory)
+                .map_err(|e| format!("{e:#}"))?;
             let workspace = store
                 .projects
                 .iter()
@@ -71,7 +72,8 @@ impl Engine {
             .collect();
         for id in ready {
             let waiters = self.deleting.remove(&id).unwrap_or_default();
-            let result = block_in_place(|| self.store.delete_project(&id));
+            let result =
+                block_in_place(|| self.store.delete_project(&id)).map_err(|e| format!("{e:#}"));
             if result.is_ok() {
                 for conversation in self.project_conversations(&id) {
                     self.live.remove(&conversation);
@@ -120,13 +122,15 @@ impl Engine {
         let launch = if harness_id == harness::CUSTOM || Path::new(command).is_absolute() {
             block_in_place(|| harness::resolve(command))
                 .map(|path| storage::Launch {
-                    command: path.to_string_lossy().into_owned(),
+                    command: path,
                     arguments,
                     environment: Vec::new(),
                 })
                 .ok_or_else(|| format!("Command {command} was not found on this machine."))?
         } else if self.harnesses.installed.contains_key(harness_id) {
-            self.harnesses.launch(harness_id, "", &[])?
+            self.harnesses
+                .launch(harness_id, "", &[])
+                .map_err(|e| format!("{e:#}"))?
         } else {
             return Err(format!(
                 "{} is not installed.",
@@ -202,7 +206,7 @@ impl Engine {
                     &terminal.environment,
                 )
             });
-            return Some(result.map(|()| Value::Null));
+            return Some(result.map(|()| Value::Null).map_err(|e| format!("{e:#}")));
         }
         let (session, results, urls) = acp::login(config, method.map(|method| method.id));
         self.logins.insert((client, request), session);
@@ -231,10 +235,11 @@ impl Engine {
     }
 
     pub(super) fn set_settings(&mut self, settings: EngineSettings) -> Result<Value, String> {
-        let path = settings_path()?;
+        let path = settings_path().map_err(|e| format!("{e:#}"))?;
         block_in_place(|| {
             config::seed_yaml(&path, &settings).and_then(|()| config::write_yaml(&path, &settings))
-        })?;
+        })
+        .map_err(|e| format!("{e:#}"))?;
         self.settings = settings;
         let retries = u32::try_from(self.settings.retry_limit).unwrap_or(u32::MAX);
         for slot in self.drivers.values() {
@@ -263,7 +268,14 @@ impl Engine {
             Ok(watcher)
         });
         result
-            .map_err(|error| log(format!("Cannot watch the data folders: {error}")))
+            .map_err(|error| {
+                tracing::event!(
+                    name: "engine.watch.failed",
+                    tracing::Level::WARN,
+                    error.message = %error,
+                    "Cannot watch the data folders: {{error.message}}"
+                );
+            })
             .ok()
     }
 
@@ -322,7 +334,12 @@ impl Engine {
         let deleting: HashSet<String> = self.deleting.keys().cloned().collect();
         let changes = self.store.reconcile(fresh, &busy, &deleting);
         for error in &changes.errors {
-            log(error);
+            tracing::event!(
+                name: "engine.store.reconcile_failed",
+                tracing::Level::WARN,
+                error.message = %error,
+                "{{error.message}}"
+            );
             self.broadcast_message(&EngineMessage::Delta(Delta::Notice {
                 message: error.clone(),
             }));

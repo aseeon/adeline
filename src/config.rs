@@ -1,5 +1,6 @@
 //! Human-editable application preferences. Missing files are seeded, never replaced.
 //! Render paths read through `with`, which doesn't clone the settings.
+use anyhow::Context as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     cell::RefCell,
@@ -225,12 +226,12 @@ struct State {
     error: Option<String>,
 }
 thread_local! { static ACTIVE: RefCell<State> = RefCell::new(State::default()); }
-pub fn home() -> Result<PathBuf, String> {
+pub fn home() -> anyhow::Result<PathBuf> {
     std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
         .map(PathBuf::from)
-        .ok_or_else(|| "Could not find your home directory.".into())
+        .context("Could not find your home directory.")
 }
-pub fn directory() -> Result<PathBuf, String> {
+pub fn directory() -> anyhow::Result<PathBuf> {
     Ok(home()?.join(".config/adeline"))
 }
 pub fn current() -> Settings {
@@ -352,22 +353,22 @@ pub fn bind_keys(cx: &mut gpui_kit::App) {
     ]);
     cx.bind_keys(bindings);
 }
-pub fn write_yaml(path: &Path, value: &impl Serialize) -> Result<(), String> {
-    let text = serde_yaml_ng::to_string(value).map_err(|e| e.to_string())?;
+pub fn write_yaml(path: &Path, value: &impl Serialize) -> anyhow::Result<()> {
+    let text = serde_yaml_ng::to_string(value)?;
     crate::files::replace(path, text.as_bytes())
 }
-pub fn seed_yaml(path: &Path, value: &impl Serialize) -> Result<(), String> {
-    let text = serde_yaml_ng::to_string(value).map_err(|e| e.to_string())?;
+pub fn seed_yaml(path: &Path, value: &impl Serialize) -> anyhow::Result<()> {
+    let text = serde_yaml_ng::to_string(value)?;
     crate::files::seed(path, text.as_bytes())
 }
-fn read(path: &Path) -> Result<Settings, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    serde_yaml_ng::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
+fn read(path: &Path) -> anyhow::Result<Settings> {
+    let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
+    serde_yaml_ng::from_str(&text).with_context(|| path.display().to_string())
 }
 pub fn init() {
     let result = (|| {
         let root = directory()?;
-        std::fs::create_dir_all(root.join("themes")).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(root.join("themes"))?;
         let path = root.join("settings.yml");
         seed_yaml(&path, &Settings::default())?;
         read(&path)
@@ -379,13 +380,13 @@ pub fn init() {
                 error: None,
             }
         }
-        Err(error) => s.borrow_mut().error = Some(error),
+        Err(error) => s.borrow_mut().error = Some(format!("{error:#}")),
     });
 }
-pub fn update(change: impl FnOnce(&mut Settings)) -> Result<(), String> {
+pub fn update(change: impl FnOnce(&mut Settings)) -> anyhow::Result<()> {
     update_at(&directory()?.join("settings.yml"), change)
 }
-fn update_at(path: &Path, change: impl FnOnce(&mut Settings)) -> Result<(), String> {
+fn update_at(path: &Path, change: impl FnOnce(&mut Settings)) -> anyhow::Result<()> {
     // Re-read to preserve hand edits and refuse to overwrite malformed files.
     let mut settings = read(path)?;
     change(&mut settings);

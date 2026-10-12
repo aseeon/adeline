@@ -1,6 +1,7 @@
 //! Filesystem helpers shared by the settings, agent and project stores.
 //! Writes are synced before they replace anything, and a failed `replace`
 //! restores the original.
+use anyhow::{Context as _, Result, bail};
 use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
@@ -33,48 +34,49 @@ pub fn random_id() -> String {
     format!("{:016x}{:016x}", half(), half())
 }
 
-pub fn checked_id(id: &str) -> Result<(), String> {
-    if crate::agents::normalize_name(id).as_deref() == Ok(id) {
-        Ok(())
-    } else {
-        Err(format!("Invalid folder name: {id}"))
-    }
-}
-
-pub fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)
-        .map_err(|e| error(path, e))?;
-    if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
-        drop(file);
-        let _ = fs::remove_file(path);
-        return Err(error(path, e));
+pub fn checked_id(id: &str) -> Result<()> {
+    if crate::agents::normalize_name(id).ok().as_deref() != Some(id) {
+        bail!("Invalid folder name: {id}");
     }
     Ok(())
 }
 
-pub fn seed(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut file = OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .with_context(|| path.display().to_string())?;
+    if let Err(e) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(e).with_context(|| path.display().to_string());
+    }
+    Ok(())
+}
+
+pub fn seed(path: &Path, bytes: &[u8]) -> Result<()> {
     match OpenOptions::new().write(true).create_new(true).open(path) {
-        Ok(mut file) => file.write_all(bytes).map_err(|e| error(path, e)),
+        Ok(mut file) => file
+            .write_all(bytes)
+            .with_context(|| path.display().to_string()),
         Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-        Err(e) => Err(error(path, e)),
+        Err(e) => Err(e).with_context(|| path.display().to_string()),
     }
 }
 
-pub fn replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub fn replace(path: &Path, bytes: &[u8]) -> Result<()> {
     let temp = path.with_extension(unique("tmp"));
     write_new(&temp, bytes)?;
     let backup = path.with_extension(unique("bak"));
     if let Err(e) = fs::rename(path, &backup) {
         let _ = fs::remove_file(&temp);
-        return Err(error(path, e));
+        return Err(e).with_context(|| path.display().to_string());
     }
     if let Err(e) = fs::rename(&temp, path) {
         let _ = fs::rename(&backup, path);
         let _ = fs::remove_file(&temp);
-        return Err(error(path, e));
+        return Err(e).with_context(|| path.display().to_string());
     }
     let _ = fs::remove_file(&backup);
     Ok(())

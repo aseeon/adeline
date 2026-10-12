@@ -1,6 +1,7 @@
 //! The Chats layout, command popovers (the menus), modal dialogs (including
 //! quit, SSH prompt and upgrade), and UI helpers shared across windows.
 use super::*;
+use crate::conversation::ThreadStatus;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::command::{Command, CommandItem, CommandState};
 use gpui_kit::component::dialog::Dialog;
@@ -30,8 +31,8 @@ impl Adeline {
                 header.child(chat_render::context_meter(thread.context, cx).mr_2())
             })
             .when_some(thread, |header, thread| {
-                let done = conversation::closed(&thread.status);
-                let archived = thread.status == "archived";
+                let done = thread.status.closed();
+                let archived = thread.status == ThreadStatus::Archived;
                 let complete = if done {
                     "Mark as incomplete"
                 } else {

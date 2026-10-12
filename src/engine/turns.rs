@@ -2,7 +2,7 @@
 use super::{ALREADY_PROCESSING, Engine, history_text, live_for};
 use crate::{
     acp,
-    conversation::{Attachment, closed},
+    conversation::{Attachment, MessageRole, ThreadStatus},
     data::Message,
     protocol::{Delta, Queued},
 };
@@ -49,7 +49,7 @@ impl Engine {
             let Some(thread) = self.locate(&id) else {
                 return Err("This conversation no longer exists.".into());
             };
-            if thread.status == "archived" {
+            if thread.status == ThreadStatus::Archived {
                 return Err("This conversation is archived.".into());
             }
             let live = self.live.entry(id.clone()).or_default();
@@ -80,13 +80,16 @@ impl Engine {
                 .ok_or("Create or select an agent before sending.")?;
             let launch = self
                 .harnesses
-                .launch(&agent.harness, &agent.command, &agent.arguments)?;
+                .launch(&agent.harness, &agent.command, &agent.arguments)
+                .map_err(|e| format!("{e:#}"))?;
             let mut servers = self.settings.mcp_servers.clone();
             servers.extend(agent.mcp_servers.iter().cloned());
             let title = crate::short(&prompt, 100);
             let store = &mut self.store;
             let (id, thread, live) = block_in_place(|| {
-                let id = store.create_conversation(project_id, &agent, launch, servers, &title)?;
+                let id = store
+                    .create_conversation(project_id, &agent, launch, servers, &title)
+                    .map_err(|e| format!("{e:#}"))?;
                 let saved = store
                     .conversation(&id)
                     .ok_or_else(|| "Created conversation is missing.".to_owned())?;
@@ -162,7 +165,7 @@ impl Engine {
         attachments: Vec<Attachment>,
     ) -> bool {
         let message = Message {
-            role: "user".into(),
+            role: MessageRole::User,
             text,
             read: true,
             created_at: crate::recency::now().to_string(),
@@ -228,14 +231,15 @@ impl Engine {
         attachments: Vec<Attachment>,
         retry: bool,
     ) {
-        if self.cannot_start(id).is_some() || !self.set_runtime_status(id, "processing") {
+        if self.cannot_start(id).is_some() || !self.set_runtime_status(id, ThreadStatus::Processing)
+        {
             return;
         }
         if !self.ensure_driver(id) {
             let error = "Could not load this conversation's saved agent settings.".to_owned();
             self.record_visible(id, "error", json!({"message":error}));
             self.live.entry(id.to_owned()).or_default().error = Some(error);
-            self.set_runtime_status(id, "blocked");
+            self.set_runtime_status(id, ThreadStatus::Blocked);
             return;
         }
         if retry
@@ -289,7 +293,7 @@ impl Engine {
             live.processing = false;
             live.error = Some(error.clone());
             self.record_visible(id, "error", json!({"message":error}));
-            self.set_runtime_status(id, "blocked");
+            self.set_runtime_status(id, ThreadStatus::Blocked);
         }
     }
 
@@ -318,9 +322,9 @@ impl Engine {
         {
             return Some("This project is being deleted.".into());
         }
-        match self.status_of(id).as_str() {
-            "completed" => Some("Already completed".into()),
-            "archived" => Some("This conversation is archived.".into()),
+        match self.status_of(id)? {
+            ThreadStatus::Completed => Some("Already completed".into()),
+            ThreadStatus::Archived => Some("This conversation is archived.".into()),
             _ => None,
         }
     }
@@ -374,7 +378,7 @@ impl Engine {
         }
         let store = &mut self.store;
         let result = block_in_place(|| {
-            store.retry_unsaved(id)?;
+            store.retry_unsaved(id).map_err(|e| format!("{e:#}"))?;
             store
                 .conversation(id)
                 .map(|conversation| {
@@ -415,7 +419,7 @@ impl Engine {
         live.recovering_storage = live.processing;
         live.error = if live.recovering_storage {
             Some("History is saved. Waiting for the stopped turn to settle.".into())
-        } else if !closed(&settings.status) && !live.last_prompt.is_empty() {
+        } else if !settings.status.closed() && !live.last_prompt.is_empty() {
             Some("History is saved. Retry to continue the interrupted turn.".into())
         } else {
             None
@@ -426,8 +430,8 @@ impl Engine {
             live.processing = false;
             live.recovering_storage = false;
         }
-        if !closed(&settings.status) {
-            self.set_runtime_status(id, "blocked");
+        if !settings.status.closed() {
+            self.set_runtime_status(id, ThreadStatus::Blocked);
         }
         self.send_live(id);
         Ok(Value::Null)
@@ -448,12 +452,12 @@ impl Engine {
             .locate(id)
             .map(|thread| history_text(&thread.messages))
             .unwrap_or_default();
-        if !self.set_runtime_status(id, "processing") {
+        if !self.set_runtime_status(id, ThreadStatus::Processing) {
             self.send_live(id);
             return Err("History could not be saved.".into());
         }
         if !self.ensure_driver(id) {
-            self.set_runtime_status(id, "blocked");
+            self.set_runtime_status(id, ThreadStatus::Blocked);
             return Err("Could not load this conversation's saved agent settings.".into());
         }
         if !self.record_visible(
@@ -469,7 +473,7 @@ impl Engine {
         {
             self.drivers.remove(id);
             self.live.entry(id.to_owned()).or_default().error = Some(error.clone());
-            self.set_runtime_status(id, "blocked");
+            self.set_runtime_status(id, ThreadStatus::Blocked);
             self.send_live(id);
             return Err(error);
         }

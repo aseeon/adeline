@@ -3,6 +3,7 @@
 //! The client listens on an owner-only named pipe (Windows) or a 0600 Unix
 //! socket, so only the same user can ask or read answers. One JSON line goes
 //! each way: the `Ask`, then the answer, `null` when the user cancels.
+use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWriteExt as _, BufReader};
 
@@ -25,7 +26,7 @@ struct Ask {
     prompt: String,
 }
 
-pub fn serve_askpass(prompts: async_channel::Sender<Prompt>) -> Result<String, String> {
+pub fn serve_askpass(prompts: async_channel::Sender<Prompt>) -> anyhow::Result<String> {
     // Runs inside the client runtime. Returns the address `ssh` children get.
     #[cfg(windows)]
     {
@@ -35,7 +36,7 @@ pub fn serve_askpass(prompts: async_channel::Sender<Prompt>) -> Result<String, S
             crate::files::random_id()
         );
         let mut server = crate::platform::owner_only_pipe(&address, true)
-            .map_err(|e| format!("Cannot listen for SSH prompts: {e}"))?;
+            .context("Cannot listen for SSH prompts")?;
         let name = address.clone();
         tokio::spawn(async move {
             while server.connect().await.is_ok() {
@@ -53,15 +54,15 @@ pub fn serve_askpass(prompts: async_channel::Sender<Prompt>) -> Result<String, S
         use std::os::unix::fs::PermissionsExt as _;
         // Owner-only before the socket exists, so no other user can connect first.
         let dir = crate::config::directory()?.join("askpass");
-        std::fs::create_dir_all(&dir).map_err(|e| crate::files::error(&dir, e))?;
+        std::fs::create_dir_all(&dir).with_context(|| dir.display().to_string())?;
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
-            .map_err(|e| crate::files::error(&dir, e))?;
+            .with_context(|| dir.display().to_string())?;
         let path = dir.join(format!("{}.sock", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let listener = tokio::net::UnixListener::bind(&path)
-            .map_err(|e| format!("Cannot listen for SSH prompts: {e}"))?;
+        let listener =
+            tokio::net::UnixListener::bind(&path).context("Cannot listen for SSH prompts")?;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| crate::files::error(&path, e))?;
+            .with_context(|| path.display().to_string())?;
         tokio::spawn(async move {
             while let Ok((stream, _)) = listener.accept().await {
                 tokio::spawn(answer(stream, prompts.clone()));

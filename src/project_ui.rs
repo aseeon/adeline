@@ -138,7 +138,7 @@ impl Adeline {
         }
         let id = self.projects[ix].config.id.clone();
         if let Err(error) = ui_state::record_opened(&self.projects[ix].machine, &id, now) {
-            window.push_notification(format!("Couldn't record opening {id}: {error}"), cx);
+            window.push_notification(format!("Couldn't record opening {id}: {error:#}"), cx);
         }
     }
 
@@ -794,7 +794,7 @@ impl Adeline {
                     .workspace()
                     .threads
                     .iter()
-                    .any(|thread| !conversation::closed(&thread.status));
+                    .any(|thread| !thread.status.closed());
                 content = content
                     .child(views::dialog_title(if creating { "New project" } else { "Project settings" }))
                     .when(creating && machines::checked().len() > 1, |column| column.child(

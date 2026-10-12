@@ -1,9 +1,16 @@
 //! The UI side of conversations: it mirrors what the engine reports and
 //! sends every action to the engine.
 use super::*;
+use crate::conversation::{MessageRole, ThreadStatus};
 use crate::protocol::{Command, Delta, Live, Snapshot};
+use anyhow::Context as _;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
+
+// The traffic tab keeps at most this many lines, dropping the oldest in batches
+// so the list doesn't shift on every new line.
+const TRAFFIC_CAP: usize = 5000;
+const TRAFFIC_TRIM: usize = 1000;
 
 #[derive(Default)]
 pub(super) struct Runtime {
@@ -104,7 +111,7 @@ impl Adeline {
         let Some(through) = self.projects[p].threads[t]
             .messages
             .iter()
-            .rposition(|message| message.role == "assistant")
+            .rposition(|message| message.role == MessageRole::Assistant)
         else {
             return;
         };
@@ -303,7 +310,7 @@ impl Adeline {
         self.request(
             Command::Login {
                 harness: execution.harness,
-                command: execution.command,
+                command: execution.command.to_string_lossy().into_owned(),
                 arguments: execution.arguments,
                 method: Some(method),
             },
@@ -368,8 +375,8 @@ impl Adeline {
         let bottom = self.traffic_scroll.max_offset().y;
         let following = -offset >= bottom - px(8.);
         self.traffic.push(entry);
-        if self.traffic.len() > 5000 {
-            self.traffic.drain(..1000);
+        if self.traffic.len() > TRAFFIC_CAP {
+            self.traffic.drain(..TRAFFIC_TRIM);
         }
         if following {
             self.traffic_scroll.scroll_to_bottom();
@@ -399,24 +406,21 @@ impl Adeline {
         let Some((p, t)) = self.locate_conversation(id) else {
             return;
         };
-        let finished = matches!(
-            self.projects[p].threads[t].status.as_str(),
-            "completed" | "archived"
-        );
+        let finished = self.projects[p].threads[t].status.closed();
         let status = if archive {
-            "archived"
+            ThreadStatus::Archived
         } else if finished {
-            "idle"
+            ThreadStatus::Idle
         } else {
-            "completed"
+            ThreadStatus::Completed
         };
         if self.demo_mode {
-            self.projects[p].threads[t].status = status.into();
+            self.projects[p].threads[t].status = status;
         } else {
             self.command(
                 Command::SetStatus {
                     id: id.to_owned(),
-                    status: status.into(),
+                    status,
                 },
                 cx,
             );
@@ -536,26 +540,18 @@ impl Adeline {
         expected: Option<agents::AgentDefinition>,
         overwrite: bool,
         cx: &mut App,
-    ) -> Result<String, String> {
-        let (demo, select_first) = entity
-            .read_with(cx, |app, _| {
-                (
-                    app.demo_mode,
-                    original.is_none() && app.catalog(machine).entries.is_empty(),
-                )
-            })
-            .map_err(|error| error.to_string())?;
+    ) -> Result<String> {
+        let (demo, select_first) = entity.read_with(cx, |app, _| {
+            (
+                app.demo_mode,
+                original.is_none() && app.catalog(machine).entries.is_empty(),
+            )
+        })?;
         let saved = if demo {
-            entity
-                .update(cx, move |app, _| {
-                    app.catalog_mut(machine).save(
-                        original,
-                        definition,
-                        expected.as_ref(),
-                        overwrite,
-                    )
-                })
-                .map_err(|error| error.to_string())??
+            entity.update(cx, move |app, _| {
+                app.catalog_mut(machine)
+                    .save(original, definition, expected.as_ref(), overwrite)
+            })??
         } else {
             let command = Command::SaveAgent {
                 original: original.map(str::to_owned),
@@ -563,16 +559,15 @@ impl Adeline {
                 expected,
                 overwrite,
             };
-            client::request_blocking(machine, command, cx)?
+            client::request_blocking(machine, command, cx)
+                .map_err(anyhow::Error::msg)?
                 .as_str()
                 .map(str::to_owned)
-                .ok_or("The conversation engine returned no agent ID.")?
+                .context("The conversation engine returned no agent ID.")?
         };
-        entity
-            .update(cx, |app, cx| {
-                app.agents_changed(original, Some(&saved), select_first, cx);
-            })
-            .map_err(|error| error.to_string())?;
+        entity.update(cx, |app, cx| {
+            app.agents_changed(original, Some(&saved), select_first, cx);
+        })?;
         Ok(saved)
     }
 
@@ -581,20 +576,15 @@ impl Adeline {
         machine: &str,
         id: &str,
         cx: &mut App,
-    ) -> Result<(), String> {
-        let demo = entity
-            .read_with(cx, |app, _| app.demo_mode)
-            .map_err(|error| error.to_string())?;
+    ) -> Result<()> {
+        let demo = entity.read_with(cx, |app, _| app.demo_mode)?;
         if demo {
-            entity
-                .update(cx, |app, _| app.catalog_mut(machine).delete(id))
-                .map_err(|error| error.to_string())??;
+            entity.update(cx, |app, _| app.catalog_mut(machine).delete(id))??;
         } else {
-            client::request_blocking(machine, Command::DeleteAgent { id: id.to_owned() }, cx)?;
+            client::request_blocking(machine, Command::DeleteAgent { id: id.to_owned() }, cx)
+                .map_err(anyhow::Error::msg)?;
         }
-        entity
-            .update(cx, |app, cx| app.agents_changed(Some(id), None, false, cx))
-            .map_err(|error| error.to_string())
+        entity.update(cx, |app, cx| app.agents_changed(Some(id), None, false, cx))
     }
 
     fn close_main_window(&self, cx: &mut Context<Self>) {
@@ -656,7 +646,7 @@ impl Adeline {
                 id: format!("local-{}", self.workspace().threads.len()),
                 title: format!("{} (fork)", source.title),
                 provider: source.provider.clone(),
-                status: "idle".into(),
+                status: ThreadStatus::Idle,
                 messages: source.messages[..=message].to_vec(),
                 activity: source
                     .activity

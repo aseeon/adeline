@@ -14,6 +14,7 @@
 //! The mode rail continues the title bar's app-icon cell down to the bottom of
 //! the window: one icon per enabled mode, and the main menu at the foot.
 use super::*;
+use crate::conversation::ThreadStatus;
 use gpui_kit::component::checkbox::Checkbox;
 use gpui_kit::component::menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenu, PopupMenuItem};
 use gpui_kit::component::notification::Notification;
@@ -523,7 +524,7 @@ impl Adeline {
             .workspace()
             .threads
             .iter()
-            .any(|thread| thread.status == "blocked");
+            .any(|thread| thread.status == ThreadStatus::Blocked);
         let mut modes = col()
             .id("modes")
             .role(Role::TabList)

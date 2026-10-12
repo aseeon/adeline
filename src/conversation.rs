@@ -149,8 +149,48 @@ pub struct TodoStep {
     pub status: StepStatus,
 }
 
-pub fn closed(status: &str) -> bool {
-    matches!(status, "completed" | "archived")
+// Earlier versions saved new chats as "active" and running ones as "working".
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThreadStatus {
+    #[serde(alias = "working")]
+    Processing,
+    Blocked,
+    Completed,
+    Archived,
+    #[default]
+    #[serde(alias = "active", other)]
+    Idle,
+}
+
+impl ThreadStatus {
+    pub fn closed(self) -> bool {
+        matches!(self, Self::Completed | Self::Archived)
+    }
+
+    pub fn live(self) -> bool {
+        matches!(self, Self::Processing | Self::Blocked)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MessageRole {
+    User,
+    Assistant,
+    #[default]
+    #[serde(other)]
+    Other,
+}
+
+impl MessageRole {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::Other => "",
+        }
+    }
 }
 
 pub fn current_step(steps: &[TodoStep]) -> Option<&TodoStep> {
@@ -331,20 +371,21 @@ impl Attachment {
 }
 
 #[cfg(feature = "gui")]
-pub fn read_attachment(path: &std::path::Path) -> Result<Attachment, String> {
+pub fn read_attachment(path: &std::path::Path) -> anyhow::Result<Attachment> {
+    use anyhow::Context as _;
     let name = path.file_name().map_or_else(
         || path.display().to_string(),
         |n| n.to_string_lossy().into_owned(),
     );
     let mime = mime_for(&name).to_owned();
     let size = std::fs::metadata(path)
-        .map_err(|e| crate::files::error(path, e))?
+        .with_context(|| path.display().to_string())?
         .len();
     // Too big to read; `attach` reports it.
     let data = if size > ATTACHMENT_LIMIT {
         String::new()
     } else {
-        base64(&std::fs::read(path).map_err(|e| crate::files::error(path, e))?)
+        base64(&std::fs::read(path).with_context(|| path.display().to_string())?)
     };
     Ok(Attachment {
         name,
@@ -493,5 +534,21 @@ mod tests {
         assert_eq!(current_step(&steps).unwrap().text, "c");
         assert_eq!(current_step(&steps[..2]).unwrap().text, "b");
         assert!(current_step(&steps[..1]).is_none());
+    }
+
+    #[test]
+    fn statuses_keep_their_saved_names() {
+        let parse = |text: &str| serde_json::from_str::<ThreadStatus>(text).unwrap();
+        assert_eq!(parse(r#""active""#), ThreadStatus::Idle);
+        assert_eq!(parse(r#""working""#), ThreadStatus::Processing);
+        assert_eq!(parse(r#""someday""#), ThreadStatus::Idle);
+        assert_eq!(
+            serde_json::to_string(&ThreadStatus::Blocked).unwrap(),
+            r#""blocked""#
+        );
+        assert_eq!(
+            serde_json::from_str::<MessageRole>(r#""assistant""#).unwrap(),
+            MessageRole::Assistant
+        );
     }
 }

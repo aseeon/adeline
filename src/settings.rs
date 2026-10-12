@@ -25,17 +25,55 @@ mod general;
 mod licenses;
 mod machine_list;
 
-const GROUPS: [&str; 5] = ["General", "Modes", "Licenses", "Agents", "Engine"];
-const SUBGROUPS: [&[&str]; 5] = [
-    &["Features", "Appearance", "Keymap"],
-    &["Chats"],
-    &["Phosphor Icons", "GPUI", "Chivo & Chivo Mono"],
-    &["MCP servers"],
-    &["Engine"],
-];
-const LICENSES: usize = 2;
-const AGENTS: usize = 3;
-const ENGINE: usize = 4;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Group {
+    General,
+    Modes,
+    Licenses,
+    Agents,
+    Engine,
+}
+impl Group {
+    const NAVIGATION: [Self; 5] = [
+        Self::General,
+        Self::Modes,
+        Self::Agents,
+        Self::Engine,
+        Self::Licenses,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::General => "General",
+            Self::Modes => "Modes",
+            Self::Licenses => "Licenses",
+            Self::Agents => "Agents",
+            Self::Engine => "Engine",
+        }
+    }
+
+    fn subgroups(self) -> &'static [&'static str] {
+        match self {
+            Self::General => &["Features", "Appearance", "Keymap"],
+            Self::Modes => &["Chats"],
+            Self::Licenses => &["Phosphor Icons", "GPUI", "Chivo & Chivo Mono"],
+            Self::Agents => &["MCP servers"],
+            Self::Engine => &["Engine"],
+        }
+    }
+
+    fn local_only(self) -> bool {
+        matches!(self, Self::General | Self::Modes | Self::Licenses)
+    }
+
+    fn of_mode(mode: Option<Section>) -> Self {
+        if mode == Some(Section::Chats) {
+            Self::Modes
+        } else {
+            Self::General
+        }
+    }
+}
 const KEEP_RUNNING: &str = "Keep conversation engine running";
 const KEEP_RUNNING_DESCRIPTION: &str =
     "The engine never exits on its own, and idle agents keep running with no window open.";
@@ -347,7 +385,7 @@ fn persist_form(
     form: &Entity<agent_form::AgentForm>,
     overwrite: bool,
     cx: &mut App,
-) -> Result<String, String> {
+) -> Result<String> {
     let form = form.read(cx);
     form.check(cx)?;
     let definition = form.values(cx);
@@ -474,7 +512,7 @@ impl AgentWindow {
             }
             Err(error) => {
                 self.form.update(cx, |form, cx| {
-                    form.status = Some(error);
+                    form.status = Some(format!("{error:#}"));
                     cx.notify();
                 });
                 false
@@ -620,7 +658,7 @@ enum AfterAgent {
     Machines,
     CloseSettings,
     CloseOwner,
-    Child(usize, usize),
+    Child(Group, usize),
     OpenMode(Section),
     Agent(String),
     Delete(String),
@@ -656,9 +694,9 @@ struct SettingsWindow {
     font_pickers: [Entity<SelectState<SearchableVec<String>>>; 2],
     theme_status: Option<String>,
     demo: bool,
-    group: usize,
+    group: Group,
     subgroup: Option<usize>,
-    search_page: Option<(usize, Option<usize>)>,
+    search_page: Option<(Group, Option<usize>)>,
     folded: [bool; 5],
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -815,7 +853,7 @@ impl SettingsWindow {
             )
         });
         let (theme_choices, errors) =
-            theme::discover().unwrap_or_else(|error| (Vec::new(), vec![error]));
+            theme::discover().unwrap_or_else(|error| (Vec::new(), vec![format!("{error:#}")]));
         let selected_theme = config::current().general.appearance.theme;
         let selected_theme = theme_choices
             .iter()
@@ -897,7 +935,8 @@ impl SettingsWindow {
                     Ok(minutes) => config::update(|settings| {
                         settings.modes.chats.silence_notice_minutes = minutes;
                     })
-                    .err(),
+                    .err()
+                    .map(|e| format!("{e:#}")),
                     Err(_) => {
                         Some("Enter a whole number of minutes. 0 turns the notice off.".into())
                     }
@@ -951,7 +990,8 @@ impl SettingsWindow {
                 this.thinking_error = config::update(|settings| {
                     settings.modes.chats.thinking_animation = choice;
                 })
-                .err();
+                .err()
+                .map(|e| format!("{e:#}"));
                 // A running turn's row picks up the new animation on its next frame.
                 let _ = this.owner.entity.update(cx, |_, cx| cx.notify());
                 cx.notify();
@@ -995,7 +1035,7 @@ impl SettingsWindow {
                             this.theme_picker.update(cx, |picker, cx| {
                                 picker.set_selected_value(&saved, window, cx);
                             });
-                            Some(message)
+                            Some(format!("{message:#}"))
                         }
                     };
                     cx.notify();
@@ -1068,10 +1108,10 @@ impl SettingsWindow {
             font_pickers,
             theme_status,
             demo,
-            group: usize::from(mode == Some(Section::Chats)),
+            group: Group::of_mode(mode),
             subgroup: Some(usize::from(!demo && mode != Some(Section::Chats))),
             search_page: None,
-            folded: std::array::from_fn(|group| group != usize::from(mode == Some(Section::Chats))),
+            folded: std::array::from_fn(|group| group != Group::of_mode(mode) as usize),
             focus,
             _subscriptions: subscriptions,
         }
@@ -1093,10 +1133,10 @@ impl SettingsWindow {
         self.close_agent();
         self.agent_status = None;
         self.machines_page = false;
-        if machine != machines::LOCAL && self.group < AGENTS {
-            self.group = ENGINE;
+        if machine != machines::LOCAL && self.group.local_only() {
+            self.group = Group::Engine;
             self.subgroup = Some(0);
-            self.folded[ENGINE] = false;
+            self.folded[Group::Engine as usize] = false;
         }
         self.machine = machine;
         cx.notify();
@@ -1120,7 +1160,7 @@ impl SettingsWindow {
             AfterAgent::Child(group, child) => {
                 self.machines_page = false;
                 self.group = group;
-                self.folded[group] = false;
+                self.folded[group as usize] = false;
                 self.subgroup = Some(child);
                 self.close_agent();
                 self.search_page = Some((group, Some(child)));
@@ -1129,11 +1169,7 @@ impl SettingsWindow {
                 self.last_query.clear();
                 self.query
                     .update(cx, |input, cx| input.set_value("", window, cx));
-                self.after_agent(
-                    AfterAgent::Child(usize::from(mode == Section::Chats), 0),
-                    window,
-                    cx,
-                );
+                self.after_agent(AfterAgent::Child(Group::of_mode(Some(mode)), 0), window, cx);
             }
             AfterAgent::Agent(id) => self.show_agent(id, window, cx),
             AfterAgent::Delete(id) => self.confirm_delete_after_leaving(id, window, cx),
@@ -1253,15 +1289,18 @@ fn caps(text: &str, cx: &App) -> Div {
         .child(text.to_uppercase())
 }
 fn group_header(
-    group: usize,
+    group: Group,
     count: usize,
     folded: bool,
     cx: &mut Context<SettingsWindow>,
 ) -> Stateful<Div> {
     let theme = cx.theme();
-    let name = GROUPS[group];
+    let name = group.label();
     row()
-        .id(SharedString::from(format!("settings-group-{group}")))
+        .id(SharedString::from(format!(
+            "settings-group-{}",
+            group as usize
+        )))
         .role(Role::Button)
         .aria_label(format!("{} {name}", if folded { "Show" } else { "Hide" }))
         .mt_3()
@@ -1285,7 +1324,7 @@ fn group_header(
         .child(div().flex_1().child(name.to_uppercase()))
         .child(count.to_string())
         .on_click(cx.listener(move |this, _, _, cx| {
-            this.folded[group] = !this.folded[group];
+            this.folded[group as usize] = !this.folded[group as usize];
             cx.notify();
         }))
 }
@@ -1314,23 +1353,24 @@ impl Render for SettingsWindow {
         let searching = !query.trim().is_empty();
         let mut navigation = div().flex().flex_col().gap_1();
         let remote = self.machine != machines::LOCAL;
-        for group in [0, 1, AGENTS, ENGINE, LICENSES] {
-            let name = GROUPS[group];
-            if group == LICENSES && searching || remote && group < AGENTS {
+        for group in Group::NAVIGATION {
+            let name = group.label();
+            if group == Group::Licenses && searching || remote && group.local_only() {
                 continue;
             }
-            let matching: Vec<_> = SUBGROUPS[group]
+            let matching: Vec<_> = group
+                .subgroups()
                 .iter()
                 .enumerate()
                 .filter(|(child, title)| {
-                    if group == 0 {
+                    if group == Group::General {
                         (self.demo || *child != 0) && general_matches(*child, &query)
                     } else {
                         matches_query(&query, &[name, title])
                     }
                 })
                 .collect();
-            let matching_agents: Vec<_> = if group == AGENTS {
+            let matching_agents: Vec<_> = if group == Group::Agents {
                 let machine = self.machine.clone();
                 self.owner
                     .entity
@@ -1355,11 +1395,11 @@ impl Render for SettingsWindow {
             if searching
                 && matching.is_empty()
                 && matching_agents.is_empty()
-                && !(group == AGENTS && matches_query(&query, &["Agents"]))
+                && !(group == Group::Agents && matches_query(&query, &["Agents"]))
             {
                 continue;
             }
-            let folded = self.folded[group] && !searching;
+            let folded = self.folded[group as usize] && !searching;
             navigation = navigation.child(group_header(
                 group,
                 matching.len() + matching_agents.len(),
@@ -1369,22 +1409,17 @@ impl Render for SettingsWindow {
             if folded {
                 continue;
             }
-            let icon = match group {
-                1 => "chat.svg",
-                AGENTS => "link.svg",
-                LICENSES => "file.svg",
-                ENGINE => "devices.svg",
-                _ => "robot.svg",
-            };
             for (child, title) in matching {
-                let icon = if group == 0 {
-                    ["settings.svg", "pen.svg", "code.svg"][child]
-                } else {
-                    icon
+                let icon = match group {
+                    Group::General => ["settings.svg", "pen.svg", "code.svg"][child],
+                    Group::Modes => "chat.svg",
+                    Group::Agents => "link.svg",
+                    Group::Licenses => "file.svg",
+                    Group::Engine => "devices.svg",
                 };
                 navigation = navigation.child(
                     navigation_button(
-                        format!("settings-{group}-{child}"),
+                        format!("settings-{}-{child}", group as usize),
                         *title,
                         icon,
                         !self.machines_page && self.group == group && self.subgroup == Some(child),
@@ -1455,8 +1490,8 @@ impl Render for SettingsWindow {
                             .menu_width(rems(15.)),
                     ),
             );
-        let show = |group, child| {
-            if self.machines_page || remote && group < AGENTS {
+        let show = |group: Group, child| {
+            if self.machines_page || remote && group.local_only() {
                 false
             } else if searching {
                 self.search_page
@@ -1469,18 +1504,22 @@ impl Render for SettingsWindow {
             "Machines".to_string()
         } else if searching {
             "Search results".to_string()
-        } else if let Some(form) = self.agent_form.as_ref().filter(|_| self.group == AGENTS) {
+        } else if let Some(form) = self
+            .agent_form
+            .as_ref()
+            .filter(|_| self.group == Group::Agents)
+        {
             form.read(cx).name(cx)
         } else {
             self.subgroup
-                .map_or(GROUPS[self.group], |child| SUBGROUPS[self.group][child])
+                .map_or(self.group.label(), |child| self.group.subgroups()[child])
                 .to_string()
         };
         // The title bar names the page, so the content starts with its settings.
-        let mut crumbs = if searching || self.machines_page || heading == GROUPS[self.group] {
+        let mut crumbs = if searching || self.machines_page || heading == self.group.label() {
             vec![heading]
         } else {
-            vec![GROUPS[self.group].to_string(), heading]
+            vec![self.group.label().to_string(), heading]
         };
         if remote && !self.machines_page {
             crumbs.insert(0, machines::name(&self.machine));
@@ -1491,23 +1530,23 @@ impl Render for SettingsWindow {
         }
         if let Some(owner) = self.owner.entity.upgrade() {
             let app = owner.read(cx);
-            if self.demo && show(0, 0) && general_matches(0, &query) {
+            if self.demo && show(Group::General, 0) && general_matches(0, &query) {
                 pages.push(self.features_settings(&query, searching, cx));
             }
-            if show(0, 1) && general_matches(1, &query) {
+            if show(Group::General, 1) && general_matches(1, &query) {
                 pages.push(self.appearance_settings(cx));
             }
-            if show(0, 2) && general_matches(2, &query) {
+            if show(Group::General, 2) && general_matches(2, &query) {
                 pages.push(self.keymap_settings(&query, searching, cx));
             }
-            if show(1, 0) {
+            if show(Group::Modes, 0) {
                 pages.extend(self.chats_settings(app, &query, searching, cx));
             }
         }
-        if show(ENGINE, 0) && engine_matches(&query) {
+        if show(Group::Engine, 0) && engine_matches(&query) {
             pages.push(self.engine_settings(&query, cx));
         }
-        if self.group == LICENSES && !searching && !remote && !self.machines_page {
+        if self.group == Group::Licenses && !searching && !remote && !self.machines_page {
             pages.extend(self.licenses_settings(cx));
         }
         let mcp_page = !self.machines_page
@@ -1515,12 +1554,12 @@ impl Render for SettingsWindow {
             && if searching {
                 matches_query(&query, &["Agents", "MCP servers", MCP_DESCRIPTION])
             } else {
-                self.group == AGENTS && self.subgroup == Some(0)
+                self.group == Group::Agents && self.subgroup == Some(0)
             };
         if mcp_page {
             pages.push(self.mcp_settings(cx));
         }
-        if !self.machines_page && (searching || (self.group == AGENTS && !mcp_page)) {
+        if !self.machines_page && (searching || (self.group == Group::Agents && !mcp_page)) {
             pages.extend(self.agent_settings(&query, searching, cx));
         }
         let found = !pages.is_empty();
@@ -1542,7 +1581,8 @@ impl Render for SettingsWindow {
         if !searching
             && !self.machines_page
             && !remote
-            && (self.group == 1 || (self.group == 0 && self.subgroup.is_none_or(|i| i == 0)))
+            && (self.group == Group::Modes
+                || (self.group == Group::General && self.subgroup.is_none_or(|i| i == 0)))
         {
             content = content.child(
                 div()

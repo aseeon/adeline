@@ -1,6 +1,7 @@
 //! Application themes. Existing 32-color YAML files project onto Kit's global
 //! theme for every window. Preferences stay separate from workspace data.
 //! `apply` runs after Kit's initialization and after every appearance change.
+use anyhow::{Context as _, Result, bail};
 use gpui_kit::{
     App, Hsla,
     component::{Colorize as _, Theme as KitTheme, ThemeMode},
@@ -11,14 +12,14 @@ use std::{cell::RefCell, collections::BTreeMap, path::Path};
 
 include!(concat!(env!("OUT_DIR"), "/themes.rs"));
 
-fn seed_bundled_themes(directory: &Path) -> Result<(), String> {
-    std::fs::create_dir_all(directory).map_err(|e| e.to_string())?;
+fn seed_bundled_themes(directory: &Path) -> Result<()> {
+    std::fs::create_dir_all(directory)?;
     for &(name, contents) in BUNDLED_THEMES {
         let theme: ThemeFile =
-            serde_yaml_ng::from_str(contents).map_err(|e| format!("Bundled theme {name}: {e}"))?;
+            serde_yaml_ng::from_str(contents).with_context(|| format!("Bundled theme {name}"))?;
         theme
             .validate()
-            .map_err(|e| format!("Bundled theme {name}: {e}"))?;
+            .with_context(|| format!("Bundled theme {name}"))?;
         crate::files::seed(&directory.join(name), contents.as_bytes())?;
     }
     Ok(())
@@ -101,12 +102,12 @@ impl ThemeFile {
         serde_yaml_ng::from_str(include_str!("../bundled-themes/claude-plus.yml"))
             .expect("valid bundled Claude Plus theme")
     }
-    fn validate(&self) -> Result<BTreeMap<&'static str, u32>, String> {
+    fn validate(&self) -> Result<BTreeMap<&'static str, u32>> {
         if self.name.trim().is_empty() {
-            return Err("Theme name cannot be empty.".into());
+            bail!("Theme name cannot be empty.");
         }
         if self.colors.len() != ROLES.len() {
-            return Err("A theme must contain exactly the 32 named colors.".into());
+            bail!("A theme must contain exactly the 32 named colors.");
         }
         ROLES
             .iter()
@@ -115,7 +116,7 @@ impl ThemeFile {
                     .get(key)
                     .and_then(|v| parse_hex(v))
                     .map(|v| (key, v))
-                    .ok_or_else(|| format!("{label}: expected a six-digit hex color."))
+                    .with_context(|| format!("{label}: expected a six-digit hex color."))
             })
             .collect()
     }
@@ -159,10 +160,9 @@ impl Default for State {
     }
 }
 impl State {
-    fn fallback(mut error: String) -> Self {
-        error.push_str(" Using Claude Plus until this is fixed.");
+    fn fallback(error: &anyhow::Error) -> Self {
         Self {
-            load_error: Some(error),
+            load_error: Some(format!("{error:#} Using Claude Plus until this is fixed.")),
             ..Self::default()
         }
     }
@@ -186,13 +186,13 @@ pub fn sidebar_focus() -> Hsla {
     // sidebar ring on its focused border.
     rgb(sidebar_ring()).into()
 }
-fn read(path: &Path) -> Result<State, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
+fn read(path: &Path) -> Result<State> {
+    let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
     let theme: ThemeFile =
-        serde_yaml_ng::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
+        serde_yaml_ng::from_str(&text).with_context(|| path.display().to_string())?;
     let colors = theme
         .validate()
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+        .with_context(|| path.display().to_string())?;
     Ok(State {
         theme,
         colors,
@@ -203,7 +203,7 @@ fn is_yaml(path: &Path) -> bool {
     path.extension()
         .is_some_and(|e| e.eq_ignore_ascii_case("yml") || e.eq_ignore_ascii_case("yaml"))
 }
-fn theme_path(file: &str) -> Result<std::path::PathBuf, String> {
+fn theme_path(file: &str) -> Result<std::path::PathBuf> {
     let path = Path::new(file);
     if file.contains(['/', '\\', ':'])
         || path.components().count() != 1
@@ -213,20 +213,20 @@ fn theme_path(file: &str) -> Result<std::path::PathBuf, String> {
         )
         || !is_yaml(path)
     {
-        return Err("Select a YAML filename inside the themes folder.".into());
+        bail!("Select a YAML filename inside the themes folder.");
     }
     Ok(crate::config::directory()?.join("themes").join(path))
 }
-pub fn discover() -> Result<(Vec<ThemeChoice>, Vec<String>), String> {
+pub fn discover() -> Result<(Vec<ThemeChoice>, Vec<String>)> {
     let directory = crate::config::directory()?.join("themes");
     discover_in(&directory)
 }
-fn discover_in(directory: &Path) -> Result<(Vec<ThemeChoice>, Vec<String>), String> {
-    let entries = std::fs::read_dir(directory).map_err(|e| e.to_string())?;
+fn discover_in(directory: &Path) -> Result<(Vec<ThemeChoice>, Vec<String>)> {
+    let entries = std::fs::read_dir(directory)?;
     let mut choices = Vec::new();
     let mut errors = Vec::new();
     for entry in entries {
-        let entry = entry.map_err(|e| e.to_string())?;
+        let entry = entry?;
         let path = entry.path();
         if !path.is_file() || !is_yaml(&path) {
             continue;
@@ -237,7 +237,7 @@ fn discover_in(directory: &Path) -> Result<(Vec<ThemeChoice>, Vec<String>), Stri
                 name: theme.name,
                 brightness: theme.brightness,
             }),
-            Err(error) => errors.push(error),
+            Err(error) => errors.push(format!("{error:#}")),
         }
     }
     choices.sort_by(|a, b| a.name.cmp(&b.name).then(a.file.cmp(&b.file)));
@@ -251,10 +251,10 @@ pub fn init() {
         read(&theme_path(&file)?)
     })();
     ACTIVE.with(|s| {
-        *s.borrow_mut() = result.unwrap_or_else(State::fallback);
+        *s.borrow_mut() = result.unwrap_or_else(|error| State::fallback(&error));
     });
 }
-pub fn select(file: &str, cx: &mut App) -> Result<(), String> {
+pub fn select(file: &str, cx: &mut App) -> Result<()> {
     let state = read(&theme_path(file)?)?;
     crate::config::update(|s| s.general.appearance.theme = file.into())?;
     ACTIVE.with(|s| *s.borrow_mut() = state);
@@ -538,7 +538,7 @@ mod tests {
         let missing = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("bundled-themes")
             .join("missing-theme-for-test.yml");
-        let state = State::fallback(read(&missing).err().unwrap());
+        let state = State::fallback(&read(&missing).err().unwrap());
         assert_eq!(state.theme.name, "Claude Plus");
         assert_eq!(state.theme.brightness, Brightness::Dark);
         assert_eq!(state.colors, ThemeFile::builtin().validate().unwrap());

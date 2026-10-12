@@ -46,7 +46,7 @@ fn conversations_snapshot_resolved_launch_and_switch_only_model_and_effort() {
         settings.execution.selections.model,
         "openai-codex/gpt-6-sol"
     );
-    assert_eq!(settings.execution.command, "C:/tools/omp.exe");
+    assert_eq!(settings.execution.command, Path::new("C:/tools/omp.exe"));
     assert_eq!(settings.execution.arguments, ["acp"]);
     assert_eq!(settings.execution.harness, "omp");
     let mut switched = settings;
@@ -163,9 +163,13 @@ fn project_rename_preserves_history_and_directory_snapshot() {
     let conversation = store
         .create_conversation(&id, &agent(), launch(), Vec::new(), "Hello")
         .unwrap();
-    for status in ["active", "idle", "processing", "blocked"] {
+    for status in [
+        ThreadStatus::Idle,
+        ThreadStatus::Processing,
+        ThreadStatus::Blocked,
+    ] {
         let mut settings = store.conversation(&conversation).unwrap().settings.clone();
-        settings.status = status.into();
+        settings.status = status;
         store
             .update_conversation(&id, &conversation, settings)
             .unwrap();
@@ -189,7 +193,7 @@ fn project_rename_preserves_history_and_directory_snapshot() {
             .update_conversation(&id, &conversation, changed_execution)
             .is_err()
     );
-    settings.status = "archived".into();
+    settings.status = ThreadStatus::Archived;
     settings.session_id = Some("saved-session".into());
     store
         .update_conversation(&id, &conversation, settings)
@@ -679,7 +683,7 @@ fn bad_transcript_keeps_prior_history_and_exposes_error() {
         )
         .unwrap();
     let mut settings = store.conversation(&conversation).unwrap().settings.clone();
-    settings.status = "processing".into();
+    settings.status = ThreadStatus::Processing;
     store
         .update_conversation(&id, &conversation, settings)
         .unwrap();
@@ -708,7 +712,7 @@ fn bad_transcript_keeps_prior_history_and_exposes_error() {
             .unwrap()
             .settings
             .status,
-        "blocked"
+        ThreadStatus::Blocked
     );
     assert!(
         reloaded

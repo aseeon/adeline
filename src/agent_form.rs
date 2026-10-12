@@ -591,19 +591,19 @@ impl AgentForm {
             || matches!(self.probing, Probing::Loading)
     }
 
-    pub(super) fn check(&self, cx: &App) -> Result<(), String> {
+    pub(super) fn check(&self, cx: &App) -> Result<()> {
         if self.name(cx).trim().is_empty() {
-            return Err("Name is required.".into());
+            anyhow::bail!("Name is required.");
         }
         let Some(id) = self.harness_id(cx) else {
-            return Err("Choose a harness.".into());
+            anyhow::bail!("Choose a harness.");
         };
         if cx.global::<Catalog>().is_installed(&id) != Some(true) {
-            return Err("This harness is not installed.".into());
+            anyhow::bail!("This harness is not installed.");
         }
         match &self.probing {
-            Probing::Loading => return Err("Wait for the agent's options to load.".into()),
-            Probing::Idle if id == CUSTOM => return Err("Command is required.".into()),
+            Probing::Loading => anyhow::bail!("Wait for the agent's options to load."),
+            Probing::Idle if id == CUSTOM => anyhow::bail!("Command is required."),
             Probing::Failed(_) => return Ok(()),
             _ => {}
         }
@@ -612,11 +612,12 @@ impl AgentForm {
             (Category::Effort, "effort", &self.original.effort),
         ] {
             if self.offers(category) && self.chosen(category, cx).is_empty() {
-                return Err(if self.not_offered(category, cx) {
-                    format!("Saved {label} {saved} is not offered by the agent. Choose another.")
-                } else {
-                    format!("Choose a {label}.")
-                });
+                if self.not_offered(category, cx) {
+                    anyhow::bail!(
+                        "Saved {label} {saved} is not offered by the agent. Choose another."
+                    );
+                }
+                anyhow::bail!("Choose a {label}.");
             }
         }
         Ok(())
@@ -1259,13 +1260,11 @@ impl AgentForm {
                 mcp_ui::open_editor(
                     server.as_ref(),
                     Rc::new(move |server, _, cx| {
-                        saving
-                            .update(cx, |form, cx| {
-                                mcp_ui::upsert(&mut form.mcp_servers, ix, server);
-                                form.status = None;
-                                cx.notify();
-                            })
-                            .map_err(|error| error.to_string())
+                        saving.update(cx, |form, cx| {
+                            mcp_ui::upsert(&mut form.mcp_servers, ix, server);
+                            form.status = None;
+                            cx.notify();
+                        })
                     }),
                     window,
                     cx,

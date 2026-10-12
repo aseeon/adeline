@@ -283,7 +283,12 @@ pub fn init(demo: bool, initial: Option<Initial>, snapshot: Option<&Snapshot>, c
     let (prompts, inbox) = async_channel::unbounded();
     match runtime().block_on(async { askpass::serve_askpass(prompts) }) {
         Ok(address) => connections.askpass = address,
-        Err(error) => crate::log::log(&error),
+        Err(error) => tracing::event!(
+            name: "client.askpass.failed",
+            tracing::Level::WARN,
+            error.message = format!("{error:#}"),
+            "{{error.message}}"
+        ),
     }
     cx.spawn(async move |cx| {
         while let Ok(prompt) = inbox.recv().await {
@@ -469,7 +474,7 @@ pub fn connect(machine: &str, cx: &mut App) {
                     }
                 },
                 Err(error) => {
-                    let _ = incoming.send(Incoming::Failed(error)).await;
+                    let _ = incoming.send(Incoming::Failed(format!("{error:#}"))).await;
                 }
             }
         });
@@ -610,6 +615,7 @@ fn schedule_retry(machine: &str, cx: &mut App) {
         return;
     };
     connection.retries += 1;
+    // Doubles from 2 s, capped at 30 s so a machine that comes back is found soon.
     let delay = Duration::from_secs(1 << connection.retries.min(5)).min(Duration::from_secs(30));
     let epoch = connection.epoch;
     let machine = machine.to_owned();
@@ -626,7 +632,7 @@ fn schedule_retry(machine: &str, cx: &mut App) {
     .detach();
 }
 
-fn adopt_engine(machine: &str, engine: &str, cx: &mut App) -> Result<(), String> {
+fn adopt_engine(machine: &str, engine: &str, cx: &mut App) -> anyhow::Result<()> {
     let saved = machines::remote(machine).and_then(|m| m.engine);
     if saved.is_some() || engine.is_empty() {
         return Ok(());
@@ -636,9 +642,9 @@ fn adopt_engine(machine: &str, engine: &str, cx: &mut App) -> Result<(), String>
         .map(|m| m.name)
         .or_else(|| (local.as_deref() == Some(engine)).then(|| machines::name(LOCAL)));
     if let Some(existing) = existing {
-        return Err(format!(
+        anyhow::bail!(
             "This machine is already saved as \"{existing}\". Add its destination to \"{existing}\" instead."
-        ));
+        );
     }
     machines::edit(machine, |m| {
         m.engine = Some(engine.to_owned());
@@ -679,6 +685,7 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
         } => {
             cx.global_mut::<Connections>().secrets.remove(machine);
             if let Err(error) = adopt_engine(machine, &status.engine_id, cx) {
+                let error = format!("{error:#}");
                 let connection = get_mut(machine, cx).expect("connection");
                 connection.epoch += 1;
                 connection.cancel = None;
@@ -936,6 +943,7 @@ pub fn request_blocking(machine: &str, command: Command, cx: &mut App) -> Result
         *slot = Some((id, reply));
     }
     send_line(sender, id, command);
+    // The window blocks while it waits; a remote engine answers over SSH, so it gets longer.
     let wait = if machine == LOCAL { 10 } else { 30 };
     let result = replies
         .recv_timeout(Duration::from_secs(wait))

@@ -34,11 +34,11 @@ impl SettingsWindow {
         let definition = self.agent_definition(Some(&id), cx);
         self.agent_page = Some(id.clone());
         self.machines_page = false;
-        self.group = AGENTS;
+        self.group = Group::Agents;
         self.subgroup = None;
-        self.folded[AGENTS] = false;
+        self.folded[Group::Agents as usize] = false;
         self.agent_status = None;
-        self.search_page = Some((AGENTS, None));
+        self.search_page = Some((Group::Agents, None));
         self.agent_subscriptions.clear();
         client::ensure(&machine, cx);
         client::refresh_harnesses(&machine, false, cx);
@@ -144,6 +144,7 @@ impl SettingsWindow {
                 cx.notify();
             }
             Err(message) => {
+                let message = format!("{message:#}");
                 let conflict = message.contains("changed outside this form");
                 form.update(cx, |form, cx| {
                     form.external_changed = conflict;
@@ -200,7 +201,7 @@ impl SettingsWindow {
                             view.close_agent();
                             view.agent_status = None;
                         }
-                        Err(message) => view.agent_status = Some(message),
+                        Err(message) => view.agent_status = Some(format!("{message:#}")),
                     }
                     cx.notify();
                 });
@@ -230,7 +231,7 @@ impl SettingsWindow {
         }
         let mut page = div().w_full().flex().flex_col().gap_3();
         if let Some(form) = self.agent_form.clone() {
-            if self.group == AGENTS && (!searching || self.search_page.is_some()) {
+            if self.group == Group::Agents && (!searching || self.search_page.is_some()) {
                 let blocked = form.read(cx).blocked(cx);
                 page = page.child(form.clone());
                 let form = form.read(cx);

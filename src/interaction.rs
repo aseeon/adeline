@@ -2,6 +2,7 @@
 //! composer's message, saving the preferences `act` toggles, and closing the
 //! main window, which asks before quitting with agents still working.
 use super::*;
+use crate::conversation::{MessageRole, ThreadStatus};
 use std::fmt::Write as _;
 
 impl Adeline {
@@ -210,7 +211,7 @@ impl Adeline {
                 let checked = !machines::is_checked(&machine);
                 match machines::set_checked(&machine, checked) {
                     Ok(()) => client::sync(cx),
-                    Err(error) => window.push_notification(error, cx),
+                    Err(error) => window.push_notification(format!("{error:#}"), cx),
                 }
             }
             Action::MachineRetry(machine) => client::retry(&machine, cx),
@@ -304,7 +305,7 @@ impl Adeline {
                 if let Err(error) =
                     config::update(|settings| settings.modes.chats.submit_on_enter = submit)
                 {
-                    window.push_notification(error, cx);
+                    window.push_notification(format!("{error:#}"), cx);
                 }
                 let submit = config::current().modes.chats.submit_on_enter;
                 self.composer
@@ -315,7 +316,7 @@ impl Adeline {
                 if let Err(error) = config::update(|settings| {
                     settings.modes.chats.hide_tool_calls = !settings.modes.chats.hide_tool_calls;
                 }) {
-                    window.push_notification(error, cx);
+                    window.push_notification(format!("{error:#}"), cx);
                 }
                 self.resync_transcript(cx);
             }
@@ -351,7 +352,7 @@ impl Adeline {
                 if let Err(error) = config::update(|settings| {
                     settings.modes.chats.show_thinking = !settings.modes.chats.show_thinking;
                 }) {
-                    window.push_notification(error, cx);
+                    window.push_notification(format!("{error:#}"), cx);
                 }
                 self.resync_transcript(cx);
             }
@@ -424,7 +425,7 @@ impl Adeline {
                 if let Err(error) =
                     config::update(|settings| settings.general.features.toggle(section))
                 {
-                    window.push_notification(format!("Could not save settings: {error}"), cx);
+                    window.push_notification(format!("Could not save settings: {error:#}"), cx);
                 }
                 if !config::current().general.features.enabled(self.section) {
                     self.section = Section::Chats;
@@ -486,7 +487,7 @@ impl Adeline {
                         decision.selected = Some(ix);
                         decision.resolved = true;
                     }
-                    self.projects[self.project].threads[thread].status = "idle".into();
+                    self.projects[self.project].threads[thread].status = ThreadStatus::Idle;
                 }
             }
             Action::AddFile | Action::AttachFile | Action::AddDirectory
@@ -546,7 +547,7 @@ impl Adeline {
                 | Action::ToggleSidePanel
         ) && let Err(error) = self.save_settings(&changed)
         {
-            window.push_notification(format!("Could not save settings: {error}"), cx);
+            window.push_notification(format!("Could not save settings: {error:#}"), cx);
         }
         self.sync_regions(&changed, cx);
         if self.modal.is_some() && previous_modal.is_none() {
@@ -564,7 +565,7 @@ impl Adeline {
         self.left_panel_open = s.modes.chats.show_left_panel;
         self.side_panel_open = s.modes.chats.show_agent_activity;
     }
-    fn save_settings(&self, action: &Action) -> Result<(), String> {
+    fn save_settings(&self, action: &Action) -> Result<()> {
         config::update(|s| match action {
             Action::ShowCompleted => s.modes.chats.show_completed_chats = self.show_completed,
             Action::ShowArchived => s.modes.chats.show_archived_chats = self.show_archived,
@@ -620,7 +621,7 @@ impl Adeline {
                         "codex"
                     }
                     .into(),
-                    status: "idle".into(),
+                    status: ThreadStatus::Idle,
                     ..Default::default()
                 },
             );
@@ -646,14 +647,14 @@ impl Adeline {
         let attachments = std::mem::take(&mut self.attachments);
         let thread = &mut self.projects[self.project].threads[ix];
         thread.push_message(Message {
-            role: "user".into(),
+            role: MessageRole::User,
             text: prompt,
             read: true,
             attachments,
             ..Default::default()
         });
-        thread.push_message(Message { role: "assistant".into(), text: "I've added this to our local demo chat. We can work through the next step here. This preview uses sample responses and doesn't run commands or connect to external services.".into(), read: true, ..Default::default() });
-        thread.status = "idle".into();
+        thread.push_message(Message { role: MessageRole::Assistant, text: "I've added this to our local demo chat. We can work through the next step here. This preview uses sample responses and doesn't run commands or connect to external services.".into(), read: true, ..Default::default() });
+        thread.status = ThreadStatus::Idle;
         self.composer
             .update(cx, |state, cx| state.set_value("", window, cx));
     }

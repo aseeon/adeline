@@ -2,6 +2,7 @@
 //! global installs, and terminal logins. The engine runs these on its own
 //! machine and streams the output to the client. A run stops at its first failed step.
 use crate::profiles::{self, Step};
+use anyhow::{Context as _, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::io::AsyncBufReadExt as _;
@@ -36,20 +37,19 @@ fn planned(step: &Step) -> Planned {
     }
 }
 
-pub fn plan(target: &Target, catalog: &crate::harness::Catalog) -> Result<Vec<Planned>, String> {
+pub fn plan(target: &Target, catalog: &crate::harness::Catalog) -> Result<Vec<Planned>> {
     match target {
         Target::Agent { harness } => {
-            let profile = profiles::find(harness, "").ok_or_else(|| {
-                "Adeline can't install this agent. Install it by hand.".to_owned()
-            })?;
+            let profile = profiles::find(harness, "")
+                .context("Adeline can't install this agent. Install it by hand.")?;
             if profile.install.needs_node && catalog.node.npm.is_none() {
-                return Err(format!("{} needs Node.js.", profile.name));
+                bail!("{} needs Node.js.", profile.name);
             }
             Ok(profile.install.steps().iter().map(planned).collect())
         }
         Target::Node => {
             if catalog.node.manager.is_none() {
-                return Err(node_missing());
+                bail!(node_missing());
             }
             Ok(vec![if cfg!(windows) {
                 Planned {
@@ -88,11 +88,11 @@ pub fn node_missing() -> String {
 pub async fn run(
     steps: Vec<Planned>,
     output: std::sync::Arc<dyn Fn(String) + Send + Sync>,
-) -> Result<(), String> {
+) -> Result<()> {
     for step in steps {
         output(format!("> {}", step.display()));
         let program = crate::harness::program(&step.program)
-            .ok_or_else(|| format!("{} was not found on this machine.", step.program))?;
+            .with_context(|| format!("{} was not found on this machine.", step.program))?;
         let mut command = std::process::Command::new(&program);
         command.args(&step.arguments);
         // npm's shims need `node` from the same folder on PATH.
@@ -106,7 +106,7 @@ pub async fn run(
         };
         let (mut child, stdin, stdout, stderr) =
             tokio::task::block_in_place(|| crate::platform::spawn_piped(&mut command, true))
-                .map_err(|error| format!("Could not start {}: {error}", step.program))?;
+                .with_context(|| format!("Could not start {}", step.program))?;
         drop(stdin);
         let mut readers = Vec::new();
         for reader in std::iter::once(stdout).chain(stderr) {
@@ -122,9 +122,9 @@ pub async fn run(
             let _ = reader.await;
         }
         let status = tokio::task::block_in_place(|| child.wait())
-            .map_err(|error| format!("{} failed: {error}", step.program))?;
+            .with_context(|| format!("{} failed", step.program))?;
         if !status.success() {
-            return Err(format!("{} failed ({status}).", step.display()));
+            bail!("{} failed ({status}).", step.display());
         }
     }
     Ok(())
@@ -148,7 +148,7 @@ pub fn open_terminal(
     command: &Path,
     arguments: &[String],
     environment: &[(String, String)],
-) -> Result<(), String> {
+) -> Result<()> {
     let line = std::iter::once(quote(&command.to_string_lossy()))
         .chain(arguments.iter().map(|arg| quote(arg)))
         .collect::<Vec<_>>()
@@ -185,7 +185,7 @@ pub fn open_terminal(
     terminal
         .spawn()
         .map(drop)
-        .map_err(|error| format!("Could not open a terminal: {error}. Run this yourself: {line}"))
+        .map_err(|error| anyhow!("Could not open a terminal: {error}. Run this yourself: {line}"))
 }
 
 fn quote(text: &str) -> String {

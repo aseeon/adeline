@@ -1,6 +1,7 @@
 //! Harnesses Adeline can run: the ACP registry plus built-in OMP, where their
 //! executables are installed and in which version, and whether Node.js is there.
 //! The engine detects them, on its blocking pool; clients get a copy.
+use anyhow::Context as _;
 #[cfg(feature = "gui")]
 use gpui_kit::{App, Global};
 use serde::{Deserialize, Serialize};
@@ -127,27 +128,27 @@ impl Catalog {
         id: &str,
         command: &str,
         arguments: &[String],
-    ) -> Result<crate::storage::Launch, String> {
+    ) -> anyhow::Result<crate::storage::Launch> {
         if id == CUSTOM {
             let path = resolve(command)
-                .ok_or_else(|| format!("Command {command} was not found on this machine."))?;
+                .with_context(|| format!("Command {command} was not found on this machine."))?;
             return Ok(crate::storage::Launch {
-                command: path.to_string_lossy().into_owned(),
+                command: path,
                 arguments: arguments.to_vec(),
                 environment: Vec::new(),
             });
         }
         let harness = self
             .get(id)
-            .ok_or_else(|| format!("Harness {id} is not in the harness list."))?;
+            .with_context(|| format!("Harness {id} is not in the harness list."))?;
         let path = self
             .installed
             .get(id)
             .cloned()
             .or_else(|| locate(harness))
-            .ok_or_else(|| format!("{} is not installed.", harness.name))?;
+            .with_context(|| format!("{} is not installed.", harness.name))?;
         Ok(crate::storage::Launch {
-            command: path.to_string_lossy().into_owned(),
+            command: path,
             arguments: harness.arguments.clone(),
             environment: harness.environment.clone(),
         })
@@ -288,16 +289,15 @@ pub fn load() -> Vec<Harness> {
     clippy::disallowed_methods,
     reason = "Runs on the engine's blocking pool, never on the UI thread"
 )]
-fn download() -> Result<(), String> {
-    let cache = cache().ok_or("No configuration directory.")?;
-    fs::create_dir_all(cache.join("registry-icons")).map_err(|e| e.to_string())?;
+fn download() -> anyhow::Result<()> {
+    let cache = cache().context("No configuration directory.")?;
+    fs::create_dir_all(cache.join("registry-icons"))?;
     let partial = cache.join(crate::files::unique("registry.json"));
     let status = hidden(Command::new("curl"))
         .args(["-fsSL", "--max-time", "20", "-o"])
         .arg(&partial)
         .arg(REGISTRY_URL)
-        .status()
-        .map_err(|e| e.to_string())?;
+        .status()?;
     let text = fs::read_to_string(&partial).unwrap_or_default();
     let parsed = status
         .success()
@@ -305,9 +305,9 @@ fn download() -> Result<(), String> {
         .flatten();
     let Some(registry) = parsed.filter(|_| parse_registry(&text).is_ok()) else {
         let _ = fs::remove_file(&partial);
-        return Err("Registry download failed.".into());
+        anyhow::bail!("Registry download failed.");
     };
-    fs::rename(&partial, cache.join("registry.json")).map_err(|e| e.to_string())?;
+    fs::rename(&partial, cache.join("registry.json"))?;
     let mut icons = hidden(Command::new("curl"));
     icons.args(["-fsSL", "--max-time", "30"]);
     for agent in registry["agents"].as_array().into_iter().flatten() {
@@ -365,11 +365,11 @@ const INTERPRETERS: &[&str] = &[
     "osascript",
 ];
 
-fn parse_registry(text: &str) -> Result<Vec<Harness>, String> {
-    let registry: Value = serde_json::from_str(text).map_err(|e| e.to_string())?;
+fn parse_registry(text: &str) -> anyhow::Result<Vec<Harness>> {
+    let registry: Value = serde_json::from_str(text)?;
     let agents = registry["agents"]
         .as_array()
-        .ok_or("Registry has no agents.")?;
+        .context("Registry has no agents.")?;
     let platform = format!(
         "{}-{}",
         match std::env::consts::OS {

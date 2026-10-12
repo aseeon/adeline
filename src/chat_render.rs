@@ -3,6 +3,7 @@
 //! Sizes are in rems. The collapsed list is as wide as the mode rail beside it.
 use super::*;
 use crate::chat::{self, LABEL_GAP, ROW_HEIGHT, SECTION_HEIGHT};
+use crate::conversation::{MessageRole, ThreadStatus};
 use crate::prepared::{Group, Outcome};
 use gpui_kit::base::SelectableText;
 use gpui_kit::component::plot::shape::{Arc as ArcShape, ArcData};
@@ -168,8 +169,8 @@ fn updated(thread: &Thread) -> Option<String> {
 
 fn row_status(thread: &Thread, updated: Option<String>, cx: &App) -> AnyElement {
     let theme = cx.theme();
-    match thread.status.as_str() {
-        "blocked" => row()
+    match thread.status {
+        ThreadStatus::Blocked => row()
             .flex_shrink_0()
             .size(rems(0.8125))
             .justify_center()
@@ -177,7 +178,7 @@ fn row_status(thread: &Thread, updated: Option<String>, cx: &App) -> AnyElement 
             .bg(theme.primary.alpha(0.22))
             .child(div().size(rems(0.4375)).rounded_full().bg(theme.primary))
             .into_any_element(),
-        "processing" => {
+        ThreadStatus::Processing => {
             let (track, arc) = (theme.border, theme.foreground);
             div()
                 .flex_shrink_0()
@@ -209,12 +210,12 @@ pub(super) fn collapsed_button(id: &'static str, label: &'static str, icon_name:
 }
 
 fn status_name(thread: &Thread) -> &'static str {
-    match thread.status.as_str() {
-        "processing" => "running",
-        "completed" => "completed",
-        "blocked" => "needs input",
-        "archived" => "archived",
-        _ => "idle",
+    match thread.status {
+        ThreadStatus::Processing => "running",
+        ThreadStatus::Completed => "completed",
+        ThreadStatus::Blocked => "needs input",
+        ThreadStatus::Archived => "archived",
+        ThreadStatus::Idle => "idle",
     }
 }
 
@@ -261,8 +262,8 @@ impl Adeline {
     fn chat_title(&self, i: usize, selected: bool, cx: &Context<Self>) -> Div {
         let thread = &self.workspace().threads[i];
         let theme = cx.theme();
-        let done = conversation::closed(&thread.status);
-        let live = matches!(thread.status.as_str(), "blocked" | "processing");
+        let done = thread.status.closed();
+        let live = thread.status.live();
         // Unread, waiting and running chats read bright; the rest recede.
         let title_color = if selected || thread.unread() || live {
             theme.foreground
@@ -292,7 +293,7 @@ impl Adeline {
     fn chat_row_end(&self, i: usize, group: &SharedString, cx: &Context<Self>) -> AnyElement {
         let thread = &self.workspace().threads[i];
         let status = row_status(thread, updated(thread), cx);
-        if thread.status != "completed" {
+        if thread.status != ThreadStatus::Completed {
             return status;
         }
         div()
@@ -743,7 +744,7 @@ impl Adeline {
         let theme = cx.theme();
         let thread = &self.workspace().threads[index];
         let message = &thread.messages[i];
-        let user = message.role == "user";
+        let user = message.role == MessageRole::User;
         // A reply that so far only thought shows as the Thinking row instead.
         let thinking = config::with(|s| s.modes.chats.show_thinking);
         if !user && message.text.is_empty() && (message.thought.is_empty() || !thinking) {
@@ -1099,7 +1100,7 @@ impl Adeline {
                 );
             }
             content.into_any_element()
-        } else if thread.status == "blocked" {
+        } else if thread.status == ThreadStatus::Blocked {
             div().text_sm().child("Needs your input").into_any_element()
         } else {
             div().into_any_element()
@@ -1424,7 +1425,7 @@ impl Adeline {
         max_chars: usize,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
-        use conversation::{Category, OptionKind};
+        use conversation::Category;
         let menu = option_menu_name(category);
         let (id, heading, keys) = match category {
             Category::Model => ("chat-model", "Model", "Alt+M"),
@@ -1488,57 +1489,8 @@ impl Adeline {
         if processing {
             return Some(trigger.into_any_element());
         }
-        let mut groups: Vec<(String, Vec<(String, String, String, bool)>)> = Vec::new();
-        for option in &shown {
-            let value = current(option);
-            let mut items = Vec::new();
-            match &option.kind {
-                OptionKind::Select { choices, .. } => {
-                    for choice in choices {
-                        items.push((
-                            choice.value.clone(),
-                            choice.name.clone(),
-                            choice.description.clone(),
-                            choice.value == value,
-                        ));
-                    }
-                }
-                OptionKind::Boolean { current } => {
-                    for (on, name) in [(true, "On"), (false, "Off")] {
-                        items.push((
-                            on.to_string(),
-                            name.to_owned(),
-                            String::new(),
-                            *current == on,
-                        ));
-                    }
-                }
-            }
-            if category == Category::Model {
-                // Models group by the agent's groups or provider prefix.
-                let OptionKind::Select { choices, .. } = &option.kind else {
-                    continue;
-                };
-                for (choice, item) in choices.iter().zip(items) {
-                    match groups.last_mut() {
-                        Some((group, list)) if *group == choice.group => list.push(item),
-                        _ => groups.push((choice.group.clone(), vec![item])),
-                    }
-                }
-            } else {
-                let title = if category == Category::Other {
-                    option.name.clone()
-                } else {
-                    String::new()
-                };
-                groups.push((title, items));
-            }
-        }
-        let ids: Vec<String> = if category == Category::Model {
-            vec![shown[0].id.clone(); groups.len()]
-        } else {
-            shown.iter().map(|option| option.id.clone()).collect()
-        };
+        // The choice lists are built only while the menu is open.
+        let currents: Vec<String> = shown.iter().map(current).collect();
         let owner = cx.weak_entity();
         let content_owner = owner.clone();
         let state = self.command_popup.clone();
@@ -1572,11 +1524,11 @@ impl Adeline {
                 .content(move |_, _, cx| {
                     let popover = cx.entity();
                     let owner = content_owner.clone();
+                    let (groups, ids) = option_groups(category, &shown, &currents);
                     let values: Vec<Vec<String>> = groups
                         .iter()
                         .map(|(_, items)| items.iter().map(|item| item.0.clone()).collect())
                         .collect();
-                    let ids = ids.clone();
                     col().w(rems(24.)).when_some(state.as_ref(), |column, state| {
                         let mut command = Command::new(state)
                             .bordered(false)
@@ -1647,6 +1599,67 @@ impl Adeline {
                 .into_any_element(),
         )
     }
+}
+
+type OptionItem = (String, String, String, bool);
+
+fn option_groups(
+    category: conversation::Category,
+    shown: &[conversation::SessionOption],
+    currents: &[String],
+) -> (Vec<(String, Vec<OptionItem>)>, Vec<String>) {
+    use conversation::{Category, OptionKind};
+    let mut groups: Vec<(String, Vec<OptionItem>)> = Vec::new();
+    for (option, value) in shown.iter().zip(currents) {
+        let mut items = Vec::new();
+        match &option.kind {
+            OptionKind::Select { choices, .. } => {
+                for choice in choices {
+                    items.push((
+                        choice.value.clone(),
+                        choice.name.clone(),
+                        choice.description.clone(),
+                        choice.value == *value,
+                    ));
+                }
+            }
+            OptionKind::Boolean { current } => {
+                for (on, name) in [(true, "On"), (false, "Off")] {
+                    items.push((
+                        on.to_string(),
+                        name.to_owned(),
+                        String::new(),
+                        *current == on,
+                    ));
+                }
+            }
+        }
+        if category == Category::Model {
+            // Models group by the agent's groups or provider prefix.
+            let OptionKind::Select { choices, .. } = &option.kind else {
+                continue;
+            };
+            for (choice, item) in choices.iter().zip(items) {
+                match groups.last_mut() {
+                    Some((group, list)) if *group == choice.group => list.push(item),
+                    _ => groups.push((choice.group.clone(), vec![item])),
+                }
+            }
+        } else {
+            let title = if category == Category::Other {
+                option.name.clone()
+            } else {
+                String::new()
+            };
+            groups.push((title, items));
+        }
+    }
+    let ids = if category == Category::Model {
+        vec![shown[0].id.clone(); groups.len()]
+    } else {
+        shown.iter().map(|option| option.id.clone()).collect()
+    };
+    (groups, ids)
 }
 
 pub(super) fn option_menu_name(category: conversation::Category) -> &'static str {

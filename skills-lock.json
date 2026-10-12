@@ -12,6 +12,13 @@
       "sourceType": "github",
       "skillPath": "skills/gpui-kit-design-guides/SKILL.md",
       "computedHash": "1dc12103913002f85e4675635146572516e6a86dc96d0fda1a9f7347b82fec90"
+    },
+    "ms-rust": {
+      "source": "https://gitlab.com/lx-industries/ms-rust-skill.git",
+      "sourceUrl": "https://gitlab.com/lx-industries/ms-rust-skill.git",
+      "sourceType": "gitlab",
+      "skillPath": "SKILL.md",
+      "computedHash": "b431c08947ea07c19008a03db1d9b02538770cde0b0bd4b829477197476e55b1"
     }
   }
 }

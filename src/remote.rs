@@ -8,6 +8,7 @@ use crate::{
     ipc,
     protocol::{ClientMessage, Command, EngineMessage, PROTOCOL, Status},
 };
+use anyhow::Context as _;
 use std::{
     process::Stdio,
     sync::{
@@ -31,6 +32,15 @@ const SUPPORTED: [&str; 4] = [
 ];
 const MARKER: &str = "ADELINE-PROBE";
 const INSTALLED: &str = "ADELINE-INSTALLED";
+// A remote engine stops its agents before it answers; give slow ones time.
+const REMOTE_SHUTDOWN: Duration = Duration::from_secs(45);
+// How long `ssh` gets to exit once its session is done.
+const SSH_EXIT: Duration = Duration::from_secs(5);
+// `ssh` exits with 255 for its own errors, any other code is the remote command's.
+const SSH_FAILED: i32 = 255;
+// Error output is kept to its last part; the end says what went wrong.
+const ERRORS_CAP: usize = 16_384;
+const ERRORS_KEPT: usize = 8_192;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Failure {
@@ -177,13 +187,13 @@ async fn shut_down(mut child: Child, mut reader: ipc::Reader, mut writer: ipc::W
         command: Command::Shutdown,
     };
     if ipc::send(&mut writer, &request).await.is_ok() {
-        let _ = tokio::time::timeout(Duration::from_secs(45), async {
+        let _ = tokio::time::timeout(REMOTE_SHUTDOWN, async {
             while let Ok(Some(_)) = reader.next_line().await {}
         })
         .await;
     }
     drop(writer);
-    let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+    let _ = tokio::time::timeout(SSH_EXIT, child.wait()).await;
 }
 
 fn short_id(id: &str) -> &str {
@@ -208,7 +218,7 @@ fn split_port(destination: &str) -> (&str, Option<&str>) {
     }
 }
 
-pub fn check_destination(destination: &str) -> Result<(), String> {
+pub fn check_destination(destination: &str) -> anyhow::Result<()> {
     let (host, _) = split_port(destination);
     if host.is_empty()
         || host.starts_with('-')
@@ -216,9 +226,9 @@ pub fn check_destination(destination: &str) -> Result<(), String> {
         || host.ends_with('@')
         || host.starts_with('@')
     {
-        return Err(format!(
+        anyhow::bail!(
             "\"{destination}\" isn't a destination. Use user@host, user@host:port, or a Host alias from ~/.ssh/config."
-        ));
+        );
     }
     Ok(())
 }
@@ -288,8 +298,8 @@ fn drain(stderr: Option<tokio::process::ChildStderr>) -> Errors {
             }
             if let Ok(mut text) = sink.lock() {
                 text.push_str(&String::from_utf8_lossy(&buffer[..read]));
-                if text.len() > 16_384 {
-                    let cut = text.len() - 8_192;
+                if text.len() > ERRORS_CAP {
+                    let cut = text.len() - ERRORS_KEPT;
                     let cut = (cut..text.len())
                         .find(|&i| text.is_char_boundary(i))
                         .unwrap_or(0);
@@ -362,7 +372,7 @@ async fn run(
         .await
         .map_err(|e| Failure::Network(e.to_string()))?;
     let stderr = finish(errors).await;
-    if status.code() == Some(255) {
+    if status.code() == Some(SSH_FAILED) {
         return Err(classify(&stderr));
     }
     Ok((
@@ -538,12 +548,12 @@ async fn binary(platform: &str) -> Result<Vec<u8>, Failure> {
             std::fs::read(&exe).map_err(|e| Failure::Fatal(crate::files::error(&exe, e)))
         }
         Err(error) => Err(Failure::Fatal(format!(
-            "No Adeline {VERSION} release for {platform} ({error})."
+            "No Adeline {VERSION} release for {platform} ({error:#})."
         ))),
     }
 }
 
-async fn download(platform: &str) -> Result<Vec<u8>, String> {
+async fn download(platform: &str) -> anyhow::Result<Vec<u8>> {
     // Cached per user: a shared temp folder would let another user plant the binary.
     let cache = crate::config::directory()?.join("cache");
     let folder = cache.join(format!("headless-{VERSION}-{platform}"));
@@ -559,7 +569,7 @@ async fn download(platform: &str) -> Result<Vec<u8>, String> {
     let staging = cache.join(crate::files::unique("headless"));
     tokio::fs::create_dir_all(&staging)
         .await
-        .map_err(|e| crate::files::error(&staging, e))?;
+        .with_context(|| staging.display().to_string())?;
     let fetched = fetch(platform, &staging).await;
     if fetched.is_err() || tokio::fs::rename(&staging, &folder).await.is_err() {
         let _ = tokio::fs::remove_dir_all(&staging).await;
@@ -567,10 +577,10 @@ async fn download(platform: &str) -> Result<Vec<u8>, String> {
     fetched?;
     tokio::fs::read(&exe)
         .await
-        .map_err(|e| crate::files::error(&exe, e))
+        .with_context(|| exe.display().to_string())
 }
 
-async fn fetch(platform: &str, folder: &std::path::Path) -> Result<(), String> {
+async fn fetch(platform: &str, folder: &std::path::Path) -> anyhow::Result<()> {
     let zip = folder.join("adeline.zip");
     let url = format!("{RELEASES}/v{VERSION}/adeline-headless-{platform}.zip");
     local_tool(
@@ -611,7 +621,7 @@ async fn fetch(platform: &str, folder: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
-async fn local_tool(name: &str, args: &[&std::ffi::OsStr]) -> Result<(), String> {
+async fn local_tool(name: &str, args: &[&std::ffi::OsStr]) -> anyhow::Result<()> {
     // Windows uses its own copies, not ones a toolchain put first on PATH.
     #[cfg(windows)]
     let program = std::env::var_os("SystemRoot").map_or_else(
@@ -633,15 +643,11 @@ async fn local_tool(name: &str, args: &[&std::ffi::OsStr]) -> Result<(), String>
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
-    let output = command.output().await.map_err(|e| format!("{name}: {e}"))?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "{name}: {}",
-            String::from_utf8_lossy(&output.stderr).trim()
-        ))
+    let output = command.output().await.context(name.to_owned())?;
+    if !output.status.success() {
+        anyhow::bail!("{name}: {}", String::from_utf8_lossy(&output.stderr).trim());
     }
+    Ok(())
 }
 
 async fn bridge(
@@ -667,7 +673,7 @@ async fn bridge(
             }
         }
     }
-    let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
+    let _ = tokio::time::timeout(SSH_EXIT, child.wait()).await;
     Err(classify(&finish(errors).await))
 }
 
@@ -682,7 +688,7 @@ pub fn bridge_main() -> i32 {
         let (mut engine_lines, mut engine) = match ipc::connect_or_start(false).await {
             Ok(connection) => connection,
             Err(error) => {
-                eprintln!("{error}");
+                eprintln!("{error:#}");
                 return 1;
             }
         };

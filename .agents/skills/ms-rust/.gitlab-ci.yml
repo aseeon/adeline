@@ -1,0 +1,24 @@
+# yaml-language-server: $schema=https://gitlab.com/gitlab-org/gitlab/-/raw/master/app/assets/javascripts/editor/schema/ci.json
+
+# https://docs.astral.sh/uv/guides/integration/gitlab/
+image: ghcr.io/astral-sh/uv:0.9.30-python3.12-bookworm-slim@sha256:e5b65587bce7de595f299855d7385fe7fca39b8a74baa261ba1b7147afa78e58
+
+variables:
+  UV_LINK_MODE: copy
+  UV_CACHE_DIR: .uv-cache
+
+validate-skill:
+  stage: test
+  cache:
+    - key:
+        files:
+          - uv.lock
+      paths:
+        - $UV_CACHE_DIR
+  script:
+    - uv sync
+    # agentskills validate requires the parent directory name to match
+    # the 'name' field in SKILL.md (ours is 'ms-rust')
+    - ln -s "$CI_PROJECT_DIR" /tmp/ms-rust
+    - uv run agentskills validate /tmp/ms-rust
+    - uv cache prune --ci

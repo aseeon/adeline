@@ -2,8 +2,7 @@
 use super::{Engine, PERMISSION_STOPPED};
 use crate::{
     acp,
-    conversation::closed,
-    log::log,
+    conversation::ThreadStatus,
     protocol::{Delta, EngineMessage, PendingPermission},
     storage,
 };
@@ -44,7 +43,7 @@ impl Engine {
         let was_processing = self.live.get(&id).is_some_and(|l| l.processing);
         let closing = self.live.get(&id).is_some_and(|l| l.shutting_down)
             || self.stop_all.is_some()
-            || closed(&self.status_of(&id));
+            || self.status_of(&id).is_some_and(ThreadStatus::closed);
         match event.kind {
             acp::EventKind::Traffic(_) | acp::EventKind::Probed => return,
             acp::EventKind::Session {
@@ -180,7 +179,7 @@ impl Engine {
                             title,
                             options,
                         });
-                    self.set_runtime_status(&id, "blocked");
+                    self.set_runtime_status(&id, ThreadStatus::Blocked);
                     if self.subscribers() == 0 {
                         self.stop_for_permission(&id);
                     }
@@ -253,7 +252,7 @@ impl Engine {
                 if saved {
                     live.error = Some(message);
                     if !closing {
-                        self.set_runtime_status(&id, "blocked");
+                        self.set_runtime_status(&id, ThreadStatus::Blocked);
                     }
                 }
                 if self.text_copy_pending.remove(&id) {
@@ -273,7 +272,7 @@ impl Engine {
                 live.quiet_since = None;
                 live.permission.clear();
                 if !closing && !live.storage_failed {
-                    self.set_runtime_status(&id, "idle");
+                    self.set_runtime_status(&id, ThreadStatus::Idle);
                     self.send_queue(&id);
                 }
             }
@@ -290,7 +289,7 @@ impl Engine {
                     live.worked = true;
                     live.error = Some(PERMISSION_STOPPED.into());
                     if !closing && !live.storage_failed {
-                        self.set_runtime_status(&id, "blocked");
+                        self.set_runtime_status(&id, ThreadStatus::Blocked);
                     }
                 } else if live.recovering_storage {
                     live.recovering_storage = false;
@@ -299,11 +298,11 @@ impl Engine {
                             "History is saved. Retry to continue the interrupted turn.".into()
                         });
                         if !closing && !live.storage_failed {
-                            self.set_runtime_status(&id, "blocked");
+                            self.set_runtime_status(&id, ThreadStatus::Blocked);
                         }
                     }
                 } else if saved && !closing && !live.storage_failed {
-                    self.set_runtime_status(&id, "idle");
+                    self.set_runtime_status(&id, ThreadStatus::Idle);
                     if self.send_after_stop.remove(&id) {
                         self.send_queue(&id);
                     }
@@ -321,7 +320,7 @@ impl Engine {
                 self.drivers.remove(&id);
                 self.steering.remove(&id);
                 self.last_traffic.remove(&id);
-                let finished = closed(&self.status_of(&id));
+                let finished = self.status_of(&id).is_some_and(ThreadStatus::closed);
                 let live = self.live.entry(id.clone()).or_default();
                 live.processing = false;
                 live.shutting_down = false;
@@ -370,7 +369,7 @@ impl Engine {
                     live.error = Some(format!(
                         "{error} Start a new session using saved messages only if you want to continue."
                     ));
-                    self.set_runtime_status(&id, "blocked");
+                    self.set_runtime_status(&id, ThreadStatus::Blocked);
                 }
             }
         }
@@ -426,9 +425,12 @@ impl Engine {
         }
         live.permission.clear();
         live.progress = Some("Stopping…".into());
-        log(format!(
-            "Stopping conversation {id}: it needs a permission and no client is connected"
-        ));
+        tracing::event!(
+            name: "engine.permission.unanswerable",
+            tracing::Level::INFO,
+            conversation.id = id,
+            "Stopping conversation {{conversation.id}}: it needs a permission and no client is connected"
+        );
         self.permission_stopped.insert(id.to_owned());
         self.record_visible(
             id,

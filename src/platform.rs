@@ -25,7 +25,7 @@ pub type Reader = Box<dyn AsyncRead + Send + Unpin>;
     clippy::cast_possible_truncation,
     reason = "Win32 struct sizes fit in u32"
 )]
-pub fn contain_children(_dir: &Path) -> Result<(), String> {
+pub fn contain_children(_dir: &Path) -> anyhow::Result<()> {
     use windows_sys::Win32::System::{
         JobObjects::{
             AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
@@ -34,7 +34,7 @@ pub fn contain_children(_dir: &Path) -> Result<(), String> {
         },
         Threading::GetCurrentProcess,
     };
-    let error = |step| format!("{step} failed: {}", io::Error::last_os_error());
+    let error = |step| anyhow::anyhow!("{step} failed: {}", io::Error::last_os_error());
     // SAFETY: null attributes and name create an anonymous job with default security.
     let job = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
     if job.is_null() {
@@ -65,7 +65,7 @@ pub fn contain_children(_dir: &Path) -> Result<(), String> {
     clippy::unnecessary_wraps,
     reason = "matches the Windows version, which can fail"
 )]
-pub fn contain_children(dir: &Path) -> Result<(), String> {
+pub fn contain_children(dir: &Path) -> anyhow::Result<()> {
     let file = dir.join("agent-groups");
     stop_groups(&file);
     if let Ok(mut groups) = GROUPS.lock() {

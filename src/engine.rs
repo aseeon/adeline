@@ -9,10 +9,9 @@ use crate::{
     acp,
     agents::{self, AgentCatalog},
     config,
-    conversation::{Attachment, Category, PermissionKind, TurnState, closed},
+    conversation::{Attachment, Category, MessageRole, PermissionKind, ThreadStatus, TurnState},
     data::{Message, Thread, Workspace},
     harness, install, ipc,
-    log::log,
     protocol::{
         ActiveConversation, ClientMessage, Command, Delta, EngineMessage, EngineSettings, Live,
         PROTOCOL, Snapshot, Status,
@@ -35,15 +34,28 @@ mod turns;
 
 pub use cli::main;
 
+// Without clients, daemon mode or work, the engine exits after this long, which
+// lets a window that closes and reopens keep its agents.
 const IDLE_EXIT: Duration = Duration::from_secs(60);
+// Enough for a reconnecting client to catch up on a long streamed turn.
 const RECENT_DELTAS: usize = 20_000;
+// How long agents get to stop on their own before they're killed.
 const STOP_GRACE: Duration = Duration::from_secs(5);
+// A processing agent silent this long gets a "no output" notice; in ms, like the traffic times.
 const QUIET_AFTER_MS: u64 = 5_000;
+// The engine's housekeeping interval: idle exit, quiet agents, stops and flushes.
+const TICK: Duration = Duration::from_millis(250);
+// File events arrive in bursts; one reload follows after they settle.
+const WATCH_SETTLE: Duration = Duration::from_millis(300);
+// Traffic lines a client gets when it starts watching a conversation.
+const TRAFFIC_BACKLOG: usize = 2000;
+// Blocking work is short file and process calls; this caps threads when many run at once.
+const BLOCKING_THREADS: usize = 64;
 const ALREADY_PROCESSING: &str =
     "This conversation is already processing (sent from another window)";
 const PERMISSION_STOPPED: &str = "Stopped while waiting for permission: no Adeline window was open to answer it. Retry continues the turn.";
 
-fn settings_path() -> Result<PathBuf, String> {
+fn settings_path() -> anyhow::Result<PathBuf> {
     Ok(ipc::engine_dir()?.join("settings.yml"))
 }
 
@@ -61,7 +73,13 @@ fn load_settings() -> EngineSettings {
         return match serde_yaml_ng::from_str(&text) {
             Ok(settings) => settings,
             Err(error) => {
-                log(format!("{}: {error}", path.display()));
+                tracing::event!(
+                    name: "engine.settings.unreadable",
+                    tracing::Level::WARN,
+                    file.path = %path.display(),
+                    error.message = %error,
+                    "{{file.path}}: {{error.message}}"
+                );
                 defaults
             }
         };
@@ -78,7 +96,12 @@ fn load_settings() -> EngineSettings {
         ..defaults
     };
     if let Err(error) = config::seed_yaml(&path, &settings) {
-        log(error);
+        tracing::event!(
+            name: "engine.settings.seed_failed",
+            tracing::Level::WARN,
+            error.message = format!("{error:#}"),
+            "{{error.message}}"
+        );
     }
     settings
 }
@@ -87,7 +110,7 @@ fn run(daemon: bool) -> i32 {
     let dir = match ipc::engine_dir() {
         Ok(dir) => dir,
         Err(error) => {
-            eprintln!("{error}");
+            eprintln!("{error:#}");
             return 1;
         }
     };
@@ -112,22 +135,35 @@ fn run(daemon: bool) -> i32 {
         return 0;
     }
     crate::log::open(dir.join("logs"));
-    log(format!(
-        "Engine {} starting (protocol {PROTOCOL}{})",
-        env!("CARGO_PKG_VERSION"),
-        if daemon { ", --daemon" } else { "" }
-    ));
+    tracing::event!(
+        name: "engine.start",
+        tracing::Level::INFO,
+        engine.version = env!("CARGO_PKG_VERSION"),
+        engine.protocol = PROTOCOL,
+        engine.daemon = daemon,
+        "Engine {{engine.version}} starting"
+    );
     if let Err(error) = crate::platform::contain_children(&dir) {
-        log(format!("Cannot tie agent processes to the engine: {error}"));
+        tracing::event!(
+            name: "engine.process_group.failed",
+            tracing::Level::WARN,
+            error.message = format!("{error:#}"),
+            "Cannot tie agent processes to the engine: {{error.message}}"
+        );
     }
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .max_blocking_threads(64)
+        .max_blocking_threads(BLOCKING_THREADS)
         .build()
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            log(&error);
+            tracing::event!(
+                name: "engine.runtime.failed",
+                tracing::Level::ERROR,
+                error.message = %error,
+                "Cannot start the runtime: {{error.message}}"
+            );
             return 1;
         }
     };
@@ -135,7 +171,7 @@ fn run(daemon: bool) -> i32 {
     // A detection or probe still running mustn't hold up the exit.
     runtime.shutdown_timeout(Duration::from_secs(1));
     crate::platform::stop_children();
-    log("Engine exited");
+    tracing::event!(name: "engine.exit",tracing::Level::INFO, "Engine exited");
     drop(lock);
     code
 }
@@ -187,7 +223,12 @@ async fn serve(daemon: bool) -> i32 {
     let mut listener = match ipc::Listener::bind() {
         Ok(listener) => listener,
         Err(error) => {
-            log(&error);
+            tracing::event!(
+                name: "engine.listen.failed",
+                tracing::Level::ERROR,
+                error.message = format!("{error:#}"),
+                "{{error.message}}"
+            );
             return 1;
         }
     };
@@ -204,20 +245,31 @@ async fn serve(daemon: bool) -> i32 {
                     connection(next, reader, writer, &accept_input);
                 }
                 Err(error) => {
-                    log(format!("Accepting a client failed: {error}"));
+                    tracing::event!(
+                        name: "engine.client.accept_failed",
+                        tracing::Level::WARN,
+                        error.message = %error,
+                        "Accepting a client failed: {{error.message}}"
+                    );
                     tokio::time::sleep(Duration::from_millis(100)).await;
                 }
             }
         }
     });
-    let mut tick = tokio::time::interval(Duration::from_millis(250));
+    let mut tick = tokio::time::interval(TICK);
     while !engine.exit {
+        // Agent events stream fast; their status changes go out on the next tick.
         tokio::select! {
-            Some(input) = inputs.recv() => engine.input(input),
+            Some(input) = inputs.recv() => {
+                engine.input(input);
+                engine.refresh_status();
+            }
             Ok(event) = agent_events.recv() => engine.driver_event(event),
-            _ = tick.tick() => engine.tick(),
+            _ = tick.tick() => {
+                engine.tick();
+                engine.refresh_status();
+            }
         }
-        engine.refresh_status();
     }
     // Let writers flush the last replies and the goodbye.
     let writers: Vec<_> = engine
@@ -270,9 +322,13 @@ fn connection(
                 Ok(message) => {
                     let _ = input.send(Input::Message { client, message });
                 }
-                Err(error) => log(format!(
-                    "Client {client} sent an unreadable message: {error}"
-                )),
+                Err(error) => tracing::event!(
+                    name: "engine.client.unreadable",
+                    tracing::Level::WARN,
+                    client.id = client,
+                    error.message = %error,
+                    "Client {{client.id}} sent an unreadable message: {{error.message}}"
+                ),
             }
         }
         let _ = input.send(Input::Disconnected { client });
@@ -354,12 +410,9 @@ fn live_for(conversation: &storage::StoredConversation) -> Live {
     let last_user = thread
         .messages
         .iter()
-        .rposition(|m| m.role == "user")
+        .rposition(|m| m.role == MessageRole::User)
         .filter(|&i| i >= copied);
-    let interrupted = matches!(
-        conversation.settings.status.as_str(),
-        "processing" | "blocked"
-    );
+    let interrupted = conversation.settings.status.live();
     let last_error = conversation
         .events
         .iter()
@@ -397,7 +450,7 @@ fn live_for(conversation: &storage::StoredConversation) -> Live {
         last_read_through: thread
             .messages
             .iter()
-            .rposition(|message| message.role == "assistant" && message.read),
+            .rposition(|message| message.role == MessageRole::Assistant && message.read),
         error,
         last_prompt: last_user
             .map(|i| thread.messages[i].text.clone())
@@ -407,13 +460,14 @@ fn live_for(conversation: &storage::StoredConversation) -> Live {
     }
 }
 
-fn list_directory(path: Option<PathBuf>) -> Result<crate::protocol::Listing, String> {
+fn list_directory(path: Option<PathBuf>) -> anyhow::Result<crate::protocol::Listing> {
+    use anyhow::Context as _;
     let path = match path.filter(|path| !path.as_os_str().is_empty()) {
         Some(path) => path,
         None => config::home()?,
     };
     let mut entries: Vec<_> = std::fs::read_dir(&path)
-        .map_err(|e| crate::files::error(&path, e))?
+        .with_context(|| path.display().to_string())?
         .flatten()
         .map(|entry| crate::protocol::Entry {
             name: entry.file_name().to_string_lossy().into_owned(),
@@ -431,7 +485,7 @@ fn list_directory(path: Option<PathBuf>) -> Result<crate::protocol::Listing, Str
 fn history_text(messages: &[Message]) -> String {
     messages
         .iter()
-        .map(|m| format!("{}: {}", m.role, m.text))
+        .map(|m| format!("{}: {}", m.role.as_str(), m.text))
         .collect::<Vec<_>>()
         .join("\n\n")
 }
@@ -483,7 +537,12 @@ impl Engine {
     ) -> Self {
         let store = block_in_place(ProjectStore::new);
         for error in &store.errors {
-            log(error);
+            tracing::event!(
+                name: "engine.store.load_failed",
+                tracing::Level::WARN,
+                error.message = %error,
+                "{{error.message}}"
+            );
         }
         let projects = store.to_workspaces();
         let live = store
@@ -531,7 +590,12 @@ impl Engine {
             status: Status::default(),
             exit: false,
             identity: ipc::engine_id().unwrap_or_else(|error| {
-                log(format!("Cannot keep an engine identity: {error}"));
+                tracing::event!(
+                    name: "engine.identity.failed",
+                    tracing::Level::WARN,
+                    error.message = format!("{error:#}"),
+                    "Cannot keep an engine identity: {{error.message}}"
+                );
                 String::new()
             }),
             epoch: crate::files::random_id(),
@@ -723,13 +787,18 @@ impl Engine {
                 self.logins.retain(|(owner, _), _| *owner != client);
                 self.watching.remove(&client);
                 if self.clients.remove(&client).is_some_and(|c| c.subscribed) {
-                    log(format!("Client {client} disconnected"));
+                    tracing::event!(
+                        name: "engine.client.disconnected",
+                        tracing::Level::INFO,
+                        client.id = client,
+                        "Client {{client.id}} disconnected"
+                    );
                     self.clients_changed();
                 }
             }
             Input::Watch(paths) => {
                 self.watched.extend(paths);
-                self.watch_due = Some(Instant::now() + Duration::from_millis(300));
+                self.watch_due = Some(Instant::now() + WATCH_SETTLE);
             }
             Input::ProjectsLoaded { store, started } => self.reconcile(store, started),
             Input::Harnesses(catalog) => {
@@ -792,7 +861,12 @@ impl Engine {
                     if let Some(entry) = self.clients.get_mut(&client) {
                         entry.subscribed = true;
                     }
-                    log(format!("Client {client} connected"));
+                    tracing::event!(
+                        name: "engine.client.connected",
+                        tracing::Level::INFO,
+                        client.id = client,
+                        "Client {{client.id}} connected"
+                    );
                     if !resume.is_some_and(|resume| self.resume(client, &resume)) {
                         self.send_to(client, &EngineMessage::Snapshot(Box::new(self.snapshot())));
                     }
@@ -908,7 +982,7 @@ impl Engine {
             } => conversation(self, &id)
                 .and_then(|()| self.answer_permission(&id, request_id, &option_id)),
             Command::SetStatus { id, status } => {
-                conversation(self, &id).and_then(|()| self.set_status(&id, &status))
+                conversation(self, &id).and_then(|()| self.set_status(&id, status))
             }
             Command::MarkRead { id, through } => {
                 conversation(self, &id).map(|()| self.mark_read(&id, through))
@@ -963,12 +1037,12 @@ impl Engine {
                     )
                 });
                 self.agents_changed();
-                saved.map(Value::String)
+                saved.map(Value::String).map_err(|e| format!("{e:#}"))
             }
             Command::DeleteAgent { id } => {
                 let deleted = block_in_place(|| self.agents.delete(&id));
                 self.agents_changed();
-                deleted.map(|()| Value::Null)
+                deleted.map(|()| Value::Null).map_err(|e| format!("{e:#}"))
             }
             Command::RefreshHarnesses { fetch } => {
                 self.detect_harnesses(fetch);
@@ -986,11 +1060,12 @@ impl Engine {
                 Ok(Value::Null)
             }
             Command::PlanInstall { target } => install::plan(&target, &self.harnesses)
+                .map_err(|e| format!("{e:#}"))
                 .and_then(|steps| serde_json::to_value(steps).map_err(|e| e.to_string())),
             Command::Install { target } => {
                 let steps = match install::plan(&target, &self.harnesses) {
                     Ok(steps) => steps,
-                    Err(error) => return Some(Err(error)),
+                    Err(error) => return Some(Err(format!("{error:#}"))),
                 };
                 let input = self.input.clone();
                 tokio::spawn(async move {
@@ -1002,7 +1077,10 @@ impl Engine {
                             line,
                         });
                     });
-                    let result = install::run(steps, output).await.map(|()| Value::Null);
+                    let result = install::run(steps, output)
+                        .await
+                        .map(|()| Value::Null)
+                        .map_err(|e| format!("{e:#}"));
                     let _ = input.send(Input::Done {
                         client,
                         request,
@@ -1021,7 +1099,7 @@ impl Engine {
             Command::WatchTraffic { id } => {
                 let recorded = id
                     .as_ref()
-                    .map(|id| self.store.traffic(id, 2000))
+                    .map(|id| self.store.traffic(id, TRAFFIC_BACKLOG))
                     .unwrap_or_default();
                 match id {
                     Some(id) => self.watching.insert(client, id),
@@ -1034,13 +1112,19 @@ impl Engine {
                 serde_json::to_value(self.compute_status()).map_err(|e| e.to_string())
             }
             Command::ListDirectory { path } => block_in_place(|| list_directory(path))
+                .map_err(|e| format!("{e:#}"))
                 .and_then(|listing| serde_json::to_value(listing).map_err(|e| e.to_string())),
             Command::StopAll => {
                 self.begin_stop_all(Some((client, request)), false);
                 return None;
             }
             Command::Shutdown => {
-                log(format!("Client {client} asked the engine to stop"));
+                tracing::event!(
+                    name: "engine.stop.requested",
+                    tracing::Level::INFO,
+                    client.id = client,
+                    "Client {{client.id}} asked the engine to stop"
+                );
                 self.begin_stop_all(Some((client, request)), true);
                 return None;
             }
@@ -1109,13 +1193,22 @@ impl Engine {
         {
             if stop.forced {
                 // Agents that ignore even a kill can't hold the engine forever.
-                log("Some agents did not stop after being killed");
+                tracing::event!(
+                    name: "engine.stop.unkillable",
+                    tracing::Level::WARN,
+                    "Some agents did not stop after being killed"
+                );
                 self.drivers.clear();
                 self.finish_stop_all();
             } else {
                 stop.forced = true;
                 stop.deadline = Instant::now() + STOP_GRACE;
-                log("Killing agents that did not stop within 5 seconds");
+                tracing::event!(
+                    name: "engine.stop.killing",
+                    tracing::Level::WARN,
+                    stop.grace_secs = STOP_GRACE.as_secs(),
+                    "Killing agents that did not stop within {{stop.grace_secs}} seconds"
+                );
                 for slot in self.drivers.values() {
                     let _ = slot.driver.send(acp::Command::ForceStop);
                 }
@@ -1128,7 +1221,12 @@ impl Engine {
         if !idle {
             self.idle_since = None;
         } else if self.idle_since.get_or_insert_with(Instant::now).elapsed() >= IDLE_EXIT {
-            log("No clients or active conversations for 60 seconds; exiting");
+            tracing::event!(
+                name: "engine.idle_exit",
+                tracing::Level::INFO,
+                idle.secs = IDLE_EXIT.as_secs(),
+                "No clients or active conversations for {{idle.secs}} seconds; exiting",
+            );
             self.begin_stop_all(None, true);
         }
     }
@@ -1209,10 +1307,8 @@ impl Engine {
             .collect()
     }
 
-    fn status_of(&self, id: &str) -> String {
-        self.locate(id)
-            .map(|t| t.status.clone())
-            .unwrap_or_default()
+    fn status_of(&self, id: &str) -> Option<ThreadStatus> {
+        self.locate(id).map(|t| t.status)
     }
 
     fn conversation_settings(&self, id: &str) -> Option<storage::ConversationSettings> {
@@ -1229,10 +1325,10 @@ impl Engine {
             let _ = slot.driver.send(acp::Command::Cancel);
         }
         let status = self.status_of(id);
-        if !status.is_empty() && !closed(&status) {
+        if status.is_some_and(|status| !status.closed()) {
             self.broadcast(Delta::Status {
                 id: id.to_owned(),
-                status: "blocked".into(),
+                status: ThreadStatus::Blocked,
             });
         }
     }
@@ -1244,7 +1340,7 @@ impl Engine {
             .queue_event(id, storage::TranscriptEvent::new(kind, data));
         if let Err(error) = result {
             if !self.live.get(id).is_some_and(|live| live.storage_failed) {
-                self.storage_failure(id, &error);
+                self.storage_failure(id, &format!("{error:#}"));
             }
             false
         } else {
@@ -1259,7 +1355,7 @@ impl Engine {
                 .record_event(id, &storage::TranscriptEvent::new(kind, data))
         });
         if let Err(error) = result {
-            self.storage_failure(id, &error);
+            self.storage_failure(id, &format!("{error:#}"));
             false
         } else {
             true
@@ -1277,24 +1373,24 @@ impl Engine {
         self.touched.insert(id.to_owned(), Instant::now());
         let result = block_in_place(|| self.store.update_conversation(&project_id, id, settings));
         if let Err(error) = result {
-            self.storage_failure(id, &error);
+            self.storage_failure(id, &format!("{error:#}"));
             false
         } else {
             true
         }
     }
 
-    fn set_runtime_status(&mut self, id: &str, status: &str) -> bool {
+    fn set_runtime_status(&mut self, id: &str, status: ThreadStatus) -> bool {
         let Some(mut settings) = self.conversation_settings(id) else {
             return false;
         };
-        status.clone_into(&mut settings.status);
+        settings.status = status;
         if !self.save_conversation_settings(id, settings) {
             return false;
         }
         self.broadcast(Delta::Status {
             id: id.to_owned(),
-            status: status.to_owned(),
+            status,
         });
         true
     }
@@ -1342,9 +1438,10 @@ impl Engine {
         for file in attachments {
             if file.size > crate::conversation::ATTACHMENT_LIMIT {
                 return Some(format!(
-                    "{} is {} MB. Files over 20 MB can't be attached.",
+                    "{} is {} MB. Files over {} MB can't be attached.",
                     file.name,
-                    file.size.div_ceil(1024 * 1024)
+                    file.size.div_ceil(1024 * 1024),
+                    crate::conversation::ATTACHMENT_LIMIT / (1024 * 1024)
                 ));
             }
         }
@@ -1387,25 +1484,25 @@ impl Engine {
         }
     }
 
-    fn set_status(&mut self, id: &str, status: &str) -> Result<Value, String> {
+    fn set_status(&mut self, id: &str, status: ThreadStatus) -> Result<Value, String> {
         let current = self.status_of(id);
-        if current == status {
+        if current == Some(status) {
             return Err(match status {
-                "completed" => "Already completed",
-                "archived" => "Already archived",
+                ThreadStatus::Completed => "Already completed",
+                ThreadStatus::Archived => "Already archived",
                 _ => "Already open",
             }
             .into());
         }
         match status {
-            "idle" if closed(&current) => {
-                self.set_runtime_status(id, "idle");
+            ThreadStatus::Idle if current.is_some_and(ThreadStatus::closed) => {
+                self.set_runtime_status(id, ThreadStatus::Idle);
             }
-            "completed" | "archived" => {
+            ThreadStatus::Completed | ThreadStatus::Archived => {
                 self.set_runtime_status(id, status);
                 self.shutdown_conversation(id);
             }
-            _ => return Err(format!("Cannot change this conversation to {status}.")),
+            _ => return Err(format!("Cannot change this conversation to {status:?}.")),
         }
         self.send_live(id);
         Ok(Value::Null)
@@ -1423,7 +1520,7 @@ impl Engine {
                 thread
                     .messages
                     .iter()
-                    .rposition(|m| m.role == "user")
+                    .rposition(|m| m.role == MessageRole::User)
                     .is_some_and(|last| message > last)
             });
         if running {
@@ -1431,7 +1528,9 @@ impl Engine {
         }
         let store = &mut self.store;
         let (fork, live) = block_in_place(|| {
-            let fork = store.fork_conversation(id, message)?;
+            let fork = store
+                .fork_conversation(id, message)
+                .map_err(|e| format!("{e:#}"))?;
             let live = store.conversation(&fork).map(live_for).unwrap_or_default();
             Ok::<_, String>((fork, live))
         })?;
@@ -1540,14 +1639,14 @@ impl Engine {
             live.permission.clear();
             live.error = Some(error.clone());
             self.record_visible(id, "error", json!({"message":error}));
-            self.set_runtime_status(id, "blocked");
+            self.set_runtime_status(id, ThreadStatus::Blocked);
             self.send_live(id);
             return Err(error);
         }
         let live = self.live.entry(id.to_owned()).or_default();
         live.permission.remove(index);
         if live.permission.is_empty() {
-            self.set_runtime_status(id, "processing");
+            self.set_runtime_status(id, ThreadStatus::Processing);
         }
         self.send_live(id);
         Ok(Value::Null)

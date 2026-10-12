@@ -9,6 +9,7 @@
 //! `follow` and `reveal` leave redrawing the panel to the caller.
 use super::*;
 use crate::chat_render::{LabelPlacement, section_label};
+use crate::conversation::ThreadStatus;
 use crate::prepared::{Criteria, Group, Outcome};
 use gpui_kit::component::{ActiveTheme as _, scroll::Scrollbar};
 use std::sync::Arc;
@@ -18,6 +19,12 @@ pub(super) const SECTION_HEIGHT: f32 = 2.125;
 pub(super) const LABEL_GAP: f32 = 0.375;
 const END_HEIGHT: f32 = 0.75;
 const COMPACT_WIDTH: f32 = 17.;
+// Smaller searches run inline, where they finish well within a frame; larger
+// ones run in the background so typing never stalls.
+const INLINE_SEARCH_ROWS: usize = 256;
+const INLINE_SEARCH_BYTES: usize = 64 * 1024;
+// Background searches wait this long for the next keystroke.
+const SEARCH_DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(30);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Item {
@@ -259,14 +266,16 @@ impl ChatList {
         let ticket = self.generation.next();
         let records = self.records.clone();
         let now = recency::now();
-        if criteria.query.is_empty() || (records.len() < 256 && self.search_bytes < 64 * 1024) {
+        if criteria.query.is_empty()
+            || (records.len() < INLINE_SEARCH_ROWS && self.search_bytes < INLINE_SEARCH_BYTES)
+        {
             self.publish(prepared::search(records.iter(), &criteria, now), cx);
         } else {
             self.searching = true;
             let executor = cx.background_executor().clone();
             self.pending = Some(cx.spawn(async move |this, cx| {
                 if debounce {
-                    executor.timer(std::time::Duration::from_millis(30)).await;
+                    executor.timer(SEARCH_DEBOUNCE).await;
                 }
                 let outcome = executor
                     .spawn(async move { prepared::search(records.iter(), &criteria, now) })
@@ -851,7 +860,7 @@ impl Transcript {
         let messages = thread.map_or(0, |t| t.messages.len());
         let footer = thread.is_some_and(|t| {
             !app.demo_mode
-                || t.status == "blocked"
+                || t.status == ThreadStatus::Blocked
                 || app.runtime.conversations.contains_key(&t.id)
                 || app
                     .workspace()

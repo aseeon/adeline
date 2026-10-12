@@ -1,0 +1,14 @@
+[project]
+name = "ms-rust-skill"
+version = "0.1.0"
+description = "Microsoft Pragmatic Rust Guidelines as an Agent Skill"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28",
+    "jinja2>=3.1",
+]
+
+[dependency-groups]
+dev = [
+    "skills-ref>=0.1",
+]

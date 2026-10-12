@@ -514,6 +514,7 @@ fn files_are_embedded_or_linked_and_images_need_support() {
         worker
             .content(&[Part::File(image.clone())])
             .unwrap_err()
+            .to_string()
             .contains("can't receive images")
     );
     let linked = worker.content(&[Part::File(file.clone())]).unwrap();

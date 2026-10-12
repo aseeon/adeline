@@ -17,11 +17,11 @@ impl SettingsWindow {
 
     fn machines_changed(
         &mut self,
-        result: Result<(), String>,
+        result: Result<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.machine_error = result.err();
+        self.machine_error = result.err().map(|e| format!("{e:#}"));
         if !machines::all().contains(&self.machine) {
             machines::LOCAL.clone_into(&mut self.machine);
             client::focus(machines::LOCAL, cx);
@@ -72,7 +72,7 @@ impl SettingsWindow {
     fn edit_machine(
         &mut self,
         id: &str,
-        edit: impl FnOnce(&mut machines::Machine) -> Result<(), String>,
+        edit: impl FnOnce(&mut machines::Machine) -> Result<()>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
@@ -280,9 +280,9 @@ impl SettingsWindow {
                                                     |m| {
                                                         remote::check_destination(&destination)?;
                                                         if m.destinations.contains(&destination) {
-                                                            return Err(format!(
+                                                            anyhow::bail!(
                                                                 "{destination} is already listed."
-                                                            ));
+                                                            );
                                                         }
                                                         m.destinations.push(destination);
                                                         Ok(())

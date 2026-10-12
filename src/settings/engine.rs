@@ -259,7 +259,7 @@ impl SettingsWindow {
                             .enumerate()
                             .any(|(other, s)| s.name == server.name && Some(other) != ix)
                         {
-                            return Err(format!("{} is already listed.", server.name));
+                            anyhow::bail!("{} is already listed.", server.name);
                         }
                         mcp_ui::upsert(&mut servers, ix, server);
                         settings.update(cx, |this, cx| this.save_mcp_servers(servers, cx));

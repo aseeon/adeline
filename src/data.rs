@@ -1,7 +1,7 @@
 //! The UI's model of projects, chats, messages and tool activity, plus the
 //! bundled demo workspace (`assets/workspace.json`). `u64` times are
 //! milliseconds since the epoch and `i64` times seconds. A 0 time is unknown.
-use crate::conversation::{Attachment, ToolKind, ToolStatus};
+use crate::conversation::{Attachment, MessageRole, ThreadStatus, ToolKind, ToolStatus};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -36,10 +36,13 @@ pub struct Thread {
     pub unread_messages: Vec<usize>,
     #[serde(skip)]
     pub search_text: std::sync::Arc<str>,
+    // Streamed reply text is searchable once the turn's status changes.
+    #[serde(skip)]
+    pub search_stale: bool,
     pub id: String,
     pub title: String,
     pub provider: String,
-    pub status: String,
+    pub status: ThreadStatus,
     pub messages: Vec<Message>,
     pub activity: Vec<Activity>,
     pub created_at: String,
@@ -106,7 +109,7 @@ pub struct Message {
     // Chunks with another ID start a new message.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub id: String,
-    pub role: String,
+    pub role: MessageRole,
     pub text: String,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub thought: String,
@@ -273,7 +276,7 @@ pub fn load() -> Vec<Workspace> {
         project.threads.reverse();
         for thread in &mut project.threads {
             if let Some(work) = data.scene.working.iter().find(|w| w.thread_id == thread.id) {
-                thread.status = "processing".into();
+                thread.status = ThreadStatus::Processing;
                 thread.activity = work.activity.clone();
             }
             thread.prepare_search();
@@ -309,14 +312,14 @@ fn shift_to(projects: &mut [Workspace], now: i64) {
 
 impl Thread {
     pub fn push_message(&mut self, message: Message) {
-        if self.search_text.is_empty() {
+        if self.search_text.is_empty() || self.search_stale {
             self.prepare_search();
         }
         let separator = if self.messages.is_empty() { "" } else { " " };
         self.search_text = format!("{}{separator}{}", self.search_text, message.text)
             .to_lowercase()
             .into();
-        if message.role == "assistant" && !message.read {
+        if message.role == MessageRole::Assistant && !message.read {
             self.unread_messages.push(self.messages.len());
         }
         self.messages.push(message);
@@ -325,16 +328,16 @@ impl Thread {
         self.messages
             .get(..message)?
             .iter()
-            .rposition(|m| m.role == "user")
+            .rposition(|m| m.role == MessageRole::User)
     }
     pub fn ends_turn(&self, message: usize) -> bool {
         self.messages
             .get(message)
-            .is_some_and(|m| m.role == "assistant")
+            .is_some_and(|m| m.role == MessageRole::Assistant)
             && self
                 .messages
                 .get(message + 1)
-                .is_none_or(|next| next.role == "user")
+                .is_none_or(|next| next.role == MessageRole::User)
     }
     pub fn stream(
         &mut self,
@@ -346,7 +349,7 @@ impl Thread {
     ) {
         let current = assistant.filter(|&index| {
             self.messages.get(index).is_some_and(|m| {
-                m.role == "assistant"
+                m.role == MessageRole::Assistant
                     && message.is_none_or(|id| m.id.is_empty() || m.id == id)
                     // A thought after reply text starts the next reply.
                     && !(thought && !m.text.is_empty() && message.is_none())
@@ -358,7 +361,7 @@ impl Thread {
             *assistant = Some(self.messages.len());
             self.push_message(Message {
                 id: message.unwrap_or_default().to_owned(),
-                role: "assistant".into(),
+                role: MessageRole::Assistant,
                 created_at: at.to_string(),
                 ..Default::default()
             });
@@ -379,7 +382,10 @@ impl Thread {
     }
 
     pub fn apply_tool(&mut self, report: &ToolReport, at: u64) {
-        let turn = self.messages.iter().rposition(|m| m.role == "user");
+        let turn = self
+            .messages
+            .iter()
+            .rposition(|m| m.role == MessageRole::User);
         let key = format!("tool:{}", report.id);
         let item = if let Some(index) = self.activity.iter().position(|a| a.kind == key) {
             index
@@ -388,7 +394,7 @@ impl Thread {
             let written = self
                 .messages
                 .last()
-                .filter(|m| m.role == "assistant")
+                .filter(|m| m.role == MessageRole::Assistant)
                 .map_or(0, |m| m.text.len());
             self.activity.push(Activity {
                 kind: key,
@@ -461,21 +467,22 @@ impl Thread {
         crate::prepared::SearchRecord {
             id: std::sync::Arc::from(self.id.as_str()),
             text: std::sync::Arc::clone(&self.search_text),
-            completed: self.status == "completed",
-            archived: self.status == "archived",
-            blocked: self.status == "blocked",
-            processing: self.status == "processing",
+            completed: self.status == ThreadStatus::Completed,
+            archived: self.status == ThreadStatus::Archived,
+            blocked: self.status == ThreadStatus::Blocked,
+            processing: self.status == ThreadStatus::Processing,
             unread: self.unread(),
             agent: std::sync::Arc::from(self.provider.as_str()),
             activity: self.last_activity(),
         }
     }
     pub fn prepare_search(&mut self) {
+        self.search_stale = false;
         self.unread_messages = self
             .messages
             .iter()
             .enumerate()
-            .filter(|(_, m)| m.role == "assistant" && !m.read)
+            .filter(|(_, m)| m.role == MessageRole::Assistant && !m.read)
             .map(|(i, _)| i)
             .collect();
         self.search_text = format!(
@@ -495,11 +502,15 @@ impl Workspace {
     pub fn attention_count(&self) -> usize {
         self.threads
             .iter()
-            .filter(|thread| thread.status == "blocked" || thread.unread())
+            .filter(|thread| thread.status == ThreadStatus::Blocked || thread.unread())
             .count()
     }
     pub fn busy(&self) -> bool {
-        self.attention_count() > 0 || self.threads.iter().any(|t| t.status == "processing")
+        self.attention_count() > 0
+            || self
+                .threads
+                .iter()
+                .any(|t| t.status == ThreadStatus::Processing)
     }
 }
 
@@ -536,12 +547,12 @@ mod tests {
     #[test]
     fn completed_and_archived_conversations_show_only_when_asked_for() {
         let mut thread = Thread {
-            status: "completed".into(),
+            status: ThreadStatus::Completed,
             ..Default::default()
         };
         assert!(!shows(&thread, "", false, true));
         assert!(shows(&thread, "", true, false));
-        thread.status = "archived".into();
+        thread.status = ThreadStatus::Archived;
         assert!(!shows(&thread, "", true, false));
         assert!(shows(&thread, "", false, true));
     }
@@ -562,7 +573,7 @@ mod tests {
         ] {
             let snapshot = std::sync::Arc::clone(&thread.search_text);
             thread.push_message(Message {
-                role: "assistant".into(),
+                role: MessageRole::Assistant,
                 text: body.into(),
                 ..Default::default()
             });
@@ -710,7 +721,7 @@ mod tests {
                 .iter()
                 .find(|thread| thread.id == working)
                 .unwrap();
-            assert_eq!(thread.status, "processing");
+            assert_eq!(thread.status, ThreadStatus::Processing);
             assert!(!thread.activity.is_empty());
             for decision in &project.decisions {
                 let thread = project
@@ -718,14 +729,14 @@ mod tests {
                     .iter()
                     .find(|thread| thread.id == decision.thread_id)
                     .unwrap();
-                assert_eq!(thread.status, "blocked");
+                assert_eq!(thread.status, ThreadStatus::Blocked);
             }
         }
     }
     #[test]
     fn a_turn_summary_counts_distinct_files_and_every_call() {
-        let message = |role: &str| Message {
-            role: role.into(),
+        let message = |role| Message {
+            role,
             ..Default::default()
         };
         let call = |id: &str, tool: ToolKind, paths: &[&str], turn: usize| Activity {
@@ -737,11 +748,11 @@ mod tests {
         };
         let thread = Thread {
             messages: vec![
-                message("user"),
-                message("assistant"),
-                message("user"),
-                message("assistant"),
-                message("assistant"),
+                message(MessageRole::User),
+                message(MessageRole::Assistant),
+                message(MessageRole::User),
+                message(MessageRole::Assistant),
+                message(MessageRole::Assistant),
             ],
             activity: vec![
                 call("1", ToolKind::Read, &["a.md"], 0),
@@ -800,7 +811,7 @@ mod tests {
         let done = p[0]
             .threads
             .iter()
-            .find(|t| t.status == "completed")
+            .find(|t| t.status == ThreadStatus::Completed)
             .unwrap();
         assert!(!shows(done, "", false, false));
     }

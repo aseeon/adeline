@@ -3,6 +3,7 @@
 //! jump-to-latest buttons over the chat and the list sit 0.5rem above both.
 use super::*;
 use crate::chat_render::{CHAT_HEADER_HEIGHT, agent_mark, message_time, tokens, tool_icon};
+use crate::conversation::MessageRole;
 use gpui_kit::component::{
     ActiveTheme as _, Selectable as _, Sizable as _, button::ButtonVariants as _,
     scroll::Scrollbar, spinner::Spinner, tooltip::Tooltip,
@@ -58,10 +59,10 @@ fn push_reply<'a>(
 fn timeline(thread: &Thread) -> Vec<Entry<'_>> {
     let mut entries = Vec::new();
     let prompts: Vec<usize> = (0..thread.messages.len())
-        .filter(|&i| thread.messages[i].role == "user")
+        .filter(|&i| thread.messages[i].role == MessageRole::User)
         .collect();
     let first = prompts.first().copied().unwrap_or(thread.messages.len());
-    for message in (0..first).filter(|&i| thread.messages[i].role == "assistant") {
+    for message in (0..first).filter(|&i| thread.messages[i].role == MessageRole::Assistant) {
         push_reply(&mut entries, thread, message, 0, usize::MAX);
     }
     for (n, &prompt) in prompts.iter().enumerate() {
@@ -71,7 +72,8 @@ fn timeline(thread: &Thread) -> Vec<Entry<'_>> {
             message: prompt,
         });
         entries.push(Entry::Prompt(prompt));
-        let mut replies = (prompt + 1..end).filter(|&i| thread.messages[i].role == "assistant");
+        let mut replies =
+            (prompt + 1..end).filter(|&i| thread.messages[i].role == MessageRole::Assistant);
         let reply = replies.next();
         let mut written = 0;
         for (ix, call) in thread.activity.iter().enumerate() {
@@ -493,7 +495,7 @@ impl Adeline {
                 // A turn's steps show under its last reply once the turn ends.
                 let closing = call.turn.and_then(|prompt| {
                     (prompt + 1..thread.messages.len())
-                        .take_while(|&i| thread.messages[i].role != "user")
+                        .take_while(|&i| thread.messages[i].role != MessageRole::User)
                         .last()
                         .filter(|&i| thread.ends_turn(i))
                 });
@@ -727,12 +729,12 @@ impl Adeline {
 #[cfg(test)]
 mod tests {
     use super::{Entry, duration, excerpt, timeline};
-    use crate::conversation::{ToolKind, ToolStatus};
+    use crate::conversation::{MessageRole, ToolKind, ToolStatus};
     use crate::data::{Activity, Message, Thread, ToolReport};
 
-    fn message(role: &str, text: &str) -> Message {
+    fn message(role: MessageRole, text: &str) -> Message {
         Message {
-            role: role.into(),
+            role,
             text: text.into(),
             ..Default::default()
         }
@@ -741,10 +743,10 @@ mod tests {
     #[test]
     fn replies_split_around_the_tool_calls_made_while_writing() {
         let mut thread = Thread {
-            messages: vec![message("user", "Fix it")],
+            messages: vec![message(MessageRole::User, "Fix it")],
             ..Default::default()
         };
-        thread.push_message(message("assistant", "Looking first."));
+        thread.push_message(message(MessageRole::Assistant, "Looking first."));
         let report = |id: &str, title: &str, status, kind| ToolReport {
             id: id.into(),
             title: title.into(),

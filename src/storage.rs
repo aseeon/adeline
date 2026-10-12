@@ -9,9 +9,13 @@
 use crate::files::{self, checked_id, error as file_error};
 use crate::{
     agents::{self, AgentDefinition, InstructionsMode},
-    conversation::{AgentCommand, Features, McpServer, Selections, SessionOption, TodoStep},
+    conversation::{
+        AgentCommand, Features, McpServer, MessageRole, Selections, SessionOption, ThreadStatus,
+        TodoStep,
+    },
     data,
 };
+use anyhow::{Context as _, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -32,7 +36,7 @@ pub struct ExecutionConfig {
     pub harness: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub identity: String,
-    pub command: String,
+    pub command: PathBuf,
     #[serde(default)]
     pub arguments: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -59,7 +63,7 @@ impl ExecutionConfig {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Launch {
-    pub command: String,
+    pub command: PathBuf,
     pub arguments: Vec<String>,
     pub environment: Vec<(String, String)>,
 }
@@ -70,7 +74,7 @@ pub struct ConversationSettings {
     pub version: u32,
     pub agent_id: String,
     pub title: String,
-    pub status: String,
+    pub status: ThreadStatus,
     pub created_at: String,
     pub execution: ExecutionConfig,
     #[serde(default)]
@@ -145,7 +149,7 @@ impl StoredConversation {
             id: self.id.clone(),
             title: self.settings.title.clone(),
             provider: self.settings.execution.name.clone(),
-            status: self.settings.status.clone(),
+            status: self.settings.status,
             created_at: self.settings.created_at.clone(),
             fork: self.settings.forked_from.as_ref().map(|origin| data::Fork {
                 id: origin.conversation_id.clone(),
@@ -164,11 +168,11 @@ impl StoredConversation {
                         if message.created_at.is_empty() {
                             message.created_at = event.timestamp.to_string();
                         }
-                        if message.role == "user" {
+                        if message.role == MessageRole::User {
                             thread.timing.prompt(event.timestamp);
                         }
-                        current_assistant =
-                            (message.role == "assistant").then_some(thread.messages.len());
+                        current_assistant = (message.role == MessageRole::Assistant)
+                            .then_some(thread.messages.len());
                         thread.messages.push(message);
                     }
                 }
@@ -232,7 +236,10 @@ impl StoredConversation {
                     thread.activity.push(data::Activity {
                         kind: "error".into(),
                         title: title.to_owned(),
-                        turn: thread.messages.iter().rposition(|m| m.role == "user"),
+                        turn: thread
+                            .messages
+                            .iter()
+                            .rposition(|m| m.role == MessageRole::User),
                         ..Default::default()
                     });
                 }
@@ -327,11 +334,14 @@ impl ProjectStore {
     pub fn new() -> Self {
         match crate::config::directory() {
             Ok(root) => Self::with_root(root.join("projects")),
-            Err(error) => Self {
-                projects: Vec::new(),
-                errors: vec![error.clone()],
-                root: Err(error),
-            },
+            Err(error) => {
+                let error = format!("{error:#}");
+                Self {
+                    projects: Vec::new(),
+                    errors: vec![error.clone()],
+                    root: Err(error),
+                }
+            }
         }
     }
 
@@ -359,15 +369,15 @@ impl ProjectStore {
             .find(|conversation| conversation.id == id)
     }
 
-    fn project(&self, id: &str) -> Result<&ProjectRecord, String> {
+    fn project(&self, id: &str) -> Result<&ProjectRecord> {
         self.projects
             .iter()
             .find(|p| p.id == id)
-            .ok_or_else(|| format!("Project {id} no longer exists."))
+            .with_context(|| format!("Project {id} no longer exists."))
     }
 
-    fn conversation_mut(&mut self, id: &str) -> Result<(PathBuf, &mut StoredConversation), String> {
-        let root = self.root.as_ref().map_err(Clone::clone)?;
+    fn conversation_mut(&mut self, id: &str) -> Result<(PathBuf, &mut StoredConversation)> {
+        let root = self.root.as_ref().map_err(|e| anyhow!("{e}"))?;
         self.projects
             .iter_mut()
             .find_map(|p| {
@@ -376,7 +386,7 @@ impl ProjectStore {
                     .find(|c| c.id == id)
                     .map(|c| (conversation_dir(root, &p.id, id), c))
             })
-            .ok_or_else(|| format!("Conversation {id} no longer exists."))
+            .with_context(|| format!("Conversation {id} no longer exists."))
     }
 
     fn reload(&mut self) {
@@ -410,79 +420,85 @@ impl ProjectStore {
             }
         };
         for entry in folders {
-            let result = entry.map_err(|e| file_error(root, e)).and_then(|entry| {
-                let folder = entry.path();
-                let kind = entry.file_type().map_err(|e| file_error(&folder, e))?;
-                if kind.is_symlink() {
-                    return Err(format!(
-                        "{}: linked project folders are not loaded.",
-                        folder.display()
-                    ));
-                }
-                if !kind.is_dir() {
-                    return Ok(None);
-                }
-                safe_directory(&folder)?;
-                let id = entry.file_name().to_string_lossy().into_owned();
-                checked_id(&id)?;
-                ensure_regular_file(&folder.join("project.yml"))?;
-                let text = fs::read_to_string(folder.join("project.yml"))
-                    .map_err(|e| file_error(&folder.join("project.yml"), e))?;
-                let definition: ProjectDefinition = serde_yaml_ng::from_str(&text)
-                    .map_err(|e| file_error(&folder.join("project.yml"), e))?;
-                if agents::normalize_name(&definition.name)? != id
-                    || !definition.directory.is_absolute()
-                {
-                    return Err(format!(
-                        "{}: project name or directory is invalid.",
-                        folder.display()
-                    ));
-                }
-                if let Err(error) = outside_project_storage(&definition.directory, root) {
-                    self.errors
-                        .push(file_error(&folder.join("project.yml"), error));
-                }
-                let mut project = ProjectRecord {
-                    id,
-                    name: definition.name,
-                    directory: definition.directory,
-                    opened_at: definition.opened_at,
-                    conversations: Vec::new(),
-                };
-                let conversations = folder.join("conversations");
-                safe_directory(&conversations)?;
-                match fs::read_dir(&conversations) {
-                    Ok(entries) => {
-                        for entry in entries {
-                            match entry
-                                .map_err(|e| file_error(&conversations, e))
-                                .and_then(|entry| load_conversation(&entry.path()))
-                            {
-                                Ok(Some(conversation)) => {
-                                    if let Some(error) = &conversation.storage_error {
-                                        self.errors.push(error.clone());
+            let result = entry
+                .with_context(|| root.display().to_string())
+                .and_then(|entry| {
+                    let folder = entry.path();
+                    let kind = entry
+                        .file_type()
+                        .with_context(|| folder.display().to_string())?;
+                    if kind.is_symlink() {
+                        bail!(
+                            "{}: linked project folders are not loaded.",
+                            folder.display()
+                        );
+                    }
+                    if !kind.is_dir() {
+                        return Ok(None);
+                    }
+                    safe_directory(&folder)?;
+                    let id = entry.file_name().to_string_lossy().into_owned();
+                    checked_id(&id)?;
+                    ensure_regular_file(&folder.join("project.yml"))?;
+                    let text = fs::read_to_string(folder.join("project.yml"))
+                        .with_context(|| folder.join("project.yml").display().to_string())?;
+                    let definition: ProjectDefinition = serde_yaml_ng::from_str(&text)
+                        .with_context(|| folder.join("project.yml").display().to_string())?;
+                    if agents::normalize_name(&definition.name)? != id
+                        || !definition.directory.is_absolute()
+                    {
+                        bail!(
+                            "{}: project name or directory is invalid.",
+                            folder.display()
+                        );
+                    }
+                    if let Err(error) = outside_project_storage(&definition.directory, root) {
+                        self.errors.push(format!(
+                            "{}: {error:#}",
+                            folder.join("project.yml").display()
+                        ));
+                    }
+                    let mut project = ProjectRecord {
+                        id,
+                        name: definition.name,
+                        directory: definition.directory,
+                        opened_at: definition.opened_at,
+                        conversations: Vec::new(),
+                    };
+                    let conversations = folder.join("conversations");
+                    safe_directory(&conversations)?;
+                    match fs::read_dir(&conversations) {
+                        Ok(entries) => {
+                            for entry in entries {
+                                match entry
+                                    .with_context(|| conversations.display().to_string())
+                                    .and_then(|entry| load_conversation(&entry.path()))
+                                {
+                                    Ok(Some(conversation)) => {
+                                        if let Some(error) = &conversation.storage_error {
+                                            self.errors.push(error.clone());
+                                        }
+                                        project.conversations.push(conversation);
                                     }
-                                    project.conversations.push(conversation);
+                                    Ok(None) => {}
+                                    Err(error) => self.errors.push(format!("{error:#}")),
                                 }
-                                Ok(None) => {}
-                                Err(error) => self.errors.push(error),
                             }
                         }
+                        Err(error) => self.errors.push(file_error(&conversations, error)),
                     }
-                    Err(error) => self.errors.push(file_error(&conversations, error)),
-                }
-                project.conversations.sort_by(|a, b| {
-                    b.settings
-                        .created_at
-                        .cmp(&a.settings.created_at)
-                        .then(b.id.cmp(&a.id))
+                    project.conversations.sort_by(|a, b| {
+                        b.settings
+                            .created_at
+                            .cmp(&a.settings.created_at)
+                            .then(b.id.cmp(&a.id))
+                    });
+                    Ok(Some(project))
                 });
-                Ok(Some(project))
-            });
             match result {
                 Ok(Some(project)) => self.projects.push(project),
                 Ok(None) => {}
-                Err(error) => self.errors.push(error),
+                Err(error) => self.errors.push(format!("{error:#}")),
             }
         }
         self.projects
@@ -494,11 +510,11 @@ impl ProjectStore {
         original: Option<&str>,
         name: &str,
         directory: &Path,
-    ) -> Result<String, String> {
+    ) -> Result<String> {
         let id = agents::normalize_name(name)
-            .map_err(|_invalid| "Project name does not produce a valid folder name.".to_owned())?;
+            .map_err(|_invalid| anyhow!("Project name does not produce a valid folder name."))?;
         valid_working_directory(directory)?;
-        let root = self.root.as_ref().map_err(Clone::clone)?;
+        let root = self.root.as_ref().map_err(|e| anyhow!("{e}"))?;
         if let Some(old) = original {
             checked_id(old)?;
             let project = self.project(old)?;
@@ -506,23 +522,22 @@ impl ProjectStore {
                 && project
                     .conversations
                     .iter()
-                    .any(|c| !crate::conversation::closed(&c.settings.status))
+                    .any(|c| !c.settings.status.closed())
             {
-                return Err(
+                bail!(
                     "Complete or archive every conversation before changing the project directory."
-                        .into(),
                 );
             }
         }
-        fs::create_dir_all(root).map_err(|e| file_error(root, e))?;
+        fs::create_dir_all(root).with_context(|| root.display().to_string())?;
         safe_directory(root)?;
         outside_project_storage(directory, root)?;
         let destination = root.join(&id);
         if original != Some(id.as_str()) {
-            for entry in fs::read_dir(root).map_err(|e| file_error(root, e))? {
-                let entry = entry.map_err(|e| file_error(root, e))?;
+            for entry in fs::read_dir(root).with_context(|| root.display().to_string())? {
+                let entry = entry.with_context(|| root.display().to_string())?;
                 if entry.file_name().to_string_lossy().to_lowercase() == id {
-                    return Err(format!("Project folder {id} already exists."));
+                    bail!("Project folder {id} already exists.");
                 }
             }
         }
@@ -535,12 +550,13 @@ impl ProjectStore {
             directory: directory.to_owned(),
             opened_at,
         };
-        let text = serde_yaml_ng::to_string(&definition).map_err(|e| e.to_string())?;
+        let text = serde_yaml_ng::to_string(&definition)?;
         if let Some(old) = original {
             let old_path = root.join(old);
             safe_directory(&old_path)?;
             if id != old {
-                fs::rename(&old_path, &destination).map_err(|e| file_error(&old_path, e))?;
+                fs::rename(&old_path, &destination)
+                    .with_context(|| old_path.display().to_string())?;
             }
             let write = files::replace(&destination.join("project.yml"), text.as_bytes());
             if let Err(error) = write {
@@ -558,9 +574,9 @@ impl ProjectStore {
             name.clone_into(&mut project.name);
             directory.clone_into(&mut project.directory);
         } else {
-            fs::create_dir(&destination).map_err(|e| file_error(&destination, e))?;
+            fs::create_dir(&destination).with_context(|| destination.display().to_string())?;
             let result = fs::create_dir(destination.join("conversations"))
-                .map_err(|e| file_error(&destination, e))
+                .with_context(|| destination.display().to_string())
                 .and_then(|()| files::write_new(&destination.join("project.yml"), text.as_bytes()));
             if let Err(error) = result {
                 let _ = fs::remove_dir(destination.join("conversations"));
@@ -578,10 +594,10 @@ impl ProjectStore {
         Ok(id)
     }
 
-    pub fn delete_project(&mut self, id: &str) -> Result<(), String> {
+    pub fn delete_project(&mut self, id: &str) -> Result<()> {
         // Callers stop every live agent in the project first.
         checked_id(id)?;
-        let root = self.root.as_ref().map_err(Clone::clone)?;
+        let root = self.root.as_ref().map_err(|e| anyhow!("{e}"))?;
         let project = self.project(id)?;
         outside_project_storage(&project.directory, root)?;
         safe_directory(root)?;
@@ -590,15 +606,18 @@ impl ProjectStore {
         let definition_path = folder.join("project.yml");
         ensure_regular_file(&definition_path)?;
         let disk: ProjectDefinition = serde_yaml_ng::from_str(
-            &fs::read_to_string(&definition_path).map_err(|e| file_error(&definition_path, e))?,
+            &fs::read_to_string(&definition_path)
+                .with_context(|| definition_path.display().to_string())?,
         )
-        .map_err(|e| file_error(&definition_path, e))?;
+        .with_context(|| definition_path.display().to_string())?;
         outside_project_storage(&disk.directory, root)?;
         let conversations = folder.join("conversations");
         safe_directory(&conversations)?;
         let mut folders = Vec::new();
-        for entry in fs::read_dir(&conversations).map_err(|e| file_error(&conversations, e))? {
-            let entry = entry.map_err(|e| file_error(&conversations, e))?;
+        for entry in
+            fs::read_dir(&conversations).with_context(|| conversations.display().to_string())?
+        {
+            let entry = entry.with_context(|| conversations.display().to_string())?;
             checked_id(&entry.file_name().to_string_lossy())?;
             safe_directory(&entry.path())?;
             check_contents(&entry.path(), &["conversation.yml", "transcript.jsonl"])?;
@@ -606,13 +625,16 @@ impl ProjectStore {
         }
         check_contents(&folder, &["project.yml", "conversations"])?;
         for folder in folders {
-            fs::remove_file(folder.join("conversation.yml")).map_err(|e| file_error(&folder, e))?;
-            fs::remove_file(folder.join("transcript.jsonl")).map_err(|e| file_error(&folder, e))?;
-            fs::remove_dir(&folder).map_err(|e| file_error(&folder, e))?;
+            fs::remove_file(folder.join("conversation.yml"))
+                .with_context(|| folder.display().to_string())?;
+            fs::remove_file(folder.join("transcript.jsonl"))
+                .with_context(|| folder.display().to_string())?;
+            fs::remove_dir(&folder).with_context(|| folder.display().to_string())?;
         }
-        fs::remove_dir(&conversations).map_err(|e| file_error(&conversations, e))?;
-        fs::remove_file(folder.join("project.yml")).map_err(|e| file_error(&folder, e))?;
-        fs::remove_dir(&folder).map_err(|e| file_error(&folder, e))?;
+        fs::remove_dir(&conversations).with_context(|| conversations.display().to_string())?;
+        fs::remove_file(folder.join("project.yml"))
+            .with_context(|| folder.display().to_string())?;
+        fs::remove_dir(&folder).with_context(|| folder.display().to_string())?;
         self.projects.retain(|p| p.id != id);
         Ok(())
     }
@@ -624,16 +646,16 @@ impl ProjectStore {
         launch: Launch,
         mcp_servers: Vec<McpServer>,
         title: &str,
-    ) -> Result<String, String> {
+    ) -> Result<String> {
         checked_id(project_id)?;
         let agent_id = agent.validate()?;
         let project = self
             .projects
             .iter_mut()
             .find(|p| p.id == project_id)
-            .ok_or_else(|| format!("Project {project_id} no longer exists."))?;
+            .with_context(|| format!("Project {project_id} no longer exists."))?;
         valid_working_directory(&project.directory)?;
-        let root = self.root.as_ref().map_err(Clone::clone)?;
+        let root = self.root.as_ref().map_err(|e| anyhow!("{e}"))?;
         let base = root.join(project_id).join("conversations");
         safe_directory(root)?;
         safe_directory(&root.join(project_id))?;
@@ -644,7 +666,7 @@ impl ProjectStore {
             version: VERSION,
             agent_id,
             title: title.to_owned(),
-            status: "idle".into(),
+            status: ThreadStatus::Idle,
             created_at: crate::recency::now_ms().to_string(),
             execution: ExecutionConfig {
                 name: agent.name.clone(),
@@ -678,22 +700,21 @@ impl ProjectStore {
         Ok(id)
     }
 
-    pub fn fork_conversation(&mut self, source_id: &str, message: usize) -> Result<String, String> {
+    pub fn fork_conversation(&mut self, source_id: &str, message: usize) -> Result<String> {
         checked_id(source_id)?;
-        let root = self.root.as_ref().map_err(Clone::clone)?;
-        let project = self
+        let root = self.root.as_ref().map_err(|e| anyhow!("{e}"))?;
+        let (project, index) = self
             .projects
             .iter_mut()
-            .find(|p| p.conversations.iter().any(|c| c.id == source_id))
-            .ok_or_else(|| format!("Conversation {source_id} no longer exists."))?;
-        let source = project
-            .conversations
-            .iter()
-            .find(|c| c.id == source_id)
-            .expect("found above");
+            .find_map(|p| {
+                let index = p.conversations.iter().position(|c| c.id == source_id)?;
+                Some((p, index))
+            })
+            .with_context(|| format!("Conversation {source_id} no longer exists."))?;
+        let source = &project.conversations[index];
         let thread = source.to_thread();
         if !thread.ends_turn(message) {
-            return Err("Fork from the last reply of a finished turn.".into());
+            bail!("Fork from the last reply of a finished turn.");
         }
         let base = root.join(&project.id).join("conversations");
         safe_directory(root)?;
@@ -701,7 +722,7 @@ impl ProjectStore {
         safe_directory(&base)?;
         let prompts = thread.messages[..=message]
             .iter()
-            .filter(|m| m.role == "user")
+            .filter(|m| m.role == MessageRole::User)
             .count();
         let mut seen = 0;
         let mut events = Vec::new();
@@ -731,7 +752,7 @@ impl ProjectStore {
         ));
         let settings = ConversationSettings {
             title: format!("{} (fork)", source.settings.title),
-            status: "idle".into(),
+            status: ThreadStatus::Idle,
             created_at: crate::recency::now_ms().to_string(),
             session_id: None,
             previous_session_ids: Vec::new(),
@@ -753,35 +774,33 @@ impl ProjectStore {
         project_id: &str,
         id: &str,
         settings: ConversationSettings,
-    ) -> Result<(), String> {
+    ) -> Result<()> {
         checked_id(project_id)?;
         checked_id(id)?;
-        let root = self.root.as_ref().map_err(Clone::clone)?;
+        let root = self.root.as_ref().map_err(|e| anyhow!("{e}"))?;
         let project = self
             .projects
             .iter_mut()
             .find(|p| p.id == project_id)
-            .ok_or_else(|| format!("Project {project_id} no longer exists."))?;
+            .with_context(|| format!("Project {project_id} no longer exists."))?;
         let conversation = project
             .conversations
             .iter_mut()
             .find(|c| c.id == id)
-            .ok_or_else(|| format!("Conversation {id} no longer exists."))?;
+            .with_context(|| format!("Conversation {id} no longer exists."))?;
         if conversation.settings.agent_id != settings.agent_id
             || conversation.settings.created_at != settings.created_at
             || conversation.settings.execution.fixed() != settings.execution.fixed()
         {
-            return Err(
-                "An existing conversation's agent and launch settings cannot change.".into(),
-            );
+            bail!("An existing conversation's agent and launch settings cannot change.");
         }
         conversation.pending_settings = Some(settings.clone());
-        if settings.status != "blocked" {
+        if settings.status != ThreadStatus::Blocked {
             conversation.interrupted = false;
         }
         conversation.settings = settings;
         if let Some(error) = &conversation.storage_error {
-            return Err(error.clone());
+            bail!("{error}");
         }
         flush_settings(
             conversation,
@@ -789,32 +808,27 @@ impl ProjectStore {
         )
     }
 
-    pub fn record_event(
-        &mut self,
-        conversation_id: &str,
-        event: &TranscriptEvent,
-    ) -> Result<(), String> {
+    pub fn record_event(&mut self, conversation_id: &str, event: &TranscriptEvent) -> Result<()> {
         self.queue_event(conversation_id, event.clone())?;
         self.flush(conversation_id)
     }
 
-    pub fn queue_event(
-        &mut self,
-        conversation_id: &str,
-        event: TranscriptEvent,
-    ) -> Result<(), String> {
+    pub fn queue_event(&mut self, conversation_id: &str, event: TranscriptEvent) -> Result<()> {
         let (_, conversation) = self.conversation_mut(conversation_id)?;
         conversation.unsaved_events.push(event);
         conversation
             .unsaved_since
             .get_or_insert_with(crate::recency::now_ms);
-        conversation.storage_error.clone().map_or(Ok(()), Err)
+        conversation
+            .storage_error
+            .as_ref()
+            .map_or(Ok(()), |error| Err(anyhow!("{error}")))
     }
 
-    fn flush(&mut self, conversation_id: &str) -> Result<(), String> {
+    fn flush(&mut self, conversation_id: &str) -> Result<()> {
         let (folder, conversation) = self.conversation_mut(conversation_id)?;
         if let Some(error) = &conversation.storage_error {
-            return Err(error.clone());
+            bail!("{error}");
         }
         if conversation.unsaved_events.is_empty() {
             return Ok(());
@@ -834,7 +848,11 @@ impl ProjectStore {
             .map(|c| c.id.clone())
             .collect();
         ids.into_iter()
-            .filter_map(|id| self.flush(&id).err().map(|error| (id, error)))
+            .filter_map(|id| {
+                self.flush(&id)
+                    .err()
+                    .map(|error| (id, format!("{error:#}")))
+            })
             .collect()
     }
 
@@ -852,22 +870,29 @@ impl ProjectStore {
         all[all.len().saturating_sub(limit)..].to_vec()
     }
 
-    pub fn retry_unsaved(&mut self, conversation_id: &str) -> Result<(), String> {
+    pub fn retry_unsaved(&mut self, conversation_id: &str) -> Result<()> {
         let (folder, conversation) = self.conversation_mut(conversation_id)?;
         let had_pending_settings = conversation.pending_settings.is_some();
         if had_pending_settings {
             flush_settings(conversation, &folder.join("conversation.yml"))?;
         }
         if conversation.load_error {
-            return Err(conversation.storage_error.clone().unwrap_or_else(|| {
-                "Transcript must be repaired and reloaded before continuing.".into()
-            }));
+            bail!(
+                "{}",
+                conversation
+                    .storage_error
+                    .as_deref()
+                    .unwrap_or("Transcript must be repaired and reloaded before continuing.")
+            );
         }
         if conversation.unsaved_events.is_empty() {
             if had_pending_settings && !conversation.load_error {
                 conversation.storage_error = None;
             }
-            return conversation.storage_error.clone().map_or(Ok(()), Err);
+            return conversation
+                .storage_error
+                .as_ref()
+                .map_or(Ok(()), |error| Err(anyhow!("{error}")));
         }
         flush_events(conversation, &folder.join("transcript.jsonl"))
     }
@@ -962,23 +987,23 @@ fn write_conversation(
     base: &Path,
     settings: ConversationSettings,
     events: Vec<TranscriptEvent>,
-) -> Result<StoredConversation, String> {
+) -> Result<StoredConversation> {
     let id = loop {
         let id = files::unique(&format!("{:x}", crate::recency::now_ms()));
         match fs::create_dir(base.join(&id)) {
             Ok(()) => break id,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(file_error(base, e)),
+            Err(e) => return Err(e).with_context(|| base.display().to_string()),
         }
     };
     let folder = base.join(&id);
     let mut transcript = Vec::new();
     for event in &events {
-        serde_json::to_writer(&mut transcript, event).map_err(|e| e.to_string())?;
+        serde_json::to_writer(&mut transcript, event)?;
         transcript.push(b'\n');
     }
     let result = serde_yaml_ng::to_string(&settings)
-        .map_err(|e| e.to_string())
+        .map_err(anyhow::Error::from)
         .and_then(|text| files::write_new(&folder.join("conversation.yml"), text.as_bytes()))
         .and_then(|()| files::write_new(&folder.join("transcript.jsonl"), &transcript));
     if let Err(error) = result {
@@ -1002,15 +1027,15 @@ fn write_conversation(
     })
 }
 
-fn flush_settings(conversation: &mut StoredConversation, path: &Path) -> Result<(), String> {
+fn flush_settings(conversation: &mut StoredConversation, path: &Path) -> Result<()> {
+    let Some(settings) = &conversation.pending_settings else {
+        return Ok(());
+    };
     let result = (|| {
         safe_conversation_path(path)?;
         ensure_regular_file(path)?;
-        let settings = conversation
-            .pending_settings
-            .as_ref()
-            .expect("pending settings");
-        let text = serde_yaml_ng::to_string(settings).map_err(|e| file_error(path, e))?;
+        let text =
+            serde_yaml_ng::to_string(settings).with_context(|| path.display().to_string())?;
         files::replace(path, text.as_bytes())
     })();
     match result {
@@ -1019,13 +1044,13 @@ fn flush_settings(conversation: &mut StoredConversation, path: &Path) -> Result<
             Ok(())
         }
         Err(error) => {
-            conversation.storage_error = Some(error.clone());
+            conversation.storage_error = Some(format!("{error:#}"));
             Err(error)
         }
     }
 }
 
-fn flush_events(conversation: &mut StoredConversation, path: &Path) -> Result<(), String> {
+fn flush_events(conversation: &mut StoredConversation, path: &Path) -> Result<()> {
     let result = (|| {
         safe_conversation_path(path)?;
         ensure_regular_file(path)?;
@@ -1033,34 +1058,42 @@ fn flush_events(conversation: &mut StoredConversation, path: &Path) -> Result<()
             .read(true)
             .write(true)
             .open(path)
-            .map_err(|e| file_error(path, e))?;
-        let len = file.metadata().map_err(|e| file_error(path, e))?.len();
+            .with_context(|| path.display().to_string())?;
+        let len = file
+            .metadata()
+            .with_context(|| path.display().to_string())?
+            .len();
         if len < conversation.persisted_len {
-            return Err(format!(
+            bail!(
                 "{}: saved transcript was truncated; reload before writing.",
                 path.display()
-            ));
+            );
         }
         if conversation.needs_rollback {
             file.set_len(conversation.persisted_len)
-                .map_err(|e| file_error(path, e))?;
-            file.sync_all().map_err(|e| file_error(path, e))?;
+                .with_context(|| path.display().to_string())?;
+            file.sync_all()
+                .with_context(|| path.display().to_string())?;
             conversation.needs_rollback = false;
         } else if len != conversation.persisted_len {
-            return Err(format!(
+            bail!(
                 "{}: transcript changed on disk; reload before writing.",
                 path.display()
-            ));
+            );
         }
         file.seek(SeekFrom::Start(conversation.persisted_len))
-            .map_err(|e| file_error(path, e))?;
+            .with_context(|| path.display().to_string())?;
         let write_result = (|| {
             for event in &conversation.unsaved_events {
-                serde_json::to_writer(&mut file, event).map_err(|e| file_error(path, e))?;
-                file.write_all(b"\n").map_err(|e| file_error(path, e))?;
+                serde_json::to_writer(&mut file, event)
+                    .with_context(|| path.display().to_string())?;
+                file.write_all(b"\n")
+                    .with_context(|| path.display().to_string())?;
             }
-            file.sync_all().map_err(|e| file_error(path, e))?;
-            file.stream_position().map_err(|e| file_error(path, e))
+            file.sync_all()
+                .with_context(|| path.display().to_string())?;
+            file.stream_position()
+                .with_context(|| path.display().to_string())
         })();
         match write_result {
             Ok(len) => conversation.persisted_len = len,
@@ -1074,33 +1107,34 @@ fn flush_events(conversation: &mut StoredConversation, path: &Path) -> Result<()
         Ok(())
     })();
     if let Err(error) = &result {
-        conversation.storage_error = Some(error.clone());
+        conversation.storage_error = Some(format!("{error:#}"));
     }
     result
 }
 
-fn load_conversation(folder: &Path) -> Result<Option<StoredConversation>, String> {
-    let metadata = fs::symlink_metadata(folder).map_err(|e| file_error(folder, e))?;
+fn load_conversation(folder: &Path) -> Result<Option<StoredConversation>> {
+    let metadata = fs::symlink_metadata(folder).with_context(|| folder.display().to_string())?;
     if is_link(&metadata) {
-        return Err(format!(
+        bail!(
             "{}: linked conversation folders are not loaded.",
             folder.display()
-        ));
+        );
     }
     if !metadata.file_type().is_dir() {
         return Ok(None);
     }
     let id = folder
         .file_name()
-        .ok_or_else(|| format!("{}: missing folder name.", folder.display()))?
+        .with_context(|| format!("{}: missing folder name.", folder.display()))?
         .to_string_lossy()
         .into_owned();
     checked_id(&id)?;
     let settings_path = folder.join("conversation.yml");
     ensure_regular_file(&settings_path)?;
-    let text = fs::read_to_string(&settings_path).map_err(|e| file_error(&settings_path, e))?;
+    let text =
+        fs::read_to_string(&settings_path).with_context(|| settings_path.display().to_string())?;
     let yaml: serde_yaml_ng::Value =
-        serde_yaml_ng::from_str(&text).map_err(|e| file_error(&settings_path, e))?;
+        serde_yaml_ng::from_str(&text).with_context(|| settings_path.display().to_string())?;
     // An earlier format stays on disk untouched and is not shown.
     if yaml
         .get("version")
@@ -1110,27 +1144,24 @@ fn load_conversation(folder: &Path) -> Result<Option<StoredConversation>, String
         return Ok(None);
     }
     let mut settings: ConversationSettings =
-        serde_yaml_ng::from_value(yaml).map_err(|e| file_error(&settings_path, e))?;
-    // Earlier versions saved running chats as "working" and new ones as "active".
-    if settings.status == "active" {
-        settings.status = "idle".into();
-    }
-    let interrupted = matches!(settings.status.as_str(), "processing" | "working");
+        serde_yaml_ng::from_value(yaml).with_context(|| settings_path.display().to_string())?;
+    let interrupted = settings.status == ThreadStatus::Processing;
     if interrupted {
-        settings.status = "blocked".into();
+        settings.status = ThreadStatus::Blocked;
     }
     if !settings.execution.directory.is_absolute() {
-        return Err(format!(
+        bail!(
             "{}: saved working directory is not absolute.",
             settings_path.display()
-        ));
+        );
     }
     let transcript_path = folder.join("transcript.jsonl");
     ensure_regular_file(&transcript_path)?;
-    let file = File::open(&transcript_path).map_err(|e| file_error(&transcript_path, e))?;
+    let file =
+        File::open(&transcript_path).with_context(|| transcript_path.display().to_string())?;
     let persisted_len = file
         .metadata()
-        .map_err(|e| file_error(&transcript_path, e))?
+        .with_context(|| transcript_path.display().to_string())?
         .len();
     let mut events = Vec::new();
     let mut load_error = None;
@@ -1167,31 +1198,31 @@ fn conversation_dir(root: &Path, project_id: &str, id: &str) -> PathBuf {
     root.join(project_id).join("conversations").join(id)
 }
 
-fn outside_project_storage(directory: &Path, root: &Path) -> Result<(), String> {
-    let root_path = fs::canonicalize(root).map_err(|e| file_error(root, e))?;
+fn outside_project_storage(directory: &Path, root: &Path) -> Result<()> {
+    let root_path = fs::canonicalize(root).with_context(|| root.display().to_string())?;
     if directory.starts_with(root)
         || (directory.exists()
             && fs::canonicalize(directory)
-                .map_err(|e| file_error(directory, e))?
+                .with_context(|| directory.display().to_string())?
                 .starts_with(root_path))
     {
-        return Err(format!(
+        bail!(
             "{}: working directory cannot be inside Adeline's projects storage folder.",
             directory.display()
-        ));
+        );
     }
     Ok(())
 }
 
-fn valid_working_directory(directory: &Path) -> Result<(), String> {
+fn valid_working_directory(directory: &Path) -> Result<()> {
     if !directory.is_absolute() {
-        return Err("Choose an absolute working directory.".into());
+        bail!("Choose an absolute working directory.");
     }
     if !directory.is_dir() {
-        return Err(format!(
+        bail!(
             "{}: working directory does not exist or is not a directory.",
             directory.display()
-        ));
+        );
     }
     Ok(())
 }
@@ -1207,59 +1238,59 @@ fn is_link(metadata: &fs::Metadata) -> bool {
     metadata.file_type().is_symlink()
 }
 
-fn safe_directory(path: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(path).map_err(|e| file_error(path, e))?;
+fn safe_directory(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path).with_context(|| path.display().to_string())?;
     if metadata.file_type().is_dir() && !is_link(&metadata) {
         Ok(())
     } else {
-        Err(format!(
+        Err(anyhow!(
             "{}: expected a real directory, not a link.",
             path.display()
         ))
     }
 }
-fn safe_conversation_path(file: &Path) -> Result<(), String> {
+fn safe_conversation_path(file: &Path) -> Result<()> {
     for ancestor in file.ancestors().skip(1).take(4) {
         safe_directory(ancestor)?;
     }
     Ok(())
 }
 
-fn ensure_regular_file(path: &Path) -> Result<(), String> {
-    let metadata = fs::symlink_metadata(path).map_err(|e| file_error(path, e))?;
+fn ensure_regular_file(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path).with_context(|| path.display().to_string())?;
     if metadata.file_type().is_file() && !is_link(&metadata) {
         Ok(())
     } else {
-        Err(format!(
+        Err(anyhow!(
             "{}: expected a regular file, not a link.",
             path.display()
         ))
     }
 }
 
-fn check_contents(folder: &Path, allowed: &[&str]) -> Result<(), String> {
-    for entry in fs::read_dir(folder).map_err(|e| file_error(folder, e))? {
-        let entry = entry.map_err(|e| file_error(folder, e))?;
+fn check_contents(folder: &Path, allowed: &[&str]) -> Result<()> {
+    for entry in fs::read_dir(folder).with_context(|| folder.display().to_string())? {
+        let entry = entry.with_context(|| folder.display().to_string())?;
         let path = entry.path();
         let name = entry.file_name();
-        let metadata = fs::symlink_metadata(&path).map_err(|e| file_error(&path, e))?;
+        let metadata = fs::symlink_metadata(&path).with_context(|| path.display().to_string())?;
         if !allowed
             .iter()
             .any(|allowed| name == std::ffi::OsStr::new(*allowed))
             || is_link(&metadata)
         {
-            return Err(format!(
+            bail!(
                 "{}: unexpected file or link prevents safe deletion.",
                 path.display()
-            ));
+            );
         }
     }
     for name in allowed {
         if !folder.join(name).exists() {
-            return Err(format!(
+            bail!(
                 "{}: missing saved project data.",
                 folder.join(name).display()
-            ));
+            );
         }
     }
     Ok(())

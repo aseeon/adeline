@@ -27,7 +27,7 @@ impl SettingsWindow {
                     self.font_size_errors[which] = None;
                     theme::apply(cx);
                 }
-                Err(message) => self.font_size_errors[which] = Some(message),
+                Err(message) => self.font_size_errors[which] = Some(format!("{message:#}")),
             }
         }
         cx.notify();
@@ -44,7 +44,7 @@ impl SettingsWindow {
                 self.theme_status = None;
                 theme::apply(cx);
             }
-            Err(message) => self.theme_status = Some(message),
+            Err(message) => self.theme_status = Some(format!("{message:#}")),
         }
         cx.notify();
     }
@@ -60,7 +60,7 @@ impl SettingsWindow {
                     .then(|| errors.join("\n"))
                     .or_else(theme::load_error);
             }
-            Err(message) => self.theme_status = Some(message),
+            Err(message) => self.theme_status = Some(format!("{message:#}")),
         }
         cx.notify();
     }

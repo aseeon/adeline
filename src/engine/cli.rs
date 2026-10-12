@@ -39,8 +39,8 @@ fn cli<F: Future<Output = i32>>(run: impl FnOnce() -> F) -> i32 {
     }
 }
 
-async fn request(command: Command) -> Result<(Value, ipc::Reader), String> {
-    let (mut reader, mut writer) = ipc::connect().await.map_err(|e| e.to_string())?;
+async fn request(command: Command) -> anyhow::Result<(Value, ipc::Reader)> {
+    let (mut reader, mut writer) = ipc::connect().await?;
     let hello = ClientMessage::Hello {
         protocol: PROTOCOL,
         cli: true,
@@ -48,18 +48,18 @@ async fn request(command: Command) -> Result<(Value, ipc::Reader), String> {
     };
     let request = ClientMessage::Request { id: 1, command };
     for message in [hello, request] {
-        ipc::send(&mut writer, &message)
-            .await
-            .map_err(|e| e.to_string())?;
+        ipc::send(&mut writer, &message).await?;
     }
     while let Ok(Some(line)) = reader.next_line().await {
         if let Ok(EngineMessage::Reply { id: 1, result }) = serde_json::from_str(&line) {
             // Keep the writer open until the reader is done with it.
             drop(writer);
-            return result.map(|value| (value, reader));
+            return result
+                .map(|value| (value, reader))
+                .map_err(anyhow::Error::msg);
         }
     }
-    Err("The conversation engine closed the connection.".into())
+    anyhow::bail!("The conversation engine closed the connection.")
 }
 
 async fn cli_status() -> i32 {
@@ -109,12 +109,12 @@ async fn cli_start(daemon: bool) -> i32 {
                 0
             }
             Err(error) => {
-                println!("{error}");
+                println!("{error:#}");
                 1
             }
         },
         Err(error) => {
-            println!("{error} See {}.", ipc::log_path());
+            println!("{error:#} See {}.", ipc::log_path());
             1
         }
     }
