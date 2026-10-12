@@ -1,5 +1,6 @@
 //! The UI's model of projects, chats, messages and tool activity, plus the
-//! bundled demo workspace (`assets/workspace.json`).
+//! bundled demo workspace (`assets/workspace.json`). `u64` times are
+//! milliseconds since the epoch and `i64` times seconds. A 0 time is unknown.
 use crate::conversation::{Attachment, ToolKind, ToolStatus};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -7,16 +8,15 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Workspace {
-    /// The machine whose engine owns the project. Set by the client; an
-    /// engine leaves it empty.
+    // Set by the client. An engine leaves it empty.
     pub machine: String,
     pub config: Config,
     pub threads: Vec<Thread>,
     pub decisions: Vec<Decision>,
 }
 impl Workspace {
-    /// Unique across machines; project IDs are unique only within one.
     pub fn key(&self) -> String {
+        // Project IDs are unique only within one machine.
         format!("{}:{}", self.machine, self.config.id)
     }
 }
@@ -27,7 +27,6 @@ pub struct Config {
     pub name: String,
     pub provider: String,
     pub directory: PathBuf,
-    /// When the project was last opened, in seconds since the Unix epoch.
     pub opened_at: Option<i64>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -36,7 +35,7 @@ pub struct Thread {
     #[serde(skip)]
     pub unread_messages: Vec<usize>,
     #[serde(skip)]
-    pub search_text: crate::prepared::SearchText,
+    pub search_text: std::sync::Arc<str>,
     pub id: String,
     pub title: String,
     pub provider: String,
@@ -44,38 +43,29 @@ pub struct Thread {
     pub messages: Vec<Message>,
     pub activity: Vec<Activity>,
     pub created_at: String,
-    /// Tokens in the agent's context and the size of its window, once the agent reports them.
+    // Tokens used and the window size.
     pub context: Option<(u64, u64)>,
     pub timing: Timing,
-    /// The conversation this one was forked from.
     pub fork: Option<Fork>,
 }
-/// Where a fork came from, for its marker.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Fork {
-    /// The immediate source conversation.
     pub id: String,
-    /// The source's title when forked, shown if the source is gone.
     pub title: String,
-    /// The agent got the history as text rather than a native session fork.
     pub text_copy: bool,
 }
-/// When a chat's turns ran and how fast its replies streamed. Times are
-/// milliseconds since the epoch.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Timing {
-    /// Each turn: when its prompt was sent and when the agent last answered.
+    // Prompt sent, last answer.
     pub turns: Vec<(u64, u64)>,
-    /// Reply text that arrived in a steady stream, and the time it took.
     pub streamed_chars: u64,
     pub streamed_ms: u64,
-    /// When reply text last arrived, until a tool call breaks the stream.
     pub last_text: Option<u64>,
 }
-/// Longer than this between two pieces of reply text, the agent was doing
-/// something other than writing.
+// A longer gap between pieces of reply text means the agent was doing
+// something other than writing.
 const STREAM_GAP_MS: u64 = 2_000;
 impl Timing {
     pub fn prompt(&mut self, at: u64) {
@@ -102,11 +92,9 @@ impl Timing {
             turn.1 = turn.1.max(at);
         }
     }
-    /// Time from each prompt to the agent's last answer to it.
     pub fn active_ms(&self) -> u64 {
         self.turns.iter().map(|(start, end)| end - start).sum()
     }
-    /// Reply tokens per second, counting about four characters a token.
     pub fn tokens_per_second(&self) -> Option<f64> {
         (self.streamed_ms >= 500)
             .then(|| self.streamed_chars as f64 / 4. / (self.streamed_ms as f64 / 1000.))
@@ -115,26 +103,21 @@ impl Timing {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Message {
-    /// The agent's message ID, when it gives one. Chunks with another ID
-    /// start a new message.
+    // Chunks with another ID start a new message.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub id: String,
     pub role: String,
     pub text: String,
-    /// What the agent thought before replying (scope R24).
     #[serde(skip_serializing_if = "String::is_empty")]
     pub thought: String,
-    /// When the thought began and last grew, in milliseconds since the epoch.
     #[serde(skip_serializing_if = "is_zero")]
     pub thought_started: u64,
     #[serde(skip_serializing_if = "is_zero")]
     pub thought_ended: u64,
     pub created_at: String,
     pub read: bool,
-    /// Bundled demo pictures shown in the message.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub images: Vec<String>,
-    /// Files sent with a prompt.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub attachments: Vec<Attachment>,
 }
@@ -147,7 +130,6 @@ fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
-/// One report of a tool call, as the agent layer sends it.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ToolReport {
@@ -165,42 +147,30 @@ pub struct Activity {
     pub title: String,
     pub detail: String,
     pub running: bool,
-    /// For a tool call, what kind of tool it is.
     pub tool: ToolKind,
-    /// Files a tool call reads or changes.
     pub paths: Vec<String>,
-    /// The user message whose turn made this tool call.
     pub turn: Option<usize>,
     pub status: ToolStatus,
-    /// When the tool call started and finished, in milliseconds since the
-    /// epoch; 0 when unknown or still running.
     pub started: u64,
     pub finished: u64,
-    /// How much of its turn's reply the agent had written when the call
-    /// started, in bytes. Places the call between parts of the reply.
+    // Reply bytes written when the call started, which places it in the reply.
     pub after_text: usize,
 }
 impl Activity {
-    /// The title without the status the runtime appends to it.
     pub fn name(&self) -> &str {
         self.title
             .strip_suffix(&format!(" ({})", self.status.label()))
             .unwrap_or(&self.title)
     }
-    /// How long a finished tool call took, in milliseconds.
     pub fn duration_ms(&self) -> Option<u64> {
         (self.started > 0 && self.finished >= self.started).then(|| self.finished - self.started)
     }
 }
 
-/// What one agent turn did with its tools.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TurnSummary {
-    /// Distinct files read.
     pub read: usize,
-    /// Distinct files edited, deleted or moved.
     pub edited: usize,
-    /// Tool calls made.
     pub tools: usize,
 }
 
@@ -224,7 +194,6 @@ struct Working {
     thread_id: String,
     activity: Vec<Activity>,
 }
-/// A demo chat's live state: queue, TODO list, options and the rest.
 #[derive(Deserialize)]
 struct DemoLive {
     #[serde(rename = "threadId")]
@@ -250,7 +219,6 @@ fn fixture() -> Fixture {
     serde_json::from_str(include_str!("../assets/workspace.json")).expect("valid bundled demo")
 }
 
-/// The demo chats' live state, by chat ID, as the engine would report it.
 pub fn demo_live() -> std::collections::HashMap<String, crate::protocol::Live> {
     let now = crate::recency::now_ms();
     fixture()
@@ -268,7 +236,6 @@ pub fn demo_live() -> std::collections::HashMap<String, crate::protocol::Live> {
         .collect()
 }
 
-/// A demo chat's ACP traffic, for the traffic tab.
 pub fn demo_traffic(id: &str) -> Vec<crate::conversation::TrafficEntry> {
     let now = crate::recency::now_ms();
     fixture()
@@ -315,10 +282,8 @@ pub fn load() -> Vec<Workspace> {
     projects
 }
 
-/// Move every demo timestamp by the same amount so the newest one is `now`.
-/// The bundled chats keep their relative ages, and so their sections, whenever
-/// the demo runs.
 fn shift_to(projects: &mut [Workspace], now: i64) {
+    // A uniform shift keeps the bundled chats' relative ages, and so their sections.
     let newest = projects
         .iter()
         .flat_map(|project| &project.threads)
@@ -356,14 +321,12 @@ impl Thread {
         }
         self.messages.push(message);
     }
-    /// The user message that opened the turn an assistant message belongs to.
     pub fn turn_of(&self, message: usize) -> Option<usize> {
         self.messages
             .get(..message)?
             .iter()
             .rposition(|m| m.role == "user")
     }
-    /// Whether an assistant message is the last reply of its turn.
     pub fn ends_turn(&self, message: usize) -> bool {
         self.messages
             .get(message)
@@ -373,8 +336,6 @@ impl Thread {
                 .get(message + 1)
                 .is_none_or(|next| next.role == "user")
     }
-    /// Adds streamed reply or thought text to the turn's reply. `assistant`
-    /// is the reply being written; a new message ID starts another one.
     pub fn stream(
         &mut self,
         assistant: &mut Option<usize>,
@@ -417,7 +378,6 @@ impl Thread {
         }
     }
 
-    /// Adds a tool call, or updates it from a later report, at `at` milliseconds.
     pub fn apply_tool(&mut self, report: &ToolReport, at: u64) {
         let turn = self.messages.iter().rposition(|m| m.role == "user");
         let key = format!("tool:{}", report.id);
@@ -457,13 +417,11 @@ impl Thread {
         activity.turn = activity.turn.or(turn);
         self.timing.tool(at);
     }
-    /// The tool calls made in the turn opened by a user message.
     pub fn turn_tools(&self, turn: usize) -> impl Iterator<Item = &Activity> {
         self.activity
             .iter()
             .filter(move |a| a.kind.starts_with("tool:") && a.turn == Some(turn))
     }
-    /// What the turn opened by a user message did.
     pub fn turn_summary(&self, turn: usize) -> TurnSummary {
         let mut read = std::collections::HashSet::new();
         let mut edited = std::collections::HashSet::new();
@@ -486,8 +444,6 @@ impl Thread {
     pub fn unread(&self) -> bool {
         !self.unread_messages.is_empty()
     }
-    /// When the chat last changed: its newest dated message, else its creation.
-    /// Seconds since the epoch; 0 when neither carries a readable time.
     pub fn last_activity(&self) -> i64 {
         self.messages
             .iter()
@@ -501,7 +457,6 @@ impl Thread {
             self.messages[index].read = true;
         }
     }
-    /// What the chat list searches and sorts by.
     pub fn search_record(&self) -> crate::prepared::SearchRecord {
         crate::prepared::SearchRecord {
             id: std::sync::Arc::from(self.id.as_str()),
@@ -543,7 +498,6 @@ impl Workspace {
             .filter(|thread| thread.status == "blocked" || thread.unread())
             .count()
     }
-    /// Whether something here needs the user or is still working.
     pub fn busy(&self) -> bool {
         self.attention_count() > 0 || self.threads.iter().any(|t| t.status == "processing")
     }
@@ -564,13 +518,9 @@ mod tests {
     use super::*;
     use crate::prepared::{Criteria, search};
 
-    /// Whether the chat list shows a chat for a search and tab (0 all, 1 needs
-    /// input, 2 processing), with completed and archived chats each shown only
-    /// when asked for.
-    fn shows(thread: &Thread, query: &str, filter: usize, completed: bool, archived: bool) -> bool {
+    fn shows(thread: &Thread, query: &str, completed: bool, archived: bool) -> bool {
         let criteria = Criteria {
             query: query.to_lowercase(),
-            filter,
             completed,
             archived,
             agent: None,
@@ -584,11 +534,11 @@ mod tests {
             status: "completed".into(),
             ..Default::default()
         };
-        assert!(!shows(&thread, "", 0, false, true));
-        assert!(shows(&thread, "", 0, true, false));
+        assert!(!shows(&thread, "", false, true));
+        assert!(shows(&thread, "", true, false));
         thread.status = "archived".into();
-        assert!(!shows(&thread, "", 0, true, false));
-        assert!(shows(&thread, "", 0, false, true));
+        assert!(!shows(&thread, "", true, false));
+        assert!(shows(&thread, "", false, true));
     }
 
     #[test]
@@ -726,7 +676,7 @@ mod tests {
             )
             .to_lowercase();
             assert_eq!(
-                shows(&thread, query, 0, true, true),
+                shows(&thread, query, true, true),
                 original.contains(&query.to_lowercase())
             );
         }
@@ -735,8 +685,8 @@ mod tests {
             ..Default::default()
         });
         thread.prepare_search();
-        assert!(shows(&thread, "newly APPENDED", 0, true, true));
-        assert!(!shows(&thread, "anything", 1, true, true));
+        assert!(shows(&thread, "newly APPENDED", true, true));
+        assert!(!shows(&thread, "anything", true, true));
     }
     #[test]
     fn fixture_keeps_chat_activity_and_decisions_with_their_projects() {
@@ -833,21 +783,20 @@ mod tests {
     }
 
     #[test]
-    fn search_and_status_filters_compose() {
+    fn search_and_completed_filter_compose() {
         let p = load();
         let t = p[0]
             .threads
             .iter()
             .find(|t| t.id == "adeline-session")
             .unwrap();
-        assert!(shows(t, "SESSION", 1, false, false));
-        assert!(!shows(t, "session", 2, true, true));
-        assert!(!shows(t, "no matching text", 0, true, true));
+        assert!(shows(t, "SESSION", false, false));
+        assert!(!shows(t, "no matching text", true, true));
         let done = p[0]
             .threads
             .iter()
             .find(|t| t.status == "completed")
             .unwrap();
-        assert!(!shows(done, "", 0, false, false));
+        assert!(!shows(done, "", false, false));
     }
 }

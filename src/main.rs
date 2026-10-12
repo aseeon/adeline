@@ -119,8 +119,6 @@ fn text(s: impl Into<SharedString>, size: f32, color: u32) -> Div {
         .child(s.into())
 }
 #[cfg(feature = "gui")]
-/// Search fields drop Kit's focus glow; a focused one shows a 1px primary
-/// border instead.
 fn search_field(input: Input, state: &Entity<InputState>, window: &Window, cx: &App) -> Input {
     use gpui_kit::base::FocusableExt as _;
     let focused = state.focus_handle(cx).contains_focused(window, cx);
@@ -164,10 +162,8 @@ enum Section {
 enum Action {
     Project(usize),
     CloseProject(usize),
-    /// Delete a closed project after a short undo window.
     RemoveClosedProject(String),
     UndoProjectRemoval(String),
-    /// Open the rename dialog for a project, open or closed.
     RenameProject(usize),
     SaveRename,
     ToggleProjectSort,
@@ -183,7 +179,6 @@ enum Action {
     Section(Section),
     Chat(usize),
     NewChat,
-    /// Show one agent's chats, or every agent's with `None`.
     AgentFilter(Option<std::sync::Arc<str>>),
     ClearChatFilters,
     ShowCompleted,
@@ -195,31 +190,22 @@ enum Action {
     AppMenu,
     Machines,
     Agents,
-    /// Check or uncheck a machine in the machine selector.
     Machine(String),
-    /// Connect a machine again after a failure.
     MachineRetry(String),
-    /// Settings, open on the machines page.
     ManageMachines,
-    /// Ask whether to restart a machine's older engine with this version.
     MachineUpgrade(String),
-    /// The user agreed to that restart.
     ConfirmUpgrade,
-    /// Answer the waiting SSH prompt: accept or submit, or cancel.
+    // True accepts or submits, false cancels.
     AnswerPrompt(bool),
-    /// Open folder: the machine whose folders to browse.
     FolderMachine(String),
-    /// The project dialog's machine.
     ProjectMachine(String),
-    /// The folder browser: show this folder.
     BrowseTo(std::path::PathBuf),
-    /// The folder browser: choose the shown folder, or a file in it.
+    // None picks the shown folder.
     BrowsePick(Option<String>),
     About,
     QuitApp,
     Settings,
     AppSettings,
-    /// Settings, open on the current chat's agent.
     AgentSettings,
     ModeSettings,
     ConfigureModeSettings,
@@ -229,69 +215,51 @@ enum Action {
     Agent(String),
     Speed(usize),
     ToggleMode(Section),
-    /// Sends the composer's message; during a turn it is queued.
+    // Queued during a turn.
     Send,
-    /// Delivers the composer's message now, or the queue when the composer is empty.
+    // Sends the queue when the composer is empty.
     SendNow,
-    /// Opens a composer menu: Model, Effort, Mode, or More options for `Other`.
     OptionMenu(conversation::Category),
-    /// Sets an option of the open chat, or of the next new chat's defaults.
     SetOption {
         category: conversation::Category,
         option: String,
         value: String,
     },
-    /// Moves a queued message back into the composer.
     EditQueued(u64),
-    /// Edits the last queued message: Up in an empty composer.
     EditLastQueued,
     RemoveQueued(u64),
     SendQueuedNow(u64),
-    /// Picks files to attach.
     AttachFile,
     RemoveAttachment(usize),
-    /// Hides an error under the open chat.
     DismissError(String),
-    /// Shows a sent image in a dialog: message, attachment.
+    // Message, attachment.
     PreviewImage(usize, usize),
     ToggleThought(String),
     ShowThinking,
-    /// Opens or closes the TODO list in the chat header.
     TodoList,
-    /// Opens the right panel on the ACP traffic tab.
     TrafficView,
-    /// Shows the right panel's tab: 0 activity, 1 traffic.
+    // 0 activity, 1 traffic.
     PanelTab(usize),
     CopyTraffic,
-    /// Logs the open chat's agent in with one of its methods.
     Login(String),
-    /// Stops the agent and starts it again, continuing the turn.
     Restart,
     Stop,
     ForceStop,
-    /// Stop every agent, from the app menu.
     StopAll,
-    /// Quit dialog: stop every agent, then quit.
     QuitStopAll,
-    /// Quit dialog: quit and let running turns finish.
     FinishInBackground,
     StartEngine,
     EngineRetry,
     EngineWait,
-    /// Stop an older engine's agents so this version's engine can start.
     EngineStopOld,
     RetryPrompt,
     RetryStorage,
     ReplaceSession,
     PermissionResponse(String),
     ToggleTool(String),
-    /// Quote a message of the open chat into the composer.
     ReplyTo(usize),
-    /// Copy a message of the open chat to the clipboard.
     CopyMessage(usize),
-    /// Fork the open chat at one of its finished replies.
     Fork(usize),
-    /// Archive a chat of the current project, by its index.
     ArchiveChat(usize),
     Decision(usize),
     InsertFiles,
@@ -344,18 +312,12 @@ struct Adeline {
     open_projects: Vec<bool>,
     empty_workspace: Workspace,
     demo_mode: bool,
-    /// Each machine's agents, by machine ID.
     catalogs: std::collections::HashMap<String, agents::AgentCatalog>,
     empty_catalog: agents::AgentCatalog,
-    /// Machines whose engine state has arrived at least once.
     loaded_machines: std::collections::HashSet<String>,
-    /// The machine the project dialog creates a project on.
     project_machine: String,
-    /// The folder browser for a remote machine, while it's open.
     browser: Option<project_ui::Browser>,
-    /// The dialog the folder browser returns to.
     browser_return: Option<&'static str>,
-    /// The remote machine the upgrade question is about.
     upgrade_machine: Option<String>,
     prompt_input: Entity<InputState>,
     selected_agent: Option<String>,
@@ -363,29 +325,24 @@ struct Adeline {
     project_directory_input: Entity<InputState>,
     project_error: Option<String>,
     delete_project: Option<usize>,
-    /// The project the rename dialog is for.
     rename_project: Option<usize>,
     project_search: Entity<InputState>,
     project_sort: project_bar::ProjectSort,
-    /// The projects-menu row the arrow keys have reached, by project id.
     project_highlight: Option<String>,
     project_list_scroll: ScrollHandle,
     pending_removal: Option<project_bar::PendingRemoval>,
     removal_generation: u64,
-    /// A folded tab under the pointer, which shows its name.
     tab_fit: std::rc::Rc<project_bar::TabFit>,
     project: usize,
     section: Section,
     selected: Option<usize>,
-    filter: usize,
     agent_filter: Option<std::sync::Arc<str>>,
-    /// The chat search field is shown under the list's header.
     chat_search_open: bool,
-    /// Height of the composer, which floats over the end of the transcript.
+    // The composer floats over the end of the transcript.
     composer_height: std::rc::Rc<std::cell::Cell<Pixels>>,
     show_completed: bool,
     show_archived: bool,
-    side_panel_open: [bool; 7],
+    side_panel_open: bool,
     right_panel_width: f32,
     panel_state: Entity<component::ResizableState>,
     activity: activity::ActivityPanel,
@@ -396,30 +353,22 @@ struct Adeline {
     menu: Option<&'static str>,
     command_popup: Option<Entity<component::command::CommandState>>,
     speed: usize,
-    /// Files waiting in the composer for the next message (scope R23).
     attachments: Vec<conversation::Attachment>,
-    /// Why the last file couldn't be attached, shown under the chips.
     attachment_error: Option<String>,
-    /// Errors hidden by hand: chat, its latest turn, message.
+    // Chat, its latest turn, message.
     // ponytail: in memory only, so a restart shows a dismissed error of the latest turn again.
     dismissed_errors: std::collections::HashSet<(String, Option<usize>, String)>,
-    /// The slash list's highlighted row, while it is open.
     slash: Option<usize>,
-    /// The slash list was closed with Escape for the text typed so far.
+    // Closed with Escape for the text typed so far.
     slash_dismissed: bool,
-    /// The right panel shows the ACP traffic tab.
     traffic_tab: bool,
-    /// The traffic shown for the open chat, newest last.
+    // Newest last.
     traffic: Vec<conversation::TrafficEntry>,
     traffic_scroll: ScrollHandle,
-    /// Thoughts and agent output opened from their disclosures.
     open_thoughts: std::collections::HashSet<String>,
-    /// Chats whose agent finished a login started from the login card.
     logged_in: std::collections::HashSet<String>,
-    /// Decoded attachment pictures, by attachment.
     pictures: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<Image>>>,
-    /// Focus for the TODO list popover.
-    left_panel_open: [bool; 7],
+    left_panel_open: bool,
     sidebar_width: f32,
     selected_tint: usize,
     focus: FocusHandle,
@@ -572,13 +521,12 @@ impl Adeline {
             project: 0,
             section: Section::Chats,
             selected: None,
-            filter: 0,
             agent_filter: None,
             chat_search_open: false,
             composer_height,
             show_completed: true,
             show_archived: false,
-            side_panel_open: [false, false, false, false, true, true, true],
+            side_panel_open: false,
             activity: activity::ActivityPanel::default(),
             query,
             composer,
@@ -598,7 +546,7 @@ impl Adeline {
             open_thoughts: std::collections::HashSet::new(),
             logged_in: std::collections::HashSet::new(),
             pictures: std::cell::RefCell::default(),
-            left_panel_open: [true, false, false, true, true, true, true],
+            left_panel_open: true,
             sidebar_width: 360.,
             selected_tint: 3,
             focus: cx.focus_handle(),
@@ -648,7 +596,6 @@ impl Adeline {
         .detach();
         app
     }
-    /// The machine of the open project, or the first checked machine.
     fn current_machine(&self) -> String {
         if self.has_open_project() {
             self.workspace().machine.clone()
@@ -659,7 +606,6 @@ impl Adeline {
                 .unwrap_or_else(|| machines::LOCAL.into())
         }
     }
-    /// A machine's agents.
     fn catalog(&self, machine: &str) -> &agents::AgentCatalog {
         self.catalogs.get(machine).unwrap_or(&self.empty_catalog)
     }
@@ -668,7 +614,6 @@ impl Adeline {
             .entry(machine.to_owned())
             .or_insert_with(agents::AgentCatalog::remote)
     }
-    /// The agents of the current machine, which new chats can use.
     fn agent_catalog(&self) -> &agents::AgentCatalog {
         self.catalog(&self.current_machine())
     }
@@ -748,15 +693,12 @@ impl Adeline {
             .ghost()
             .on_click(cx.listener(move |app, _, window, cx| app.act(action.clone(), window, cx)))
     }
-    /// Focuses the chat search: in the list, or unfurled from the collapsed list.
     fn focus_chat_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.chat_search_open = true;
         window.focus(&self.query.focus_handle(cx), cx);
         self.chat_list.update(cx, |_, cx| cx.notify());
         cx.notify();
     }
-    /// The list header's search button: opens and focuses the search, or clears
-    /// and closes an open one.
     fn toggle_chat_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.chat_search_open || !self.query.read(cx).value().is_empty() {
             self.chat_search_open = false;
@@ -938,7 +880,6 @@ fn main() {
     }
 }
 
-/// The build kind the Engine settings page and `adeline engine status` show.
 fn build(headless: bool) -> &'static str {
     if headless { "headless" } else { "full" }
 }
@@ -953,7 +894,6 @@ fn open(demo_mode: bool) {
         theme::init();
         theme::apply(cx);
         harness::init(demo_mode, cx);
-        // Demo mode never starts or connects to the engine.
         let mut initial = (!demo_mode && machines::is_checked(machines::LOCAL))
             .then(client::connect_existing)
             .flatten();

@@ -1,5 +1,12 @@
 //! Independently invalidated chat regions. The shell remains the shared
 //! data/action coordinator; list state and input invalidation live in these views.
+//!
+//! Sizes are in rems. Chat rows and section labels (which include the gap above
+//! them) have fixed heights, so the list places its stacked labels by arithmetic.
+//! A label sticks once its natural place reaches its slot, like CSS sticky with a
+//! top of slot times the label height; the current section is the last to stick.
+//! `COLLAPSED_SEARCH` is NUL-prefixed because chat ids never are. `Transcript`'s
+//! `follow` and `reveal` leave redrawing the panel to the caller.
 use super::*;
 use crate::Action;
 use crate::chat_render::{LabelPlacement, section_label};
@@ -11,36 +18,24 @@ use gpui_kit::component::{
 };
 use std::sync::Arc;
 
-/// Heights of the chat list's items in rems. Rows and section labels have fixed
-/// heights so the list can place its stacked section labels by arithmetic.
 pub(super) const ROW_HEIGHT: f32 = 1.75;
-/// A section label includes the gap above it that sets it off from the chats before.
 pub(super) const SECTION_HEIGHT: f32 = 2.125;
 pub(super) const LABEL_GAP: f32 = 0.375;
-/// Room after the last chat.
 const END_HEIGHT: f32 = 0.75;
-/// Below this list width, in rems, the search and the empty list shorten their text.
 const COMPACT_WIDTH: f32 = 17.;
 
-/// One entry of the virtualized chat list.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum Item {
-    /// The label of the section at this position in `Outcome::groups`.
     Section(usize),
-    /// A chat, by index into the workspace's threads.
     Chat(usize),
-    /// Closes the list with its chat count.
     End,
-    /// Space after the end so the last section can scroll up into the top stack.
     Tail,
 }
 
-/// Resolved item geometry, rebuilt every frame from the item heights.
 #[derive(Default)]
 struct Layout {
-    /// Top of every item plus the total height, in pixels.
+    // The top of every item, then the total height.
     tops: Vec<Pixels>,
-    /// Item index of every section label.
     sections: Vec<usize>,
     section: Pixels,
     viewport: Pixels,
@@ -64,16 +59,12 @@ impl Layout {
         }
     }
 
-    /// The section an item belongs to.
     fn section_of(&self, item: usize) -> usize {
         self.sections
             .partition_point(|&start| start <= item)
             .saturating_sub(1)
     }
 
-    /// Which labels sit in the top stack at a scroll offset. A label sticks once
-    /// its natural place reaches its slot, like CSS sticky positioning with a top
-    /// of slot times the label height.
     fn stacks(&self, scroll: Pixels) -> Stacks {
         let mut top = 0;
         let mut current = 0;
@@ -93,14 +84,11 @@ impl Layout {
         }
     }
 
-    /// The scroll offset that puts a section's first chat right under the top stack.
     fn jump_target(&self, section: usize) -> Option<Pixels> {
         let ix = *self.sections.get(section)?;
         Some(self.tops[ix] - self.section * section as f32)
     }
 
-    /// The scroll offset that brings an item into view below the top stack, if it
-    /// is covered or out of view.
     fn reveal_target(&self, item: usize, scroll: Pixels) -> Option<Pixels> {
         let section = self.section_of(item);
         let covered_top = self.section * (section + 1) as f32;
@@ -115,20 +103,14 @@ impl Layout {
     }
 }
 
-/// Where each section label is drawn at the current scroll position.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct Stacks {
-    /// Sections stacked under the controls, from the first.
     pub top: std::ops::Range<usize>,
-    /// The section being read: the last one that reached its place in the top stack.
     pub current: usize,
 }
 
-/// What `ChatList::hover_collapsed` records while the pointer is on the
-/// collapsed list's search; chat ids never start with a NUL.
 pub(super) const COLLAPSED_SEARCH: &str = "\0search";
 
-/// One chat tile of the collapsed list, with its retained focus handle.
 #[expect(
     clippy::too_many_arguments,
     reason = "the pinned tile and the virtualized rows share this"
@@ -163,7 +145,7 @@ pub(super) struct ChatList {
     owner: WeakEntity<Adeline>,
     state: ListState,
     typography: config::Typography,
-    records: prepared::SearchCatalog,
+    records: Vec<prepared::SearchRecord>,
     generation: prepared::Generation,
     pending: Option<Task<()>>,
     searching: bool,
@@ -176,15 +158,10 @@ pub(super) struct ChatList {
     keys: Vec<Arc<str>>,
     tail: Pixels,
     layout: Layout,
-    /// Width of the list panel at the last paint; narrow panels drop details.
     width: Pixels,
-    /// The search placeholder last set, shortened with the tabs.
     placeholder: &'static str,
-    /// The collapsed list's chat under the pointer, by thread id.
     collapsed_hover: Option<Arc<str>>,
-    /// Scroll position of the collapsed list's chats.
     collapsed_scroll: UniformListScrollHandle,
-    /// Sections whose chats are hidden under their label.
     folded: Vec<Group>,
 }
 
@@ -221,7 +198,7 @@ impl ChatList {
     }
 
     pub fn sync(&mut self, app: &Adeline, criteria: Criteria, cx: &mut Context<Self>) {
-        let records: prepared::SearchCatalog = app
+        let records: Vec<prepared::SearchRecord> = app
             .workspace()
             .threads
             .iter()
@@ -246,7 +223,6 @@ impl ChatList {
         self.search(criteria, false, cx);
     }
 
-    /// A model mutation identifies one stable thread; selection alone is view state.
     fn update_thread(&mut self, app: &Adeline, cx: &mut Context<Self>) {
         if self.project != app.project || self.records.len() != app.workspace().threads.len() {
             self.sync(app, self.criteria.clone(), cx);
@@ -277,7 +253,8 @@ impl ChatList {
                 return;
             }
         }
-        self.invalidate_selection();
+        // Selection draws the row fill and hides the separator above it.
+        invalidate_range(&self.state, 0..self.state.item_count());
         cx.notify();
     }
 
@@ -342,11 +319,6 @@ impl ChatList {
         cx.notify();
     }
 
-    /// Selection draws the row fill and hides the separator above it.
-    fn invalidate_selection(&self) {
-        invalidate_range(&self.state, 0..self.state.item_count());
-    }
-
     fn measure(&mut self, window: &Window) {
         let rem = window.rem_size();
         let (row, section, end) = (rem * ROW_HEIGHT, rem * SECTION_HEIGHT, rem * END_HEIGHT);
@@ -403,7 +375,6 @@ impl ChatList {
         self.layout.scroll_offset(self.state.logical_scroll_top())
     }
 
-    /// Show or hide a section's chats under its label.
     fn toggle_fold(&mut self, group: Group, cx: &mut Context<Self>) {
         if let Some(ix) = self.folded.iter().position(|&folded| folded == group) {
             self.folded.remove(ix);
@@ -413,7 +384,6 @@ impl ChatList {
         self.publish(self.outcome.clone(), cx);
     }
 
-    /// Scroll so the first chat of a section sits right under the top stack.
     pub fn jump(&mut self, section: usize, cx: &mut Context<Self>) {
         if let Some(target) = self.layout.jump_target(section) {
             self.state.scroll_to(self.layout.offset_at(target));
@@ -421,16 +391,14 @@ impl ChatList {
         }
     }
 
-    /// Keep a chat clear of the top stack and in view after keyboard selection.
     fn reveal(&self, item: usize) {
         if let Some(target) = self.layout.reveal_target(item, self.scroll()) {
             self.state.scroll_to(self.layout.offset_at(target));
         }
     }
 
-    /// A collapsed chat unfurls when the pointer enters its tile and folds when
-    /// the pointer leaves its flyout.
     pub fn hover_collapsed(&mut self, id: &Arc<str>, hovered: bool, cx: &mut Context<Self>) {
+        // Entering a tile unfurls it; only leaving its own flyout folds it.
         let next = if hovered {
             Some(id.clone())
         } else if self.collapsed_hover.as_ref() == Some(id) {
@@ -444,8 +412,6 @@ impl ChatList {
         }
     }
 
-    /// The collapsed list: new chat and search above the agent tiles of the
-    /// current and today's chats, without section labels.
     fn render_collapsed(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         let Some(owner) = self.owner.upgrade() else {
             return div().into_any_element();
@@ -555,7 +521,6 @@ impl ChatList {
             .into_any_element()
     }
 
-    /// The chat a navigation key moves to, as (item, thread index).
     fn navigation_target(&self, key: &str) -> Option<(usize, usize)> {
         let chats: Vec<(usize, usize)> = self
             .items
@@ -629,9 +594,7 @@ impl Render for ChatList {
             })
             .read(cx)
             .clone();
-        let filtered = !self.criteria.query.is_empty()
-            || self.criteria.filter != 0
-            || self.criteria.agent.is_some();
+        let filtered = !self.criteria.query.is_empty() || self.criteria.agent.is_some();
         let rows = if self.items.is_empty() {
             let owner = self.owner.clone();
             // A narrow list tightens the message and shortens the button.
@@ -787,21 +750,14 @@ impl Render for ChatList {
             .relative()
             .size_full()
             .child(sidebar)
-            .child(
-                canvas(
-                    move |bounds, _, cx| {
-                        let _ = measured.update(cx, |list, cx| {
-                            if (list.width - bounds.size.width).abs() > px(0.5) {
-                                list.width = bounds.size.width;
-                                cx.notify();
-                            }
-                        });
-                    },
-                    |_, (), _, _| {},
-                )
-                .absolute()
-                .size_full(),
-            )
+            .child(size_probe(move |size, cx| {
+                let _ = measured.update(cx, |list, cx| {
+                    if (list.width - size.width).abs() > px(0.5) {
+                        list.width = size.width;
+                        cx.notify();
+                    }
+                });
+            }))
             .into_any_element()
     }
 }
@@ -814,11 +770,8 @@ pub(super) struct Transcript {
     selected: Option<usize>,
     messages: usize,
     footer_focus: FocusHandle,
-    /// Height of the composer floating over the end of the transcript.
     composer_height: std::rc::Rc<std::cell::Cell<Pixels>>,
-    /// Distance from the end at the last wheel scroll.
     left_to_end: Pixels,
-    /// Following the end at the last scroll; the activity panel follows with it.
     following: bool,
 }
 
@@ -861,20 +814,16 @@ impl Transcript {
         }
     }
 
-    /// Whether the transcript sticks to its end as messages arrive.
     pub fn following(&self) -> bool {
         self.state.is_following_tail()
     }
 
-    /// Scrolls to the end and follows it again. The caller redraws the panel.
     pub fn follow(&mut self, cx: &mut Context<Self>) {
         self.state.set_follow_mode(FollowMode::Tail);
         self.following = true;
         cx.notify();
     }
 
-    /// Scrolls a message into view, which stops following the end. The caller
-    /// redraws the panel.
     pub fn reveal(&mut self, message: usize, cx: &mut Context<Self>) {
         self.state.scroll_to(ListOffset {
             item_ix: message,
@@ -884,7 +833,6 @@ impl Transcript {
         cx.notify();
     }
 
-    /// Tells the activity panel when scrolling starts or stops following.
     fn note_following(&mut self, cx: &mut Context<Self>) {
         let following = self.state.is_following_tail();
         if following != self.following {
@@ -1009,6 +957,17 @@ impl Render for Transcript {
     }
 }
 
+pub(super) fn size_probe(
+    on_size: impl FnOnce(Size<Pixels>, &mut App) + 'static,
+) -> impl IntoElement {
+    canvas(
+        move |bounds, _, cx| on_size(bounds.size, cx),
+        |_, (), _, _| {},
+    )
+    .absolute()
+    .size_full()
+}
+
 fn invalidate_range(state: &ListState, range: std::ops::Range<usize>) {
     let top = state.logical_scroll_top();
     state.splice(range.clone(), range.len());
@@ -1017,7 +976,6 @@ fn invalidate_range(state: &ListState, range: std::ops::Range<usize>) {
 
 pub(super) struct Composer {
     owner: WeakEntity<Adeline>,
-    /// Width at the last paint; a narrow composer shortens its labels.
     width: Pixels,
     _content_subscription: Subscription,
 }
@@ -1054,21 +1012,14 @@ impl Render for Composer {
             .update(cx, |app, cx| {
                 app.composer_view(width, cx)
                     .relative()
-                    .child(
-                        canvas(
-                            move |bounds, _, cx| {
-                                measured.update(cx, |composer, cx| {
-                                    if (composer.width - bounds.size.width).abs() > px(0.5) {
-                                        composer.width = bounds.size.width;
-                                        cx.notify();
-                                    }
-                                });
-                            },
-                            |_, (), _, _| {},
-                        )
-                        .absolute()
-                        .size_full(),
-                    )
+                    .child(size_probe(move |size, cx| {
+                        measured.update(cx, |composer, cx| {
+                            if (composer.width - size.width).abs() > px(0.5) {
+                                composer.width = size.width;
+                                cx.notify();
+                            }
+                        });
+                    }))
                     .into_any_element()
             })
             .unwrap_or_else(|_| div().into_any_element())
@@ -1087,11 +1038,9 @@ impl Render for Header {
 }
 
 impl Adeline {
-    /// What the chat list should show for the current search and filters.
     pub(super) fn chat_criteria(&self, cx: &App) -> Criteria {
         Criteria {
             query: self.query(cx),
-            filter: self.filter,
             completed: self.show_completed,
             archived: self.show_archived,
             agent: self.agent_filter.clone(),
@@ -1105,6 +1054,10 @@ impl Adeline {
                 list.search(criteria, true, cx);
             }
         });
+    }
+    pub(super) fn resync_transcript(&self, cx: &mut Context<Self>) {
+        self.transcript
+            .update(cx, |view, cx| view.sync(self, false, cx));
     }
     pub(super) fn sync_sidebar(&self, cx: &mut Context<Self>) {
         let criteria = self.chat_criteria(cx);
@@ -1188,7 +1141,6 @@ mod tests {
     use super::{Layout, Stacks, invalidate_range};
     use gpui_kit::{ListAlignment, ListOffset, ListState, Pixels, px};
 
-    /// Three sections of 10, 10 and 4 chats: labels 32 px, rows 52 px, a 400 px viewport.
     fn layout() -> Layout {
         let (label, row) = (px(32.), px(52.));
         let mut tops = Vec::new();

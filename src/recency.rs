@@ -2,7 +2,8 @@
 //! ("Today", "Last 3 days", "Earlier") and a short label ("5m", "Tue").
 //!
 //! Calendar days are UTC days, so a chat active shortly after local midnight
-//! can land in the neighbouring day for users far from UTC.
+//! can land in the neighbouring day for users far from UTC. `now` is in
+//! seconds and `now_ms` in milliseconds since the Unix epoch.
 use chrono::{DateTime, Datelike as _, NaiveDate, SecondsFormat, Utc};
 
 const DAY: i64 = 86_400;
@@ -10,24 +11,20 @@ const DAY: i64 = 86_400;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Period {
     Today,
-    /// The two days before today; with today, the last three calendar days.
     LastThreeDays,
     Earlier,
 }
 
-/// Seconds since the Unix epoch, now.
 pub fn now() -> i64 {
     Utc::now().timestamp()
 }
 
-/// Milliseconds since the Unix epoch, now.
 pub fn now_ms() -> u64 {
     u64::try_from(Utc::now().timestamp_millis()).unwrap_or(0)
 }
 
-/// Stored chats record milliseconds since the epoch; bundled demo chats use
-/// RFC 3339 UTC timestamps such as `2026-09-24T10:00:00Z`.
 pub fn parse(stamp: &str) -> Option<i64> {
+    // Stored chats record epoch milliseconds; bundled demo chats use RFC 3339.
     let stamp = stamp.trim();
     if !stamp.is_empty() && stamp.bytes().all(|b| b.is_ascii_digit()) {
         let value: i64 = stamp.parse().ok()?;
@@ -53,8 +50,6 @@ pub fn period(at: i64, now: i64) -> Period {
     }
 }
 
-/// The compact time shown beside a chat or project: `now`, `5m`, `3h`, the
-/// weekday within the last week (yesterday included), then a date.
 pub fn label(at: i64, now: i64) -> String {
     let elapsed = now - at;
     let days = now.div_euclid(DAY) - at.div_euclid(DAY);
@@ -79,7 +74,6 @@ pub fn label(at: i64, now: i64) -> String {
     }
 }
 
-/// RFC 3339 UTC, as the bundled demo chats store their times.
 pub fn iso(at: i64) -> String {
     DateTime::from_timestamp(at, 0)
         .map(|date| date.to_rfc3339_opts(SecondsFormat::Secs, true))

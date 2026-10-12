@@ -1,3 +1,11 @@
+# Coding Standards
+
+Design with maintainability in mind and implement minimal code that solves the problem. Don't overengineer. Reduce complexity, embrace simplicity. 
+
+Prefer composition over inherticance. Prefer decoupling and clear separation of concerns. 
+
+Prefer sparse - top of the module level comments. Avoid class and function level comments. Code should be self-evident.
+
 # Navigation
 
 Before changing code that spans modules, read `docs/architecture.md`. It traces a user action from UI to engine to agent and back, and covers demo mode and assets.

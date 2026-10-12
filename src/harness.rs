@@ -1,5 +1,6 @@
 //! Harnesses Adeline can run: the ACP registry plus built-in OMP, where their
 //! executables are installed and in which version, and whether Node.js is there.
+//! The engine detects them, on its blocking pool; clients get a copy.
 #[cfg(feature = "gui")]
 use gpui_kit::{App, Global};
 use serde::{Deserialize, Serialize};
@@ -20,16 +21,13 @@ pub struct Harness {
     pub id: String,
     pub name: String,
     pub website: String,
-    /// Executable names to look for, in order.
     executables: Vec<String>,
-    /// The npm or uv package the executables must come from.
+    // The npm or uv package the executables must come from.
     #[serde(default)]
     package: Option<String>,
     pub arguments: Vec<String>,
-    /// Environment variables the registry sets for the agent.
     #[serde(default)]
     pub environment: Vec<(String, String)>,
-    /// The registry's current version, for update offers (scope R12).
     #[serde(default)]
     pub version: String,
 }
@@ -51,9 +49,9 @@ fn omp() -> Harness {
     }
 }
 
-/// Supported agents launch the way their profile says, whatever the
-/// registry guesses from package names.
 fn with_profile(mut harness: Harness) -> Harness {
+    // Supported agents launch the way their profile says, whatever the registry
+    // guesses from package names.
     if let Some(profile) = crate::profiles::find(&harness.id, "") {
         harness.executables = vec![profile.command.to_owned()];
         harness.arguments = profile.arguments.iter().map(|&a| a.to_owned()).collect();
@@ -64,27 +62,21 @@ fn with_profile(mut harness: Harness) -> Harness {
     harness
 }
 
-/// Whether Node.js is there for npm installs, and which package manager
-/// could install it (scope R11).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Node {
     pub npm: Option<PathBuf>,
-    /// `winget` on Windows or `brew` on macOS, when found.
+    // `winget` on Windows or `brew` on macOS.
     pub manager: Option<PathBuf>,
 }
 
-/// Every known harness and where each installed one lives. The engine
-/// detects them; clients get a copy.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Catalog {
     pub harnesses: Vec<Harness>,
     pub installed: HashMap<String, PathBuf>,
-    /// The installed version of npm-installed agents.
     #[serde(default)]
     pub versions: HashMap<String, String>,
     #[serde(default)]
     pub node: Node,
-    /// Detection has finished at least once.
     pub detected: bool,
     #[serde(skip)]
     pub demo: bool,
@@ -94,15 +86,10 @@ pub struct Catalog {
 impl Global for Catalog {}
 
 impl Catalog {
-    pub fn demo(&self) -> bool {
-        self.demo
-    }
-
     pub fn get(&self, id: &str) -> Option<&Harness> {
         self.harnesses.iter().find(|harness| harness.id == id)
     }
 
-    /// Installed harnesses first, each group by name.
     pub fn sorted(&self) -> Vec<&Harness> {
         let mut list: Vec<_> = self.harnesses.iter().collect();
         list.sort_by_cached_key(|harness| {
@@ -114,8 +101,8 @@ impl Catalog {
         list
     }
 
-    /// `None` while detection has not answered yet.
     pub fn is_installed(&self, id: &str) -> Option<bool> {
+        // `None` while detection has not answered yet.
         if id == CUSTOM {
             return Some(true);
         }
@@ -135,7 +122,6 @@ impl Catalog {
         }
     }
 
-    /// The executable and arguments a new conversation starts with.
     pub fn launch(
         &self,
         id: &str,
@@ -167,7 +153,6 @@ impl Catalog {
         })
     }
 
-    /// The installed and the newer registry version, when an update exists.
     pub fn update(&self, id: &str) -> Option<(&str, &str)> {
         let installed = self.versions.get(id)?;
         let latest = self.get(id)?.version.as_str();
@@ -175,7 +160,6 @@ impl Catalog {
     }
 }
 
-/// Whether version `a` is newer than `b`, comparing dotted numbers.
 pub fn newer(a: &str, b: &str) -> bool {
     let parts = |v: &str| -> Vec<u64> {
         v.trim_start_matches('v')
@@ -187,8 +171,6 @@ pub fn newer(a: &str, b: &str) -> bool {
     !a.is_empty() && !b.is_empty() && a > b
 }
 
-/// The client's catalog until the engine sends its own. Demo mode, which has
-/// no engine, lists the bundled harnesses as not installed.
 #[cfg(feature = "gui")]
 pub fn init(demo: bool, cx: &mut App) {
     cx.set_global(Catalog {
@@ -199,8 +181,6 @@ pub fn init(demo: bool, cx: &mut App) {
     });
 }
 
-/// Finds installed harnesses, after fetching a fresh registry when `fetch`
-/// is set. Blocking: the engine runs it on its blocking pool.
 pub fn detect(fetch: bool, known: Vec<Harness>) -> Catalog {
     let harnesses = if fetch && download().is_ok() {
         load()
@@ -241,11 +221,9 @@ fn cache() -> Option<PathBuf> {
         .map(|path| path.join("cache"))
 }
 
-/// Icons the engine sent, by asset path.
 static ICONS: std::sync::RwLock<BTreeMap<String, Vec<u8>>> =
     std::sync::RwLock::new(BTreeMap::new());
 
-/// Adds icons an engine sent. Every machine's engine adds its own.
 pub fn set_icons(icons: &BTreeMap<String, String>) {
     if let Ok(mut map) = ICONS.write() {
         map.extend(
@@ -256,17 +234,14 @@ pub fn set_icons(icons: &BTreeMap<String, String>) {
     }
 }
 
-/// A registry icon or agent avatar from the engine, for the asset loader.
 pub fn icon(path: &str) -> Option<Vec<u8>> {
     ICONS.read().ok()?.get(path).cloned()
 }
 
-/// Whether the engine sent an icon for `path`, without copying it.
 pub fn has_icon(path: &str) -> bool {
     ICONS.read().is_ok_and(|icons| icons.contains_key(path))
 }
 
-/// A harness's icon, read by the engine: bundled for OMP, else the cached registry icon.
 pub fn icon_svg(id: &str) -> Option<Vec<u8>> {
     if id == OMP {
         crate::embedded("omp.svg").map(<[u8]>::to_vec)
@@ -277,8 +252,6 @@ pub fn icon_svg(id: &str) -> Option<Vec<u8>> {
     }
 }
 
-/// A harness's icon asset path: bundled for OMP, the registry icon
-/// otherwise, else the generic robot.
 pub fn icon_path(id: &str) -> String {
     let registry = format!("registry-icons/{id}.svg");
     if id == OMP {
@@ -290,7 +263,6 @@ pub fn icon_path(id: &str) -> String {
     }
 }
 
-/// The cached registry, else the bundled copy, else OMP alone.
 pub fn load() -> Vec<Harness> {
     let cached = cache()
         .and_then(|cache| fs::read_to_string(cache.join("registry.json")).ok())
@@ -358,7 +330,7 @@ fn hidden(mut command: Command) -> Command {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+        command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
     }
     command
         .stdin(Stdio::null())
@@ -529,22 +501,26 @@ fn search_path() -> Vec<PathBuf> {
     dirs
 }
 
-/// A program found on PATH or in the usual install folders.
 pub fn program(name: &str) -> Option<PathBuf> {
     find(name, &search_path())
 }
 
-/// The installed version of an npm package, from its `package.json`.
 fn package_version(package: &str, dirs: &[PathBuf]) -> Option<String> {
     dirs.iter().find_map(|dir| {
-        [dir.join("node_modules"), dir.join("../lib/node_modules")]
-            .iter()
-            .find_map(|modules| {
-                let text = fs::read(modules.join(package).join("package.json")).ok()?;
-                let manifest: Value = serde_json::from_slice(&text).ok()?;
-                manifest["version"].as_str().map(str::to_owned)
-            })
+        manifest(package, dir)?["version"]
+            .as_str()
+            .map(str::to_owned)
     })
+}
+
+// Windows npm keeps packages in `<shims>/node_modules`, Unix in `<prefix>/lib/node_modules`.
+fn manifest(package: &str, dir: &Path) -> Option<Value> {
+    [dir.join("node_modules"), dir.join("../lib/node_modules")]
+        .iter()
+        .find_map(|modules| {
+            let text = fs::read(modules.join(package).join("package.json")).ok()?;
+            serde_json::from_slice(&text).ok()
+        })
 }
 
 fn find(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
@@ -583,8 +559,6 @@ fn locate(harness: &Harness) -> Option<PathBuf> {
         })
 }
 
-/// The executable an installed `package` provides, read from what npm and uv
-/// record: npm's `package.json` next to its shims, uv's tool receipt.
 fn from_package(package: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
     let unscoped = package.rsplit('/').next().unwrap_or(package);
     let uv_name = package.to_lowercase().replace(['_', '.'], "-");
@@ -612,28 +586,19 @@ fn from_package(package: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
                 .filter(|path| path.is_file());
         }
     }
-    // Windows npm keeps packages in `<shims>/node_modules`, Unix in `<prefix>/lib/node_modules`.
     dirs.iter().find_map(|dir| {
-        [dir.join("node_modules"), dir.join("../lib/node_modules")]
-            .iter()
-            .find_map(|modules| {
-                let text = fs::read(modules.join(package).join("package.json")).ok()?;
-                let manifest: Value = serde_json::from_slice(&text).ok()?;
-                let names = match &manifest["bin"] {
-                    Value::String(_) => vec![unscoped.to_owned()],
-                    Value::Object(bins) => bins.keys().cloned().collect(),
-                    _ => Vec::new(),
-                };
-                find(&pick(&names, unscoped)?, std::slice::from_ref(dir))
-            })
+        let names = match &manifest(package, dir)?["bin"] {
+            Value::String(_) => vec![unscoped.to_owned()],
+            Value::Object(bins) => bins.keys().cloned().collect(),
+            _ => Vec::new(),
+        };
+        find(&pick(&names, unscoped)?, std::slice::from_ref(dir))
     })
 }
 
-/// The executable `npx` or `uvx` would run: the one named after the package,
-/// else the only one.
-/// ponytail: else the shortest name, as in `mcode` over `mcode-tools`; let
-/// the agent definition name it if a package ever needs another.
 fn pick(names: &[String], package: &str) -> Option<String> {
+    // ponytail: else the shortest name, as in `mcode` over `mcode-tools`; let
+    // the agent definition name it if a package ever needs another.
     names
         .iter()
         .find(|name| *name == package)
@@ -641,7 +606,6 @@ fn pick(names: &[String], package: &str) -> Option<String> {
         .cloned()
 }
 
-/// Where `uv tool install` puts its tools, by its documented defaults.
 fn uv_tool_dirs() -> Vec<PathBuf> {
     let mut dirs: Vec<PathBuf> = std::env::var_os("UV_TOOL_DIR")
         .map(PathBuf::from)
@@ -659,10 +623,9 @@ fn uv_tool_dirs() -> Vec<PathBuf> {
     dirs
 }
 
-/// Whether `path` runs `package`: it links into the package's folder, or is a
-/// small shim or launcher that names it, as npm, bun and uv install them.
-/// Names are guessed from the package, so `@minimax-ai/code` must not find VS Code's `code`.
 fn comes_from(path: &Path, package: &str) -> bool {
+    // It links into the package's folder, or is a small shim or launcher naming it.
+    // Names are guessed, so `@minimax-ai/code` must not find VS Code's `code`.
     let needles: Vec<String> = ['/', '\\']
         .iter()
         .map(|sep| format!("{sep}{}{sep}", package.replace('/', &sep.to_string())))
@@ -683,7 +646,6 @@ fn contains_ascii_bytes(haystack: &[u8], needle: &[u8]) -> bool {
         .any(|window| window.eq_ignore_ascii_case(needle))
 }
 
-/// A Custom command as a path: itself when it names a file, else found on PATH.
 pub fn resolve(command: &str) -> Option<PathBuf> {
     let path = Path::new(command);
     if path.is_file() {
@@ -708,7 +670,6 @@ pub fn resolve(command: &str) -> Option<PathBuf> {
     }
 }
 
-/// The system guidance a supported harness receives.
 pub fn guidance(name: &str, instructions: &str) -> String {
     let lead = format!(
         "You are an agent named {name}, running inside Adeline ADE (Agentic Development Environment)"

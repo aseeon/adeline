@@ -1,11 +1,14 @@
 //! Adeline's own conversation model: what an agent session offers and does,
 //! independent of ACP. `acp.rs` translates the protocol to and from it, and
 //! the engine↔client protocol, storage and UI use only these types.
+//!
+//! The TODO list is what ACP calls the `plan`. `StopReason::Signal` ends a turn
+//! on the profile's turn-end signal, without a prompt response. An `Attachment`
+//! carries its bytes base64-encoded, or a `path` on the engine's machine to read
+//! instead. Traffic times are epoch milliseconds.
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-/// What an option controls. The composer gives Model, Effort and Mode their own
-/// menus; everything else goes under More options.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Category {
@@ -16,14 +19,12 @@ pub enum Category {
     Other,
 }
 
-/// One value of a select option.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Choice {
     pub value: String,
     pub name: String,
     pub description: String,
-    /// The agent's group, else the `provider/` prefix of the value, else empty.
     pub group: String,
 }
 
@@ -39,7 +40,6 @@ pub enum OptionKind {
     },
 }
 
-/// A setting the running agent offers for its session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SessionOption {
     pub id: String,
@@ -72,7 +72,6 @@ impl SessionOption {
         }
     }
 
-    /// The display name of one of its values.
     pub fn name_of<'a>(&'a self, value: &'a str) -> &'a str {
         self.choices()
             .iter()
@@ -81,20 +80,16 @@ impl SessionOption {
     }
 }
 
-/// The first option of a category.
 pub fn option(options: &[SessionOption], category: Category) -> Option<&SessionOption> {
     options.iter().find(|option| option.category == category)
 }
 
-/// A value chosen for an option, by option category for Model, Effort and
-/// Mode (which the agent definition can preset), else by option ID.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Selections {
     pub model: String,
     pub effort: String,
     pub mode: String,
-    /// More options: option ID and value, `true`/`false` for a boolean.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub other: Vec<(String, String)>,
 }
@@ -129,13 +124,11 @@ impl Selections {
     }
 }
 
-/// A slash command the agent advertises.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentCommand {
     pub name: String,
     pub description: String,
-    /// What to type after the command, when it takes input.
     pub hint: String,
 }
 
@@ -148,7 +141,6 @@ pub enum StepStatus {
     Completed,
 }
 
-/// One step of the agent's TODO list (ACP calls the list `plan`).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct TodoStep {
@@ -156,7 +148,10 @@ pub struct TodoStep {
     pub status: StepStatus,
 }
 
-/// The step the TODO button shows: the first in progress, else the first pending.
+pub fn closed(status: &str) -> bool {
+    matches!(status, "completed" | "archived")
+}
+
 pub fn current_step(steps: &[TodoStep]) -> Option<&TodoStep> {
     steps
         .iter()
@@ -182,7 +177,6 @@ pub enum ToolKind {
 }
 
 impl ToolKind {
-    /// Whether the call changes files.
     pub fn edits(self) -> bool {
         matches!(self, Self::Edit | Self::Delete | Self::Move)
     }
@@ -213,8 +207,6 @@ impl ToolStatus {
     }
 }
 
-/// The agent's answers to a permission request. "Reject always" never reaches
-/// Adeline's model: it stays hidden (scope R21).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PermissionKind {
@@ -238,30 +230,24 @@ pub enum StopReason {
     MaxTurnRequests,
     Refusal,
     Cancelled,
-    /// A turn-end signal from the agent's profile, without a prompt response.
     Signal,
 }
 
-/// Where a conversation's turn stands.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TurnState {
     #[default]
     Idle,
     Running,
-    /// Waiting for the user: a permission, a login, a decision about the session.
     NeedsAction,
 }
 
-/// A way the agent offers to log in.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthMethod {
     pub id: String,
     pub name: String,
     #[serde(default)]
     pub description: String,
-    /// Runs the agent's own program with these arguments in the user's
-    /// terminal, instead of asking the agent to log in.
     #[serde(default)]
     pub terminal: Option<TerminalLogin>,
 }
@@ -272,8 +258,6 @@ pub struct TerminalLogin {
     pub environment: Vec<(String, String)>,
 }
 
-/// What the running agent offers beyond prompting. Anything it does not
-/// offer is shown as unavailable (scope R5).
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Features {
@@ -288,11 +272,9 @@ pub struct Features {
     pub mcp_http: bool,
     pub mcp_sse: bool,
     pub auth: Vec<AuthMethod>,
-    /// Known once the agent has answered `initialize` at least once.
     pub known: bool,
 }
 
-/// An MCP server given to agents at session start (scope R28).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpServer {
@@ -327,18 +309,14 @@ impl McpServer {
     }
 }
 
-/// Files over this size can't be attached (scope R23).
 pub const ATTACHMENT_LIMIT: u64 = 20 * 1024 * 1024;
 
-/// A file sent with a prompt. Images and small files carry their bytes;
-/// `path` names a file on the engine's machine to read instead.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Attachment {
     pub name: String,
     pub mime: String,
     pub size: u64,
-    /// The file's bytes, base64-encoded.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub data: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -351,7 +329,6 @@ impl Attachment {
     }
 }
 
-/// The MIME type for a file name, for the common types agents read.
 pub fn mime_for(name: &str) -> &'static str {
     let extension = name
         .rsplit_once('.')
@@ -375,7 +352,6 @@ pub fn mime_for(name: &str) -> &'static str {
     }
 }
 
-/// Standard base64 with padding.
 pub fn base64(bytes: &[u8]) -> String {
     const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
     let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
@@ -394,7 +370,6 @@ pub fn base64(bytes: &[u8]) -> String {
     out
 }
 
-/// Decodes standard base64; `None` for anything else.
 pub fn unbase64(text: &str) -> Option<Vec<u8>> {
     let value = |c: u8| match c {
         b'A'..=b'Z' => Some(c - b'A'),
@@ -417,7 +392,6 @@ pub fn unbase64(text: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// Which way a line of ACP traffic went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Direction {
@@ -426,7 +400,6 @@ pub enum Direction {
     Stderr,
 }
 
-/// What Adeline made of a line from the agent.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TrafficNote {
@@ -436,10 +409,8 @@ pub enum TrafficNote {
     Unknown,
 }
 
-/// One line of the ACP traffic view (scope R36).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrafficEntry {
-    /// Milliseconds since the epoch.
     pub at: u64,
     pub direction: Direction,
     pub text: String,

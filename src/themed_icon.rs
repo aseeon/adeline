@@ -12,7 +12,6 @@ impl ThemedIcon {
         Self(svg().path(format!("{name}.svg")))
     }
 
-    /// An icon by its full asset path.
     pub(crate) fn path(path: &str) -> Self {
         Self(svg().path(path.to_owned()))
     }

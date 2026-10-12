@@ -1,34 +1,30 @@
 //! Agent profiles: everything Adeline knows about one supported agent beyond
-//! generic ACP (scope R6). Agents without a profile, including Custom agents
+//! generic ACP. Agents without a profile, including Custom agents
 //! and other registry agents, get generic behavior.
 
-/// How an agent receives Adeline's system instructions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Instructions {
-    /// No verified mechanism; the agent form hides the field.
+    // No verified mechanism, so the agent form hides the field.
     None,
-    /// `--append-system-prompt=` or `--system-prompt=` on the command line (OMP).
+    // `--append-system-prompt=` or `--system-prompt=` on the command line (OMP).
     Flags,
-    /// `_meta.systemPrompt` on session setup: a string replaces the default
-    /// prompt, `{append}` adds to it (claude-agent-acp).
+    // `_meta.systemPrompt` on session setup: a string replaces the default
+    // prompt, `{append}` adds to it (claude-agent-acp).
     SessionMeta,
 }
 
-/// One command of an install: a program and its arguments.
 #[derive(Clone, Copy, Debug)]
 pub struct Step {
     pub program: &'static str,
     pub arguments: &'static [&'static str],
 }
 
-/// The documented, standard global installation of an agent on one OS.
 #[derive(Clone, Copy, Debug)]
 pub struct Install {
     pub windows: &'static [Step],
     pub unix: &'static [Step],
-    /// The steps run `npm`, so Node.js must be installed first.
     pub needs_node: bool,
-    /// The npm package whose installed version is compared with the registry.
+    // Its installed version is compared with the registry.
     pub package: Option<&'static str>,
 }
 
@@ -44,24 +40,23 @@ impl Install {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Profile {
-    /// The registry ID, or `omp` for the built-in OMP entry.
+    // The registry ID, or `omp` for the built-in OMP entry.
     pub harness: &'static str,
-    /// The display name used in sentences like "Claude Code needs Node.js."
+    // Used in sentences like "Claude Code needs Node.js."
     pub name: &'static str,
-    /// The executable and its arguments.
     pub command: &'static str,
     pub arguments: &'static [&'static str],
     pub install: Install,
     pub instructions: Instructions,
-    /// Mode IDs that are plan modes: hidden from every mode choice (scope R20).
+    // Hidden from every mode choice.
     pub plan_modes: &'static [&'static str],
-    /// Descriptions for modes whose own description is missing or unclear.
+    // For modes whose own description is missing or unclear.
     pub mode_notes: &'static [(&'static str, &'static str)],
-    /// `_meta` keys that, set to `true` on a session update, end the running
-    /// turn without a prompt response (scope R33).
+    // `_meta` keys that, set to `true` on a session update, end the running
+    // turn without a prompt response.
     pub turn_end: &'static [&'static str],
-    /// Whether Send now may steer the running turn when the agent advertises
-    /// steering. Off for adapters that start a detached turn instead.
+    // Whether Send now may steer the running turn when the agent advertises
+    // steering. Off for adapters that start a detached turn instead.
     pub steering: bool,
 }
 
@@ -223,9 +218,8 @@ pub const OMP: Profile = Profile {
 
 pub const ALL: [Profile; 5] = [CLAUDE, CODEX, PI, OPENCODE, OMP];
 
-/// The profile of a harness, by registry ID. A Custom agent matches by the
-/// name it reports in its handshake, so a hand-configured OMP is still OMP.
 pub fn find(harness: &str, identity: &str) -> Option<&'static Profile> {
+    // A Custom agent matches by its handshake name, so a hand-configured OMP is still OMP.
     let identity = identity.to_lowercase();
     ALL.iter().find(|profile| {
         profile.harness == harness
@@ -239,17 +233,14 @@ pub fn find(harness: &str, identity: &str) -> Option<&'static Profile> {
     })
 }
 
-/// How a harness takes instructions; generic agents take none.
 pub fn instructions(harness: &str, identity: &str) -> Instructions {
     find(harness, identity).map_or(Instructions::None, |profile| profile.instructions)
 }
 
-/// Whether a mode is one of the profile's hidden plan modes.
 pub fn is_plan_mode(profile: Option<&Profile>, mode: &str) -> bool {
     profile.is_some_and(|profile| profile.plan_modes.contains(&mode))
 }
 
-/// The agent's mode description, else the profile's supplement.
 pub fn mode_description(profile: Option<&Profile>, mode: &str, given: &str) -> String {
     if !given.trim().is_empty() {
         return given.to_owned();

@@ -1,7 +1,8 @@
 //! Remote machines through the system `ssh`: finding the remote platform and
 //! its Adeline, installing this client's version there, and `adeline bridge`,
 //! which joins the SSH session to the remote engine's local pipe or socket.
-//! Prompts from `ssh` come back to the UI through `askpass`.
+//! Prompts from `ssh` come back to the UI through `askpass`. The SSH session
+//! starts in the home folder on every platform, so remote paths are relative to it.
 use crate::{
     ipc,
     protocol::{ClientMessage, Command, EngineMessage, PROTOCOL, Status},
@@ -22,7 +23,6 @@ use tokio::{
 
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 const RELEASES: &str = "https://github.com/aseeon/adeline/releases/download";
-/// The platforms each release ships a headless build for.
 const SUPPORTED: [&str; 4] = [
     "windows-x86_64",
     "macos-arm64",
@@ -32,65 +32,47 @@ const SUPPORTED: [&str; 4] = [
 const MARKER: &str = "ADELINE-PROBE";
 const INSTALLED: &str = "ADELINE-INSTALLED";
 
-/// A saved remote machine, as the connection needs it.
-#[derive(Clone)]
-pub struct Remote {
-    pub name: String,
-    pub destinations: Vec<String>,
-    /// The engine this machine was first connected to.
-    pub engine: Option<String>,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Failure {
-    /// A timeout or network problem. Retried with growing delays.
+    // Retried with growing delays.
     Network(String),
-    /// A rejected password or key. Not retried until the user asks.
+    // A rejected password or key. Not retried until the user asks.
     SignIn(String),
-    /// Retrying wouldn't help: a refused host key, the wrong engine, no build.
+    // Retrying wouldn't help: a refused host key, the wrong engine, no build.
     Fatal(String),
     Unsupported(String),
-    /// The remote engine speaks a newer protocol than this client.
+    // The remote engine speaks a newer protocol than this client.
     LocalUpdate(String),
-    /// An engine with an older protocol runs there; replacing it stops its agents.
-    Upgrade {
-        version: String,
-        active: usize,
-    },
+    // An older protocol runs there. Replacing it stops its agents.
+    Upgrade { version: String, active: usize },
 }
 
-/// A connected remote engine, after its welcome.
 pub struct Link {
     pub reader: ipc::Reader,
     pub writer: ipc::Writer,
     pub status: Status,
     pub destination: String,
-    /// The `ssh` process; dropping it ends the session.
+    // Dropping the `ssh` process ends the session.
     pub child: Child,
 }
 
-/// Where each `ssh` process sends its prompts, and for which machine.
 #[derive(Clone)]
 pub struct Askpass {
     pub address: String,
     pub machine: String,
 }
 
-/// Each `ssh` run is a session; a password typed in one session of a connect
-/// answers the same prompt in the next one.
+// A password typed in one `ssh` run of a connect answers the same prompt in the next one.
 static SESSION: AtomicU64 = AtomicU64::new(0);
 
-// ---------------------------------------------------------------------------
-// Connecting
-
-/// Tries each destination in order and returns the first that reaches the
-/// machine's engine. `upgrade` is the user's consent to restart an older engine.
 pub async fn connect(
-    remote: &Remote,
+    remote: &crate::machines::Machine,
     hello: &ClientMessage,
     upgrade: bool,
     askpass: &Askpass,
 ) -> Result<Link, Failure> {
+    // The first destination that reaches the machine's engine wins. `upgrade` is
+    // the user's consent to restart an older engine.
     let mut failures = Vec::new();
     let (mut sign_in, mut network) = (false, false);
     for destination in &remote.destinations {
@@ -119,7 +101,7 @@ pub async fn connect(
 }
 
 async fn attempt(
-    remote: &Remote,
+    remote: &crate::machines::Machine,
     destination: &str,
     hello: &ClientMessage,
     upgrade: bool,
@@ -178,7 +160,8 @@ async fn attempt(
             });
         }
         // An installed build newer than this one may already speak its protocol.
-        if compare(&probe.version) == std::cmp::Ordering::Less {
+        let installed = probe.version.trim();
+        if installed != VERSION && !crate::harness::newer(installed, VERSION) {
             install(destination, &probe.platform, askpass).await?;
         }
         shut_down(child, reader, writer).await;
@@ -188,7 +171,6 @@ async fn attempt(
     ))
 }
 
-/// Asks an older engine to stop its agents and exit, and waits until it has.
 async fn shut_down(mut child: Child, mut reader: ipc::Reader, mut writer: ipc::Writer) {
     let request = ClientMessage::Request {
         id: u64::MAX,
@@ -212,11 +194,6 @@ fn short_id(id: &str) -> &str {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Running ssh
-
-/// `user@host:port` splits into the destination and its port; anything else,
-/// such as a `Host` alias, goes to `ssh` unchanged.
 fn split_port(destination: &str) -> (&str, Option<&str>) {
     match destination.rsplit_once(':') {
         Some((host, port))
@@ -231,7 +208,6 @@ fn split_port(destination: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// Checks a destination as typed: `user@host[:port]` or a `Host` alias.
 pub fn check_destination(destination: &str) -> Result<(), String> {
     let (host, _) = split_port(destination);
     if host.is_empty()
@@ -295,8 +271,8 @@ fn ssh(destination: &str, remote_command: &str, askpass: &Askpass) -> tokio::pro
     command
 }
 
-/// Collects a child's error output as it comes, so a full pipe never stalls it.
 fn drain(stderr: Option<tokio::process::ChildStderr>) -> Arc<Mutex<String>> {
+    // Reading as it comes means a full pipe never stalls the child.
     let text = Arc::new(Mutex::new(String::new()));
     if let Some(mut stderr) = stderr {
         let sink = text.clone();
@@ -328,7 +304,6 @@ fn taken(text: &Arc<Mutex<String>>) -> String {
         .unwrap_or_default()
 }
 
-/// Sorts an `ssh` failure by whether trying again could help.
 fn classify(stderr: &str) -> Failure {
     let text = if stderr.is_empty() {
         "The SSH connection closed.".to_owned()
@@ -357,7 +332,6 @@ fn spawn_error(error: &std::io::Error) -> Failure {
     })
 }
 
-/// Runs one remote command to completion, feeding it `input`.
 async fn run(
     destination: &str,
     remote_command: &str,
@@ -395,40 +369,15 @@ async fn run(
     ))
 }
 
-// ---------------------------------------------------------------------------
-// What runs on the remote machine
-
-/// A PowerShell script that runs the same whether the remote's SSH shell is
-/// cmd or PowerShell: base64 survives both shells' quoting.
 fn powershell(script: &str) -> String {
+    // Base64 survives the quoting of cmd and PowerShell, whichever the SSH shell is.
     let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     format!(
         "powershell -NoProfile -NonInteractive -EncodedCommand {}",
-        base64(&utf16)
+        crate::conversation::base64(&utf16)
     )
 }
 
-fn base64(bytes: &[u8]) -> String {
-    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let n = chunk
-            .iter()
-            .enumerate()
-            .fold(0u32, |n, (i, &b)| n | u32::from(b) << (16 - 8 * i));
-        for i in 0..4 {
-            if i <= chunk.len() {
-                out.push(char::from(TABLE[(n >> (18 - 6 * i)) as usize & 63]));
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
-}
-
-/// The SSH session starts in the home folder on every platform, so remote
-/// paths are relative to it.
 fn unix_probe() -> String {
     format!(
         "sh -c 'echo {MARKER}; uname -sm; cat .config/adeline/engine/id 2>/dev/null; echo; cat .adeline/bin/version 2>/dev/null; echo'"
@@ -470,8 +419,7 @@ Move-Item -LiteralPath $part -Destination $exe
     ))
 }
 
-/// Joins the session to the remote engine, through a login shell so agents
-/// find the user's usual PATH.
+// A login shell, so agents find the user's usual PATH.
 const UNIX_BRIDGE: &str = r#"sh -c 'exec "${SHELL:-sh}" -lc "exec .adeline/bin/adeline bridge"'"#;
 const WINDOWS_BRIDGE: &str = r".\.adeline\bin\adeline.exe bridge";
 
@@ -519,7 +467,6 @@ async fn probe(destination: &str, askpass: &Askpass) -> Result<Probe, Failure> {
     })
 }
 
-/// `uname -sm` (or the Windows probe's line) as a release platform name.
 fn platform(line: &str) -> Option<String> {
     let mut words = line.split_whitespace();
     let (system, machine) = (words.next()?, words.next_back()?);
@@ -557,24 +504,6 @@ fn local_platform() -> String {
     format!("{os}-{arch}")
 }
 
-/// Compares a remote version with this client's. A missing or unreadable
-/// version is older.
-fn compare(version: &str) -> std::cmp::Ordering {
-    let parse = |text: &str| -> Vec<u64> {
-        text.trim()
-            .split('.')
-            .map(|part| part.parse().unwrap_or(0))
-            .collect()
-    };
-    if version.trim().is_empty() {
-        return std::cmp::Ordering::Less;
-    }
-    parse(version).cmp(&parse(VERSION))
-}
-
-// ---------------------------------------------------------------------------
-// Installing
-
 async fn install(destination: &str, platform: &str, askpass: &Askpass) -> Result<(), Failure> {
     let binary = binary(platform).await?;
     let script = if platform.starts_with("windows") {
@@ -597,9 +526,6 @@ async fn install(destination: &str, platform: &str, askpass: &Askpass) -> Result
     }
 }
 
-/// The client's version for `platform`: the headless build from its GitHub
-/// release, or this very executable when there's no release and the
-/// platforms match.
 async fn binary(platform: &str) -> Result<Vec<u8>, Failure> {
     let release = download(platform).await;
     match release {
@@ -614,7 +540,6 @@ async fn binary(platform: &str) -> Result<Vec<u8>, Failure> {
     }
 }
 
-/// Downloads and unpacks a release's headless build, keeping it for other machines.
 async fn download(platform: &str) -> Result<Vec<u8>, String> {
     let folder = std::env::temp_dir().join(format!("adeline-headless-{VERSION}-{platform}"));
     let exe = folder.join(if platform.starts_with("windows") {
@@ -666,9 +591,8 @@ async fn download(platform: &str) -> Result<Vec<u8>, String> {
     std::fs::read(&exe).map_err(|e| crate::files::error(&exe, e))
 }
 
-/// Runs `curl`, `tar` or `unzip` on this machine. Windows uses its own copies,
-/// not ones a toolchain put first on PATH.
 async fn local_tool(name: &str, args: &[&std::ffi::OsStr]) -> Result<(), String> {
+    // Windows uses its own copies, not ones a toolchain put first on PATH.
     #[cfg(windows)]
     let program = std::env::var_os("SystemRoot").map_or_else(
         || std::path::PathBuf::from(format!("{name}.exe")),
@@ -700,9 +624,6 @@ async fn local_tool(name: &str, args: &[&std::ffi::OsStr]) -> Result<(), String>
     }
 }
 
-// ---------------------------------------------------------------------------
-// The bridge
-
 async fn bridge(
     destination: &str,
     windows: bool,
@@ -731,8 +652,6 @@ async fn bridge(
     Err(classify(&taken(&errors)))
 }
 
-/// `adeline bridge`: joins this process's stdin and stdout to the local
-/// engine, starting it when it isn't running. A remote client runs it over SSH.
 pub fn bridge_main() -> i32 {
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -768,7 +687,6 @@ pub fn bridge_main() -> i32 {
                 }
             }
         };
-        // Either side closing ends the bridge.
         tokio::select! {
             () = upstream => {},
             () = downstream => {},
@@ -777,10 +695,6 @@ pub fn bridge_main() -> i32 {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Askpass
-
-/// A prompt from `ssh`, waiting for the user.
 pub struct Prompt {
     pub machine: String,
     pub session: u64,
@@ -789,7 +703,6 @@ pub struct Prompt {
 }
 
 impl Prompt {
-    /// An unknown host key, answered yes or no rather than typed.
     pub fn host_key(&self) -> bool {
         self.text.contains("(yes/no")
     }
@@ -801,9 +714,8 @@ struct Ask {
     prompt: String,
 }
 
-/// Listens for this process's askpass helpers. Call inside the client
-/// runtime. Returns the address `ssh` children get.
 pub fn serve_askpass(prompts: async_channel::Sender<Prompt>) -> Result<String, String> {
+    // Runs inside the client runtime. Returns the address `ssh` children get.
     #[cfg(windows)]
     {
         let address = format!(
@@ -875,9 +787,8 @@ async fn answer<S: AsyncRead + tokio::io::AsyncWrite + Send + 'static>(
     }
 }
 
-/// The askpass helper: `ssh` runs this executable with a prompt, and the
-/// answer printed here is what it sends. Exits 1 when the user cancels.
 pub fn askpass_main(address: &str, prompt: &str) -> i32 {
+    // `ssh` sends the answer printed here. Exits 1 when the user cancels.
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -959,24 +870,6 @@ mod tests {
         assert_eq!(platform("Linux aarch64").unwrap(), "linux-aarch64");
         assert_eq!(platform("Darwin x86_64").unwrap(), "macos-x86_64");
         assert!(parse_probe("'sh' is not recognized").is_none());
-    }
-
-    #[test]
-    fn versions_compare_numerically() {
-        use std::cmp::Ordering::*;
-        assert_eq!(compare(VERSION), Equal);
-        assert_eq!(compare(""), Less);
-        assert_eq!(compare("0.0.1"), Less);
-        assert_eq!(compare("99.0.0"), Greater);
-    }
-
-    #[test]
-    fn base64_matches_the_standard_alphabet() {
-        assert_eq!(base64(b""), "");
-        assert_eq!(base64(b"a"), "YQ==");
-        assert_eq!(base64(b"ab"), "YWI=");
-        assert_eq!(base64(b"abc"), "YWJj");
-        assert_eq!(base64(b"abcdef"), "YWJjZGVm");
     }
 
     #[test]

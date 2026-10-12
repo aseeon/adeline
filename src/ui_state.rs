@@ -1,14 +1,14 @@
 //! What this UI remembers for itself and doesn't share with other clients:
-//! when it last opened each project, by machine and project ID.
+//! when it last opened each project, by machine and project ID. Local projects
+//! keep the bare IDs older versions wrote. `migrated` records that the first
+//! local snapshot's times, kept by older project files, were adopted.
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, sync::Mutex};
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(default)]
 struct UiState {
-    /// The `opened_at` values from older project files have been copied.
     migrated: bool,
-    /// Local projects by ID, remote ones by `machine:ID`.
     opened_at: BTreeMap<String, i64>,
 }
 
@@ -18,7 +18,6 @@ fn path() -> Result<PathBuf, String> {
     Ok(crate::config::directory()?.join("ui-state.yml"))
 }
 
-/// Local projects keep the bare IDs older versions wrote.
 fn key(machine: &str, id: &str) -> String {
     if machine == crate::machines::LOCAL {
         id.to_owned()
@@ -46,8 +45,6 @@ fn save(state: &UiState) -> Result<(), String> {
     crate::config::seed_yaml(&path, state).and_then(|()| crate::config::write_yaml(&path, state))
 }
 
-/// Gives a machine's projects this UI's recency. The first time, it adopts
-/// the times the local engine still reports from older project files.
 pub fn apply(machine: &str, projects: &mut [crate::data::Workspace]) {
     with(|state| {
         if !state.migrated && machine == crate::machines::LOCAL {
@@ -79,7 +76,6 @@ pub fn record_opened(machine: &str, id: &str, at: i64) -> Result<(), String> {
     })
 }
 
-/// Keeps a renamed project's recency.
 pub fn rename(machine: &str, old: &str, new: &str) {
     with(|state| {
         if let Some(at) = state.opened_at.remove(&key(machine, old)) {

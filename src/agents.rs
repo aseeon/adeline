@@ -1,4 +1,5 @@
 //! User agent definitions, stored under the Adeline configuration directory.
+//! Files older than `VERSION` are left alone and not listed.
 use crate::files::{self, checked_id, error as file_error};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -6,15 +7,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
-/// The agent file format this version writes. Older files are ignored.
 pub const VERSION: u32 = 1;
 
-/// The agent's icon, copied from its harness when the agent is added.
 pub const AVATAR: &str = "avatar.svg";
 
-/// A field older files carry and this version ignores: read, never written.
-/// Earlier agent files saved a `permission_mode`, which the agent's own modes
-/// replace (scope R22).
+// Read, never written: older files' `permission_mode`, which the agent's modes replace.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Dropped;
 
@@ -24,7 +21,6 @@ impl<'de> Deserialize<'de> for Dropped {
     }
 }
 
-/// Whether system instructions add to or replace the harness's own guidance.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum InstructionsMode {
     #[default]
@@ -34,27 +30,24 @@ pub enum InstructionsMode {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[non_exhaustive]
 pub struct AgentDefinition {
     pub version: u32,
     pub name: String,
-    /// A registry ID, `omp`, or `custom`.
+    // A registry ID, `omp`, or `custom`.
     pub harness: String,
-    /// The name a Custom harness reported in its ACP handshake.
+    // What a Custom harness reported in its ACP handshake.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub identity: String,
-    /// Custom harnesses only; others are located when a conversation starts.
+    // Custom harnesses only. Others are located when a conversation starts.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub command: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub arguments: Vec<String>,
-    /// Empty when the harness offers no model option.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub model: String,
-    /// Empty when the harness offers no effort option.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub effort: String,
-    /// The mode new conversations start in; empty keeps the agent's default.
+    // Empty keeps the agent's default.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub mode: String,
     #[serde(default, rename = "permission_mode", skip_serializing)]
@@ -63,7 +56,7 @@ pub struct AgentDefinition {
     pub system_instructions: String,
     #[serde(default)]
     pub instructions_mode: InstructionsMode,
-    /// MCP servers for this agent, added to the global ones (scope R28).
+    // Added to the global ones.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp_servers: Vec<crate::conversation::McpServer>,
 }
@@ -128,7 +121,6 @@ fn looks_like_executable_path(command: &str) -> bool {
         })
 }
 
-/// A folder ID is made only from letters, digits and single separators.
 pub(crate) fn normalize_name(name: &str) -> Result<String, String> {
     let mut id = String::new();
     for c in name.trim().chars().flat_map(char::to_lowercase) {
@@ -175,7 +167,6 @@ impl AgentCatalog {
         )
     }
 
-    /// A client's copy of the engine's agents; the engine saves them.
     pub fn remote() -> Self {
         Self {
             entries: Vec::new(),
@@ -223,7 +214,6 @@ impl AgentCatalog {
         catalog
     }
 
-    /// Returns whether visible definitions or filesystem errors changed.
     pub fn refresh(&mut self) -> bool {
         if self.demo {
             return false;
@@ -246,8 +236,6 @@ impl AgentCatalog {
         changed
     }
 
-    /// `expected` is the definition loaded when editing began. A changed, deleted,
-    /// or invalid file requires an explicit overwrite decision.
     pub fn save(
         &mut self,
         original: Option<&str>,
@@ -255,6 +243,8 @@ impl AgentCatalog {
         expected: Option<&AgentDefinition>,
         overwrite: bool,
     ) -> Result<String, String> {
+        // `expected` was loaded when editing began. A changed, deleted or invalid
+        // file needs `overwrite`.
         let id = definition.validate()?;
         if self.demo {
             if let Some(original) = original
@@ -391,7 +381,6 @@ impl AgentCatalog {
     }
 }
 
-/// An agent's avatar asset path, else its harness icon.
 pub fn avatar_path(id: &str, harness: &str) -> String {
     let path = format!("agent-avatars/{id}.svg");
     if crate::harness::has_icon(&path) {
@@ -401,7 +390,6 @@ pub fn avatar_path(id: &str, harness: &str) -> String {
     }
 }
 
-/// `None` for a file older than [`VERSION`]: it is left alone and not listed.
 fn load(folder: &Path) -> Result<Option<AgentDefinition>, String> {
     let path = folder.join("agent.yml");
     if !fs::symlink_metadata(folder)

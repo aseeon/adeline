@@ -1,7 +1,9 @@
 //! Projects from the UI: add, rename, settings, delete with undo, the project
-//! dialog, and browsing a remote machine's folders.
+//! dialog, and browsing a remote machine's folders. The engine deletes a
+//! project everywhere once its agents stop. Closing the stopping dialog
+//! keeps the project, but agents already asked to stop keep stopping.
 use super::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub(super) enum BrowserPurpose {
     OpenFolder,
@@ -9,7 +11,6 @@ pub(super) enum BrowserPurpose {
     Attach { directory: bool },
 }
 
-/// A remote machine's folders, listed by its engine.
 pub(super) struct Browser {
     pub machine: String,
     pub purpose: BrowserPurpose,
@@ -23,7 +24,6 @@ impl Browser {
     }
 }
 
-/// Joins a name to a path from another machine, with that machine's separator.
 fn join_remote(base: &str, name: &str) -> String {
     let separator = if base.contains('\\') || base.chars().nth(1) == Some(':') {
         '\\'
@@ -37,8 +37,7 @@ fn join_remote(base: &str, name: &str) -> String {
     }
 }
 
-/// The last part of a path from any machine.
-fn last_name(path: &str) -> String {
+pub(super) fn last_name(path: &str) -> String {
     path.trim_end_matches(['/', '\\'])
         .rsplit(['/', '\\'])
         .next()
@@ -58,8 +57,6 @@ impl Adeline {
         self.add_project(name, &directory, true, window, cx);
     }
 
-    /// Saves a new project and opens it in a tab. Errors show in the project
-    /// dialog when it's `from_dialog`, else as a notification.
     pub(super) fn add_project(
         &mut self,
         name: String,
@@ -128,7 +125,6 @@ impl Adeline {
         );
     }
 
-    /// Remembers when this window opened a project, for the projects menu's order.
     pub(super) fn record_project_opened(
         &mut self,
         ix: usize,
@@ -146,12 +142,11 @@ impl Adeline {
         }
     }
 
-    /// Saves a project's name and directory through the engine.
     fn save_project_as(
         &mut self,
         ix: usize,
         name: String,
-        directory: std::path::PathBuf,
+        directory: PathBuf,
         cx: &mut Context<Self>,
     ) {
         let original = self.projects[ix].config.id.clone();
@@ -211,7 +206,6 @@ impl Adeline {
         self.save_project_as(self.project, name, directory.into(), cx);
     }
 
-    /// Renames the project the rename dialog is for, keeping its directory.
     pub(super) fn save_project_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(ix) = self.rename_project.filter(|&ix| ix < self.projects.len()) else {
             return;
@@ -249,8 +243,6 @@ impl Adeline {
         cx.notify();
     }
 
-    /// Asks the engine to stop the project's agents and delete it. The engine
-    /// removes it everywhere once they've stopped.
     pub(super) fn confirm_project_delete(&mut self, cx: &mut Context<Self>) {
         if self.modal != Some("delete-project") && self.modal != Some("delete-project-shutdown") {
             return;
@@ -300,8 +292,6 @@ impl Adeline {
         self.force_project(index, cx);
     }
 
-    /// Closing the stopping dialog keeps the project; agents already asked to
-    /// stop keep stopping.
     pub(super) fn cancel_project_delete(&mut self, cx: &mut Context<Self>) {
         if self.modal == Some("delete-project-shutdown")
             && let Some(project) = self.delete_project.and_then(|ix| self.projects.get(ix))
@@ -318,7 +308,6 @@ impl Adeline {
         self.delete_project = None;
     }
 
-    /// Forgets a deleted project: its tab, runtime state and selection.
     pub(super) fn remove_project_at(&mut self, index: usize, cx: &mut Context<Self>) {
         let ids: Vec<_> = self.projects[index]
             .threads
@@ -375,8 +364,6 @@ impl Adeline {
 }
 
 impl Adeline {
-    /// Fills the project dialog from a picked or dropped folder. A new
-    /// project takes the folder's name unless the user typed their own.
     pub(super) fn set_project_folder(
         &mut self,
         directory: &Path,
@@ -411,18 +398,30 @@ impl Adeline {
             self.open_browser(BrowserPurpose::ProjectFolder, cx);
             return;
         }
+        self.pick_folder("Choose folder", window, cx, |app, directory, window, cx| {
+            app.set_project_folder(&directory, window, cx);
+        });
+    }
+
+    fn pick_folder(
+        &mut self,
+        prompt: &'static str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+        picked: impl FnOnce(&mut Self, PathBuf, &mut Window, &mut Context<Self>) + 'static,
+    ) {
         let selection = cx.prompt_for_paths(PathPromptOptions {
             files: false,
             directories: true,
             multiple: false,
-            prompt: Some("Choose folder".into()),
+            prompt: Some(prompt.into()),
         });
         cx.spawn_in(window, async move |this, cx| {
             let result = selection.await;
             let _ = this.update_in(cx, |app, window, cx| match result {
                 Ok(Ok(Some(paths))) => {
-                    if let Some(directory) = paths.first() {
-                        app.set_project_folder(directory, window, cx);
+                    if let Some(directory) = paths.into_iter().next() {
+                        picked(app, directory, window, cx);
                     }
                 }
                 Ok(Ok(None)) => {}
@@ -432,8 +431,6 @@ impl Adeline {
         .detach();
     }
 
-    /// Open folder on `machine`: the native picker for this computer, the
-    /// folder browser for a remote machine.
     pub(super) fn browse_folder_to_open(
         &mut self,
         machine: String,
@@ -446,28 +443,11 @@ impl Adeline {
             self.open_browser(BrowserPurpose::OpenFolder, cx);
             return;
         }
-        let selection = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: false,
-            prompt: Some("Open folder".into()),
+        self.pick_folder("Open folder", window, cx, |app, directory, window, cx| {
+            app.open_folder(machines::LOCAL, &directory, window, cx);
         });
-        cx.spawn_in(window, async move |this, cx| {
-            let result = selection.await;
-            let _ = this.update_in(cx, |app, window, cx| match result {
-                Ok(Ok(Some(paths))) => {
-                    if let Some(directory) = paths.into_iter().next() {
-                        app.open_folder(machines::LOCAL, &directory, window, cx);
-                    }
-                }
-                Ok(Ok(None)) => {}
-                _ => window.push_notification("Could not open the folder picker.", cx),
-            });
-        })
-        .detach();
     }
 
-    /// Opens the folder browser for a remote machine at its home folder.
     pub(super) fn open_browser(&mut self, purpose: BrowserPurpose, cx: &mut Context<Self>) {
         let machine = match purpose {
             BrowserPurpose::Attach { .. } => self.workspace().machine.clone(),
@@ -495,8 +475,7 @@ impl Adeline {
         self.browse(None, cx);
     }
 
-    /// Lists a folder of the browser's machine; its home folder without `path`.
-    pub(super) fn browse(&mut self, path: Option<std::path::PathBuf>, cx: &mut Context<Self>) {
+    pub(super) fn browse(&mut self, path: Option<PathBuf>, cx: &mut Context<Self>) {
         let Some(browser) = &self.browser else {
             return;
         };
@@ -523,7 +502,6 @@ impl Adeline {
         );
     }
 
-    /// The browser's choice: the shown folder, or `file` in it.
     pub(super) fn browse_pick(
         &mut self,
         file: Option<String>,
@@ -575,7 +553,6 @@ impl Adeline {
         })
     }
 
-    /// The folder browser's body.
     fn browser_view(&self, cx: &Context<Self>) -> Div {
         let theme = cx.theme();
         let mut content = col().gap_3();
@@ -700,7 +677,6 @@ impl Adeline {
             )
     }
 
-    /// Buttons choosing among the checked machines.
     fn machine_choice(
         &self,
         id: &'static str,
@@ -724,7 +700,6 @@ impl Adeline {
             )
     }
 
-    /// The folder drop zone that leads the project dialogs.
     fn folder_zone(&self, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let accent = theme.primary;
@@ -896,7 +871,7 @@ impl Adeline {
                     .workspace()
                     .threads
                     .iter()
-                    .any(|thread| !matches!(thread.status.as_str(), "completed" | "archived"));
+                    .any(|thread| !conversation::closed(&thread.status));
                 content = content
                     .child(views::dialog_title(if creating { "New project" } else { "Project settings" }))
                     .when(creating && machines::checked().len() > 1, |column| column.child(
@@ -947,10 +922,8 @@ impl Adeline {
                 let stopping = self.modal == Some("delete-project-shutdown");
                 let stopped = self
                     .delete_project
-                    .and_then(|ix| self.projects.get(ix))
-                    .is_some_and(|_| {
-                        self.project_agents_stopped(self.delete_project.unwrap_or_default())
-                    });
+                    .filter(|&ix| ix < self.projects.len())
+                    .is_some_and(|ix| self.project_agents_stopped(ix));
                 let name = self
                     .delete_project
                     .and_then(|ix| self.projects.get(ix))

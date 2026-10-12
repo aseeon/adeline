@@ -9,14 +9,11 @@ use std::collections::{HashMap, HashSet};
 pub(super) struct Runtime {
     pub conversations: HashMap<String, Live>,
     pub expanded_tools: HashSet<String>,
-    /// The user chose Stop all or Finish in background, so quitting goes ahead.
     pub quitting: bool,
-    /// Stop all is waiting for every agent to exit.
     pub stopping_all: bool,
 }
 
 impl Adeline {
-    /// Sends a command to the open project's engine; `done` runs with its reply.
     pub(super) fn request(
         &self,
         command: Command,
@@ -26,7 +23,6 @@ impl Adeline {
         self.machine_request(&self.current_machine(), command, cx, done);
     }
 
-    /// Sends a command to one machine's engine; `done` runs with its reply.
     pub(super) fn machine_request(
         &self,
         machine: &str,
@@ -48,7 +44,6 @@ impl Adeline {
         );
     }
 
-    /// Sends a command whose only answer worth showing is a refusal.
     fn command(&self, command: Command, cx: &mut Context<Self>) {
         self.request(command, cx, |app, result, _, cx| {
             if let Err(error) = result {
@@ -73,7 +68,6 @@ impl Adeline {
         })
     }
 
-    /// The agent a conversation started with.
     pub(super) fn conversation_agent(&self, id: &str) -> Option<String> {
         self.runtime
             .conversations
@@ -83,21 +77,16 @@ impl Adeline {
     }
 
     pub(super) fn bound_definition(&self) -> Option<storage::ExecutionConfig> {
-        self.current_id()
-            .and_then(|id| self.runtime.conversations.get(&id))
-            .and_then(|live| live.execution.clone())
+        self.current_live().and_then(|live| live.execution.clone())
     }
 
-    /// What the engine reports about the open chat.
     pub(super) fn current_live(&self) -> Option<&Live> {
         self.current_id()
             .and_then(|id| self.runtime.conversations.get(&id))
     }
 
     pub(super) fn conversation_processing(&self) -> bool {
-        self.current_id()
-            .and_then(|id| self.runtime.conversations.get(&id))
-            .is_some_and(|r| r.processing)
+        self.current_live().is_some_and(|live| live.processing)
     }
 
     pub(super) fn mark_conversation_read(&mut self, cx: &mut Context<Self>) {
@@ -130,16 +119,13 @@ impl Adeline {
 
     pub(super) fn refresh_runtime_views(&self, cx: &mut Context<Self>) {
         self.sync_sidebar(cx);
-        self.transcript
-            .update(cx, |view, cx| view.sync(self, false, cx));
+        self.resync_transcript(cx);
         self.composer_region.update(cx, |_, cx| cx.notify());
         self.header_region.update(cx, |_, cx| cx.notify());
         self.control_pane.update(cx, |_, cx| cx.notify());
         cx.notify();
     }
 
-    /// Sends the composer's message and files. During a turn it is queued,
-    /// or with `now` delivered at once (scope R30).
     pub(super) fn send_real(&mut self, now: bool, window: &mut Window, cx: &mut Context<Self>) {
         if !self.has_open_project() {
             return;
@@ -213,16 +199,12 @@ impl Adeline {
         });
     }
 
-    /// The open conversation's offered options, live or from its last session.
     pub(super) fn conversation_options(&self) -> Vec<conversation::SessionOption> {
-        self.current_id()
-            .and_then(|id| self.runtime.conversations.get(&id))
+        self.current_live()
             .map(|live| live.options.clone())
             .unwrap_or_default()
     }
 
-    /// Sets a model, effort, mode or other option for the open conversation
-    /// only. It never changes the agent definition (scope R17).
     pub(super) fn set_option(
         &mut self,
         category: conversation::Category,
@@ -234,16 +216,15 @@ impl Adeline {
             return;
         };
         if self.demo_mode {
-            if let Some(live) = self.runtime.conversations.get_mut(&id) {
-                if let Some(found) = live.options.iter_mut().find(|o| o.id == option)
-                    && let conversation::OptionKind::Select { current, .. } = &mut found.kind
-                {
-                    current.clone_from(&value);
-                }
-                if let Some(found) = live.options.iter_mut().find(|o| o.id == option)
-                    && let conversation::OptionKind::Boolean { current } = &mut found.kind
-                {
-                    *current = value == "true";
+            if let Some(found) = self
+                .runtime
+                .conversations
+                .get_mut(&id)
+                .and_then(|live| live.options.iter_mut().find(|o| o.id == option))
+            {
+                match &mut found.kind {
+                    conversation::OptionKind::Select { current, .. } => current.clone_from(&value),
+                    conversation::OptionKind::Boolean { current } => *current = value == "true",
                 }
             }
             self.refresh_runtime_views(cx);
@@ -260,7 +241,6 @@ impl Adeline {
         );
     }
 
-    /// Takes a queued message out; with `edit`, back into the composer (scope R31).
     pub(super) fn take_queued(
         &mut self,
         queued: u64,
@@ -305,7 +285,6 @@ impl Adeline {
         }
     }
 
-    /// Logs the open chat's agent in with one of its methods (scope R47).
     pub(super) fn login(&mut self, method: &str, cx: &mut Context<Self>) {
         let Some(id) = self.current_id() else {
             return;
@@ -345,7 +324,6 @@ impl Adeline {
         );
     }
 
-    /// Starts or stops receiving the open chat's ACP traffic for the traffic tab.
     pub(super) fn watch_traffic(&mut self, cx: &mut Context<Self>) {
         let watched = self
             .current_id()
@@ -377,7 +355,6 @@ impl Adeline {
         );
     }
 
-    /// A line of the watched chat's traffic arrived.
     pub(super) fn traffic_arrived(
         &mut self,
         id: &str,
@@ -387,7 +364,6 @@ impl Adeline {
         if self.current_id().as_deref() != Some(id) {
             return;
         }
-        // Following the end unless the reader scrolled up.
         let offset = self.traffic_scroll.offset().y;
         let bottom = self.traffic_scroll.max_offset().y;
         let following = -offset >= bottom - px(8.);
@@ -419,8 +395,6 @@ impl Adeline {
         }
     }
 
-    /// Completes or archives a chat, stopping its agent. Completing a finished
-    /// chat reopens it as idle.
     pub(super) fn finish_conversation(&mut self, id: &str, archive: bool, cx: &mut Context<Self>) {
         let Some((p, t)) = self.locate_conversation(id) else {
             return;
@@ -494,7 +468,6 @@ impl Adeline {
         }
     }
 
-    /// Connected machines, for actions that reach every engine.
     fn connected_machines(cx: &App) -> Vec<String> {
         client::connections(cx)
             .iter()
@@ -503,7 +476,6 @@ impl Adeline {
             .collect()
     }
 
-    /// Stops every agent of every connected machine's engine, for every client.
     pub(super) fn stop_all(&mut self, cx: &mut Context<Self>) {
         for machine in Self::connected_machines(cx) {
             let name = machines::name(&machine);
@@ -529,8 +501,6 @@ impl Adeline {
         }
     }
 
-    /// Whether the window may close now. Quitting the last client of an
-    /// engine while one of its turns is active asks first.
     pub(super) fn request_quit(&mut self, cx: &mut Context<Self>) -> bool {
         if self.demo_mode || self.runtime.quitting {
             return true;
@@ -602,7 +572,6 @@ impl Adeline {
         }
     }
 
-    /// Copies the open chat through a finished reply into a new chat and opens it.
     pub(super) fn fork_conversation(
         &mut self,
         message: usize,
@@ -695,11 +664,6 @@ impl Adeline {
         );
     }
 
-    // -----------------------------------------------------------------------
-    // State from the engine
-
-    /// The open project's key and chat, to find them again after the
-    /// project list changes.
     fn place(&self) -> (Option<String>, Option<String>) {
         (
             self.has_open_project().then(|| self.workspace().key()),
@@ -707,7 +671,6 @@ impl Adeline {
         )
     }
 
-    /// Finds the open project and chat again by `place`.
     fn restore(&mut self, (current, selected): (Option<String>, Option<String>)) {
         let found = current.and_then(|key| self.projects.iter().position(|p| p.key() == key));
         self.project = found
@@ -725,8 +688,6 @@ impl Adeline {
         };
     }
 
-    /// Where a machine's projects sit in the list, which keeps each
-    /// machine's projects together.
     fn machine_range(&self, machine: &str) -> std::ops::Range<usize> {
         let start = self.projects.iter().position(|p| p.machine == machine);
         let Some(start) = start else {
@@ -747,7 +708,6 @@ impl Adeline {
         start..end
     }
 
-    /// Adds a project at the end of its machine's projects. Returns its index.
     pub(super) fn insert_project(&mut self, project: Workspace, open: bool) -> usize {
         let at = self.machine_range(&project.machine).end;
         self.projects.insert(at, project);
@@ -760,7 +720,6 @@ impl Adeline {
         at
     }
 
-    /// Replaces a machine's projects with `projects`, in the same place.
     fn replace_machine_projects(
         &mut self,
         machine: &str,
@@ -814,7 +773,6 @@ impl Adeline {
         self.restore(place);
     }
 
-    /// Takes a machine's whole state, keeping this window's tabs and selection.
     pub(super) fn apply_snapshot(
         &mut self,
         machine: &str,
@@ -842,7 +800,6 @@ impl Adeline {
         self.refresh_runtime_views(cx);
     }
 
-    /// A message about a machine, named when several machines show.
     fn about_machine(&self, machine: &str, message: &str) -> String {
         if machines::checked().len() > 1 {
             format!("{}: {message}", machines::name(machine))
@@ -851,23 +808,15 @@ impl Adeline {
         }
     }
 
-    /// An unchecked machine's projects and conversations leave the window.
     pub(super) fn machine_unchecked(&mut self, machine: &str, cx: &mut Context<Self>) {
-        let place = self.place();
         self.replace_machine_projects(machine, Vec::new(), false);
         self.catalogs.remove(machine);
         self.loaded_machines.remove(machine);
-        if self.has_open_project() {
-            self.restore(place);
-        } else {
-            self.selected = None;
-        }
         self.agents_changed(None, None, false, cx);
         self.sync_regions(&Action::Project(self.project), cx);
         self.refresh_runtime_views(cx);
     }
 
-    /// Demo mode: a checked machine shows its bundled projects again.
     pub(super) fn machine_checked(&mut self, machine: &str, cx: &mut Context<Self>) {
         if self.demo_mode {
             let projects = load()
@@ -882,18 +831,6 @@ impl Adeline {
         self.refresh_runtime_views(cx);
     }
 
-    /// A machine's connection changed state: its banner and labels follow.
-    pub(super) fn refresh_machine(&mut self, _machine: &str, cx: &mut Context<Self>) {
-        self.header_region.update(cx, |_, cx| cx.notify());
-        self.refresh_runtime_views(cx);
-    }
-
-    /// A machine reconnected and caught up on what it missed.
-    pub(super) fn machine_resumed(&mut self, machine: &str, cx: &mut Context<Self>) {
-        self.refresh_machine(machine, cx);
-    }
-
-    /// Asks whether to restart an older remote engine, which stops its agents.
     pub(super) fn ask_upgrade(&mut self, machine: &str, cx: &mut Context<Self>) {
         if self.modal.is_some() {
             return;
@@ -902,7 +839,6 @@ impl Adeline {
         self.open_modal_later("upgrade", cx);
     }
 
-    /// Shows the waiting SSH prompt.
     pub(super) fn show_prompt(&mut self, cx: &mut Context<Self>) {
         if self.modal == Some("prompt") {
             cx.notify();
@@ -915,7 +851,6 @@ impl Adeline {
         self.open_modal_later("prompt", cx);
     }
 
-    /// Opens a dialog from outside an action, once the current update ends.
     fn open_modal_later(&mut self, modal: &'static str, cx: &mut Context<Self>) {
         self.modal = Some(modal);
         let handle = self.main_window;
@@ -993,7 +928,6 @@ impl Adeline {
                 if id.is_some() && id == self.current_id() {
                     if let Some((p, t)) = id.as_deref().and_then(|id| self.locate_conversation(id))
                     {
-                        // Text streamed into the open chat is read as it arrives.
                         self.projects[p].threads[t].mark_read();
                     }
                     if id
@@ -1009,7 +943,6 @@ impl Adeline {
         self.refresh_runtime_views(cx);
     }
 
-    /// A machine's engine went away: nothing runs there until it starts again.
     pub(super) fn engine_stopped(
         &mut self,
         machine: &str,
@@ -1047,14 +980,13 @@ impl Adeline {
         self.refresh_runtime_views(cx);
     }
 
-    /// A full-window state while the only checked machine has no state to show.
     pub(super) fn engine_screen(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let checked = machines::checked();
         // With several machines, each one's state shows in the machine selector.
         let [machine] = checked.as_slice() else {
             return None;
         };
-        let connection = client::connection(machine, cx)?;
+        let connection = client::get(machine, cx)?;
         if machine != machines::LOCAL {
             return self.remote_screen(machine, connection, cx);
         }
@@ -1098,8 +1030,8 @@ impl Adeline {
                     }
                     (
                         format!(
-                            "An older engine is finishing {count} conversation{}",
-                            if count == 1 { "" } else { "s" }
+                            "An older engine is finishing {}",
+                            chat_render::count(count, "conversation")
                         ),
                         Some(format!(
                             "Version {} is still running. This Adeline needs a newer engine.",
@@ -1126,7 +1058,6 @@ impl Adeline {
         Some(Self::state_screen(title, detail, buttons, cx))
     }
 
-    /// The full-window state of a remote machine that has nothing to show yet.
     fn remote_screen(
         &self,
         machine: &str,
@@ -1210,11 +1141,9 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// A strip above the content while the open project's machine shows data
-    /// without its engine.
     pub(super) fn engine_banner(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let machine = self.current_machine();
-        let connection = client::connection(&machine, cx)?;
+        let connection = client::get(&machine, cx)?;
         let name = machines::name(&machine);
         let retry = || {
             Some(self.button(

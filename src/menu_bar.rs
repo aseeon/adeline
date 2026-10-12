@@ -3,6 +3,8 @@
 //!
 //! Menu items dispatch GPUI actions, which reach the focused element first. The app-wide
 //! handlers here catch the ones no element handled, such as with focus in another window.
+//! `init` runs after `config::bind_keys`, because macOS shows each item's shortcut from the
+//! keymap.
 use super::*;
 use gpui_kit::base::input;
 
@@ -19,8 +21,6 @@ actions!(
     ]
 );
 
-/// Sets the menus and handles their actions for the main window `handle`, owned by `owner`.
-/// Runs after `config::bind_keys`, because macOS shows each item's shortcut from the keymap.
 pub(super) fn init(
     handle: WindowHandle<Root>,
     owner: WeakEntity<Adeline>,

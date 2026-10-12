@@ -1,5 +1,6 @@
 //! Application themes. Existing 32-color YAML files project onto Kit's global
 //! theme for every window. Preferences stay separate from workspace data.
+//! `apply` runs after Kit's initialization and after every appearance change.
 use gpui_kit::{
     App, Hsla,
     component::{Colorize as _, Theme as KitTheme, ThemeMode},
@@ -180,19 +181,27 @@ pub fn parse_hex(value: &str) -> Option<u32> {
         .then(|| u32::from_str_radix(value, 16).ok())
         .flatten()
 }
-/// Kit has one global focus ring; sidebar navigation uses the YAML sidebar ring
-/// on its focused border to preserve the separate palette role.
 pub fn sidebar_focus() -> Hsla {
+    // Kit has one global focus ring, so sidebar navigation draws the YAML
+    // sidebar ring on its focused border.
     rgb(sidebar_ring()).into()
 }
-fn read(path: &Path) -> Result<ThemeFile, String> {
+fn read(path: &Path) -> Result<State, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let theme: ThemeFile =
         serde_yaml_ng::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))?;
-    theme
+    let colors = theme
         .validate()
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    Ok(theme)
+    Ok(State {
+        theme,
+        colors,
+        load_error: None,
+    })
+}
+fn is_yaml(path: &Path) -> bool {
+    path.extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("yml") || e.eq_ignore_ascii_case("yaml"))
 }
 fn theme_path(file: &str) -> Result<std::path::PathBuf, String> {
     let path = Path::new(file);
@@ -202,9 +211,7 @@ fn theme_path(file: &str) -> Result<std::path::PathBuf, String> {
             path.components().next(),
             Some(std::path::Component::Normal(_))
         )
-        || !path
-            .extension()
-            .is_some_and(|e| e.eq_ignore_ascii_case("yml") || e.eq_ignore_ascii_case("yaml"))
+        || !is_yaml(path)
     {
         return Err("Select a YAML filename inside the themes folder.".into());
     }
@@ -221,15 +228,11 @@ fn discover_in(directory: &Path) -> Result<(Vec<ThemeChoice>, Vec<String>), Stri
     for entry in entries {
         let entry = entry.map_err(|e| e.to_string())?;
         let path = entry.path();
-        if !path.is_file()
-            || !path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("yml") || e.eq_ignore_ascii_case("yaml"))
-        {
+        if !path.is_file() || !is_yaml(&path) {
             continue;
         }
         match read(&path) {
-            Ok(theme) => choices.push(ThemeChoice {
+            Ok(State { theme, .. }) => choices.push(ThemeChoice {
                 file: entry.file_name().to_string_lossy().into(),
                 name: theme.name,
                 brightness: theme.brightness,
@@ -245,36 +248,20 @@ pub fn init() {
         let directory = crate::config::directory()?.join("themes");
         seed_bundled_themes(&directory)?;
         let file = crate::config::current().general.appearance.theme;
-        let theme = read(&theme_path(&file)?)?;
-        let colors = theme.validate()?;
-        Ok::<_, String>(State {
-            theme,
-            colors,
-            load_error: None,
-        })
+        read(&theme_path(&file)?)
     })();
     ACTIVE.with(|s| {
         *s.borrow_mut() = result.unwrap_or_else(State::fallback);
     });
 }
 pub fn select(file: &str, cx: &mut App) -> Result<(), String> {
-    let theme = read(&theme_path(file)?)?;
-    let colors = theme.validate()?;
+    let state = read(&theme_path(file)?)?;
     crate::config::update(|s| s.general.appearance.theme = file.into())?;
-    ACTIVE.with(|s| {
-        *s.borrow_mut() = State {
-            theme,
-            colors,
-            load_error: None,
-        }
-    });
+    ACTIVE.with(|s| *s.borrow_mut() = state);
     apply(cx);
     Ok(())
 }
 
-/// Projects the 32-color YAML palette and persisted typography into Kit's
-/// global semantic and component colors, including popups and child windows.
-/// Call after Kit initialization and whenever appearance preferences change.
 pub fn apply(cx: &mut App) {
     ACTIVE.with(|state| {
         let state = state.borrow();
@@ -394,13 +381,13 @@ pub fn apply(cx: &mut App) {
     cx.refresh_windows();
 }
 
-/// Width of every scrollbar's track. Panels that float over a scrolling view
-/// stop this far from its right edge so the bar stays visible.
+// Panels that float over a scrolling view stop this far from its right edge
+// so the bar stays visible.
 pub const SCROLLBAR_TRACK: gpui_kit::Pixels = px(10.);
 
-/// Scrollbars have no track: only a narrow bar in the border color, the same at
-/// rest, under the pointer and while dragged. Kit's scroll-to-reveal timing stays.
 fn style_scrollbars(cx: &mut App) {
+    // No track: only a narrow bar in the border color, the same at rest, under
+    // the pointer and while dragged. Kit's scroll-to-reveal timing stays.
     use gpui_kit::base::{
         ScrollbarStyles, ScrollbarTheme, ScrollbarThumbStyle, ScrollbarTrackStyle,
     };
@@ -429,12 +416,9 @@ pub fn project_colors() -> [u32; 5] {
     [chart_1(), chart_2(), chart_3(), chart_4(), chart_5()]
 }
 
-/// Title-bar cell roles derived from the active palette, so every theme gets
-/// them without new YAML keys.
+// Derived from the active palette, so every theme gets them without new YAML keys.
 pub struct BarColors {
-    /// The line between title-bar cells, one step quieter than `border`.
     pub divider: Hsla,
-    /// An inactive cell under the pointer.
     pub hover: Hsla,
 }
 pub fn bar_colors(theme: &KitTheme) -> BarColors {
@@ -444,9 +428,6 @@ pub fn bar_colors(theme: &KitTheme) -> BarColors {
     }
 }
 
-/// A project's letter mark: a soft wash of its tint at rest and the full tint
-/// when active, with the letter in whichever of foreground or background
-/// stands further from the fill.
 pub fn project_mark(tint: Hsla, active: bool, theme: &KitTheme) -> (Hsla, Hsla) {
     if active {
         let letter = if (tint.l - theme.foreground.l).abs() >= (tint.l - theme.background.l).abs() {
@@ -515,8 +496,8 @@ mod tests {
         let mut names = std::collections::BTreeSet::new();
         for choice in choices {
             assert!(names.insert(choice.name));
-            let theme = read(&directory.join(choice.file)).unwrap();
-            assert_eq!(theme.validate().unwrap().len(), ROLES.len());
+            let state = read(&directory.join(choice.file)).unwrap();
+            assert_eq!(state.colors.len(), ROLES.len());
         }
     }
     #[test]
@@ -534,11 +515,14 @@ mod tests {
         assert_eq!(choices[0].name, "My theme");
         assert!(errors.is_empty());
         assert_eq!(
-            read(&root.join("custom.yml")).unwrap().validate().unwrap()["primary"],
+            read(&root.join("custom.yml")).unwrap().colors["primary"],
             0x123456
         );
         crate::config::seed_yaml(&root.join("custom.yml"), &ThemeFile::builtin()).unwrap();
-        assert_eq!(read(&root.join("custom.yml")).unwrap().name, "My theme");
+        assert_eq!(
+            read(&root.join("custom.yml")).unwrap().theme.name,
+            "My theme"
+        );
         std::fs::write(root.join("invalid.yml"), "name: Broken\nbrightness: Dark\n").unwrap();
         crate::config::seed_yaml(&root.join("added.yaml"), &ThemeFile::builtin()).unwrap();
         let (choices, errors) = discover_in(&root).unwrap();
@@ -554,7 +538,7 @@ mod tests {
         let missing = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("bundled-themes")
             .join("missing-theme-for-test.yml");
-        let state = State::fallback(read(&missing).unwrap_err());
+        let state = State::fallback(read(&missing).err().unwrap());
         assert_eq!(state.theme.name, "Claude Plus");
         assert_eq!(state.theme.brightness, Brightness::Dark);
         assert_eq!(state.colors, ThemeFile::builtin().validate().unwrap());

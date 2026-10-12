@@ -1,22 +1,19 @@
 //! Installing and updating supported agents and Node.js with their standard
-//! global installs (scope R9–R12), and terminal logins (scope R14). The engine
-//! runs these on its own machine and streams the output to the client.
+//! global installs, and terminal logins. The engine runs these on its own
+//! machine and streams the output to the client. A run stops at its first failed step.
 use crate::profiles::{self, Step};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 use tokio::io::AsyncBufReadExt as _;
 
-/// What to install.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Target {
-    /// A supported agent, by harness ID; also its update.
+    // Also its update.
     Agent { harness: String },
-    /// Node.js through the OS package manager.
     Node,
 }
 
-/// One command of an install, as shown to confirm and as run.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Planned {
     pub program: String,
@@ -39,7 +36,6 @@ fn planned(step: &Step) -> Planned {
     }
 }
 
-/// The commands an install runs on this machine, or why it can't.
 pub fn plan(target: &Target, catalog: &crate::harness::Catalog) -> Result<Vec<Planned>, String> {
     match target {
         Target::Agent { harness } => {
@@ -79,7 +75,6 @@ pub fn plan(target: &Target, catalog: &crate::harness::Catalog) -> Result<Vec<Pl
     }
 }
 
-/// Why Node.js can't be installed from Adeline.
 pub fn node_missing() -> String {
     if cfg!(windows) {
         "Node.js is required, and winget isn't available to install it. Install Node.js from nodejs.org, then check again.".into()
@@ -90,8 +85,6 @@ pub fn node_missing() -> String {
     }
 }
 
-/// Runs the commands one after another, sending each output line to
-/// `output`. Stops at the first failure.
 pub async fn run(
     steps: Vec<Planned>,
     output: std::sync::Arc<dyn Fn(String) + Send + Sync>,
@@ -109,7 +102,7 @@ pub async fn run(
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt as _;
-            command.creation_flags(0x0800_0000);
+            command.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
         }
         let (mut child, stdin, stdout, stderr) =
             tokio::task::block_in_place(|| crate::platform::spawn_piped(&mut command, true))
@@ -137,7 +130,6 @@ pub async fn run(
     Ok(())
 }
 
-/// PATH with `folder` first.
 fn with_path(folder: &Path) -> std::ffi::OsString {
     let mut paths = vec![folder.to_path_buf()];
     paths.extend(
@@ -148,7 +140,6 @@ fn with_path(folder: &Path) -> std::ffi::OsString {
     std::env::join_paths(paths).unwrap_or_default()
 }
 
-/// Opens the user's terminal running `command` with `arguments` (scope R14).
 #[expect(
     clippy::disallowed_methods,
     reason = "The engine runs this on its runtime, off any UI thread"

@@ -3,6 +3,7 @@
 //! attachment chips, the `/` command list, the TODO list in the chat header,
 //! thoughts in replies and the ACP traffic tab.
 use super::*;
+use crate::activity::{clock, excerpt};
 use crate::conversation::{
     Attachment, AuthMethod, Direction, PermissionKind, StepStatus, TrafficNote,
 };
@@ -19,7 +20,6 @@ use gpui_kit::component::{
 };
 use std::sync::Arc;
 
-/// `320 KB`, `1.2 MB`.
 pub(super) fn file_size(bytes: u64) -> String {
     if bytes >= 1024 * 1024 {
         format!("{:.1} MB", bytes as f64 / (1024. * 1024.))
@@ -28,7 +28,6 @@ pub(super) fn file_size(bytes: u64) -> String {
     }
 }
 
-/// A composer shortcut as the tooltips show it: `Ctrl+Shift+M`, `⌘⇧M` on macOS.
 pub(super) fn shortcut(keys: &str) -> String {
     if cfg!(target_os = "macos") {
         // The option menus' Alt shortcuts are Cmd+Shift on macOS (bind_keys).
@@ -39,12 +38,11 @@ pub(super) fn shortcut(keys: &str) -> String {
 }
 
 impl Adeline {
-    /// What the agent is doing right now, from real signals (scope R32).
     fn activity_label(&self, thread: &Thread, live: &Live) -> Option<String> {
         if !live.permission.is_empty() {
             return Some("Waiting for your permission".into());
         }
-        let turn = thread.messages.iter().rposition(|m| m.role == "user");
+        let turn = thread.turn_of(thread.messages.len());
         if let Some(tool) =
             turn.and_then(|turn| thread.turn_tools(turn).filter(|t| t.running).last())
         {
@@ -65,8 +63,6 @@ impl Adeline {
         live.progress.clone()
     }
 
-    /// Minutes the agent has been silent with nothing open, once past the
-    /// configured notice time (scope R34).
     fn silent_minutes(&self, thread: &Thread, live: &Live) -> Option<u64> {
         let limit = u64::from(config::with(|s| s.modes.chats.silence_notice_minutes));
         let since = live.quiet_since?;
@@ -81,14 +77,12 @@ impl Adeline {
         (minutes >= limit).then_some(minutes)
     }
 
-    /// The footer under a chat: the running turn's steps, its activity, the
-    /// queue, the permission and login cards, errors and recovery buttons.
     pub(super) fn runtime_footer(&self, index: usize, cx: &Context<Self>) -> AnyElement {
         let thread = &self.workspace().threads[index];
         let mut content = col().w_full().gap_3().pb_4();
         let empty = Live::default();
         let live = self.runtime.conversations.get(&thread.id).unwrap_or(&empty);
-        let turn = thread.messages.iter().rposition(|m| m.role == "user");
+        let turn = thread.turn_of(thread.messages.len());
         // The running turn's steps show live; finished turns fold them into
         // the summary under their reply.
         if live.processing
@@ -131,7 +125,7 @@ impl Adeline {
             content = content.child(
                 chat_render::agent_header(
                     self.agent_icon(&thread.provider, cx),
-                    thread.provider.clone(),
+                    self.agent_name(&thread.provider),
                     cx,
                 )
                 .child(chat_render::thinking_label(label, cx)),
@@ -193,7 +187,7 @@ impl Adeline {
             && !live.processing
             && !live.recovering_storage
             && !live.last_prompt.is_empty()
-            && !matches!(thread.status.as_str(), "completed" | "archived")
+            && !conversation::closed(&thread.status)
         {
             content = content.child(self.button("retry-prompt", "Retry", Action::RetryPrompt, cx));
         }
@@ -210,7 +204,6 @@ impl Adeline {
         content.into_any_element()
     }
 
-    /// An error under the chat, with a button that hides it.
     fn error_line(&self, message: &str, cx: &Context<Self>) -> Div {
         let message = message.to_owned();
         row()
@@ -237,7 +230,6 @@ impl Adeline {
             )
     }
 
-    /// "Agent silent for N min", with Stop and Restart (DD20).
     fn hang_notice(&self, minutes: u64, cx: &Context<Self>) -> Stateful<Div> {
         let title = format!("Agent silent for {minutes} min");
         col()
@@ -266,7 +258,6 @@ impl Adeline {
             )
     }
 
-    /// Queued messages under the running turn, each with Edit, Remove and Send now.
     fn queued_entries(&self, live: &Live, cx: &Context<Self>) -> Stateful<Div> {
         let theme = cx.theme();
         let steering = live.features.steering;
@@ -350,7 +341,6 @@ impl Adeline {
         list
     }
 
-    /// The agent's own permission options, without "reject always" (DD19).
     fn permission_card(
         &self,
         request: &protocol::PendingPermission,
@@ -396,7 +386,6 @@ impl Adeline {
             .child(options)
     }
 
-    /// "Claude Code needs you to log in.", a button per method, and Retry (DD12).
     fn login_card(
         &self,
         id: &str,
@@ -455,7 +444,6 @@ impl Adeline {
             .child(buttons)
     }
 
-    /// The crashed agent's stderr in a collapsed "Agent output" disclosure (DD18).
     fn crash_output(&self, id: &str, stderr: &str, cx: &Context<Self>) -> Div {
         let key = format!("stderr:{id}");
         let open = self.open_thoughts.contains(&key);
@@ -504,7 +492,6 @@ impl Adeline {
             })
     }
 
-    /// An image attachment's picture, decoded once.
     pub(super) fn picture(&self, file: &Attachment) -> Option<Arc<Image>> {
         if !file.image() || file.data.is_empty() {
             return None;
@@ -525,8 +512,6 @@ impl Adeline {
         Some(image)
     }
 
-    /// Files as chips: a miniature for images, else the file icon, the name
-    /// and the size. Composer chips can be removed; sent images open a preview.
     pub(super) fn attachment_chips(
         &self,
         files: &[Attachment],
@@ -595,8 +580,6 @@ impl Adeline {
         chips
     }
 
-    /// Adds a file to the composer, unless it is too big or an image the
-    /// agent can't receive (scope R23).
     pub(super) fn attach(&mut self, file: Attachment, cx: &mut Context<Self>) {
         self.attachment_error = None;
         if file.size > conversation::ATTACHMENT_LIMIT {
@@ -621,7 +604,6 @@ impl Adeline {
         self.composer_region.update(cx, |_, cx| cx.notify());
     }
 
-    /// Reads a local file into an attachment, on a background thread.
     pub(super) fn attach_local(&mut self, path: std::path::PathBuf, cx: &mut Context<Self>) {
         let task = cx.background_executor().spawn(async move {
             let name = path.file_name().map_or_else(
@@ -659,7 +641,6 @@ impl Adeline {
         .detach();
     }
 
-    /// A pasted image, or files copied in a file manager.
     pub(super) fn paste(&mut self, item: &ClipboardItem, cx: &mut Context<Self>) -> bool {
         let mut taken = false;
         for entry in item.entries() {
@@ -691,7 +672,6 @@ impl Adeline {
         taken
     }
 
-    /// The agent's commands matching a `/` typed at the start of the composer.
     pub(super) fn slash_matches(&self, cx: &App) -> Vec<conversation::AgentCommand> {
         if self.slash_dismissed {
             return Vec::new();
@@ -715,7 +695,6 @@ impl Adeline {
             .unwrap_or_default()
     }
 
-    /// The `/` list above the composer (DD10): command, input hint, description.
     pub(super) fn slash_list(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let commands = self.slash_matches(cx);
         if commands.is_empty() {
@@ -781,7 +760,6 @@ impl Adeline {
         Some(list.into_any_element())
     }
 
-    /// Puts `/name ` in the composer and closes the list. It never sends.
     pub(super) fn insert_command(
         &mut self,
         name: &str,
@@ -796,8 +774,6 @@ impl Adeline {
         self.composer_region.update(cx, |_, cx| cx.notify());
     }
 
-    /// Keys for the `/` list and the queue while the composer has focus.
-    /// Returns whether the key was used.
     pub(super) fn composer_key(
         &mut self,
         key: &str,
@@ -836,7 +812,6 @@ impl Adeline {
         false
     }
 
-    /// The header's TODO button and its list (DD8).
     pub(super) fn todo_button(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let steps = self
             .current_live()
@@ -926,7 +901,6 @@ impl Adeline {
         )
     }
 
-    /// A reply's thought: streaming muted text, then "Thought for 12s" (DD4).
     pub(super) fn thought_block(
         &self,
         thread: &Thread,
@@ -983,7 +957,6 @@ impl Adeline {
         )
     }
 
-    /// The right panel's tabs: Agent activity and ACP traffic (DD7).
     pub(super) fn right_panel(&self, cx: &Context<Self>) -> AnyElement {
         let owner = cx.weak_entity();
         let tabs = TabBar::new("right-panel-tabs")
@@ -1008,7 +981,6 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// The open chat's raw ACP traffic and the agent's stderr (DD21).
     fn traffic_panel(&self, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme();
         if self.selected.is_none() {
@@ -1112,7 +1084,6 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// A sent image, large, in a dialog. Escape closes it.
     pub(super) fn preview_image(
         &mut self,
         message: usize,
@@ -1144,7 +1115,6 @@ impl Adeline {
         });
     }
 
-    /// Every traffic line as text, for Copy all.
     pub(super) fn traffic_text(&self) -> String {
         self.traffic
             .iter()
@@ -1161,7 +1131,6 @@ impl Adeline {
     }
 }
 
-/// A TODO step's status, by shape: spinner, check or empty circle (DD8).
 fn step_glyph(status: StepStatus, muted: Hsla) -> AnyElement {
     match status {
         StepStatus::InProgress => Spinner::new().xsmall().into_any_element(),
@@ -1174,32 +1143,4 @@ fn step_glyph(status: StepStatus, muted: Hsla) -> AnyElement {
             .text_color(muted)
             .into_any_element(),
     }
-}
-
-/// Local time to the second: `2:43:05 PM`.
-fn clock(ms: u64) -> String {
-    i64::try_from(ms)
-        .ok()
-        .and_then(chrono::DateTime::from_timestamp_millis)
-        .map(|at| {
-            at.with_timezone(&chrono::Local)
-                .format("%-I:%M:%S %p")
-                .to_string()
-        })
-        .unwrap_or_default()
-}
-
-/// At most `lines` lines and `chars` characters of `text`, marked when cut.
-fn excerpt(text: &str, lines: usize, chars: usize) -> String {
-    let kept: Vec<&str> = text.lines().take(lines).collect();
-    let mut kept = kept.join("\n");
-    let mut cut = kept.len() < text.len();
-    if kept.chars().count() > chars {
-        kept = kept.chars().take(chars).collect();
-        cut = true;
-    }
-    if cut {
-        kept.push('…');
-    }
-    kept
 }

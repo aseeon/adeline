@@ -69,12 +69,9 @@ impl Adeline {
         }
         let changed = action.clone();
         let previous_modal = self.modal;
+        let root = window.window_handle().downcast::<Root>().unwrap();
         match action {
-            Action::AppSettings => settings::open(
-                window.window_handle().downcast::<Root>().unwrap(),
-                cx.weak_entity(),
-                cx,
-            ),
+            Action::AppSettings => settings::open(root, cx.weak_entity(), cx),
             Action::AgentSettings => {
                 let id = self
                     .current_id()
@@ -86,30 +83,17 @@ impl Adeline {
                             .iter()
                             .any(|entry| &entry.id == id)
                     });
-                settings::open_agent_page(
-                    window.window_handle().downcast::<Root>().unwrap(),
-                    cx.weak_entity(),
-                    self.current_machine(),
-                    id,
-                    cx,
-                );
+                settings::open_agent_page(root, cx.weak_entity(), self.current_machine(), id, cx);
             }
-            Action::AddAgent => settings::open_agent(
-                window.window_handle().downcast::<Root>().unwrap(),
-                cx.weak_entity(),
-                self.current_machine(),
-                cx,
-            ),
-            Action::ConfigureModeSettings => settings::open_mode(
-                window.window_handle().downcast::<Root>().unwrap(),
-                cx.weak_entity(),
-                self.section,
-                cx,
-            ),
+            Action::AddAgent => {
+                settings::open_agent(root, cx.weak_entity(), self.current_machine(), cx);
+            }
+            Action::ConfigureModeSettings => {
+                settings::open_mode(root, cx.weak_entity(), self.section, cx);
+            }
             Action::QuitApp => {
-                let handle = window.window_handle().downcast::<Root>().unwrap();
                 let owner = cx.weak_entity();
-                cx.defer(move |cx| settings::request_close(handle, owner, cx));
+                cx.defer(move |cx| settings::request_close(root, owner, cx));
             }
             Action::About => self.modal = Some("about"),
             Action::AddProject => {
@@ -180,7 +164,6 @@ impl Adeline {
                 self.open_projects[ix] = true;
                 if self.project != ix {
                     self.selected = None;
-                    self.filter = 0;
                     self.agent_filter = None;
                     self.query
                         .update(cx, |state, cx| state.set_value("", window, cx));
@@ -229,11 +212,7 @@ impl Adeline {
             Action::MachineRetry(machine) => client::retry(&machine, cx),
             Action::ManageMachines => {
                 self.menu = None;
-                settings::open_machines(
-                    window.window_handle().downcast::<Root>().unwrap(),
-                    cx.weak_entity(),
-                    cx,
-                );
+                settings::open_machines(root, cx.weak_entity(), cx);
             }
             Action::MachineUpgrade(machine) => {
                 self.menu = None;
@@ -294,14 +273,11 @@ impl Adeline {
                 self.slash = None;
                 self.watch_traffic(cx);
                 self.projects[self.project].threads[ix].mark_read();
-                if !self.demo_mode {
-                    self.mark_conversation_read(cx);
-                }
+                self.mark_conversation_read(cx);
             }
             Action::NewChat => {
                 self.section = Section::Chats;
                 self.selected = None;
-                self.filter = 0;
                 self.query
                     .update(cx, |state, cx| state.set_value("", window, cx));
                 self.composer
@@ -311,10 +287,8 @@ impl Adeline {
                 }
                 window.focus(&self.composer.focus_handle(cx), cx);
             }
-            // Agent and search combine, so changing one keeps the other.
             Action::AgentFilter(agent) => self.agent_filter = agent,
             Action::ClearChatFilters => {
-                self.filter = 0;
                 self.agent_filter = None;
                 self.query
                     .update(cx, |state, cx| state.set_value("", window, cx));
@@ -339,16 +313,15 @@ impl Adeline {
                 }) {
                     window.push_notification(error, cx);
                 }
-                self.transcript
-                    .update(cx, |view, cx| view.sync(self, false, cx));
+                self.resync_transcript(cx);
             }
-            Action::ToggleLeftPanel => self.left_panel_open[0] = !self.left_panel_open[0],
+            Action::ToggleLeftPanel => self.left_panel_open = !self.left_panel_open,
             Action::ToggleSidePanel => {
-                self.side_panel_open[0] = !self.side_panel_open[0];
+                self.side_panel_open = !self.side_panel_open;
                 self.watch_traffic(cx);
             }
             Action::TrafficView => {
-                self.side_panel_open[0] = true;
+                self.side_panel_open = true;
                 self.traffic_tab = true;
                 self.watch_traffic(cx);
             }
@@ -376,25 +349,17 @@ impl Adeline {
                 }) {
                     window.push_notification(error, cx);
                 }
-                self.transcript
-                    .update(cx, |view, cx| view.sync(self, false, cx));
+                self.resync_transcript(cx);
             }
             Action::ToggleThought(key) => {
                 if !self.open_thoughts.remove(&key) {
                     self.open_thoughts.insert(key);
                 }
-                self.transcript
-                    .update(cx, |view, cx| view.sync(self, false, cx));
+                self.resync_transcript(cx);
             }
             Action::OptionMenu(category) => {
-                let menu = match category {
-                    conversation::Category::Model => "model",
-                    conversation::Category::Effort => "effort",
-                    conversation::Category::Mode => "mode",
-                    conversation::Category::Other => "more",
-                };
                 if self.selected.is_some() && !self.conversation_processing() {
-                    self.open_commands(menu, window, cx);
+                    self.open_commands(chat_render::option_menu_name(category), window, cx);
                 }
             }
             Action::SetOption {
@@ -417,11 +382,10 @@ impl Adeline {
             Action::DismissError(message) => {
                 if let Some(index) = self.selected {
                     let thread = &self.workspace().threads[index];
-                    let turn = thread.messages.iter().rposition(|m| m.role == "user");
+                    let turn = thread.turn_of(thread.messages.len());
                     self.dismissed_errors
                         .insert((thread.id.clone(), turn, message));
-                    self.transcript
-                        .update(cx, |view, cx| view.sync(self, false, cx));
+                    self.resync_transcript(cx);
                 }
             }
             Action::RemoveAttachment(ix) => {
@@ -433,19 +397,7 @@ impl Adeline {
             Action::PreviewImage(message, ix) => self.preview_image(message, ix, window, cx),
             Action::Login(method) => self.login(&method, cx),
             Action::Restart => self.restart_agent(cx),
-            Action::Complete => {
-                if !self.demo_mode {
-                    self.complete_conversation(false, cx);
-                } else if let Some(ix) = self.selected {
-                    let thread = &mut self.projects[self.project].threads[ix];
-                    thread.status = if thread.status == "completed" {
-                        "idle"
-                    } else {
-                        "completed"
-                    }
-                    .into();
-                }
-            }
+            Action::Complete => self.complete_conversation(false, cx),
             Action::ArchiveChat(ix) => {
                 if let Some(id) = self.workspace().threads.get(ix).map(|t| t.id.clone()) {
                     self.finish_conversation(&id, true, cx);
@@ -517,8 +469,7 @@ impl Adeline {
                 if !self.runtime.expanded_tools.remove(&id) {
                     self.runtime.expanded_tools.insert(id);
                 }
-                self.transcript
-                    .update(cx, |view, cx| view.sync(self, false, cx));
+                self.resync_transcript(cx);
             }
             Action::Decision(ix) => {
                 if let Some(thread) = self.selected {
@@ -602,7 +553,6 @@ impl Adeline {
         cx.notify();
     }
 
-    /// Adds `@"path"` to the composer.
     pub(super) fn attach_path(&mut self, path: &str, window: &mut Window, cx: &mut Context<Self>) {
         let mut value = self.composer.read(cx).value().to_string();
         if !value.is_empty() && !value.ends_with(char::is_whitespace) {
@@ -613,7 +563,6 @@ impl Adeline {
             .update(cx, |state, cx| state.set_value(value, window, cx));
     }
 
-    /// The text of a message in the open chat.
     fn message_text(&self, message: usize) -> Option<String> {
         let thread = &self.workspace().threads[self.selected?];
         Some(thread.messages.get(message)?.text.clone())

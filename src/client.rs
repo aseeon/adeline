@@ -26,30 +26,21 @@ pub enum State {
     Connecting,
     Starting,
     Connected,
-    /// An engine with another protocol version is running.
     Mismatch(Status),
-    /// Waiting for that engine to exit.
+    // For the mismatched engine to exit.
     Waiting,
-    Stopped {
-        unexpected: bool,
-    },
-    /// No engine, and retrying won't help until the user acts.
+    Stopped { unexpected: bool },
+    // Retrying won't help until the user acts.
     Unavailable(String),
-    /// A remote connection dropped or couldn't be made; retrying.
+    // Retrying.
     Disconnected(String),
     SignInFailed(String),
-    /// An older engine runs on the remote machine.
-    UpgradeNeeded {
-        version: String,
-        active: usize,
-    },
-    /// The remote machine runs a newer Adeline.
+    UpgradeNeeded { version: String, active: usize },
     LocalUpdateNeeded(String),
     Unsupported(String),
 }
 
 impl State {
-    /// How the machine selector names the state.
     pub fn label(&self) -> &'static str {
         match self {
             Self::Demo | Self::Connected => "Connected",
@@ -65,7 +56,6 @@ impl State {
         }
     }
 
-    /// The error or explanation behind the state.
     pub fn detail(&self) -> Option<String> {
         match self {
             Self::Unavailable(error)
@@ -101,29 +91,27 @@ pub struct Connection {
     pub machine: String,
     pub state: State,
     pub status: Status,
-    /// When `status` arrived, to count uptime from.
+    // When `status` arrived, to count uptime from.
     pub status_at: Instant,
     pub settings: EngineSettings,
     pub harnesses: harness::Catalog,
-    /// A snapshot has arrived, so there is data to show while reconnecting.
+    // There is data to show while reconnecting.
     pub loaded: bool,
-    /// The destination a remote machine is connected through.
     pub destination: Option<String>,
     sender: Option<mpsc::UnboundedSender<String>>,
     inbox: Option<async_channel::Receiver<Incoming>>,
     next: u64,
     pending: HashMap<u64, Callback>,
-    /// Requests that stream output lines before their reply.
     outputs: HashMap<u64, Box<dyn FnMut(String, &mut App)>>,
     queued: Vec<(u64, Command)>,
     blocking: Slot,
     epoch: u64,
     bye: bool,
-    /// The engine's delta stream as far as this client has it.
+    // As far as this client has it.
     stream: Option<Resume>,
     cancel: Option<tokio::sync::oneshot::Sender<()>>,
     retries: u32,
-    /// The user agreed to restart an older remote engine.
+    // The user agreed to restart an older remote engine.
     upgrade: bool,
 }
 
@@ -154,13 +142,21 @@ impl Connection {
         }
     }
 
+    fn demo(machine: &str, harnesses: harness::Catalog) -> Self {
+        Self {
+            state: State::Demo,
+            loaded: true,
+            harnesses,
+            ..Self::new(machine)
+        }
+    }
+
     fn local(&self) -> bool {
         self.machine == LOCAL
     }
 }
 
-/// A password typed during one connect, reused by the next `ssh` session of
-/// the same connect and forgotten when it ends.
+// Reused by the next `ssh` session of the same connect, forgotten when it ends.
 struct Secret {
     prompt: String,
     answer: String,
@@ -173,7 +169,7 @@ pub struct Connections {
     prompts: VecDeque<remote::Prompt>,
     askpass: String,
     secrets: HashMap<String, Vec<Secret>>,
-    /// The machine whose harnesses are the `harness::Catalog` global.
+    // The machine whose harnesses are the `harness::Catalog` global.
     focus: String,
     demo: bool,
 }
@@ -187,11 +183,7 @@ impl Global for Connections {}
 enum Incoming {
     Starting,
     Ready(mpsc::UnboundedSender<String>),
-    /// A remote engine welcomed this client through `destination`.
-    Linked {
-        destination: String,
-        status: Status,
-    },
+    Linked { destination: String, status: Status },
     Message(EngineMessage),
     Closed,
     Failed(String),
@@ -199,8 +191,8 @@ enum Incoming {
     OldGone,
 }
 
-/// The connections' own small tokio runtime; GPUI keeps its executors.
 fn runtime() -> &'static tokio::runtime::Runtime {
+    // Its own small runtime; GPUI keeps its executors.
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
@@ -212,8 +204,7 @@ fn runtime() -> &'static tokio::runtime::Runtime {
     })
 }
 
-/// A connection to an already running local engine, made before the window
-/// opens so the project list shows without delay.
+// Made before the window opens, so the project list shows without delay.
 pub struct Initial {
     reader: ipc::Reader,
     writer: ipc::Writer,
@@ -265,10 +256,8 @@ pub fn connect_existing() -> Option<Initial> {
     })
 }
 
-/// Sets up the global before the window exists and connects every checked
-/// machine. `initial` is a local connection made already; `snapshot` is the
-/// one taken out of it.
 pub fn init(demo: bool, initial: Option<Initial>, snapshot: Option<&Snapshot>, cx: &mut App) {
+    // `snapshot` was taken out of `initial`.
     let mut connections = Connections {
         list: Vec::new(),
         owner: None,
@@ -281,15 +270,11 @@ pub fn init(demo: bool, initial: Option<Initial>, snapshot: Option<&Snapshot>, c
     if demo {
         let harnesses = cx.global::<harness::Catalog>().clone();
         for machine in machines::checked() {
-            let mut connection = Connection::new(&machine);
+            let mut connection = Connection::demo(&machine, harnesses.clone());
             // One demo machine shows what a dropped connection looks like.
-            connection.state = if machine == "vortex" {
-                State::Disconnected("Demo machine offline.".into())
-            } else {
-                State::Demo
-            };
-            connection.loaded = true;
-            connection.harnesses = harnesses.clone();
+            if machine == "vortex" {
+                connection.state = State::Disconnected("Demo machine offline.".into());
+            }
             connections.list.push(connection);
         }
         cx.set_global(connections);
@@ -352,11 +337,7 @@ pub fn set_owner(owner: WeakEntity<Adeline>, cx: &mut App) {
     cx.global_mut::<Connections>().owner = Some(owner);
 }
 
-pub fn connection<'a>(machine: &str, cx: &'a App) -> Option<&'a Connection> {
-    get(machine, cx)
-}
-
-fn get<'a>(machine: &str, cx: &'a App) -> Option<&'a Connection> {
+pub fn get<'a>(machine: &str, cx: &'a App) -> Option<&'a Connection> {
     cx.global::<Connections>()
         .list
         .iter()
@@ -374,19 +355,16 @@ pub fn state<'a>(machine: &str, cx: &'a App) -> Option<&'a State> {
     get(machine, cx).map(|c| &c.state)
 }
 
-/// Whether a machine's projects take actions now.
 pub fn usable(machine: &str, cx: &App) -> bool {
     state(machine, cx).is_some_and(State::usable)
 }
 
-/// Every connection, in machine order.
 pub fn connections(cx: &App) -> &[Connection] {
     &cx.global::<Connections>().list
 }
 
-/// Connects newly checked machines and drops unchecked ones. Runs after the
-/// current update, so callers may be updating the window.
 pub fn sync(cx: &mut App) {
+    // Deferred, so callers may be updating the window.
     cx.defer(sync_now);
 }
 
@@ -416,16 +394,15 @@ fn sync_now(cx: &mut App) {
         if get(&machine, cx).is_some() {
             continue;
         }
-        let mut connection = Connection::new(&machine);
         if demo {
-            connection.state = State::Demo;
-            connection.loaded = true;
-            connection.harnesses = cx.global::<harness::Catalog>().clone();
+            let connection = Connection::demo(&machine, cx.global::<harness::Catalog>().clone());
             cx.global_mut::<Connections>().list.push(connection);
             let machine = machine.clone();
             update_owner(cx, move |app, cx| app.machine_checked(&machine, cx));
         } else {
-            cx.global_mut::<Connections>().list.push(connection);
+            cx.global_mut::<Connections>()
+                .list
+                .push(Connection::new(&machine));
             connect(&machine, cx);
         }
     }
@@ -468,8 +445,6 @@ fn listen(machine: &str, epoch: u64, cx: &mut App) {
     .detach();
 }
 
-/// Connects a machine again. The local engine starts when none is running;
-/// a remote one starts through `adeline bridge`.
 pub fn connect(machine: &str, cx: &mut App) {
     if get(machine, cx).is_none() || cx.global::<Connections>().demo {
         return;
@@ -502,11 +477,6 @@ pub fn connect(machine: &str, cx: &mut App) {
         let Some(saved) = machines::remote(machine) else {
             return;
         };
-        let target = remote::Remote {
-            name: saved.name,
-            destinations: saved.destinations,
-            engine: saved.engine,
-        };
         let resume = connection.stream.clone().filter(|_| connection.loaded);
         let upgrade = std::mem::take(&mut connection.upgrade);
         let askpass = remote::Askpass {
@@ -514,7 +484,7 @@ pub fn connect(machine: &str, cx: &mut App) {
             machine: machine.to_owned(),
         };
         runtime().spawn(async move {
-            match remote::connect(&target, &hello(resume), upgrade, &askpass).await {
+            match remote::connect(&saved, &hello(resume), upgrade, &askpass).await {
                 Ok(link) => {
                     let linked = Incoming::Linked {
                         destination: link.destination,
@@ -542,7 +512,6 @@ pub fn connect(machine: &str, cx: &mut App) {
     cx.refresh_windows();
 }
 
-/// Connects a machine the user asked to retry, after any failure.
 pub fn retry(machine: &str, cx: &mut App) {
     if let Some(connection) = get_mut(machine, cx) {
         connection.retries = 0;
@@ -550,7 +519,6 @@ pub fn retry(machine: &str, cx: &mut App) {
     }
 }
 
-/// The user agreed to restart an older remote engine, stopping its agents.
 pub fn upgrade(machine: &str, cx: &mut App) {
     if let Some(connection) = get_mut(machine, cx) {
         connection.upgrade = true;
@@ -637,7 +605,6 @@ fn flush_queued(machine: &str, cx: &mut App) {
     }
 }
 
-/// Tries a dropped remote machine again after a growing delay.
 fn schedule_retry(machine: &str, cx: &mut App) {
     let Some(connection) = get_mut(machine, cx) else {
         return;
@@ -659,8 +626,6 @@ fn schedule_retry(machine: &str, cx: &mut App) {
     .detach();
 }
 
-/// A new remote machine's engine: saved with it, unless another saved
-/// machine already has it.
 fn adopt_engine(machine: &str, engine: &str, cx: &mut App) -> Result<(), String> {
     let saved = machines::remote(machine).and_then(|m| m.engine);
     if saved.is_some() || engine.is_empty() {
@@ -760,8 +725,7 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
             connection.state = State::Connected;
             connection.retries = 0;
             flush_queued(machine, cx);
-            let target = machine.to_owned();
-            update_owner(cx, move |app, cx| app.machine_resumed(&target, cx));
+            update_owner(cx, |app, cx| app.refresh_runtime_views(cx));
             cx.refresh_windows();
         }
         Incoming::Message(EngineMessage::Delta(delta)) => {
@@ -830,8 +794,7 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
                 let error = format!("{} disconnected.", machines::name(machine));
                 fail_pending(machine, &error, cx);
                 schedule_retry(machine, cx);
-                let target = machine.to_owned();
-                update_owner(cx, move |app, cx| app.refresh_machine(&target, cx));
+                update_owner(cx, |app, cx| app.refresh_runtime_views(cx));
                 cx.refresh_windows();
                 return;
             }
@@ -874,7 +837,7 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
                 if upgrade {
                     app.ask_upgrade(&target, cx);
                 }
-                app.refresh_machine(&target, cx);
+                app.refresh_runtime_views(cx);
             });
             cx.refresh_windows();
         }
@@ -889,7 +852,6 @@ fn send_line(sender: &mpsc::UnboundedSender<String>, id: u64, command: Command) 
     }
 }
 
-/// Why a machine can't take a command now, or `None` when it can.
 fn refusal(connection: &Connection) -> Option<String> {
     let name = machines::name(&connection.machine);
     match &connection.state {
@@ -910,18 +872,20 @@ fn refusal(connection: &Connection) -> Option<String> {
     }
 }
 
-/// Sends a command to a machine's engine; `done` gets the reply. A stopped
-/// engine is started again for it.
 pub fn request(machine: &str, command: Command, done: Callback, cx: &mut App) {
+    send_request(machine, command, done, cx);
+}
+
+fn send_request(machine: &str, command: Command, done: Callback, cx: &mut App) -> Option<u64> {
     let Some(connection) = get_mut(machine, cx) else {
         let error = format!("{} is not checked.", machines::name(machine));
         cx.defer(move |cx| done(Err(error), cx));
-        return;
+        return None;
     };
     if let Some(error) = refusal(connection) {
         // Callers may be mid-update; their reply comes after it, like any other.
         cx.defer(move |cx| done(Err(error), cx));
-        return;
+        return None;
     }
     connection.next += 1;
     let id = connection.next;
@@ -934,9 +898,9 @@ pub fn request(machine: &str, command: Command, done: Callback, cx: &mut App) {
         }
         _ => connection.queued.push((id, command)),
     }
+    Some(id)
 }
 
-/// Sends a command whose output lines go to `output` before `done` gets its reply.
 pub fn request_with_output(
     machine: &str,
     command: Command,
@@ -944,18 +908,16 @@ pub fn request_with_output(
     done: Callback,
     cx: &mut App,
 ) {
-    let next = get(machine, cx).map(|c| c.next + 1);
-    request(machine, command, done, cx);
-    if let (Some(id), Some(connection)) = (next, get_mut(machine, cx))
-        && connection.pending.contains_key(&id)
+    if let Some(id) = send_request(machine, command, done, cx)
+        && let Some(connection) = get_mut(machine, cx)
     {
         connection.outputs.insert(id, output);
     }
 }
 
-/// Sends a command and waits for its reply, applying every change the engine
-/// sent before it. Never call this while updating the `Adeline` entity.
 pub fn request_blocking(machine: &str, command: Command, cx: &mut App) -> Result<Value, String> {
+    // Applies every change sent before the reply. Never call it while updating
+    // the `Adeline` entity.
     let name = machines::name(machine);
     let Some(connection) = get_mut(machine, cx) else {
         return Err(format!("{name} is not checked."));
@@ -974,7 +936,6 @@ pub fn request_blocking(machine: &str, command: Command, cx: &mut App) -> Result
         *slot = Some((id, reply));
     }
     send_line(sender, id, command);
-    // Remote machines answer over the network.
     let wait = if machine == LOCAL { 10 } else { 30 };
     let result = replies
         .recv_timeout(Duration::from_secs(wait))
@@ -992,8 +953,6 @@ pub fn request_blocking(machine: &str, command: Command, cx: &mut App) -> Result
     result
 }
 
-/// Waits for an older local engine to exit, then starts this version's
-/// engine. With `stop`, asks it to stop its agents and exit first.
 pub fn replace_old(stop: bool, cx: &mut App) {
     let Some(connection) = get_mut(LOCAL, cx) else {
         return;
@@ -1022,7 +981,6 @@ pub fn replace_old(stop: bool, cx: &mut App) {
     cx.refresh_windows();
 }
 
-/// Starts a machine's engine again after it was stopped, for an action that needs it.
 pub fn ensure(machine: &str, cx: &mut App) {
     if matches!(state(machine, cx), Some(State::Stopped { .. })) {
         connect(machine, cx);
@@ -1040,8 +998,6 @@ pub fn refresh_harnesses(machine: &str, fetch: bool, cx: &mut App) {
     }
 }
 
-/// Makes `machine`'s harnesses the `harness::Catalog` global, for the agent
-/// pages showing that machine.
 pub fn focus(machine: &str, cx: &mut App) {
     let connections = cx.global_mut::<Connections>();
     if connections.focus == machine {
@@ -1054,9 +1010,6 @@ pub fn focus(machine: &str, cx: &mut App) {
         cx.set_global(catalog);
     }
 }
-
-// ---------------------------------------------------------------------------
-// SSH prompts
 
 fn on_prompt(prompt: remote::Prompt, cx: &mut App) {
     let connections = cx.global_mut::<Connections>();
@@ -1077,16 +1030,16 @@ fn on_prompt(prompt: remote::Prompt, cx: &mut App) {
     cx.refresh_windows();
 }
 
-/// The `ssh` prompt waiting for the user, if any: machine and text.
 pub fn prompt(cx: &App) -> Option<(String, String, bool)> {
+    // Machine, text, and whether it asks about a host key.
     cx.global::<Connections>()
         .prompts
         .front()
         .map(|p| (p.machine.clone(), p.text.clone(), p.host_key()))
 }
 
-/// Answers the waiting prompt; `None` cancels it.
 pub fn answer_prompt(answer: Option<String>, cx: &mut App) {
+    // `None` cancels.
     let connections = cx.global_mut::<Connections>();
     let Some(prompt) = connections.prompts.pop_front() else {
         return;
@@ -1109,10 +1062,6 @@ pub fn answer_prompt(answer: Option<String>, cx: &mut App) {
     cx.refresh_windows();
 }
 
-// ---------------------------------------------------------------------------
-// Probes
-
-/// A probe running in an engine. Dropping it stops the probe.
 pub struct Probe {
     id: u64,
     sender: Option<mpsc::UnboundedSender<String>>,

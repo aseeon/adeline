@@ -1,6 +1,8 @@
 //! The machines this client knows: the local machine and the remote machines
 //! saved here, which ones are checked, and which one "Open folder…" used last.
-//! Kept in `machines.yml`; other clients never see it.
+//! Kept in `machines.yml`; other clients never see it. Demo mode keeps fake
+//! machines in memory and never touches the file. The last checked machine can't
+//! be unchecked, and removing a machine leaves its engine and data untouched.
 use serde::{Deserialize, Serialize};
 use std::{
     path::PathBuf,
@@ -17,9 +19,9 @@ pub const LOCAL: &str = "local";
 pub struct Machine {
     pub id: String,
     pub name: String,
-    /// Tried in this order on every connect.
+    // Tried in this order on every connect.
     pub destinations: Vec<String>,
-    /// The engine it was first connected to.
+    // The engine it was first connected to.
     pub engine: Option<String>,
 }
 
@@ -34,7 +36,6 @@ struct Store {
 static STORE: Mutex<Option<Store>> = Mutex::new(None);
 static DEMO: AtomicBool = AtomicBool::new(false);
 
-/// Demo mode keeps fake machines in memory and never touches the file.
 pub fn init(demo: bool) {
     DEMO.store(demo, Ordering::Relaxed);
 }
@@ -92,7 +93,6 @@ fn save(store: &Store) -> Result<(), String> {
     crate::config::seed_yaml(&path, store).and_then(|()| crate::config::write_yaml(&path, store))
 }
 
-/// The saved remote machines, in the order they were added.
 pub fn remotes() -> Vec<Machine> {
     with(|store| store.machines.clone())
 }
@@ -101,7 +101,6 @@ pub fn remote(id: &str) -> Option<Machine> {
     with(|store| store.machines.iter().find(|m| m.id == id).cloned())
 }
 
-/// Every machine's ID, the local machine first.
 pub fn all() -> Vec<String> {
     let mut ids = vec![LOCAL.to_owned()];
     ids.extend(remotes().into_iter().map(|m| m.id));
@@ -123,7 +122,6 @@ pub fn name(id: &str) -> String {
     remote(id).map_or_else(|| id.to_owned(), |m| m.name)
 }
 
-/// The checked machines, in `all` order.
 pub fn checked() -> Vec<String> {
     let checked = with(|store| store.checked.clone());
     all()
@@ -136,7 +134,6 @@ pub fn is_checked(id: &str) -> bool {
     with(|store| store.checked.iter().any(|c| c == id))
 }
 
-/// Checks or unchecks a machine. The last checked one can't be unchecked.
 pub fn set_checked(id: &str, checked: bool) -> Result<(), String> {
     with(|store| {
         if checked {
@@ -153,7 +150,6 @@ pub fn set_checked(id: &str, checked: bool) -> Result<(), String> {
     })
 }
 
-/// Saves a new machine, checked. Returns its ID.
 pub fn add(name: &str, destination: &str) -> Result<String, String> {
     let name = name.trim();
     let destination = destination.trim();
@@ -182,7 +178,6 @@ pub fn add(name: &str, destination: &str) -> Result<String, String> {
     })
 }
 
-/// Changes a saved machine with `edit`, which may refuse.
 pub fn edit(id: &str, edit: impl FnOnce(&mut Machine) -> Result<(), String>) -> Result<(), String> {
     with(|store| {
         let others: Vec<String> = store
@@ -216,7 +211,6 @@ pub fn edit(id: &str, edit: impl FnOnce(&mut Machine) -> Result<(), String>) -> 
     })
 }
 
-/// Forgets a machine on this client. Its engine and data are untouched.
 pub fn remove(id: &str) -> Result<(), String> {
     with(|store| {
         store.machines.retain(|m| m.id != id);
@@ -231,7 +225,6 @@ pub fn remove(id: &str) -> Result<(), String> {
     })
 }
 
-/// The saved machine whose engine this is, other than `except`.
 pub fn with_engine(engine: &str, except: &str) -> Option<Machine> {
     with(|store| {
         store

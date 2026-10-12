@@ -1,5 +1,6 @@
 //! The agent activity panel: what the open chat's agent did, a line per step,
-//! with the chat's numbers in an island level with the composer.
+//! with the chat's numbers in an island level with the composer. The
+//! jump-to-latest buttons over the chat and the list sit 0.5rem above both.
 use super::*;
 use crate::chat_render::{CHAT_HEADER_HEIGHT, agent_mark, message_time, tokens, tool_icon};
 use gpui_kit::component::{
@@ -14,20 +15,14 @@ use std::collections::HashSet;
 
 #[derive(Default)]
 pub(super) struct ActivityPanel {
-    /// Rows opened to show their details.
     expanded: HashSet<String>,
-    /// The transcript message under the hovered row, lit in the chat.
     pub(super) lit: Option<usize>,
-    /// The row that lit it. Moving between rows enters the next one before
-    /// leaving the last, so only this row's leaving puts the light out.
     hovered: Option<String>,
     scroll: ScrollHandle,
-    /// The chat, row count and following state the list last scrolled for.
     synced: RefCell<(String, usize, bool)>,
 }
 
 impl ActivityPanel {
-    /// Forgets the open chat's rows when another chat opens.
     pub(super) fn reset(&mut self) {
         self.expanded.clear();
         self.lit = None;
@@ -35,21 +30,11 @@ impl ActivityPanel {
     }
 }
 
-/// One line of the panel, in the order things happened.
 #[derive(Debug, PartialEq)]
 enum Entry<'a> {
-    /// A turn starts at its prompt, the message at this index.
-    Turn {
-        number: usize,
-        message: usize,
-    },
+    Turn { number: usize, message: usize },
     Prompt(usize),
-    /// Reply text written between tool calls.
-    Reply {
-        message: usize,
-        text: &'a str,
-    },
-    /// A tool call or an error, by its index in the chat's activity.
+    Reply { message: usize, text: &'a str },
     Call(usize),
 }
 
@@ -73,8 +58,6 @@ fn push_reply<'a>(
     }
 }
 
-/// The chat as the panel lists it: each turn's prompt, then its reply split
-/// around the tool calls made while it was written.
 fn timeline(thread: &Thread) -> Vec<Entry<'_>> {
     let mut entries = Vec::new();
     let prompts: Vec<usize> = (0..thread.messages.len())
@@ -125,7 +108,6 @@ fn timeline(thread: &Thread) -> Vec<Entry<'_>> {
     entries
 }
 
-/// `0.4s`, `41.2s`, `2m 04s`, `1h 05m`.
 fn duration(ms: u64) -> String {
     if ms < 100 {
         "<0.1s".into()
@@ -138,8 +120,7 @@ fn duration(ms: u64) -> String {
     }
 }
 
-/// Local time to the second: `2:43:05 PM`.
-fn clock(ms: u64) -> String {
+pub(super) fn clock(ms: u64) -> String {
     i64::try_from(ms)
         .ok()
         .and_then(chrono::DateTime::from_timestamp_millis)
@@ -158,8 +139,7 @@ fn first_line(text: &str) -> &str {
         .unwrap_or("")
 }
 
-/// At most `lines` lines and `chars` characters of `text`, marked when cut.
-fn excerpt(text: &str, lines: usize, chars: usize) -> String {
+pub(super) fn excerpt(text: &str, lines: usize, chars: usize) -> String {
     let kept: Vec<&str> = text.trim().lines().take(lines).collect();
     let mut kept = kept.join("\n");
     let mut cut = kept.len() < text.trim().len();
@@ -173,12 +153,10 @@ fn excerpt(text: &str, lines: usize, chars: usize) -> String {
     kept
 }
 
-/// About four characters a token.
 fn token_estimate(text: &str) -> usize {
     text.chars().count().div_ceil(4)
 }
 
-/// What became of a tool call: `Completed in 41.2s`, `Failed after 3.0s`.
 fn outcome(call: &Activity) -> String {
     if call.kind == "error" {
         return "Error".into();
@@ -195,7 +173,6 @@ fn outcome(call: &Activity) -> String {
     }
 }
 
-/// What a row shows when hovered.
 #[derive(Clone)]
 struct Card {
     text: String,
@@ -203,19 +180,14 @@ struct Card {
     preview: Option<String>,
 }
 
-/// What a row shows when opened.
 struct Detail {
     facts: Vec<(&'static str, String)>,
     text: Option<String>,
     output: Option<String>,
-    /// The message "Show in chat" scrolls to, and whether to open its turn's steps.
     message: Option<(usize, bool)>,
     copy: Option<(&'static str, String)>,
 }
 
-/// The round button over the chat and over the activity list that goes back
-/// to the latest message. Both sit 0.5rem above the composer's top edge, which
-/// the stats island shares, so they line up.
 pub(super) fn jump_to_latest(id: &'static str, cx: &Context<Adeline>) -> impl IntoElement {
     let theme = cx.theme();
     // Clicks stop here rather than reaching the row beneath.
@@ -344,7 +316,6 @@ impl Adeline {
             .children(jump)
     }
 
-    /// Six numbers about the chat, in an island like the composer's.
     fn activity_stats(&self, thread: &Thread, cx: &Context<Self>) -> Div {
         let theme = cx.theme();
         let calls = || {
@@ -504,11 +475,7 @@ impl Adeline {
                         text: excerpt(text, 6, 280),
                         meta: format!(
                             "{}, ≈{} tokens",
-                            if self.demo_mode {
-                                provider(&thread.provider)
-                            } else {
-                                &thread.provider
-                            },
+                            self.agent_name(&thread.provider),
                             token_estimate(text)
                         ),
                         preview: None,
@@ -729,12 +696,12 @@ impl Adeline {
             .child(row().mt_1().gap_1().children(show).children(copy))
     }
 
-    /// Lights the transcript message under a hovered row, and puts it out again.
     fn light_message(&mut self, hovered: bool, row: &str, message: usize, cx: &mut Context<Self>) {
         let lit = if hovered {
             self.activity.hovered = Some(row.to_owned());
             Some(message)
         } else if self.activity.hovered.as_deref() == Some(row) {
+            // Moving between rows enters the next before leaving the last.
             self.activity.hovered = None;
             None
         } else {
@@ -746,14 +713,12 @@ impl Adeline {
         }
     }
 
-    /// Scrolls the chat to a message; for a tool call, opens its turn's steps.
     fn show_in_chat(&mut self, message: usize, steps: bool, cx: &mut Context<Self>) {
         if steps && let Some(thread) = self.selected.map(|ix| &self.workspace().threads[ix]) {
             self.runtime
                 .expanded_tools
                 .insert(format!("summary:{}:{message}", thread.id));
-            self.transcript
-                .update(cx, |view, cx| view.sync(self, false, cx));
+            self.resync_transcript(cx);
         }
         self.activity.lit = Some(message);
         self.transcript

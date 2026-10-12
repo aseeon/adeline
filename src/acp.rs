@@ -1,7 +1,13 @@
 //! One ACP agent process per conversation, spoken to through the official
 //! `agent-client-protocol` SDK and its typed v1 messages. This is the only
 //! module that knows ACP: it translates the protocol to and from Adeline's
-//! own model (`conversation.rs`). Probes and logins use the same client.
+//! own model (`conversation.rs`). Probes and logins are short-lived sessions
+//! through the same client; dropping their `Session` stops the agent.
+//!
+//! Every line both ways, and the agent's stderr, becomes traffic; lines that
+//! aren't JSON are kept as traffic and skipped. Session modes offered through
+//! `session/set_mode` rather than as a config option appear as `MODE_OPTION`.
+//! Usage is in tokens.
 use crate::{
     agents::InstructionsMode,
     conversation::{
@@ -36,18 +42,16 @@ use tokio::{
     task::block_in_place,
 };
 
-/// The option ID Adeline gives an agent's session modes when it offers them
-/// through `session/set_mode` rather than as a config option.
-pub const MODE_OPTION: &str = "adeline/session-mode";
+const MODE_OPTION: &str = "adeline/session-mode";
 
-/// How many stderr lines an exit error quotes.
+pub const CONTINUE_TURN: &str = "Continue the interrupted turn from the saved session. Preserve completed work; do not repeat completed tool actions.";
+
 const STDERR_TAIL: usize = 12;
 
 pub struct Driver {
     sender: UnboundedSender<Input>,
 }
 
-/// A part of a prompt.
 #[derive(Clone, Debug)]
 pub enum Part {
     Text(String),
@@ -65,7 +69,6 @@ fn text_of(parts: &[Part]) -> String {
         .join("\n\n")
 }
 
-/// Puts `lead` before the prompt's text.
 fn prefixed(parts: &[Part], lead: impl FnOnce(&str) -> String) -> Vec<Part> {
     let text = text_of(parts);
     let mut out = vec![Part::Text(lead(&text))];
@@ -84,7 +87,6 @@ pub enum Command {
         prompt: Vec<Part>,
         retries: u32,
     },
-    /// Delivers a message into the running turn through the agent's steering.
     Steer {
         prompt: Vec<Part>,
     },
@@ -93,9 +95,7 @@ pub enum Command {
         request_id: u64,
         option_id: String,
     },
-    /// Changes the running turn's retry limit; later turns pass their own.
     SetRetries(u32),
-    /// Sets an option; applied now when idle, else at the next setup.
     SetOption {
         category: Category,
         id: String,
@@ -104,18 +104,14 @@ pub enum Command {
     ReplaceSession {
         context: String,
     },
-    /// Gives a new fork's first session its copied history: a native fork of
-    /// `session` when the agent offers one, else `context` as text.
     Fork {
         session: Option<String>,
         context: String,
     },
-    /// Starts the agent if needed and asks it to log in with one of its methods.
     Authenticate {
         method: String,
     },
     Logout,
-    /// Starts the agent, opens a session in its folder and reports what it offers.
     Probe,
     Shutdown,
     ForceStop,
@@ -134,7 +130,6 @@ pub enum EventKind {
         session_id: String,
         replaced: bool,
     },
-    /// The agent answered `initialize`.
     Agent {
         name: String,
         version: String,
@@ -160,7 +155,6 @@ pub enum EventKind {
         kind: ToolKind,
         paths: Vec<String>,
     },
-    /// How much of the agent's context window the session uses, in tokens.
     Usage {
         used: u64,
         size: u64,
@@ -170,11 +164,9 @@ pub enum EventKind {
         title: String,
         options: Vec<PermissionOption>,
     },
-    /// A Send now went through steering; `false` means the agent didn't take it.
     Steered {
         delivered: bool,
     },
-    /// MCP servers left out because the agent doesn't support their transport.
     SkippedServers(Vec<String>),
     Retrying {
         attempt: u32,
@@ -192,16 +184,11 @@ pub enum EventKind {
     ShutdownStuck,
     ShutdownComplete,
     ReplacementRequired(String),
-    /// A fork's first prompt carries its history as text.
     TextCopy,
     Traffic(TrafficEntry),
-    /// The agent asked Adeline to open a URL, such as a login page.
     OpenUrl(String),
-    /// A login or logout finished.
     Auth(Result<(), String>),
-    /// A probe's session is set up and configured.
     Probed,
-    /// The agent's last stderr lines, just before the error its exit causes.
     Crashed(String),
 }
 
@@ -281,9 +268,7 @@ impl std::fmt::Debug for Input {
 enum Request {
     Initialize,
     Setup,
-    /// One step of applying the saved selections after setup.
     Config,
-    /// A user's change while idle.
     Switch,
     Prompt,
     Steer,
@@ -292,7 +277,6 @@ enum Request {
     Logout,
 }
 
-/// The requests Adeline sends, typed.
 #[derive(Debug)]
 #[expect(
     clippy::large_enum_variant,
@@ -307,14 +291,13 @@ enum Outgoing {
     SetConfig(wire::SetSessionConfigOptionRequest),
     SetMode(wire::SetSessionModeRequest),
     Prompt(wire::PromptRequest),
-    /// The steering extension, which the schema has no type for.
+    // The steering extension, which the schema has no type for.
     Steer(Value),
     Close(wire::CloseSessionRequest),
     Authenticate(wire::AuthenticateRequest),
     Logout(wire::LogoutRequest),
 }
 
-/// A session setup's answer, whichever request it was.
 #[derive(Debug, Default)]
 struct SessionReply {
     session_id: Option<String>,
@@ -332,11 +315,10 @@ enum Reply {
     Steer(Value),
 }
 
-/// The live connection to an agent process.
 enum Link {
     Sdk {
         connection: ConnectionTo<Agent>,
-        /// Dropping or firing it ends the connection, which closes stdin.
+        // Dropping or firing it ends the connection, which closes stdin.
         _close: oneshot::Sender<()>,
     },
     #[cfg(test)]
@@ -422,7 +404,6 @@ impl Link {
     }
 }
 
-/// The latest state of one tool call. Updates may omit fields they don't change.
 #[derive(Clone, Default)]
 struct ToolState {
     title: String,
@@ -476,7 +457,6 @@ struct Worker {
     receiver: UnboundedReceiver<Input>,
     child: Option<Child>,
     link: Option<Link>,
-    /// The process is running and its connection is still being set up.
     connecting: bool,
     epoch: u64,
     next_request: u64,
@@ -484,7 +464,6 @@ struct Worker {
     pending: HashMap<u64, Request>,
     handshake: Option<(u64, Request, Instant)>,
     permissions: HashMap<u64, PendingPermission>,
-    /// What the agent offered at `initialize`; `None` until it answered.
     features: Option<Features>,
     raw_options: Vec<wire::SessionConfigOption>,
     modes: Option<wire::SessionModeState>,
@@ -492,7 +471,6 @@ struct Worker {
     tools: HashMap<String, ToolState>,
     setup: Option<Request>,
     configured: bool,
-    /// How many of the saved selections setup has applied.
     config_step: usize,
     restore_required: bool,
     active: Option<Turn>,
@@ -510,14 +488,10 @@ struct Worker {
     pending_context: Option<String>,
     forced: bool,
     replacing: bool,
-    /// A fork's source session and history, until its first session is set up.
+    // A fork's source session and history, until its first session is set up.
     fork: Option<(Option<String>, String)>,
-    /// The session being set up is a native fork.
     forking: bool,
-    /// Reports the session's options once configured, then stops.
     probing: bool,
-    /// A login (`Some(method)`) or logout (`None`) to send once the agent
-    /// has answered `initialize`.
     #[expect(
         clippy::option_option,
         reason = "nothing pending, a logout, or a login"
@@ -590,7 +564,6 @@ impl Worker {
         });
     }
 
-    /// The agent stopped answering: its process runs but the connection is gone.
     fn stopped_talking(&self) -> bool {
         self.child.is_some() && self.link.is_none() && !self.connecting
     }
@@ -654,9 +627,8 @@ impl Worker {
         }
     }
 
-    /// Process and deadline bookkeeping, every 100 ms. Returns true once the
-    /// worker is done.
     fn tick(&mut self) -> bool {
+        // Returns true once the worker is done.
         if let Some(child) = &mut self.child {
             match child.try_wait() {
                 Ok(Some(_)) if self.forced => {
@@ -844,8 +816,6 @@ impl Worker {
         }
     }
 
-    /// Moves a new turn or probe on: starts the agent, sets up its session or
-    /// sends the prompt, whichever comes next.
     fn advance(&mut self) {
         if self.child.is_none() && self.link.is_none() && !self.connecting {
             self.start();
@@ -911,7 +881,7 @@ impl Worker {
         #[cfg(target_os = "windows")]
         {
             use std::os::windows::process::CommandExt;
-            process.creation_flags(0x0800_0000); // CREATE_NO_WINDOW: ACP uses pipes.
+            process.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
         }
         match block_in_place(|| crate::platform::spawn_piped(&mut process, true)) {
             Ok((child, stdin, stdout, stderr)) => {
@@ -951,8 +921,6 @@ impl Worker {
         }
     }
 
-    /// Runs the SDK connection over the process's stdio. Every line both ways
-    /// becomes traffic; lines that are not JSON are kept as traffic and skipped.
     fn connect(&self, stdin: tokio::process::ChildStdin, stdout: crate::platform::Reader) {
         let outgoing = futures::sink::unfold(stdin, move |mut stdin, line: String| async move {
             stdin.write_all(line.as_bytes()).await?;
@@ -971,8 +939,6 @@ impl Worker {
         self.connect_lines(outgoing, incoming);
     }
 
-    /// Runs the SDK connection over lines both ways: the agent's stdio, or a
-    /// test's channels.
     fn connect_lines(
         &self,
         outgoing: impl futures::Sink<String, Error = std::io::Error> + Send + 'static,
@@ -1061,7 +1027,6 @@ impl Worker {
         });
     }
 
-    /// Reports one line of traffic, without waiting for it to be saved.
     fn traffic_sink(&self) -> Arc<dyn Fn(Direction, &str, TrafficNote) + Send + Sync> {
         let events = self.events.clone();
         let id = self.id.clone();
@@ -1148,7 +1113,6 @@ impl Worker {
         Some(id)
     }
 
-    /// The MCP servers the agent can take, reporting the ones it can't.
     fn mcp_servers(&self) -> Vec<wire::McpServer> {
         let features = self.features.clone().unwrap_or_default();
         let mut skipped = Vec::new();
@@ -1188,7 +1152,6 @@ impl Worker {
         servers
     }
 
-    /// `_meta` for session setup: Claude's system prompt (scope R29).
     fn session_meta(&self) -> Option<wire::Meta> {
         if self.instructions() != Instructions::SessionMeta {
             return None;
@@ -1489,15 +1452,13 @@ impl Worker {
         self.configure_next();
     }
 
-    /// Rebuilds the options from the agent's config options and modes.
     fn refresh_options(&mut self) {
         self.options = translate_options(&self.raw_options, self.modes.as_ref(), self.profile);
         self.emit(EventKind::Options(self.options.clone()));
     }
 
-    /// The saved selections in the order setup applies them: model first,
-    /// because some agents (Codex) offer effort only once a model is set.
     fn selection_steps(&self) -> Vec<(Category, String, String)> {
+        // Model first: some agents (Codex) offer effort only once a model is set.
         let selections = &self.config.selections;
         let mut steps = vec![
             (Category::Model, String::new(), selections.model.clone()),
@@ -1513,8 +1474,6 @@ impl Worker {
         steps
     }
 
-    /// Applies the next saved selection, then moves on. An empty value keeps
-    /// the agent's default.
     fn configure_next(&mut self) {
         let steps = self.selection_steps();
         while let Some((category, id, mut value)) = steps.get(self.config_step).cloned() {
@@ -1528,11 +1487,7 @@ impl Worker {
             if value.is_empty() {
                 continue;
             }
-            let option = match category {
-                Category::Other => self.options.iter().find(|option| option.id == id),
-                category => crate::conversation::option(&self.options, category),
-            }
-            .cloned();
+            let option = self.find_option(category, &id);
             let label = match category {
                 Category::Model => "model",
                 Category::Effort => "effort",
@@ -1556,18 +1511,15 @@ impl Worker {
             if category != Category::Model && option.current() == value {
                 continue;
             }
-            if self.set_option(&option, &value, Request::Config) {
-                return;
-            }
+            self.set_option(&option, &value, Request::Config);
             return;
         }
         self.configured();
     }
 
-    /// Sends one option change. Returns whether a request went out.
-    fn set_option(&mut self, option: &SessionOption, value: &str, request: Request) -> bool {
+    fn set_option(&mut self, option: &SessionOption, value: &str, request: Request) {
         let Some(session) = self.session_id.clone() else {
-            return false;
+            return;
         };
         let outgoing = if option.id == MODE_OPTION {
             Outgoing::SetMode(wire::SetSessionModeRequest::new(session, value.to_owned()))
@@ -1590,7 +1542,15 @@ impl Worker {
                 modes.current_mode_id = wire::SessionModeId::new(value.to_owned());
             }
         }
-        self.request(outgoing, request).is_some()
+        self.request(outgoing, request);
+    }
+
+    fn find_option(&self, category: Category, id: &str) -> Option<SessionOption> {
+        match category {
+            Category::Other => self.options.iter().find(|option| option.id == id),
+            category => crate::conversation::option(&self.options, category),
+        }
+        .cloned()
     }
 
     fn configured(&mut self) {
@@ -1624,11 +1584,7 @@ impl Worker {
         if !self.configured || self.active.is_some() || self.link.is_none() {
             return;
         }
-        let option = match category {
-            Category::Other => self.options.iter().find(|option| option.id == id),
-            category => crate::conversation::option(&self.options, category),
-        }
-        .cloned();
+        let option = self.find_option(category, id);
         if let Some(option) = option
             && option.offers(value)
         {
@@ -1672,8 +1628,6 @@ impl Worker {
         }
     }
 
-    /// A prompt as ACP content: text, images, and files embedded or linked by
-    /// what the agent supports (scope R23).
     fn content(&self, parts: &[Part]) -> Result<Vec<wire::ContentBlock>, String> {
         let features = self.features.clone().unwrap_or_default();
         let mut blocks = Vec::new();
@@ -1810,7 +1764,7 @@ impl Worker {
                 .as_ref()
                 .is_some_and(|turn| !turn.cancelled && turn.prompt_request.is_some());
         match notification.update {
-            // Session state counts between turns too (scope R7).
+            // Session state counts between turns too.
             wire::SessionUpdate::UsageUpdate(usage) => {
                 if self.setup.is_none() {
                     self.emit(EventKind::Usage {
@@ -1929,6 +1883,7 @@ impl Worker {
         }
         let id = update.tool_call_id.0.to_string();
         let fields = update.fields;
+        // Updates may omit fields they don't change.
         let entry = self.tools.entry(id.clone()).or_default();
         if let Some(title) = fields.title {
             entry.title = title;
@@ -1988,7 +1943,7 @@ impl Worker {
                     wire::PermissionOptionKind::AllowOnce => PermissionKind::AllowOnce,
                     wire::PermissionOptionKind::AllowAlways => PermissionKind::AllowAlways,
                     wire::PermissionOptionKind::RejectOnce => PermissionKind::RejectOnce,
-                    // "Reject always" stays hidden (scope R21).
+                    // "Reject always" stays hidden.
                     _ => return None,
                 };
                 Some(PermissionOption {
@@ -2078,7 +2033,6 @@ impl Worker {
         }
     }
 
-    /// Ends the active turn as finished.
     fn finish(&mut self, stop_reason: StopReason) {
         self.active = None;
         self.cancel_permissions();
@@ -2173,7 +2127,7 @@ impl Worker {
         };
         turn.retry_at = None;
         if turn.worked {
-            turn.prompt = vec![Part::Text(continue_interrupted_turn().into())];
+            turn.prompt = vec![Part::Text(CONTINUE_TURN.into())];
             if self.child.is_none() {
                 self.start();
             } else {
@@ -2273,14 +2227,12 @@ impl Worker {
         self.close_link();
     }
 
-    /// Ends the connection, which closes the agent's stdin.
     fn close_link(&mut self) {
         self.link = None;
         self.connecting = false;
     }
 }
 
-/// Routes one message from the agent into the worker.
 fn route(dispatch: Dispatch, inputs: &UnboundedSender<Input>, epoch: u64) -> Handled<Dispatch> {
     match dispatch {
         Dispatch::Request(message, responder) => {
@@ -2322,7 +2274,7 @@ fn route(dispatch: Dispatch, inputs: &UnboundedSender<Input>, epoch: u64) -> Han
                         .cast::<wire::CreateElicitationResponse>()
                         .respond(wire::CreateElicitationResponse::new(action));
                 }
-                // Adeline offers no `fs/*` or `terminal/*` (scope boundaries).
+                // Adeline offers no `fs/*` or `terminal/*`.
                 method => {
                     let _ = responder
                         .respond_with_error(sdk::Error::method_not_found().data(method.to_owned()));
@@ -2349,7 +2301,6 @@ fn route(dispatch: Dispatch, inputs: &UnboundedSender<Input>, epoch: u64) -> Han
     }
 }
 
-/// Answers a permission request: the chosen option, or cancelled.
 fn respond(responder: Option<Responder<wire::RequestPermissionResponse>>, option: Option<&str>) {
     let Some(responder) = responder else {
         return;
@@ -2362,8 +2313,6 @@ fn respond(responder: Option<Responder<wire::RequestPermissionResponse>>, option
     let _ = responder.respond(wire::RequestPermissionResponse::new(outcome));
 }
 
-/// The session update types and methods Adeline understands; anything else
-/// is marked unknown in the traffic view (scope R4).
 fn classify_line(line: &str) -> TrafficNote {
     let Ok(value) = serde_json::from_str::<Value>(line) else {
         return TrafficNote::NotJson;
@@ -2385,7 +2334,6 @@ fn classify_line(line: &str) -> TrafficNote {
     }
 }
 
-/// Traffic lines as kept: long ones shortened, attached file data dropped.
 fn trimmed_traffic(line: &str) -> String {
     const LIMIT: usize = 64 * 1024;
     if line.len() <= LIMIT {
@@ -2429,8 +2377,6 @@ fn auth_method(method: &wire::AuthMethod) -> AuthMethod {
     }
 }
 
-/// The agent's config options and modes in Adeline's terms. Plan modes in
-/// the profile are left out of the choices (scope R20).
 fn translate_options(
     raw: &[wire::SessionConfigOption],
     modes: Option<&wire::SessionModeState>,
@@ -2632,7 +2578,6 @@ fn attachment_data(file: &Attachment) -> Result<String, String> {
     }
 }
 
-/// A file to link: its own path, else a copy of its bytes in a temporary folder.
 fn linked_path(file: &Attachment) -> Result<std::path::PathBuf, String> {
     if let Some(path) = &file.path {
         return Ok(path.clone());
@@ -2676,15 +2621,10 @@ fn engine_log(message: &str) {
     crate::engine::log(message);
 }
 
-/// A prompt that carries saved conversation history ahead of the new request.
 fn with_context(context: &str, text: &str) -> String {
     format!(
         "Saved conversation context (prior history; do not repeat completed tool actions):\n{context}\n\nNew user request:\n{text}"
     )
-}
-
-fn continue_interrupted_turn() -> &'static str {
-    "Continue the interrupted turn from where you stopped. Do not repeat completed work or tool actions."
 }
 
 fn contains_ascii(text: &str, needle: &str) -> bool {
@@ -2743,13 +2683,8 @@ fn looks_like_agent_error(text: &str) -> bool {
     })
 }
 
-// ---------------------------------------------------------------------------
-// Probes and logins: short-lived sessions through the same client.
-
-/// What a probe learned about an agent.
 #[derive(Clone, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Probed {
-    /// The name the agent reported at `initialize`.
     pub identity: String,
     pub version: String,
     pub features: Features,
@@ -2759,21 +2694,17 @@ pub struct Probed {
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ProbeError {
     pub message: String,
-    /// The agent's login methods, when it needs a login.
     #[serde(default)]
     pub auth: Vec<AuthMethod>,
-    /// The agent speaks another ACP version; retrying won't help.
+    // The agent speaks another ACP version; retrying won't help.
     #[serde(default)]
     pub version: bool,
 }
 
-/// A running probe or login. Dropping it stops the agent.
 pub struct Session {
     _driver: Driver,
 }
 
-/// Starts the agent in a temporary folder, opens a session without
-/// prompting, applies `config`'s selections and reports what it offers.
 pub fn probe(
     mut config: ExecutionConfig,
 ) -> (Session, async_channel::Receiver<Result<Probed, ProbeError>>) {
@@ -2827,7 +2758,6 @@ pub fn probe(
     (Session { _driver: driver }, results)
 }
 
-/// Starts the agent and logs in with `method`, or logs out without one.
 pub fn login(
     mut config: ExecutionConfig,
     method: Option<String>,

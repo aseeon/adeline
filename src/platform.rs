@@ -1,5 +1,9 @@
 //! OS glue for the engine: process containment, detached and piped spawning,
 //! console attachment and owner-only IPC pipes. All unsafe code lives here.
+//! Every process the engine starts dies with it, even when it is killed: a job
+//! object on Windows. On Unix each agent leads a process group listed in a file,
+//! which `stop_children` and the next engine kill. Piped readers are driven by
+//! the reactor (IOCP or epoll), so no thread waits on them.
 #![cfg_attr(
     windows,
     expect(
@@ -16,7 +20,6 @@ use tokio::io::AsyncRead;
 
 pub type Reader = Box<dyn AsyncRead + Send + Unpin>;
 
-/// Ties every process this one starts to its lifetime, even when it is killed.
 #[cfg(windows)]
 #[expect(
     clippy::cast_possible_truncation,
@@ -57,10 +60,6 @@ pub fn contain_children(_dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Ties every process this one starts to its lifetime. Unix has no job
-/// objects: each agent gets its own process group, listed in a file in `dir`.
-/// [`stop_children`] stops them on exit, and the next engine stops the ones an
-/// engine that was killed or crashed left behind.
 #[cfg(not(windows))]
 #[expect(
     clippy::unnecessary_wraps,
@@ -75,11 +74,9 @@ pub fn contain_children(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Windows needs nothing: the job object stops them when the engine exits.
 #[cfg(windows)]
 pub fn stop_children() {}
 
-/// Stops the agent process groups this engine started.
 #[cfg(not(windows))]
 pub fn stop_children() {
     if let Some(file) = GROUPS.lock().ok().and_then(|groups| groups.clone()) {
@@ -87,11 +84,9 @@ pub fn stop_children() {
     }
 }
 
-/// The file listing this engine's agent process groups, once known.
 #[cfg(not(windows))]
 static GROUPS: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
 
-/// Lists a new agent's process group, led by `pid` running `program`.
 #[cfg(not(windows))]
 fn record_group(pid: u32, program: &std::ffi::OsStr) {
     use std::io::Write as _;
@@ -108,7 +103,6 @@ fn record_group(pid: u32, program: &std::ffi::OsStr) {
     }
 }
 
-/// Kills the listed groups that are still ours, then empties the list.
 #[cfg(not(windows))]
 #[expect(
     clippy::disallowed_methods,
@@ -131,13 +125,12 @@ fn stop_groups(file: &Path) {
     let _ = std::fs::remove_file(file);
 }
 
-/// The groups in `listed` (`<pgid> <program>` lines) that `ps` (`<pid> <pgid>
-/// <command>` lines) shows are still ours. An ID isn't handed out again while a
-/// group by that ID has members, so a group without its leader is still ours.
-/// A live leader must be the program that was started: the group may have
-/// emptied and its ID gone to a new process.
 #[cfg(any(not(windows), test))]
 fn ours<'a>(ps: &str, listed: &'a str) -> Vec<&'a str> {
+    // `listed` has `<pgid> <program>` lines, `ps` `<pid> <pgid> <command>` lines.
+    // An ID isn't handed out again while a group by that ID has members, so a
+    // group without its leader is still ours. A live leader must be the program
+    // that was started: the group may have emptied and its ID gone to a new process.
     let processes: Vec<(&str, &str, &str)> = ps
         .lines()
         .filter_map(|line| {
@@ -163,19 +156,18 @@ fn ours<'a>(ps: &str, listed: &'a str) -> Vec<&'a str> {
         .collect()
 }
 
-/// Kills a process and everything it started, such as the `node` behind an
-/// npm shim: `taskkill /T` on Windows, the process group elsewhere.
 #[expect(
     clippy::disallowed_methods,
     reason = "Runs on the engine's runtime, never on the UI thread"
 )]
 pub fn kill_tree(child: &mut Child) -> io::Result<()> {
+    // The tree includes the `node` behind an npm shim.
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
         let status = Command::new("taskkill")
             .args(["/T", "/F", "/PID", &child.id().to_string()])
-            .creation_flags(0x0800_0000)
+            .creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -198,12 +190,12 @@ pub fn kill_tree(child: &mut Child) -> io::Result<()> {
     }
 }
 
-/// Starts a background process that outlives the caller, outside its console and job.
 #[expect(
     clippy::disallowed_methods,
     reason = "Callers run this off the UI thread"
 )]
 pub fn spawn_detached(command: &mut Command) -> io::Result<Child> {
+    // Outlives the caller, outside its console and job.
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -252,8 +244,8 @@ pub fn spawn_detached(command: &mut Command) -> io::Result<Child> {
     }
 }
 
-/// Lets a `windows_subsystem = "windows"` exe print to the terminal that started it.
 pub fn attach_parent_console() {
+    // Lets a `windows_subsystem = "windows"` exe print to the terminal that started it.
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
@@ -262,8 +254,8 @@ pub fn attach_parent_console() {
     }
 }
 
-/// Creates an inbound and outbound IPC pipe instance only this user (and SYSTEM)
-/// can open. The default named-pipe DACL lets Everyone read.
+// The default named-pipe DACL lets Everyone read, so this one admits only this
+// user and SYSTEM.
 #[cfg(windows)]
 #[expect(
     clippy::cast_possible_truncation,
@@ -373,8 +365,6 @@ fn current_user_sid() -> io::Result<String> {
     Ok(sid)
 }
 
-/// Spawns `command` with piped stdin and stdout, plus stderr when asked. The
-/// readers are driven by the reactor (IOCP or epoll), so no thread waits on them.
 #[expect(
     clippy::disallowed_methods,
     reason = "Callers run this off the UI thread"
@@ -429,7 +419,6 @@ pub fn spawn_piped(
     Ok((child, stdin, stdout, stderr))
 }
 
-/// An overlapped pipe: the async read end and the synchronous write end for a child.
 #[cfg(windows)]
 fn overlapped_pipe() -> io::Result<(Reader, std::fs::File)> {
     use std::sync::atomic::{AtomicU64, Ordering};

@@ -4,8 +4,7 @@ use gpui_kit::base::ResizeHandleContext;
 use gpui_kit::component::resizable::{h_resizable, resizable_panel};
 use std::rc::Rc;
 
-/// The narrowest the main panel (the chat, in Chats) gets, whatever the
-/// interface text size.
+// In px, so it holds at any interface text size.
 const MAIN_PANEL_MIN: Pixels = px(360.);
 
 pub(super) struct ControlPane {
@@ -40,7 +39,7 @@ impl Render for ControlPane {
                                     Action::ToggleLeftPanel,
                                     cx,
                                 )
-                                .selected(app.left_panel_open[0]),
+                                .selected(app.left_panel_open),
                             )
                             .child(
                                 app.command_popover(
@@ -66,7 +65,7 @@ impl Render for ControlPane {
                                     Action::ToggleSidePanel,
                                     cx,
                                 )
-                                .selected(app.side_panel_open[0]),
+                                .selected(app.side_panel_open),
                             )
                         },
                     )
@@ -77,10 +76,10 @@ impl Render for ControlPane {
 }
 impl Adeline {
     pub(super) fn left_panel_is_open(&self) -> bool {
-        self.section == Section::Chats && self.left_panel_open[0]
+        self.section == Section::Chats && self.left_panel_open
     }
     pub(super) fn side_panel_is_open(&self) -> bool {
-        self.section == Section::Chats && self.side_panel_open[0]
+        self.section == Section::Chats && self.side_panel_open
     }
     pub(super) fn workspace_panels(&self, cx: &Context<Self>) -> AnyElement {
         // A collapsed conversation list stays on screen as the chat rail.
@@ -144,9 +143,6 @@ impl Adeline {
     }
 }
 
-/// Paints a panel divider as a line that fades toward its ends, so it never
-/// touches the borders above and below it. While dragged, the divider shows
-/// Kit's own highlighted line.
 fn fading_divider(
     handle: &ResizeHandleContext,
     _: &mut Window,
@@ -158,8 +154,6 @@ fn fading_divider(
     Some(fading_line(cx).into_any_element())
 }
 
-/// A full-height 1px line in the border color that fades out toward its ends:
-/// absent for the first and last `CLEAR` rems, full strength from `FADE` rems in.
 fn fading_line(cx: &App) -> Div {
     const CLEAR: f32 = 2.5;
     const FADE: f32 = 7.5;

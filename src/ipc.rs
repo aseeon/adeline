@@ -1,5 +1,7 @@
 //! The local, same-user transport between the engine and its clients: a named
 //! pipe on Windows, a Unix socket elsewhere. Messages are JSON lines.
+//! `connect` fails with `NotFound` when no engine runs. `engine/id` is the
+//! engine's lasting identity: remote clients read it over SSH to tell engines apart.
 use serde::Serialize;
 use std::{io, path::PathBuf, time::Duration};
 use tokio::io::{
@@ -13,8 +15,6 @@ pub fn engine_dir() -> Result<PathBuf, String> {
     Ok(crate::config::directory()?.join("engine"))
 }
 
-/// The engine's lasting identity, created on first use. Remote clients tell
-/// engines apart by it, and read the file over SSH before connecting.
 pub fn engine_id() -> Result<String, String> {
     let path = engine_dir()?.join("id");
     if let Ok(id) = std::fs::read_to_string(&path)
@@ -33,9 +33,9 @@ pub fn log_path() -> String {
     engine_dir().map_or_else(|error| error, |dir| dir.join("logs").display().to_string())
 }
 
-/// One pipe per configuration folder, which is one per OS user.
 #[cfg(windows)]
 fn pipe_name() -> Result<String, String> {
+    // One pipe per configuration folder, which is one per OS user.
     let folder = crate::config::directory()?;
     let hash = folder
         .to_string_lossy()
@@ -58,7 +58,6 @@ fn split<S: AsyncRead + AsyncWrite + Send + 'static>(stream: S) -> (Reader, Writ
     (BufReader::new(read).lines(), Box::new(write))
 }
 
-/// Connects to the running engine. `NotFound` means none is running.
 pub async fn connect() -> io::Result<(Reader, Writer)> {
     #[cfg(windows)]
     {
@@ -108,8 +107,8 @@ pub struct Listener {
 }
 
 impl Listener {
-    /// Call only while holding the engine lock, so no other engine listens.
     pub fn bind() -> Result<Self, String> {
+        // Callers hold the engine lock, so no other engine listens.
         #[cfg(windows)]
         {
             let name = pipe_name()?;
@@ -149,17 +148,15 @@ impl Listener {
     }
 }
 
-/// Starts `adeline engine` in the background, detached from this process.
-pub fn spawn_engine(daemon: bool) -> io::Result<u32> {
+fn spawn_engine(daemon: bool) -> io::Result<()> {
     let mut command = std::process::Command::new(std::env::current_exe()?);
     command.arg("engine");
     if daemon {
         command.arg("--daemon");
     }
-    crate::platform::spawn_detached(&mut command).map(|child| child.id())
+    crate::platform::spawn_detached(&mut command).map(drop)
 }
 
-/// Connects, starting an engine first when none is running.
 pub async fn connect_or_start(daemon: bool) -> Result<(Reader, Writer), String> {
     if let Ok(connection) = connect().await {
         return Ok(connection);

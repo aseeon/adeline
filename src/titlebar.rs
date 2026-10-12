@@ -6,14 +6,13 @@
 use super::*;
 use gpui_kit::component::{GlobalState, TitleBar};
 
-/// Height of the main window's title bar: 4px of headroom over the 32px project tabs.
+// 4px of headroom over the 32px project tabs.
 pub(super) const MAIN_HEIGHT: Pixels = px(36.);
 
-/// Opacity of the main window's chrome over the system blur (Acrylic on Windows, vibrancy on
-/// macOS). Linux has no dependable blur, so its chrome stays opaque.
+// Over the system blur (Acrylic on Windows, vibrancy on macOS). Linux has no dependable blur,
+// so its chrome stays opaque.
 pub(super) const GLASS: f32 = if cfg!(target_os = "linux") { 1. } else { 0.7 };
 
-/// Options for a window that draws the unified title bar, so the title bar owns dragging.
 pub(super) fn main_window_options() -> WindowOptions {
     WindowOptions {
         window_background: if cfg!(target_os = "linux") {
@@ -34,9 +33,9 @@ pub(super) fn main_window_options() -> WindowOptions {
     }
 }
 
-/// Wraps a title bar so pressing it never starts text selection. Windows keeps the mouse-up for
-/// its window-move loop, so a selection begun there would trail the pointer across the window.
 pub(super) fn without_text_selection(bar: impl IntoElement) -> Div {
+    // Windows keeps the mouse-up for its window-move loop, so a selection begun on the bar would
+    // trail the pointer across the window.
     div()
         .on_mouse_down(MouseButton::Left, |_, _, cx| {
             GlobalState::suppress_text_selection(cx);
@@ -63,7 +62,6 @@ pub(super) fn app_icon(window: &Window) -> Img {
     .size(px(24.))
     .flex_shrink_0()
 }
-/// Title bar for secondary windows, which Windows draws itself and other platforms leave native.
 #[cfg(target_os = "windows")]
 pub(super) fn render(title: String, window: &Window) -> TitleBar {
     TitleBar::new().border_b_0().child(

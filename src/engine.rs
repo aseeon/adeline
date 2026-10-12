@@ -2,12 +2,14 @@
 //! conversation state and every engine-owned file. One runs per OS user.
 //!
 //! Every command and agent event goes through one task, in arrival order, so
-//! commands from several clients can't interleave or deadlock.
+//! commands from several clients can't interleave or deadlock. Every delta it
+//! sends is numbered within this process's `epoch`, and the latest
+//! `RECENT_DELTAS` are kept for clients that reconnect.
 use crate::{
     acp,
     agents::{self, AgentCatalog},
     config,
-    conversation::{Attachment, AuthMethod, Category, PermissionKind, StopReason, TurnState},
+    conversation::{Attachment, AuthMethod, Category, PermissionKind, TurnState, closed},
     data::{Message, Thread, Workspace},
     harness, install, ipc,
     protocol::{
@@ -24,19 +26,16 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use tokio::sync::mpsc;
+use tokio::{sync::mpsc, task::block_in_place};
 
 const IDLE_EXIT: Duration = Duration::from_secs(60);
-/// Deltas kept for clients that reconnect after a short drop.
 const RECENT_DELTAS: usize = 20_000;
 const STOP_GRACE: Duration = Duration::from_secs(5);
-/// No traffic for this long during a turn shows the agent as quiet.
 const QUIET_AFTER_MS: u64 = 5_000;
 const ALREADY_PROCESSING: &str =
     "This conversation is already processing (sent from another window)";
 const PERMISSION_STOPPED: &str = "Stopped while waiting for permission: no Adeline window was open to answer it. Retry continues the turn.";
 
-/// `adeline engine [status|start|stop] [--daemon]`. Returns the exit code.
 pub fn main(args: &[String]) -> i32 {
     crate::platform::attach_parent_console();
     let daemon = args.iter().any(|arg| arg == "--daemon");
@@ -69,7 +68,6 @@ fn cli<F: Future<Output = i32>>(run: impl FnOnce() -> F) -> i32 {
     }
 }
 
-/// A command-line request: connects without counting as a client.
 async fn request(command: Command) -> Result<(Value, ipc::Reader), String> {
     let (mut reader, mut writer) = ipc::connect().await.map_err(|e| e.to_string())?;
     let hello = ClientMessage::Hello {
@@ -188,13 +186,9 @@ async fn cli_stop() -> i32 {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Logging
-
 static LOG: Mutex<Option<PathBuf>> = Mutex::new(None);
 const LOG_CAP: u64 = 1024 * 1024;
 
-/// Appends a line to `engine/logs/engine.log`, rotating at 1 MB through three files.
 pub fn log(message: impl std::fmt::Display) {
     let Ok(guard) = LOG.lock() else {
         return;
@@ -226,16 +220,12 @@ pub fn log(message: impl std::fmt::Display) {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Settings
-
 fn settings_path() -> Result<PathBuf, String> {
     Ok(ipc::engine_dir()?.join("settings.yml"))
 }
 
-/// Reads `engine/settings.yml`. The first start copies the retry limit from
-/// the UI's settings.
 fn load_settings() -> EngineSettings {
+    // The first start copies the retry limit from the UI's settings.
     let defaults = EngineSettings {
         keep_running: false,
         retry_limit: 5,
@@ -269,9 +259,6 @@ fn load_settings() -> EngineSettings {
     }
     settings
 }
-
-// ---------------------------------------------------------------------------
-// The engine process
 
 fn run(daemon: bool) -> i32 {
     let dir = match ipc::engine_dir() {
@@ -361,21 +348,17 @@ enum Input {
         probe: u64,
         result: Option<Result<acp::Probed, acp::ProbeError>>,
     },
-    /// A line of a running install's output.
     Output {
         client: u64,
         request: u64,
         line: String,
     },
-    /// An install, login or logout finished.
     Done {
         client: u64,
         request: u64,
         result: Result<Value, String>,
-        /// Look for installed agents again.
         detect: bool,
     },
-    /// A login asked to open a page.
     OpenUrl(String),
 }
 
@@ -478,7 +461,6 @@ fn connection(
 struct Client {
     sender: mpsc::UnboundedSender<String>,
     writer: tokio::task::JoinHandle<()>,
-    /// A UI with a matching protocol; it gets the state and every change.
     subscribed: bool,
 }
 
@@ -496,7 +478,7 @@ struct StopAll {
 }
 
 struct Engine {
-    store: Arc<Mutex<ProjectStore>>,
+    store: ProjectStore,
     projects: Vec<Workspace>,
     live: HashMap<String, Live>,
     drivers: HashMap<String, Slot>,
@@ -513,27 +495,17 @@ struct Engine {
     stop_all: Option<StopAll>,
     deleting: HashMap<String, Vec<(u64, u64)>>,
     probes: HashMap<(u64, u64), acp::Session>,
-    /// Logins and logouts in progress, by client and request.
     logins: HashMap<(u64, u64), acp::Session>,
-    /// The conversation each client watches the ACP traffic of.
     watching: HashMap<u64, String>,
-    /// Queued messages' files, by queued message ID.
     queued_files: HashMap<u64, Vec<Attachment>>,
     next_queued: u64,
-    /// The files of each conversation's last prompt, for Retry.
     attachments: HashMap<String, Vec<Attachment>>,
-    /// A Send now waiting for the agent's steering answer, per conversation.
     steering: HashMap<String, (String, Vec<Attachment>)>,
-    /// Conversations whose queue goes out once their cancelled turn settles.
     send_after_stop: HashSet<String>,
-    /// When each running conversation's agent last sent anything, in ms.
     last_traffic: HashMap<String, u64>,
     permission_stopped: HashSet<String>,
-    /// Forks whose copied history went out as text but no turn has finished yet.
     text_copy_pending: HashSet<String>,
-    /// Turns waiting for their conversation's closing agent to exit.
-    queued: HashMap<String, String>,
-    /// When the engine itself last wrote each conversation, for file watching.
+    restart_prompt: HashMap<String, String>,
     touched: HashMap<String, Instant>,
     watched: Vec<PathBuf>,
     watch_due: Option<Instant>,
@@ -541,16 +513,13 @@ struct Engine {
     status: Status,
     exit: bool,
     identity: String,
-    /// This process's delta stream: every delta sent so far is numbered, and
-    /// the latest ones are kept for reconnecting clients.
     epoch: String,
     seq: u64,
     recent: std::collections::VecDeque<(u64, String)>,
 }
 
-/// Runs blocking file work without stalling the runtime's other tasks.
-fn blocking<T>(work: impl FnOnce() -> T) -> T {
-    tokio::task::block_in_place(work)
+fn unsaved_history(error: &str) -> String {
+    format!("History could not be saved: {error}. Restore storage access, then Retry storage.")
 }
 
 fn live_for(conversation: &storage::StoredConversation) -> Live {
@@ -584,11 +553,7 @@ fn live_for(conversation: &storage::StoredConversation) -> Live {
     let error = conversation
         .storage_error
         .clone()
-        .map(|error| {
-            format!(
-                "History could not be saved: {error}. Restore storage access, then Retry storage."
-            )
-        })
+        .map(|error| unsaved_history(&error))
         .or_else(|| {
             interrupted.then(|| {
                 last_error.map_or_else(
@@ -621,7 +586,6 @@ fn live_for(conversation: &storage::StoredConversation) -> Live {
     }
 }
 
-/// A folder's entries for a client browsing this machine; the home folder by default.
 fn list_directory(path: Option<PathBuf>) -> Result<crate::protocol::Listing, String> {
     let path = match path.filter(|path| !path.as_os_str().is_empty()) {
         Some(path) => path,
@@ -647,7 +611,6 @@ fn list_directory(path: Option<PathBuf>) -> Result<crate::protocol::Listing, Str
     })
 }
 
-/// Messages as `role: text` paragraphs, for giving an agent saved history.
 fn history_text(messages: &[Message]) -> String {
     messages
         .iter()
@@ -656,8 +619,8 @@ fn history_text(messages: &[Message]) -> String {
         .join("\n\n")
 }
 
-/// Registry icons and agent avatars, which clients can't read from disk.
 fn disk_icons() -> BTreeMap<String, String> {
+    // Clients can't read these from this machine's disk.
     let mut icons = BTreeMap::new();
     let Ok(root) = config::directory() else {
         return icons;
@@ -701,7 +664,7 @@ impl Engine {
         input: mpsc::UnboundedSender<Input>,
         events: async_channel::Sender<acp::Event>,
     ) -> Self {
-        let store = blocking(ProjectStore::new);
+        let store = block_in_place(ProjectStore::new);
         for error in &store.errors {
             log(error);
         }
@@ -713,17 +676,17 @@ impl Engine {
             .map(|conversation| (conversation.id.clone(), live_for(conversation)))
             .collect();
         let mut engine = Self {
-            store: Arc::new(Mutex::new(store)),
+            store,
             projects,
             live,
             drivers: HashMap::new(),
-            agents: blocking(|| AgentCatalog::new(false)),
+            agents: block_in_place(|| AgentCatalog::new(false)),
             harnesses: harness::Catalog {
-                harnesses: blocking(harness::load),
+                harnesses: block_in_place(harness::load),
                 ..Default::default()
             },
-            icons: blocking(disk_icons),
-            settings: blocking(load_settings),
+            icons: block_in_place(disk_icons),
+            settings: block_in_place(load_settings),
             daemon_flag: daemon,
             clients: HashMap::new(),
             _watcher: Self::watch(input.clone()),
@@ -744,7 +707,7 @@ impl Engine {
             last_traffic: HashMap::new(),
             permission_stopped: HashSet::new(),
             text_copy_pending: HashSet::new(),
-            queued: HashMap::new(),
+            restart_prompt: HashMap::new(),
             touched: HashMap::new(),
             watched: Vec::new(),
             watch_due: None,
@@ -812,7 +775,6 @@ impl Engine {
         }
     }
 
-    /// Tells clients when the status changed, ignoring the clock.
     fn refresh_status(&mut self) {
         let status = self.compute_status();
         let same = Status {
@@ -851,8 +813,6 @@ impl Engine {
         }
     }
 
-    /// Sends a reconnecting client the deltas after `resume`, if they are all
-    /// still kept. Returns whether it did.
     fn resume(&self, client: u64, resume: &crate::protocol::Resume) -> bool {
         let first = self.recent.front().map_or(self.seq + 1, |(seq, _)| *seq);
         if resume.epoch != self.epoch || resume.seq > self.seq || resume.seq + 1 < first {
@@ -867,7 +827,6 @@ impl Engine {
         true
     }
 
-    /// Applies a change to the engine's own state, then sends it to every client.
     fn broadcast(&mut self, delta: Delta) {
         crate::protocol::apply(&mut self.projects, &mut self.live, &delta);
         self.broadcast_message(&EngineMessage::Delta(delta));
@@ -918,11 +877,7 @@ impl Engine {
             harnesses: self.harnesses.clone(),
             icons: self.icons.clone(),
             settings: self.settings.clone(),
-            errors: self
-                .store
-                .lock()
-                .map(|store| store.errors.clone())
-                .unwrap_or_default(),
+            errors: self.store.errors.clone(),
             status: self.compute_status(),
             epoch: self.epoch.clone(),
             seq: self.seq,
@@ -1049,13 +1004,13 @@ impl Engine {
         }
     }
 
-    /// Runs a command. `None` means the reply comes later.
     fn command(
         &mut self,
         client: u64,
         request: u64,
         command: Command,
     ) -> Option<Result<Value, String>> {
+        // `None` means the reply comes later.
         let conversation = |engine: &Self, id: &str| {
             engine
                 .locate(id)
@@ -1107,10 +1062,8 @@ impl Engine {
                     live.shutting_down = true;
                     live.progress = Some("Restarting the agent…".into());
                     live.quiet_since = None;
-                    self.queued.insert(
-                        id.clone(),
-                        "Continue the interrupted turn from the saved session. Preserve completed work; do not repeat completed tool actions.".into(),
-                    );
+                    self.restart_prompt
+                        .insert(id.clone(), acp::CONTINUE_TURN.into());
                     self.send_live(&id);
                 }
                 Value::Null
@@ -1184,7 +1137,7 @@ impl Engine {
                 expected,
                 overwrite,
             } => {
-                let saved = blocking(|| {
+                let saved = block_in_place(|| {
                     self.agents.save(
                         original.as_deref(),
                         definition,
@@ -1196,7 +1149,7 @@ impl Engine {
                 saved.map(Value::String)
             }
             Command::DeleteAgent { id } => {
-                let deleted = blocking(|| self.agents.delete(&id));
+                let deleted = block_in_place(|| self.agents.delete(&id));
                 self.agents_changed();
                 deleted.map(|()| Value::Null)
             }
@@ -1251,7 +1204,7 @@ impl Engine {
             Command::WatchTraffic { id } => {
                 let recorded = id
                     .as_ref()
-                    .and_then(|id| self.store.lock().ok().map(|store| store.traffic(id, 2000)))
+                    .map(|id| self.store.traffic(id, 2000))
                     .unwrap_or_default();
                 match id {
                     Some(id) => self.watching.insert(client, id),
@@ -1263,7 +1216,7 @@ impl Engine {
             Command::Status => {
                 serde_json::to_value(self.compute_status()).map_err(|e| e.to_string())
             }
-            Command::ListDirectory { path } => blocking(|| list_directory(path))
+            Command::ListDirectory { path } => block_in_place(|| list_directory(path))
                 .and_then(|listing| serde_json::to_value(listing).map_err(|e| e.to_string())),
             Command::StopAll => {
                 self.begin_stop_all(Some((client, request)), false);
@@ -1305,16 +1258,12 @@ impl Engine {
     }
 
     fn tick(&mut self) {
-        let failed = self
-            .store
-            .lock()
-            .map(|mut store| store.flush_due())
-            .unwrap_or_default();
+        let failed = self.store.flush_due();
         for (id, error) in failed {
             self.storage_failure(&id, &error);
             self.send_live(&id);
         }
-        // A running turn with no traffic for a while reads as quiet (scope R32, R34).
+        // A running turn with no traffic for a while reads as quiet.
         let now = crate::recency::now_ms();
         let quiet: Vec<String> = self
             .live
@@ -1449,26 +1398,21 @@ impl Engine {
             .unwrap_or_default()
     }
 
-    // -----------------------------------------------------------------------
-    // Storage
-
     fn conversation_settings(&self, id: &str) -> Option<storage::ConversationSettings> {
-        let store = self.store.lock().ok()?;
-        store.conversation(id).map(|c| c.settings.clone())
+        self.store.conversation(id).map(|c| c.settings.clone())
     }
 
     fn storage_failure(&mut self, id: &str, error: &str) {
         let live = self.live.entry(id.to_owned()).or_default();
         live.storage_failed = true;
         live.recovering_storage = false;
-        live.error = Some(format!(
-            "History could not be saved: {error}. Restore storage access, then Retry storage."
-        ));
+        live.error = Some(unsaved_history(error));
         live.permission.clear();
         if let Some(slot) = self.drivers.get(id) {
             let _ = slot.driver.send(acp::Command::Cancel);
         }
-        if !matches!(self.status_of(id).as_str(), "completed" | "archived" | "") {
+        let status = self.status_of(id);
+        if !status.is_empty() && !closed(&status) {
             self.broadcast(Delta::Status {
                 id: id.to_owned(),
                 status: "blocked".into(),
@@ -1476,14 +1420,11 @@ impl Engine {
         }
     }
 
-    /// Queues a streamed event; it reaches disk within 250 ms (scope R41).
     fn queue_visible(&mut self, id: &str, kind: &str, data: Value) -> bool {
         self.touched.insert(id.to_owned(), Instant::now());
         let result = self
             .store
-            .lock()
-            .map_err(|e| e.to_string())
-            .and_then(|mut store| store.queue_event(id, storage::TranscriptEvent::new(kind, data)));
+            .queue_event(id, storage::TranscriptEvent::new(kind, data));
         if let Err(error) = result {
             if !self.live.get(id).is_some_and(|live| live.storage_failed) {
                 self.storage_failure(id, &error);
@@ -1494,17 +1435,11 @@ impl Engine {
         }
     }
 
-    /// Saves an event, and everything queued before it, before returning.
     fn record_visible(&mut self, id: &str, kind: &str, data: Value) -> bool {
         self.touched.insert(id.to_owned(), Instant::now());
-        let store = self.store.clone();
-        let result = blocking(|| {
-            store
-                .lock()
-                .map_err(|e| e.to_string())
-                .and_then(|mut store| {
-                    store.record_event(id, &storage::TranscriptEvent::new(kind, data))
-                })
+        let result = block_in_place(|| {
+            self.store
+                .record_event(id, &storage::TranscriptEvent::new(kind, data))
         });
         if let Err(error) = result {
             self.storage_failure(id, &error);
@@ -1523,13 +1458,7 @@ impl Engine {
             return false;
         };
         self.touched.insert(id.to_owned(), Instant::now());
-        let store = self.store.clone();
-        let result = blocking(|| {
-            store
-                .lock()
-                .map_err(|e| e.to_string())
-                .and_then(|mut store| store.update_conversation(&project_id, id, settings))
-        });
+        let result = block_in_place(|| self.store.update_conversation(&project_id, id, settings));
         if let Err(error) = result {
             self.storage_failure(id, &error);
             false
@@ -1554,17 +1483,13 @@ impl Engine {
     }
 
     fn thread_from_store(&self, id: &str) -> Option<(String, Thread)> {
-        let store = self.store.lock().ok()?;
-        store.projects.iter().find_map(|p| {
+        self.store.projects.iter().find_map(|p| {
             p.conversations
                 .iter()
                 .find(|c| c.id == id)
                 .map(|c| (p.id.clone(), c.to_thread()))
         })
     }
-
-    // -----------------------------------------------------------------------
-    // Conversations
 
     fn ensure_driver(&mut self, id: &str) -> bool {
         if self.drivers.contains_key(id) {
@@ -1584,8 +1509,6 @@ impl Engine {
         true
     }
 
-    /// Why this conversation's agent cannot start: a harness that is no
-    /// longer installed.
     fn cannot_start(&self, id: &str) -> Option<String> {
         let execution = self.live.get(id)?.execution.as_ref()?;
         let command = Path::new(&execution.command);
@@ -1598,8 +1521,6 @@ impl Engine {
         })
     }
 
-    /// Why the agent can't take these files: images it can't receive, or
-    /// files over the size limit (scope R23).
     fn refuse_attachments(&self, id: Option<&str>, attachments: &[Attachment]) -> Option<String> {
         for file in attachments {
             if file.size > crate::conversation::ATTACHMENT_LIMIT {
@@ -1647,7 +1568,7 @@ impl Engine {
             .map(|mut file| {
                 if let Some(path) = &file.path
                     && file.data.is_empty()
-                    && let Ok(metadata) = blocking(|| std::fs::metadata(path))
+                    && let Ok(metadata) = block_in_place(|| std::fs::metadata(path))
                 {
                     file.size = metadata.len();
                 }
@@ -1671,12 +1592,12 @@ impl Engine {
             if live.replacement {
                 return Err("Start a replacement session before sending.".into());
             }
-            // The composer is never blocked by a running turn (scope R30).
+            // The composer is never blocked by a running turn.
             if live.processing {
                 if now {
                     self.send_now(&id, prompt, attachments);
                 } else {
-                    self.queue(&id, prompt, attachments);
+                    self.queue(&id, prompt, attachments, false);
                 }
                 self.send_live(&id);
                 return Ok(id);
@@ -1695,10 +1616,9 @@ impl Engine {
                 .launch(&agent.harness, &agent.command, &agent.arguments)?;
             let mut servers = self.settings.mcp_servers.clone();
             servers.extend(agent.mcp_servers.iter().cloned());
-            let store = self.store.clone();
             let title = crate::short(&prompt, 100);
-            let (id, thread, live) = blocking(|| {
-                let mut store = store.lock().map_err(|e| e.to_string())?;
+            let store = &mut self.store;
+            let (id, thread, live) = block_in_place(|| {
                 let id = store.create_conversation(project_id, &agent, launch, servers, &title)?;
                 let saved = store
                     .conversation(&id)
@@ -1721,34 +1641,16 @@ impl Engine {
         Ok(id)
     }
 
-    /// Records the user's message and starts its turn.
     fn deliver(&mut self, id: &str, prompt: String, attachments: Vec<Attachment>) {
         prompt.clone_into(&mut self.live.entry(id.to_owned()).or_default().last_prompt);
-        let message = Message {
-            role: "user".into(),
-            text: prompt.clone(),
-            read: true,
-            created_at: crate::recency::now().to_string(),
-            attachments: attachments.clone(),
-            ..Default::default()
-        };
-        let saved = self.record_visible(
-            id,
-            "message",
-            serde_json::to_value(&message).unwrap_or_default(),
-        );
-        self.broadcast(Delta::Message {
-            id: id.to_owned(),
-            message,
-        });
+        let saved = self.user_message(id, prompt.clone(), attachments.clone());
         self.attachments.insert(id.to_owned(), attachments.clone());
         if saved {
             self.start_prompt(id, prompt, attachments, false);
         }
     }
 
-    /// Adds a message to the queue of the running turn (scope R31).
-    fn queue(&mut self, id: &str, text: String, files: Vec<Attachment>) {
+    fn queue(&mut self, id: &str, text: String, files: Vec<Attachment>, first: bool) {
         self.next_queued += 1;
         let queued = Queued {
             id: self.next_queued,
@@ -1756,15 +1658,14 @@ impl Engine {
             files: files.iter().map(|file| file.name.clone()).collect(),
         };
         self.queued_files.insert(queued.id, files);
-        self.live
-            .entry(id.to_owned())
-            .or_default()
-            .queued
-            .push(queued);
+        let list = &mut self.live.entry(id.to_owned()).or_default().queued;
+        if first {
+            list.insert(0, queued);
+        } else {
+            list.push(queued);
+        }
     }
 
-    /// Delivers a message during a turn: through steering when the agent
-    /// offers it, else by stopping the turn and sending it next (scope R48).
     fn send_now(&mut self, id: &str, text: String, files: Vec<Attachment>) {
         let steering = self
             .live
@@ -1782,20 +1683,30 @@ impl Engine {
             }
         }
         // The message goes first, then the cancel settles and the queue is sent.
-        self.next_queued += 1;
-        let queued = Queued {
-            id: self.next_queued,
-            text,
-            files: files.iter().map(|file| file.name.clone()).collect(),
-        };
-        self.queued_files.insert(queued.id, files);
-        self.live
-            .entry(id.to_owned())
-            .or_default()
-            .queued
-            .insert(0, queued);
+        self.queue(id, text, files, true);
         self.send_after_stop.insert(id.to_owned());
         self.stop(id);
+    }
+
+    fn user_message(&mut self, id: &str, text: String, attachments: Vec<Attachment>) -> bool {
+        let message = Message {
+            role: "user".into(),
+            text,
+            read: true,
+            created_at: crate::recency::now().to_string(),
+            attachments,
+            ..Default::default()
+        };
+        let saved = self.record_visible(
+            id,
+            "message",
+            serde_json::to_value(&message).unwrap_or_default(),
+        );
+        self.broadcast(Delta::Message {
+            id: id.to_owned(),
+            message,
+        });
+        saved
     }
 
     fn take_queued_parts(
@@ -1820,7 +1731,6 @@ impl Engine {
         Ok(Value::String(text))
     }
 
-    /// Sends every queued message as one prompt, separated by blank lines.
     fn send_queue(&mut self, id: &str) {
         let queued = std::mem::take(&mut self.live.entry(id.to_owned()).or_default().queued);
         if queued.is_empty() {
@@ -1911,7 +1821,6 @@ impl Engine {
         }
     }
 
-    /// Saves something the agent reported about its session to the conversation.
     fn save_session_state(
         &mut self,
         id: &str,
@@ -1946,7 +1855,7 @@ impl Engine {
         let was_processing = self.live.get(&id).is_some_and(|l| l.processing);
         let closing = self.live.get(&id).is_some_and(|l| l.shutting_down)
             || self.stop_all.is_some()
-            || matches!(self.status_of(&id).as_str(), "completed" | "archived");
+            || closed(&self.status_of(&id));
         match event.kind {
             acp::EventKind::Traffic(_) | acp::EventKind::Probed => return,
             acp::EventKind::Session {
@@ -2091,38 +2000,11 @@ impl Engine {
             acp::EventKind::Steered { delivered } => {
                 if let Some((text, files)) = self.steering.remove(&id) {
                     if delivered {
-                        let message = Message {
-                            role: "user".into(),
-                            text,
-                            read: true,
-                            created_at: crate::recency::now().to_string(),
-                            attachments: files,
-                            ..Default::default()
-                        };
-                        self.record_visible(
-                            &id,
-                            "message",
-                            serde_json::to_value(&message).unwrap_or_default(),
-                        );
                         self.live.entry(id.clone()).or_default().assistant = None;
-                        self.broadcast(Delta::Message {
-                            id: id.clone(),
-                            message,
-                        });
+                        self.user_message(&id, text, files);
                     } else {
                         // The agent didn't take it: it goes out when the turn ends.
-                        self.next_queued += 1;
-                        let queued = Queued {
-                            id: self.next_queued,
-                            text,
-                            files: files.iter().map(|file| file.name.clone()).collect(),
-                        };
-                        self.queued_files.insert(queued.id, files);
-                        self.live
-                            .entry(id.clone())
-                            .or_default()
-                            .queued
-                            .insert(0, queued);
+                        self.queue(&id, text, files, true);
                         if !self.live.get(&id).is_some_and(|live| live.processing) {
                             self.send_queue(&id);
                         }
@@ -2191,18 +2073,10 @@ impl Engine {
             }
             acp::EventKind::Finished { stop_reason } => {
                 self.text_copy_pending.remove(&id);
-                let reason = match stop_reason {
-                    StopReason::EndTurn => "end_turn",
-                    StopReason::MaxTokens => "max_tokens",
-                    StopReason::MaxTurnRequests => "max_turn_requests",
-                    StopReason::Refusal => "refusal",
-                    StopReason::Cancelled => "cancelled",
-                    StopReason::Signal => "signal",
-                };
                 self.record_visible(
                     &id,
                     "lifecycle",
-                    json!({"event":"turn_finished","reason":reason}),
+                    json!({"event":"turn_finished","reason":stop_reason}),
                 );
                 let live = self.live.entry(id.clone()).or_default();
                 live.processing = false;
@@ -2258,7 +2132,7 @@ impl Engine {
                 self.drivers.remove(&id);
                 self.steering.remove(&id);
                 self.last_traffic.remove(&id);
-                let finished = matches!(self.status_of(&id).as_str(), "completed" | "archived");
+                let finished = closed(&self.status_of(&id));
                 let live = self.live.entry(id.clone()).or_default();
                 live.processing = false;
                 live.shutting_down = false;
@@ -2275,7 +2149,7 @@ impl Engine {
                             Some("Agent stopped. Retry to continue from the saved session.".into());
                     }
                 }
-                if let Some(prompt) = self.queued.remove(&id)
+                if let Some(prompt) = self.restart_prompt.remove(&id)
                     && self.stop_all.is_none()
                 {
                     let files = self.attachments.get(&id).cloned().unwrap_or_default();
@@ -2320,7 +2194,6 @@ impl Engine {
         }
     }
 
-    /// Keeps a line of ACP traffic and shows it to clients watching it.
     fn traffic(&mut self, id: &str, entry: &crate::conversation::TrafficEntry) {
         self.queue_visible(
             id,
@@ -2394,9 +2267,8 @@ impl Engine {
         self.send_live(id);
     }
 
-    /// A text-copy fork whose first turn failed: retire its session and agent,
-    /// so Retry starts a fresh session and sends the copied history again.
     fn drop_undelivered_fork_session(&mut self, id: &str) {
+        // Retry then starts a fresh session and sends the copied history again.
         let Some(mut settings) = self.conversation_settings(id) else {
             return;
         };
@@ -2433,7 +2305,7 @@ impl Engine {
             .into());
         }
         match status {
-            "idle" if matches!(current.as_str(), "completed" | "archived") => {
+            "idle" if closed(&current) => {
                 self.set_runtime_status(id, "idle");
             }
             "completed" | "archived" => {
@@ -2446,7 +2318,6 @@ impl Engine {
         Ok(Value::Null)
     }
 
-    /// Why a turn can't start in this conversation now, beyond its own state.
     fn cannot_turn(&self, id: &str) -> Option<String> {
         if self.stop_all.is_some() {
             return Some("The conversation engine is stopping its agents.".into());
@@ -2477,7 +2348,7 @@ impl Engine {
         }
         let worked = live.worked;
         let prompt = if worked {
-            "Continue the interrupted turn from the saved session. Preserve completed work; do not repeat completed tool actions.".to_owned()
+            acp::CONTINUE_TURN.to_owned()
         } else {
             live.last_prompt.clone()
         };
@@ -2497,7 +2368,7 @@ impl Engine {
             // An agent closed in the background; the turn starts once it has exited.
             live.processing = true;
             live.progress = Some("Restarting the agent…".into());
-            self.queued.insert(id.to_owned(), prompt);
+            self.restart_prompt.insert(id.to_owned(), prompt);
         } else if live.shutting_down {
             return Err("Agent shutdown is stuck. Use Force Stop first.".into());
         } else {
@@ -2511,9 +2382,8 @@ impl Engine {
         if self.live.get(id).is_none_or(|live| !live.storage_failed) {
             return Err("History is already saved.".into());
         }
-        let store = self.store.clone();
-        let result = blocking(|| {
-            let mut store = store.lock().map_err(|e| e.to_string())?;
+        let store = &mut self.store;
+        let result = block_in_place(|| {
             store.retry_unsaved(id)?;
             store
                 .conversation(id)
@@ -2555,9 +2425,7 @@ impl Engine {
         live.recovering_storage = live.processing;
         live.error = if live.recovering_storage {
             Some("History is saved. Waiting for the stopped turn to settle.".into())
-        } else if !matches!(settings.status.as_str(), "completed" | "archived")
-            && !live.last_prompt.is_empty()
-        {
+        } else if !closed(&settings.status) && !live.last_prompt.is_empty() {
             Some("History is saved. Retry to continue the interrupted turn.".into())
         } else {
             None
@@ -2568,7 +2436,7 @@ impl Engine {
             live.processing = false;
             live.recovering_storage = false;
         }
-        if !matches!(settings.status.as_str(), "completed" | "archived") {
+        if !closed(&settings.status) {
             self.set_runtime_status(id, "blocked");
         }
         self.send_live(id);
@@ -2624,8 +2492,6 @@ impl Engine {
         Ok(Value::Null)
     }
 
-    /// Copies a conversation through its finished reply `message` into a new
-    /// conversation. The source and its agent are left alone.
     fn fork(&mut self, id: &str, message: usize) -> Result<Value, String> {
         if self
             .project_of(id)
@@ -2644,9 +2510,8 @@ impl Engine {
         if running {
             return Err("Wait for this reply to finish before forking.".into());
         }
-        let store = self.store.clone();
-        let (fork, live) = blocking(|| {
-            let mut store = store.lock().map_err(|e| e.to_string())?;
+        let store = &mut self.store;
+        let (fork, live) = block_in_place(|| {
             let fork = store.fork_conversation(id, message)?;
             let live = store.conversation(&fork).map(live_for).unwrap_or_default();
             Ok::<_, String>((fork, live))
@@ -2660,9 +2525,8 @@ impl Engine {
         Ok(Value::String(fork))
     }
 
-    /// For a fork without a session yet: its source's session, when a native
-    /// fork would give the agent exactly the copied history, and that history as text.
     fn fork_history(&self, id: &str) -> Option<(Option<String>, String)> {
+        // The source's session only when a native fork would give exactly the copied history.
         let settings = self.conversation_settings(id)?;
         if settings.session_id.is_some() {
             return None;
@@ -2681,8 +2545,6 @@ impl Engine {
         Some((session, context))
     }
 
-    /// Changes a model, effort, mode or other option for this conversation
-    /// only, never for its agent definition (scope R17, R18).
     fn set_option(
         &mut self,
         id: &str,
@@ -2792,9 +2654,6 @@ impl Engine {
         Value::Null
     }
 
-    // -----------------------------------------------------------------------
-    // Projects, agents, harnesses and settings
-
     fn save_project(
         &mut self,
         original: Option<&str>,
@@ -2804,9 +2663,8 @@ impl Engine {
         if original.is_some_and(|id| self.deleting.contains_key(id)) {
             return Err("This project is being deleted.".into());
         }
-        let store = self.store.clone();
-        let (id, workspace) = blocking(|| {
-            let mut store = store.lock().map_err(|e| e.to_string())?;
+        let store = &mut self.store;
+        let (id, workspace) = block_in_place(|| {
             let id = store.save_project(original, name, directory)?;
             let workspace = store
                 .projects
@@ -2849,13 +2707,7 @@ impl Engine {
             .collect();
         for id in ready {
             let waiters = self.deleting.remove(&id).unwrap_or_default();
-            let store = self.store.clone();
-            let result = blocking(|| {
-                store
-                    .lock()
-                    .map_err(|_| "Project storage is unavailable.".to_owned())
-                    .and_then(|mut store| store.delete_project(&id))
-            });
+            let result = block_in_place(|| self.store.delete_project(&id));
             if result.is_ok() {
                 for conversation in self.project_conversations(&id) {
                     self.live.remove(&conversation);
@@ -2880,7 +2732,7 @@ impl Engine {
     }
 
     fn refresh_icons(&mut self) {
-        let icons = blocking(disk_icons);
+        let icons = block_in_place(disk_icons);
         if icons != self.icons {
             self.icons = icons;
             self.broadcast(Delta::Icons(self.icons.clone()));
@@ -2895,7 +2747,6 @@ impl Engine {
         });
     }
 
-    /// What an agent would run with on this machine, for probes and logins.
     fn standalone(
         &self,
         harness_id: &str,
@@ -2903,7 +2754,7 @@ impl Engine {
         arguments: Vec<String>,
     ) -> Result<storage::ExecutionConfig, String> {
         let launch = if harness_id == harness::CUSTOM || Path::new(command).is_absolute() {
-            blocking(|| harness::resolve(command))
+            block_in_place(|| harness::resolve(command))
                 .map(|path| storage::Launch {
                     command: path.to_string_lossy().into_owned(),
                     arguments,
@@ -2966,8 +2817,6 @@ impl Engine {
         None
     }
 
-    /// Logs an agent in or out. A terminal method opens the user's own
-    /// terminal; the others go through the agent (scope R14).
     fn login(
         &mut self,
         client: u64,
@@ -2982,7 +2831,7 @@ impl Engine {
             Err(error) => return Some(Err(error)),
         };
         if let Some(terminal) = method.as_ref().and_then(|method| method.terminal.clone()) {
-            let result = blocking(|| {
+            let result = block_in_place(|| {
                 install::open_terminal(
                     Path::new(&config.command),
                     &terminal.arguments,
@@ -3019,7 +2868,7 @@ impl Engine {
 
     fn set_settings(&mut self, settings: EngineSettings) -> Result<Value, String> {
         let path = settings_path()?;
-        blocking(|| {
+        block_in_place(|| {
             config::seed_yaml(&path, &settings).and_then(|()| config::write_yaml(&path, &settings))
         })?;
         self.settings = settings;
@@ -3030,9 +2879,6 @@ impl Engine {
         self.broadcast(Delta::Settings(self.settings.clone()));
         Ok(Value::Null)
     }
-
-    // -----------------------------------------------------------------------
-    // File watching
 
     fn watch(input: mpsc::UnboundedSender<Input>) -> Option<notify::RecommendedWatcher> {
         use notify::Watcher as _;
@@ -3065,7 +2911,7 @@ impl Engine {
         let agents_root = root.join("agents");
         let projects_root = root.join("projects");
         if paths.iter().any(|path| path.starts_with(&agents_root)) {
-            let changed = blocking(|| self.agents.refresh());
+            let changed = block_in_place(|| self.agents.refresh());
             if changed {
                 self.agents_changed();
             }
@@ -3092,7 +2938,6 @@ impl Engine {
         }
     }
 
-    /// Takes in project files changed outside the engine.
     fn reconcile(&mut self, fresh: ProjectStore, started: Instant) {
         let busy: HashSet<String> = self
             .drivers
@@ -3111,13 +2956,7 @@ impl Engine {
             )
             .collect();
         let deleting: HashSet<String> = self.deleting.keys().cloned().collect();
-        let store = self.store.clone();
-        let changes = {
-            let Ok(mut store) = store.lock() else {
-                return;
-            };
-            store.reconcile(fresh, &busy, &deleting)
-        };
+        let changes = self.store.reconcile(fresh, &busy, &deleting);
         for error in &changes.errors {
             log(error);
             self.broadcast_message(&EngineMessage::Delta(Delta::Notice {
@@ -3138,11 +2977,7 @@ impl Engine {
             let Some((project_id, thread)) = self.thread_from_store(&id) else {
                 continue;
             };
-            let live = self
-                .store
-                .lock()
-                .ok()
-                .and_then(|store| store.conversation(&id).map(live_for));
+            let live = self.store.conversation(&id).map(live_for);
             if let Some(live) = live {
                 self.live.insert(id.clone(), live);
             }

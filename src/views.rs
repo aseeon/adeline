@@ -29,7 +29,7 @@ impl Adeline {
                 header.child(chat_render::context_meter(thread.context, cx).mr_2())
             })
             .when_some(thread, |header, thread| {
-                let done = matches!(thread.status.as_str(), "completed" | "archived");
+                let done = conversation::closed(&thread.status);
                 let archived = thread.status == "archived";
                 let complete = if done {
                     "Mark as incomplete"
@@ -73,18 +73,13 @@ impl Adeline {
         let transcript = self.transcript.clone();
         // The activity panel's stats island matches the composer's height.
         let owner = cx.weak_entity();
-        let measure = canvas(
-            move |bounds, _, cx| {
-                if (composer_height.get() - bounds.size.height).abs() > px(0.5) {
-                    composer_height.set(bounds.size.height);
-                    transcript.update(cx, |_, cx| cx.notify());
-                    owner.update(cx, |_, cx| cx.notify()).ok();
-                }
-            },
-            |_, (), _, _| {},
-        )
-        .absolute()
-        .size_full();
+        let measure = chat::size_probe(move |size, cx| {
+            if (composer_height.get() - size.height).abs() > px(0.5) {
+                composer_height.set(size.height);
+                transcript.update(cx, |_, cx| cx.notify());
+                owner.update(cx, |_, cx| cx.notify()).ok();
+            }
+        });
         // Messages fade out just below the header's edge instead of meeting a line.
         let fade = div()
             .absolute()
@@ -163,19 +158,9 @@ impl Adeline {
             .into_any_element()
     }
 
-    fn command_entries(&self, menu: &'static str) -> (&'static str, Vec<(String, Action)>) {
+    fn command_entries(&self, menu: &'static str) -> Vec<(String, Action)> {
         let mut entries: Vec<(String, Action)> = Vec::new();
-        let title = match menu {
-            "projects" => {
-                entries.extend(
-                    self.projects
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, project)| (project.config.name.clone(), Action::Project(ix))),
-                );
-                entries.push(("New project…".into(), Action::AddProject));
-                "Projects"
-            }
+        match menu {
             "agents" | "agent" => {
                 entries.extend(self.agent_catalog().entries.iter().map(|entry| {
                     (
@@ -191,14 +176,12 @@ impl Adeline {
                         ("Fast speed".into(), Action::Speed(1)),
                     ]);
                 }
-                "Agents"
             }
             "files" => {
                 entries.extend([
                     ("Add a file…".into(), Action::AddFile),
                     ("Add a directory…".into(), Action::AddDirectory),
                 ]);
-                "Attach context"
             }
             "mode-settings" => {
                 entries.extend(
@@ -207,7 +190,6 @@ impl Adeline {
                         .map(|(label, _, _, action)| (label.into(), action)),
                 );
                 entries.push(("Full chat settings…".into(), Action::ConfigureModeSettings));
-                "Chat settings"
             }
             _ => {
                 entries.push(("Add an agent…".into(), Action::AddAgent));
@@ -222,15 +204,14 @@ impl Adeline {
                     ("About Adeline…".into(), Action::About),
                     ("Quit Adeline".into(), Action::QuitApp),
                 ]);
-                "Adeline"
             }
-        };
-        (title, entries)
+        }
+        entries
     }
 
-    /// A closed menu leaves focus on its search box, which is gone; the
-    /// message box takes it, so shortcuts keep working.
     pub(super) fn refocus_after_menu(&self, window: &mut Window, cx: &mut App) {
+        // A closed menu leaves focus on its search box, which is gone. The
+        // message box takes it, so shortcuts keep working.
         let menu_focused = self
             .command_popup
             .as_ref()
@@ -249,7 +230,7 @@ impl Adeline {
     ) -> component::popover::Popover {
         let owner = cx.weak_entity();
         let content_owner = owner.clone();
-        let (_, entries) = self.command_entries(menu);
+        let entries = self.command_entries(menu);
         let toggles = if menu == "mode-settings" {
             self.mode_options(Section::Chats)
         } else {
@@ -276,7 +257,6 @@ impl Adeline {
                         let action = match menu {
                             "agents" => Action::Agents,
                             "agent" => Action::AgentMenu,
-                            "projects" => Action::Projects,
                             "mode-settings" => Action::ModeSettings,
                             "files" => Action::InsertFiles,
                             _ => Action::AppMenu,
@@ -385,89 +365,14 @@ impl Adeline {
             cx.notify();
             return;
         }
-        if matches!(
-            menu,
-            "agent"
-                | "agents"
-                | "app"
-                | "mode-settings"
-                | "model"
-                | "effort"
-                | "mode"
-                | "more"
-                | "files"
-        ) {
-            let state = cx.new(|cx| CommandState::new(window, cx));
-            window.focus(&state.focus_handle(cx), cx);
-            self.command_popup = Some(state);
-            self.menu = Some(menu);
-            self.header_region.update(cx, |_, cx| cx.notify());
-            self.control_pane.update(cx, |_, cx| cx.notify());
-            self.composer_region.update(cx, |_, cx| cx.notify());
-            cx.notify();
-            return;
-        }
-        let (title, entries) = self.command_entries(menu);
-        self.menu = Some(menu);
-        let entries = std::rc::Rc::new(entries);
         let state = cx.new(|cx| CommandState::new(window, cx));
-        let initial_focus = state.focus_handle(cx);
-        let owner = cx.weak_entity();
-        let closing_owner = owner.clone();
-        let errors = if matches!(menu, "agent" | "agents") {
-            self.agent_catalog().errors.join("\n")
-        } else {
-            String::new()
-        };
-        window.open_dialog(cx, move |dialog, _, cx| {
-            let owner = owner.clone();
-            let entries_for_action = entries.clone();
-            let cancel_owner = closing_owner.clone();
-            styled_dialog(dialog, cx)
-                .title(dialog_title(title))
-                .on_ok(|_, _, _| false)
-                .child(
-                    col()
-                        .gap_2()
-                        .capture_action(move |_: &Cancel, window, cx| {
-                            window.close_dialog(cx);
-                            let _ = cancel_owner.update(cx, |app, cx| {
-                                app.menu = None;
-                                cx.notify();
-                            });
-                            cx.stop_propagation();
-                        })
-                        .when(!errors.is_empty(), |column| column.child(errors.clone()))
-                        .child(
-                            Command::new(&state)
-                                .placeholder("Search")
-                                .items(
-                                    entries
-                                        .iter()
-                                        .map(|(label, _)| CommandItem::new().label(label.clone())),
-                                )
-                                .on_confirm(move |path, window, cx| {
-                                    if let Some((_, action)) = entries_for_action.get(path.row) {
-                                        window.close_dialog(cx);
-                                        let _ = owner.update(cx, |app, cx| {
-                                            app.menu = None;
-                                            app.act(action.clone(), window, cx);
-                                        });
-                                    }
-                                }),
-                        ),
-                )
-                .on_close({
-                    let owner = closing_owner.clone();
-                    move |_, _, cx| {
-                        let _ = owner.update(cx, |app, cx| {
-                            app.menu = None;
-                            cx.notify();
-                        });
-                    }
-                })
-        });
-        window.focus(&initial_focus, cx);
+        window.focus(&state.focus_handle(cx), cx);
+        self.command_popup = Some(state);
+        self.menu = Some(menu);
+        self.header_region.update(cx, |_, cx| cx.notify());
+        self.control_pane.update(cx, |_, cx| cx.notify());
+        self.composer_region.update(cx, |_, cx| cx.notify());
+        cx.notify();
     }
 
     pub(super) fn open_modal(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -513,19 +418,13 @@ impl Adeline {
                 })
                 .on_close(move |_, _, cx| {
                     let _ = owner.update(cx, |app, cx| {
-                        // Closing an SSH prompt cancels it, and the next one shows.
-                        if app.modal == Some("prompt") {
+                        // Closing an SSH prompt cancels it. The next prompt, or one
+                        // that came while another dialog was open, shows.
+                        if app.modal.take() == Some("prompt") {
                             client::answer_prompt(None, cx);
-                            app.modal = None;
-                            if client::prompt(cx).is_some() {
-                                app.show_prompt(cx);
-                            }
-                        } else {
-                            app.modal = None;
-                            // A prompt that came while this dialog was open.
-                            if client::prompt(cx).is_some() {
-                                app.show_prompt(cx);
-                            }
+                        }
+                        if client::prompt(cx).is_some() {
+                            app.show_prompt(cx);
                         }
                         cx.notify();
                     });
@@ -590,8 +489,6 @@ impl Render for ModalContent {
     }
 }
 
-/// Adeline's dialog surface: popover-colored like the app's menus, and closed
-/// with Escape or Cancel rather than a corner button.
 pub(super) fn styled_dialog(dialog: Dialog, cx: &App) -> Dialog {
     dialog
         .w(px(400.))
@@ -599,7 +496,6 @@ pub(super) fn styled_dialog(dialog: Dialog, cx: &App) -> Dialog {
         .bg(cx.theme().popover)
 }
 
-/// A dialog heading sized to the app chrome rather than Kit's large title.
 pub(super) fn dialog_title(title: impl Into<SharedString>) -> Div {
     div()
         .text_sm()

@@ -22,17 +22,13 @@ use gpui_kit::component::tooltip::Tooltip;
 use std::cell::RefCell;
 use std::time::Duration;
 
-/// How long a deleted project can be restored before its data is removed.
 const UNDO_WINDOW: Duration = Duration::from_secs(6);
-/// Height of a projects-menu row, in rem.
-const MENU_ROW: f32 = 2.5;
-/// Rows the menu shows before scrolling; the half row signals that more follow.
+const MENU_ROW_REM: f32 = 2.5;
+// The half row signals that more follow.
 const MENU_ROWS: f32 = 5.5;
 
-/// A deep drop shadow that lifts the projects menu off the dark workspace.
-///
-/// Replaces the popover's default shadow, so it redraws its hairline ring too.
 pub(super) fn menu_shadow(cx: &App) -> Vec<BoxShadow> {
+    // Replaces the popover's default shadow, so it redraws its hairline ring too.
     let ring = cx.theme().foreground.alpha(0.1);
     let ink = |a| hsla(0., 0., 0., a);
     vec![
@@ -50,24 +46,18 @@ pub(super) fn menu_shadow(cx: &App) -> Vec<BoxShadow> {
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub(super) enum ProjectSort {
-    /// Most recently opened first.
     #[default]
     Recent,
-    /// Alphabetical by name.
     Name,
 }
 
-/// A deleted project, hidden from the menu until the undo window closes.
 pub(super) struct PendingRemoval {
     id: String,
-    /// Matches the timer that commits this removal, so an undone removal's
-    /// timer finds nothing to do.
+    // Matches the timer that commits this removal, so an undone removal's
+    // timer finds nothing to do.
     generation: u64,
 }
 
-/// How much of a project tab shows. As the strip runs out of room, inactive
-/// tabs step down one at a time: full name, three letters, the mark alone,
-/// then into the overflow menu.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) enum TabSize {
     Full,
@@ -76,18 +66,16 @@ pub(super) enum TabSize {
     Hidden,
 }
 
-/// A tab's fixed parts in rem, matching `project_cell`: padding, mark, gap
-/// and close slot. A name adds its own gap and is capped in width, and an
-/// attention dot adds the same gap and its size.
+// In rem, matching `project_cell`: padding, mark, gap and close slot. A name
+// adds its own gap and is capped in width, and an attention dot adds the same
+// gap and its size.
 const TAB_CHROME: f32 = 0.625 + 1.125 + 0.5 + 1.5 + 0.375;
 const TAB_NAME_GAP: f32 = 0.5;
 const ATTENTION_DOT: f32 = 0.375;
 const TAB_NAME_MAX: f32 = 11.25;
-/// Widths of the new-project and overflow cells, in rem.
 const NEW_TAB_WIDTH: f32 = 2.25;
 const OVERFLOW_WIDTH: f32 = 4.25;
 
-/// An open tab, as the fit sees it.
 pub(super) struct FitTab {
     id: String,
     name: String,
@@ -96,15 +84,13 @@ pub(super) struct FitTab {
     dot: bool,
 }
 
-/// A tab's width at full, short and letter size.
 struct Measured {
     widths: [Pixels; 3],
     active: bool,
     busy: bool,
 }
 
-/// The size of each open tab, measured each frame from the strip's width and
-/// applied on the next.
+// Measured each frame from the strip's width and applied on the next.
 #[derive(Default)]
 pub(super) struct TabFit {
     sizes: RefCell<Vec<(String, TabSize)>>,
@@ -170,9 +156,6 @@ impl TabFit {
     }
 }
 
-/// Steps tabs down until they fit `room`. Each step reaches every quiet tab
-/// before any busy one, rightmost first, and never the active tab. `more` is
-/// the overflow cell, counted once a tab is hidden.
 fn fit_tabs(tabs: &[Measured], room: Pixels, more: Pixels) -> Vec<TabSize> {
     let fits = |sizes: &[TabSize]| {
         let mut total = Pixels::ZERO;
@@ -203,8 +186,6 @@ fn fit_tabs(tabs: &[Measured], room: Pixels, more: Pixels) -> Vec<TabSize> {
     sizes
 }
 
-/// The first three letters and an ellipsis, or the whole name when that
-/// would be no shorter.
 fn short_name(name: &str) -> String {
     if name.chars().count() <= 4 {
         return name.to_owned();
@@ -321,9 +302,6 @@ impl Adeline {
             .children(line)
     }
 
-    /// The project tabs, the machine selector and the Projects menu. On macOS,
-    /// where the window controls sit at the left, the strip draws the line
-    /// under the title bar itself.
     fn project_strip(
         &self,
         tabs: Div,
@@ -360,7 +338,6 @@ impl Adeline {
                     .child(tabs)
                     .child(measure),
             )
-            // The selector appears once a remote machine is saved.
             .when(!machines::remotes().is_empty(), |toolbar| {
                 toolbar.child(
                     div()
@@ -475,8 +452,6 @@ impl Adeline {
             .context_menu(move |menu, _, _| project_actions(menu, &owner, ix, true, &id))
     }
 
-    /// The "+N" cell holding the tabs that don't fit, and its menu. A dot on
-    /// it means a hidden project needs the user.
     fn overflow_menu(&self, hidden: &[usize], bar: &theme::BarColors, cx: &Context<Self>) -> Div {
         let theme = cx.theme();
         let now = recency::now();
@@ -559,10 +534,6 @@ impl Adeline {
             })
     }
 
-    /// The mode rail: the width and color of the app-icon cell above it, from
-    /// the title bar to the bottom of the window. Each enabled mode is an icon
-    /// named by its tooltip; the chosen one is filled and marked on its left
-    /// edge, and Chats carries a dot while a chat waits on the user.
     pub(super) fn mode_rail(&self, cx: &Context<Self>) -> Div {
         let theme = cx.theme();
         let waiting = self
@@ -684,10 +655,8 @@ impl Adeline {
                 let _ = owner.update(cx, |app, cx| {
                     if *open {
                         app.act(Action::Projects, window, cx);
-                    } else if app.menu == Some("projects") {
-                        app.menu = None;
-                        app.header_region.update(cx, |_, cx| cx.notify());
-                        cx.notify();
+                    } else {
+                        app.close_menu("projects", cx);
                     }
                 });
             })
@@ -730,7 +699,7 @@ impl Adeline {
             .id("project-menu-list")
             .role(Role::ListBox)
             .aria_label("Projects")
-            .max_h(rems(MENU_ROW * MENU_ROWS))
+            .max_h(rems(MENU_ROW_REM * MENU_ROWS))
             .overflow_y_scroll()
             .track_scroll(&self.project_list_scroll)
             .px_1()
@@ -895,7 +864,7 @@ impl Adeline {
                 None => project.config.name.clone(),
             })
             .aria_selected(highlighted)
-            .h(rems(MENU_ROW))
+            .h(rems(MENU_ROW_REM))
             .flex_shrink_0()
             .px_2()
             .gap_3()
@@ -982,9 +951,8 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// Projects the menu lists for `query`, in the chosen order. A project
-    /// waiting out its undo window is already gone from the user's view.
     fn menu_projects(&self, query: &str) -> Vec<usize> {
+        // A project waiting out its undo window is already gone from the user's view.
         let pending = self.pending_removal.as_ref().map(|p| p.id.as_str());
         let mut listed: Vec<usize> = (0..self.projects.len())
             .filter(|&ix| Some(self.projects[ix].key().as_str()) != pending)
@@ -1005,9 +973,8 @@ impl Adeline {
         listed
     }
 
-    /// Keyboard control of the open menu. Returns whether the key was used,
-    /// so everything else still reaches the search field.
     fn menu_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
+        // False lets the key reach the search field.
         let query = self.project_search.read(cx).value().trim().to_lowercase();
         let listed = self.menu_projects(&query);
         if listed.is_empty() {
@@ -1063,7 +1030,6 @@ impl Adeline {
         cx.notify();
     }
 
-    /// Typing moves the highlight to the best match, so Enter opens it.
     pub(super) fn search_projects(&mut self, cx: &mut Context<Self>) {
         let query = self.project_search.read(cx).value().trim().to_lowercase();
         self.project_highlight = if query.is_empty() {
@@ -1077,7 +1043,6 @@ impl Adeline {
         self.header_region.update(cx, |_, cx| cx.notify());
     }
 
-    /// Hides a closed project, by key, and deletes it once the undo window passes.
     pub(super) fn remove_closed_project(
         &mut self,
         id: &str,
@@ -1146,10 +1111,9 @@ impl Adeline {
         }
     }
 
-    /// Deletes the pending project for real, through the same path as the
-    /// settings dialog: agents stop first, and the dialog appears only if they
-    /// are still stopping or storage fails.
     pub(super) fn commit_pending_removal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The settings dialog's path: agents stop first, and the dialog appears
+        // only if they are still stopping or storage fails.
         let Some(pending) = self.pending_removal.take() else {
             return;
         };
@@ -1169,9 +1133,6 @@ impl Adeline {
         self.confirm_project_delete(cx);
     }
 
-    /// Opens the project for `directory` on `machine`, creating one named
-    /// after the folder when none uses it yet. The same path on two machines
-    /// is two projects.
     pub(super) fn open_folder(
         &mut self,
         machine: &str,
@@ -1188,17 +1149,19 @@ impl Adeline {
             return;
         }
         let path = directory.to_string_lossy().into_owned();
-        let name = path
-            .trim_end_matches(['/', '\\'])
-            .rsplit(['/', '\\'])
-            .next()
-            .unwrap_or_default()
-            .to_owned();
+        let name = project_ui::last_name(&path);
         machine.clone_into(&mut self.project_machine);
         self.add_project(name, &path, false, window, cx);
     }
 
-    /// A project's tab name: with its machine's when several machines show.
+    fn close_menu(&mut self, menu: &str, cx: &mut Context<Self>) {
+        if self.menu == Some(menu) {
+            self.menu = None;
+            self.header_region.update(cx, |_, cx| cx.notify());
+            cx.notify();
+        }
+    }
+
     pub(super) fn tab_name(&self, project: &Workspace) -> String {
         if machines::checked().len() > 1 {
             format!(
@@ -1211,8 +1174,6 @@ impl Adeline {
         }
     }
 
-    /// The machine selector: every machine with a checkbox, its state, and the
-    /// error behind it.
     fn machine_selector(&self, cx: &Context<Self>) -> Popover {
         let owner = cx.weak_entity();
         let content_owner = owner.clone();
@@ -1221,10 +1182,7 @@ impl Adeline {
             [one] => machines::name(one),
             several => format!("{} machines", several.len()),
         };
-        let attention = client::connections(cx).iter().any(|c| {
-            !c.state.usable()
-                && !matches!(c.state, client::State::Connecting | client::State::Starting)
-        });
+        let attention = client::connections(cx).iter().any(|c| failing(&c.state));
         let trigger = Button::new("machines")
             .ghost()
             .icon(Icon::default().path("devices.svg"))
@@ -1245,10 +1203,8 @@ impl Adeline {
                 let _ = owner.update(cx, |app, cx| {
                     if *open {
                         app.act(Action::Machines, window, cx);
-                    } else if app.menu == Some("machines") {
-                        app.menu = None;
-                        app.header_region.update(cx, |_, cx| cx.notify());
-                        cx.notify();
+                    } else {
+                        app.close_menu("machines", cx);
                     }
                 });
             })
@@ -1259,7 +1215,10 @@ impl Adeline {
     }
 }
 
-/// The machine selector's rows, read fresh each time it draws.
+fn failing(state: &client::State) -> bool {
+    !state.usable() && !matches!(state, client::State::Connecting | client::State::Starting)
+}
+
 fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let checked = machines::checked();
@@ -1285,13 +1244,10 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
                 Some(("Upgrade…", Action::MachineUpgrade(machine.clone())))
             }
             Some(state)
-                if !state.usable()
+                if failing(state)
                     && !matches!(
                         state,
-                        client::State::Connecting
-                            | client::State::Starting
-                            | client::State::Waiting
-                            | client::State::Unsupported(_)
+                        client::State::Waiting | client::State::Unsupported(_)
                     ) =>
             {
                 Some(("Retry", Action::MachineRetry(machine.clone())))
@@ -1300,13 +1256,9 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
         };
         let toggle_owner = owner.clone();
         let toggle = machine.clone();
-        let failed = state.as_ref().is_some_and(|s| {
-            !s.usable()
-                && !matches!(
-                    s,
-                    client::State::Connecting | client::State::Starting | client::State::Waiting
-                )
-        });
+        let failed = state
+            .as_ref()
+            .is_some_and(|s| failing(s) && !matches!(s, client::State::Waiting));
         list = list.child(
             col()
                 .id(("machine-row", ix))
@@ -1375,8 +1327,6 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
     .into_any_element()
 }
 
-/// A click handler that runs `action` on the shell, for elements built outside
-/// its render context.
 fn owner_action(
     owner: &WeakEntity<Adeline>,
     action: Action,
@@ -1388,7 +1338,6 @@ fn owner_action(
     }
 }
 
-/// The right-click menu of a project tab or projects-menu row.
 fn project_actions(
     menu: PopupMenu,
     owner: &WeakEntity<Adeline>,
@@ -1429,7 +1378,6 @@ fn letter_mark(name: &str, fill: Hsla, letter: Hsla, size: Rems, cx: &App) -> Di
         )
 }
 
-/// The accent dot marking a project that needs the user.
 fn attention_dot(cx: &App) -> Div {
     div()
         .flex_shrink_0()

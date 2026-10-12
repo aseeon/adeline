@@ -1,5 +1,7 @@
 //! The Settings and agent windows: groups and pages, creating, editing and
-//! deleting agents, and closing with unsaved changes.
+//! deleting agents, and closing with unsaved changes. A remote machine shows
+//! only its Agents and Engine; the rest is this client's. Demo mode adds
+//! General › Features, whose toggles are still stubs.
 use super::*;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, FocusableExt as _, Icon, IndexPath, Root, Selectable as _,
@@ -23,12 +25,25 @@ const SUBGROUPS: [&[&str]; 5] = [
     &["MCP servers"],
     &["Engine"],
 ];
+const LICENSES: usize = 2;
+const AGENTS: usize = 3;
+const ENGINE: usize = 4;
 const KEEP_RUNNING: &str = "Keep conversation engine running";
 const KEEP_RUNNING_DESCRIPTION: &str =
     "The engine never exits on its own, and idle agents keep running with no window open.";
 const RETRY_LABEL: &str = "Automatic retry limit";
 const RETRY_DESCRIPTION: &str =
     "Additional attempts after a temporary failure. Zero disables automatic retries.";
+const ENGINE_STATUS: [&str; 8] = [
+    "Status",
+    "PID",
+    "Version",
+    "Build",
+    "Uptime",
+    "Clients",
+    "Stop engine",
+    "Start engine",
+];
 const MODES: [(Section, &str); 7] = [
     (Section::Chats, "Chats"),
     (Section::Docs, "Docs"),
@@ -94,13 +109,13 @@ impl Adeline {
             (
                 "Show left panel",
                 "Display chat navigation.",
-                self.left_panel_open[Section::Chats as usize],
+                self.left_panel_open,
                 Action::ToggleLeftPanel,
             ),
             (
                 "Show agent activity",
                 "Display chat agent activity.",
-                self.side_panel_open[Section::Chats as usize],
+                self.side_panel_open,
                 Action::ToggleSidePanel,
             ),
         ]
@@ -149,7 +164,6 @@ pub(super) fn open(
 ) {
     open_at(Owner::new(owner, entity), None, None, cx);
 }
-/// Settings on the machines page.
 pub(super) fn open_machines(
     owner: WindowHandle<Root>,
     entity: WeakEntity<Adeline>,
@@ -162,8 +176,6 @@ pub(super) fn open_machines(
         cx,
     );
 }
-/// Settings on an agent's page of `machine`, or where they were if it no
-/// longer exists.
 pub(super) fn open_agent_page(
     owner: WindowHandle<Root>,
     entity: WeakEntity<Adeline>,
@@ -191,7 +203,6 @@ pub(super) fn open_mode(
         cx,
     );
 }
-/// Opens Settings, or brings it forward, on `machine`'s settings and `target`.
 fn open_at(
     owner: Owner,
     machine: Option<String>,
@@ -205,10 +216,7 @@ fn open_at(
         {
             let _ = cx.update_window(root.into(), |_, window, cx| {
                 settings.update(cx, |settings, cx| {
-                    let dirty = settings
-                        .agent_form
-                        .as_ref()
-                        .is_some_and(|form| form.read(cx).dirty(cx));
+                    let dirty = settings.agent_dirty(cx);
                     if let Some(machine) = machine.filter(|m| *m != settings.machine && !dirty) {
                         settings.set_machine(machine, window, cx);
                     }
@@ -257,7 +265,6 @@ fn open_at(
         }
     });
 }
-/// The "Add an agent" window, for `machine`.
 pub(super) fn open_agent(
     owner: WindowHandle<Root>,
     entity: WeakEntity<Adeline>,
@@ -296,11 +303,7 @@ pub(super) fn can_close_for(
 ) -> bool {
     for (root, settings) in windows_of::<SettingsWindow>(cx) {
         if settings.read(cx).owner.window.window_id() == owner.window_id()
-            && settings
-                .read(cx)
-                .agent_form
-                .as_ref()
-                .is_some_and(|form| form.read(cx).dirty(cx))
+            && settings.read(cx).agent_dirty(cx)
         {
             let _ = cx.update_window(root.into(), |_, window, cx| {
                 settings.update(cx, |view, cx| {
@@ -410,7 +413,6 @@ fn persist_form(
     Ok(saved)
 }
 
-/// Deletes one of `machine`'s agents through its engine, or locally in demo mode.
 fn delete_agent(owner: &Owner, machine: &str, id: &str, cx: &mut App) -> Result<(), String> {
     let demo = owner
         .entity
@@ -434,7 +436,6 @@ fn delete_agent(owner: &Owner, machine: &str, id: &str, cx: &mut App) -> Result<
         .map_err(|error| error.to_string())
 }
 
-/// Multi-choice Kit Dialog, with Escape mapped to the last (Cancel) action.
 fn choose(
     window: &mut Window,
     cx: &mut App,
@@ -682,9 +683,7 @@ impl Render for AgentWindow {
 
 #[derive(Clone)]
 enum AfterAgent {
-    /// Show another machine's settings.
     Machine(String),
-    /// The machines page.
     Machines,
     CloseSettings,
     CloseOwner,
@@ -696,12 +695,9 @@ enum AfterAgent {
 }
 struct SettingsWindow {
     owner: Owner,
-    /// The machine whose Agents and Engine settings show.
     machine: String,
-    /// The machine dropdown: every machine, then "Add machine…" and "Manage machines…".
     machine_picker: Entity<SelectState<SearchableVec<String>>>,
     machines_page: bool,
-    /// The machines page edits this machine, or adds one with `None`.
     editing: Option<String>,
     machine_name: Entity<InputState>,
     machine_destination: Entity<InputState>,
@@ -720,34 +716,38 @@ struct SettingsWindow {
     silence_minutes: Entity<InputState>,
     silence_error: Option<String>,
     mcp_error: Option<String>,
-    /// Stop engine is waiting for the engine's agents to exit.
     engine_stopping: bool,
     thinking_picker: Entity<SelectState<SearchableVec<String>>>,
     thinking_error: Option<String>,
     theme_picker: Entity<SelectState<SearchableVec<theme::ThemeChoice>>>,
     font_pickers: [Entity<SelectState<SearchableVec<String>>>; 2],
     theme_status: Option<String>,
-    /// Demo mode shows the General > Features page, whose toggles are still stubs.
     demo: bool,
     group: usize,
     subgroup: Option<usize>,
     search_page: Option<(usize, Option<usize>)>,
-    /// Sidebar groups folded to their header.
     folded: [bool; 5],
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
-fn text_input(
-    value: String,
+pub(super) fn text_input(
+    value: &str,
     placeholder: &'static str,
     window: &mut Window,
     cx: &mut App,
 ) -> Entity<InputState> {
     cx.new(|cx| {
         let mut input = InputState::new(window, cx).placeholder(placeholder);
-        input.set_value(value, window, cx);
+        input.set_value(value.to_owned(), window, cx);
         input
     })
+}
+fn font_size_error() -> String {
+    format!(
+        "Enter a whole number from {} to {}.",
+        config::MIN_FONT_SIZE,
+        config::MAX_FONT_SIZE
+    )
 }
 fn selected_font_size(which: usize) -> u16 {
     if which == 0 {
@@ -790,6 +790,45 @@ fn error(message: impl Into<String>, cx: &App) -> Div {
         .text_color(cx.theme().danger)
         .child(message.into())
 }
+fn switch_row(label: &'static str, description: &'static str, switch: Switch, cx: &App) -> Div {
+    div()
+        .w_full()
+        .flex()
+        .items_center()
+        .justify_between()
+        .gap_4()
+        .px_4()
+        .py_3()
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .child(label)
+                .when(!description.is_empty(), |text| {
+                    text.child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(description),
+                    )
+                }),
+        )
+        .child(switch)
+}
+fn field_row(field: Field, message: Option<String>, cx: &App) -> Div {
+    div()
+        .w_full()
+        .px_4()
+        .py_3()
+        .flex()
+        .flex_col()
+        .gap_2()
+        .child(field)
+        .when_some(message, |row, message| row.child(error(message, cx)))
+}
 fn diagnostics(errors: Vec<String>, cx: &App) -> Div {
     let mut list = div().flex().flex_col().gap_2();
     for message in errors {
@@ -801,16 +840,14 @@ fn diagnostics(errors: Vec<String>, cx: &App) -> Div {
 const ADD_MACHINE: &str = "Add machine…";
 const MANAGE_MACHINES: &str = "Manage machines…";
 
-/// The machine dropdown's entries.
 fn machine_labels() -> Vec<String> {
     let mut labels: Vec<String> = machines::all().iter().map(|m| machines::name(m)).collect();
     labels.extend([ADD_MACHINE.to_owned(), MANAGE_MACHINES.to_owned()]);
     labels
 }
 
-/// The engine settings shown for `machine`, if it's connected.
 fn engine_settings_of(machine: &str, cx: &App) -> protocol::EngineSettings {
-    client::connection(machine, cx)
+    client::get(machine, cx)
         .map(|c| c.settings.clone())
         .unwrap_or_default()
 }
@@ -842,16 +879,16 @@ impl SettingsWindow {
         let focus = cx.focus_handle().tab_stop(true);
         fonts::refresh(cx);
         let font_sizes = std::array::from_fn(|which| {
-            text_input(selected_font_size(which).to_string(), "14", window, cx)
+            text_input(&selected_font_size(which).to_string(), "14", window, cx)
         });
         let retry_limit = text_input(
-            engine_settings_of(&machine, cx).retry_limit.to_string(),
+            &engine_settings_of(&machine, cx).retry_limit.to_string(),
             "5",
             window,
             cx,
         );
         let silence_minutes = text_input(
-            config::current()
+            &config::current()
                 .modes
                 .chats
                 .silence_notice_minutes
@@ -918,8 +955,7 @@ impl SettingsWindow {
                     if let Ok(size) = value.trim().parse::<u16>() {
                         this.save_font_size(which, size, cx);
                     } else {
-                        this.font_size_errors[which] =
-                            Some("Enter a whole number from 10 to 24.".into());
+                        this.font_size_errors[which] = Some(font_size_error());
                         cx.notify();
                     }
                 },
@@ -1036,11 +1072,7 @@ impl SettingsWindow {
                 if requested == this.last_query {
                     return;
                 }
-                if this
-                    .agent_form
-                    .as_ref()
-                    .is_some_and(|form| form.read(cx).dirty(cx))
-                {
+                if this.agent_dirty(cx) {
                     input.update(cx, |input, cx| {
                         input.set_value(this.last_query.clone(), window, cx);
                     });
@@ -1091,11 +1123,7 @@ impl SettingsWindow {
         let view = cx.entity();
         window.on_window_should_close(cx, move |window, cx| {
             view.update(cx, |view, cx| {
-                if view
-                    .agent_form
-                    .as_ref()
-                    .is_some_and(|form| form.read(cx).dirty(cx))
-                {
+                if view.agent_dirty(cx) {
                     view.leave(AfterAgent::CloseSettings, window, cx);
                     false
                 } else {
@@ -1140,7 +1168,6 @@ impl SettingsWindow {
             theme_status,
             demo,
             group: usize::from(mode == Some(Section::Chats)),
-            // General opens on Features in demo mode, Appearance otherwise.
             subgroup: Some(usize::from(!demo && mode != Some(Section::Chats))),
             search_page: None,
             folded: std::array::from_fn(|group| group != usize::from(mode == Some(Section::Chats))),
@@ -1149,8 +1176,6 @@ impl SettingsWindow {
         }
     }
 
-    /// Shows another machine's settings. Only Agents and Engine belong to a
-    /// remote machine.
     fn set_machine(&mut self, machine: String, window: &mut Window, cx: &mut Context<Self>) {
         client::focus(&machine, cx);
         client::ensure(&machine, cx);
@@ -1164,18 +1189,28 @@ impl SettingsWindow {
         self.retry_limit
             .update(cx, |input, cx| input.set_value(limit, window, cx));
         self.retry_limit_error = None;
-        self.agent_page = None;
-        self.agent_form = None;
-        self.agent_subscriptions.clear();
+        self.close_agent();
         self.agent_status = None;
         self.machines_page = false;
-        if machine != machines::LOCAL && self.group < 3 {
-            self.group = 4;
+        if machine != machines::LOCAL && self.group < AGENTS {
+            self.group = ENGINE;
             self.subgroup = Some(0);
-            self.folded[4] = false;
+            self.folded[ENGINE] = false;
         }
         self.machine = machine;
         cx.notify();
+    }
+
+    fn agent_dirty(&self, cx: &App) -> bool {
+        self.agent_form
+            .as_ref()
+            .is_some_and(|form| form.read(cx).dirty(cx))
+    }
+
+    fn close_agent(&mut self) {
+        self.agent_page = None;
+        self.agent_form = None;
+        self.agent_subscriptions.clear();
     }
 
     fn agent_definition(&self, id: Option<&String>, cx: &App) -> Option<agents::AgentDefinition> {
@@ -1195,25 +1230,14 @@ impl SettingsWindow {
 
     fn show_agent(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let machine = self.machine.clone();
-        let definition = self
-            .owner
-            .entity
-            .read_with(cx, |app, _| {
-                app.catalog(&machine)
-                    .entries
-                    .iter()
-                    .find(|entry| entry.id == id)
-                    .map(|entry| entry.definition.clone())
-            })
-            .ok()
-            .flatten();
+        let definition = self.agent_definition(Some(&id), cx);
         self.agent_page = Some(id.clone());
         self.machines_page = false;
-        self.group = 3;
+        self.group = AGENTS;
         self.subgroup = None;
-        self.folded[3] = false;
+        self.folded[AGENTS] = false;
         self.agent_status = None;
-        self.search_page = Some((3, None));
+        self.search_page = Some((AGENTS, None));
         self.agent_subscriptions.clear();
         client::ensure(&machine, cx);
         client::refresh_harnesses(&machine, false, cx);
@@ -1240,9 +1264,7 @@ impl SettingsWindow {
         } else if let Some(definition) = current {
             form.update(cx, |form, cx| form.reload(definition, window, cx));
         } else {
-            self.agent_form = None;
-            self.agent_subscriptions.clear();
-            self.agent_page = None;
+            self.close_agent();
         }
         cx.notify();
     }
@@ -1251,9 +1273,7 @@ impl SettingsWindow {
         match after {
             AfterAgent::Machine(machine) => self.set_machine(machine, window, cx),
             AfterAgent::Machines => {
-                self.agent_page = None;
-                self.agent_form = None;
-                self.agent_subscriptions.clear();
+                self.close_agent();
                 self.machines_page = true;
                 self.machine_error = None;
                 self.fill_machine_inputs(window, cx);
@@ -1269,9 +1289,7 @@ impl SettingsWindow {
                 self.group = group;
                 self.folded[group] = false;
                 self.subgroup = Some(child);
-                self.agent_page = None;
-                self.agent_form = None;
-                self.agent_subscriptions.clear();
+                self.close_agent();
                 self.search_page = Some((group, Some(child)));
             }
             AfterAgent::OpenMode(mode) => {
@@ -1288,9 +1306,7 @@ impl SettingsWindow {
             AfterAgent::Delete(id) => self.confirm_delete_after_leaving(id, window, cx),
             AfterAgent::Search(query) => {
                 self.last_query.clone_from(&query);
-                self.agent_page = None;
-                self.agent_form = None;
-                self.agent_subscriptions.clear();
+                self.close_agent();
                 self.search_page = None;
                 self.query
                     .update(cx, |input, cx| input.set_value(query, window, cx));
@@ -1340,9 +1356,7 @@ impl SettingsWindow {
                                             form.reload(definition, window, cx);
                                         });
                                     } else {
-                                        view.agent_form = None;
-                                        view.agent_page = None;
-                                        view.agent_subscriptions.clear();
+                                        view.close_agent();
                                     }
                                 }
                                 if let Some(after) = after {
@@ -1390,11 +1404,7 @@ impl SettingsWindow {
         if self.pending {
             return;
         }
-        if !self
-            .agent_form
-            .as_ref()
-            .is_some_and(|form| form.read(cx).dirty(cx))
-        {
+        if !self.agent_dirty(cx) {
             self.after_agent(after, window, cx);
             return;
         }
@@ -1424,11 +1434,7 @@ impl SettingsWindow {
         if self.pending {
             return;
         }
-        if self
-            .agent_form
-            .as_ref()
-            .is_some_and(|form| form.read(cx).dirty(cx))
-        {
+        if self.agent_dirty(cx) {
             self.leave(AfterAgent::Delete(id), window, cx);
         } else {
             self.confirm_delete_after_leaving(id, window, cx);
@@ -1466,9 +1472,7 @@ impl SettingsWindow {
                     let result = delete_agent(&owner, &machine, &id, cx);
                     match result {
                         Ok(()) => {
-                            view.agent_page = None;
-                            view.agent_form = None;
-                            view.agent_subscriptions.clear();
+                            view.close_agent();
                             view.agent_status = None;
                         }
                         Err(message) => view.agent_status = Some(message),
@@ -1481,7 +1485,7 @@ impl SettingsWindow {
 
     fn save_font_size(&mut self, which: usize, size: u16, cx: &mut Context<Self>) {
         if !(config::MIN_FONT_SIZE..=config::MAX_FONT_SIZE).contains(&size) {
-            self.font_size_errors[which] = Some("Enter a whole number from 10 to 24.".into());
+            self.font_size_errors[which] = Some(font_size_error());
         } else if size == selected_font_size(which) {
             self.font_size_errors[which] = None;
         } else {
@@ -1561,59 +1565,29 @@ impl SettingsWindow {
         cx: &Context<Self>,
     ) -> Div {
         let owner = self.owner.clone();
-        div()
-            .w_full()
-            .flex()
-            .items_center()
-            .justify_between()
-            .gap_4()
-            .px_4()
-            .py_3()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .gap_1()
-                    .child(label)
-                    .when(!description.is_empty(), |text| {
-                        text.child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(description),
-                        )
-                    }),
-            )
-            .child(
-                Switch::new(id)
-                    .checked(checked)
-                    .accessibility_label(label)
-                    .on_change(move |_, window, cx| owner.act(action.clone(), window, cx)),
-            )
+        switch_row(
+            label,
+            description,
+            Switch::new(id)
+                .checked(checked)
+                .accessibility_label(label)
+                .on_change(move |_, window, cx| owner.act(action.clone(), window, cx)),
+            cx,
+        )
     }
     fn retry_limit_row(&self, cx: &Context<Self>) -> Div {
-        div()
-            .w_full()
-            .px_4()
-            .py_3()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                Field::new()
-                    .label(RETRY_LABEL)
-                    .description(RETRY_DESCRIPTION)
-                    .child(
-                        div()
-                            .w_24()
-                            .child(Input::new(&self.retry_limit).aria_label(RETRY_LABEL)),
-                    ),
-            )
-            .when_some(self.retry_limit_error.clone(), |row, message| {
-                row.child(error(message, cx))
-            })
+        field_row(
+            Field::new()
+                .label(RETRY_LABEL)
+                .description(RETRY_DESCRIPTION)
+                .child(
+                    div()
+                        .w_24()
+                        .child(Input::new(&self.retry_limit).aria_label(RETRY_LABEL)),
+                ),
+            self.retry_limit_error.clone(),
+            cx,
+        )
     }
     fn save_engine_settings(&mut self, settings: protocol::EngineSettings, cx: &mut Context<Self>) {
         let view = cx.entity().downgrade();
@@ -1647,7 +1621,6 @@ impl SettingsWindow {
         cx.notify();
     }
 
-    /// Settings › Engine: the machine's engine settings, its status, and Stop or Start.
     fn engine_settings(&self, query: &str, cx: &Context<Self>) -> Div {
         let mut page = div().w_full().flex().flex_col().gap_3();
         let name = machines::name(&self.machine);
@@ -1660,7 +1633,7 @@ impl SettingsWindow {
             .child(div().text_sm().text_color(cx.theme().muted_foreground).child(
                 "The conversation engine runs agents in the background, so work can finish after Adeline closes. These settings apply immediately, including to work already running.",
             ));
-        let Some(connection) = client::connection(&self.machine, cx) else {
+        let Some(connection) = client::get(&self.machine, cx) else {
             let machine = self.machine.clone();
             return page
                 .child(div().text_sm().child(format!(
@@ -1686,49 +1659,24 @@ impl SettingsWindow {
         ) {
             let view = cx.entity().downgrade();
             let checked = connection.settings.keep_running;
-            rows.push(
-                div()
-                    .w_full()
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_4()
-                    .px_4()
-                    .py_3()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .flex()
-                            .flex_col()
-                            .gap_1()
-                            .child(KEEP_RUNNING)
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child(KEEP_RUNNING_DESCRIPTION),
-                            ),
-                    )
-                    .child(
-                        Switch::new("engine-keep-running")
-                            .checked(checked)
-                            .disabled(!connected)
-                            .accessibility_label(KEEP_RUNNING)
-                            .on_change(move |_, _, cx| {
-                                let settings = protocol::EngineSettings {
-                                    keep_running: !checked,
-                                    ..view
-                                        .read_with(cx, |this, cx| {
-                                            engine_settings_of(&this.machine, cx)
-                                        })
-                                        .unwrap_or_default()
-                                };
-                                let _ = view
-                                    .update(cx, |this, cx| this.save_engine_settings(settings, cx));
-                            }),
-                    ),
-            );
+            rows.push(switch_row(
+                KEEP_RUNNING,
+                KEEP_RUNNING_DESCRIPTION,
+                Switch::new("engine-keep-running")
+                    .checked(checked)
+                    .disabled(!connected)
+                    .accessibility_label(KEEP_RUNNING)
+                    .on_change(move |_, _, cx| {
+                        let settings = protocol::EngineSettings {
+                            keep_running: !checked,
+                            ..view
+                                .read_with(cx, |this, cx| engine_settings_of(&this.machine, cx))
+                                .unwrap_or_default()
+                        };
+                        let _ = view.update(cx, |this, cx| this.save_engine_settings(settings, cx));
+                    }),
+                cx,
+            ));
         }
         if matches_query(query, &["Engine", RETRY_LABEL, RETRY_DESCRIPTION]) {
             rows.push(self.retry_limit_row(cx));
@@ -1736,20 +1684,7 @@ impl SettingsWindow {
         if let Some(card) = card(rows, cx) {
             page = page.child(card);
         }
-        if matches_query(
-            query,
-            &[
-                "Engine",
-                "Status",
-                "PID",
-                "Version",
-                "Build",
-                "Uptime",
-                "Clients",
-                "Stop engine",
-                "Start engine",
-            ],
-        ) {
+        if matches_query(query, &[&["Engine"][..], &ENGINE_STATUS[..]].concat()) {
             let status = &connection.status;
             let state = match &connection.state {
                 client::State::Connected => "Running".to_owned(),
@@ -1850,29 +1785,20 @@ impl SettingsWindow {
     }
 
     fn silence_row(&self, cx: &Context<Self>) -> Div {
-        div()
-            .w_full()
-            .px_4()
-            .py_3()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                Field::new()
-                    .label(SILENCE_LABEL)
-                    .description(SILENCE_DESCRIPTION)
-                    .child(
-                        div()
-                            .w_24()
-                            .child(Input::new(&self.silence_minutes).aria_label(SILENCE_LABEL)),
-                    ),
-            )
-            .when_some(self.silence_error.clone(), |row, message| {
-                row.child(error(message, cx))
-            })
+        field_row(
+            Field::new()
+                .label(SILENCE_LABEL)
+                .description(SILENCE_DESCRIPTION)
+                .child(
+                    div()
+                        .w_24()
+                        .child(Input::new(&self.silence_minutes).aria_label(SILENCE_LABEL)),
+                ),
+            self.silence_error.clone(),
+            cx,
+        )
     }
 
-    /// Saves this machine's global MCP servers in its engine settings.
     fn save_mcp_servers(&mut self, servers: Vec<conversation::McpServer>, cx: &mut App) {
         let settings = protocol::EngineSettings {
             mcp_servers: servers,
@@ -1887,7 +1813,6 @@ impl SettingsWindow {
         );
     }
 
-    /// Settings › Agents › MCP servers: this machine's global list (DD11).
     fn mcp_settings(&self, cx: &Context<Self>) -> Div {
         let view = cx.entity().downgrade();
         let servers = engine_settings_of(&self.machine, cx).mcp_servers;
@@ -1920,10 +1845,7 @@ impl SettingsWindow {
                         {
                             return Err(format!("{} is already listed.", server.name));
                         }
-                        match ix {
-                            Some(ix) if ix < servers.len() => servers[ix] = server,
-                            _ => servers.push(server),
-                        }
+                        mcp_ui::upsert(&mut servers, ix, server);
                         settings.update(cx, |this, cx| this.save_mcp_servers(servers, cx));
                         Ok(())
                     }),
@@ -1934,9 +1856,7 @@ impl SettingsWindow {
         let remove: Rc<dyn Fn(usize, &mut Window, &mut App)> = Rc::new(move |ix, _, cx| {
             let _ = view.update(cx, |this, cx| {
                 let mut servers = engine_settings_of(&this.machine, cx).mcp_servers;
-                if ix < servers.len() {
-                    servers.remove(ix);
-                }
+                mcp_ui::remove(&mut servers, ix);
                 this.save_mcp_servers(servers, cx);
             });
         });
@@ -1967,24 +1887,18 @@ impl SettingsWindow {
     }
 
     fn thinking_animation_row(&self, cx: &Context<Self>) -> Div {
-        div()
-            .w_full()
-            .px_4()
-            .py_3()
-            .flex()
-            .flex_col()
-            .gap_2()
-            .child(
-                Field::new()
-                    .label(THINKING_LABEL)
-                    .description(THINKING_DESCRIPTION)
-                    .child(div().w_64().child(
+        field_row(
+            Field::new()
+                .label(THINKING_LABEL)
+                .description(THINKING_DESCRIPTION)
+                .child(
+                    div().w_64().child(
                         Select::new(&self.thinking_picker).accessibility_label(THINKING_LABEL),
-                    )),
-            )
-            .when_some(self.thinking_error.clone(), |row, message| {
-                row.child(error(message, cx))
-            })
+                    ),
+                ),
+            self.thinking_error.clone(),
+            cx,
+        )
     }
     fn appearance_settings(&self, cx: &Context<Self>) -> Div {
         let mut page = div()
@@ -2055,9 +1969,11 @@ impl SettingsWindow {
                 Form::new().child(
                     Field::new()
                         .label(size_label)
-                        .description(
-                            "A whole number from 10 to 24 pixels. Changes save immediately.",
-                        )
+                        .description(format!(
+                            "A whole number from {} to {} pixels. Changes save immediately.",
+                            config::MIN_FONT_SIZE,
+                            config::MAX_FONT_SIZE
+                        ))
                         .child(
                             div()
                                 .flex()
@@ -2115,8 +2031,6 @@ impl SettingsWindow {
 }
 
 impl SettingsWindow {
-    /// Fills the machines page's inputs for the machine being edited, or
-    /// empties them for a new one.
     fn fill_machine_inputs(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self
             .editing
@@ -2130,8 +2044,6 @@ impl SettingsWindow {
             .update(cx, |input, cx| input.set_value("", window, cx));
     }
 
-    /// After the saved machines change: the dropdown, the title bar and the
-    /// connections follow.
     fn machines_changed(
         &mut self,
         result: Result<(), String>,
@@ -2163,7 +2075,6 @@ impl SettingsWindow {
         self.machines_changed(result, window, cx);
     }
 
-    /// Forgets a machine after asking.
     fn confirm_remove(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         let view = cx.entity().downgrade();
         choose(
@@ -2198,7 +2109,6 @@ impl SettingsWindow {
         self.machines_changed(result, window, cx);
     }
 
-    /// Settings › Machines: the remote machines saved on this client.
     fn machines_settings(&self, cx: &Context<Self>) -> Div {
         let theme = cx.theme();
         let mut page = div()
@@ -2481,6 +2391,17 @@ impl SettingsWindow {
     }
 }
 
+fn agent_matches(entry: &agents::AgentEntry, query: &str) -> bool {
+    matches_query(
+        query,
+        &[
+            "Agents",
+            &entry.definition.name,
+            &entry.definition.model,
+            &entry.definition.command,
+        ],
+    )
+}
 fn matches_query(query: &str, parts: &[&str]) -> bool {
     query
         .split_whitespace()
@@ -2510,23 +2431,11 @@ fn general_matches(child: usize, query: &str) -> bool {
     }
 }
 fn engine_matches(query: &str) -> bool {
-    [
-        KEEP_RUNNING,
-        RETRY_LABEL,
-        "Status",
-        "PID",
-        "Version",
-        "Build",
-        "Uptime",
-        "Clients",
-        "Stop engine",
-        "Start engine",
-        "daemon",
-    ]
-    .iter()
-    .any(|label| matches_query(query, &["Engine", label]))
+    [KEEP_RUNNING, RETRY_LABEL, "daemon"]
+        .iter()
+        .chain(&ENGINE_STATUS)
+        .any(|label| matches_query(query, &["Engine", label]))
 }
-/// Small capitals in the code font, like the chat list's section labels.
 fn caps(text: &str, cx: &App) -> Div {
     div()
         .font_family(cx.theme().mono_font_family.clone())
@@ -2534,7 +2443,6 @@ fn caps(text: &str, cx: &App) -> Div {
         .text_color(cx.theme().muted_foreground)
         .child(text.to_uppercase())
 }
-/// Rows on one rounded surface, split by hairlines. Empty when no rows match a search.
 fn card(rows: Vec<Div>, cx: &App) -> Option<Div> {
     (!rows.is_empty()).then(|| {
         let theme = cx.theme();
@@ -2549,7 +2457,6 @@ fn card(rows: Vec<Div>, cx: &App) -> Option<Div> {
             }))
     })
 }
-/// A sidebar group: chevron, name in capitals and its page count. Clicking folds it.
 fn group_header(
     group: usize,
     count: usize,
@@ -2611,12 +2518,10 @@ impl Render for SettingsWindow {
         let query = self.query.read(cx).value().to_lowercase();
         let searching = !query.trim().is_empty();
         let mut navigation = div().flex().flex_col().gap_1();
-        // A remote machine has only Agents and Engine; the rest is this client's.
         let remote = self.machine != machines::LOCAL;
-        // Licenses (group 2) always comes last in the sidebar.
-        for group in [0, 1, 3, 4, 2] {
+        for group in [0, 1, AGENTS, ENGINE, LICENSES] {
             let name = GROUPS[group];
-            if group == 2 && searching || remote && group < 3 {
+            if group == LICENSES && searching || remote && group < AGENTS {
                 continue;
             }
             let matching: Vec<_> = SUBGROUPS[group]
@@ -2630,7 +2535,7 @@ impl Render for SettingsWindow {
                     }
                 })
                 .collect();
-            let matching_agents: Vec<_> = if group == 3 {
+            let matching_agents: Vec<_> = if group == AGENTS {
                 let machine = self.machine.clone();
                 self.owner
                     .entity
@@ -2638,17 +2543,7 @@ impl Render for SettingsWindow {
                         app.catalog(&machine)
                             .entries
                             .iter()
-                            .filter(|entry| {
-                                matches_query(
-                                    &query,
-                                    &[
-                                        "Agents",
-                                        &entry.definition.name,
-                                        &entry.definition.model,
-                                        &entry.definition.command,
-                                    ],
-                                )
-                            })
+                            .filter(|entry| agent_matches(entry, &query))
                             .map(|entry| {
                                 (
                                     entry.id.clone(),
@@ -2665,11 +2560,10 @@ impl Render for SettingsWindow {
             if searching
                 && matching.is_empty()
                 && matching_agents.is_empty()
-                && !(group == 3 && matches_query(&query, &["Agents"]))
+                && !(group == AGENTS && matches_query(&query, &["Agents"]))
             {
                 continue;
             }
-            // Searching shows every match, whatever is folded.
             let folded = self.folded[group] && !searching;
             navigation = navigation.child(group_header(
                 group,
@@ -2682,9 +2576,9 @@ impl Render for SettingsWindow {
             }
             let icon = match group {
                 1 => "chat.svg",
-                3 => "link.svg",
-                2 => "file.svg",
-                4 => "devices.svg",
+                AGENTS => "link.svg",
+                LICENSES => "file.svg",
+                ENGINE => "devices.svg",
                 _ => "robot.svg",
             };
             for (child, title) in matching {
@@ -2767,7 +2661,7 @@ impl Render for SettingsWindow {
                     ),
             );
         let show = |group, child| {
-            if self.machines_page || remote && group < 3 {
+            if self.machines_page || remote && group < AGENTS {
                 false
             } else if searching {
                 self.search_page
@@ -2780,7 +2674,7 @@ impl Render for SettingsWindow {
             "Machines".to_string()
         } else if searching {
             "Search results".to_string()
-        } else if let Some(form) = self.agent_form.as_ref().filter(|_| self.group == 3) {
+        } else if let Some(form) = self.agent_form.as_ref().filter(|_| self.group == AGENTS) {
             form.read(cx).name(cx)
         } else {
             self.subgroup
@@ -2905,21 +2799,18 @@ impl Render for SettingsWindow {
                     if thinking_matches {
                         rows.push(self.thinking_animation_row(cx));
                     }
-                    if matches_query(
-                        &query,
-                        &["Modes", "Chats", SILENCE_LABEL, SILENCE_DESCRIPTION, "hang"],
-                    ) {
+                    if silence_matches {
                         rows.push(self.silence_row(cx));
                     }
                     content = content.children(card(rows, cx));
                 }
             }
         }
-        if show(4, 0) && engine_matches(&query) {
+        if show(ENGINE, 0) && engine_matches(&query) {
             found = true;
             content = content.child(self.engine_settings(&query, cx));
         }
-        if self.group == 2 && !searching && !remote && !self.machines_page {
+        if self.group == LICENSES && !searching && !remote && !self.machines_page {
             for (index, (name, description, license)) in [
                 (
                     "Phosphor Icons",
@@ -2965,35 +2856,28 @@ impl Render for SettingsWindow {
             && if searching {
                 matches_query(&query, &["Agents", "MCP servers", MCP_DESCRIPTION])
             } else {
-                self.group == 3 && self.subgroup == Some(0)
+                self.group == AGENTS && self.subgroup == Some(0)
             };
         if mcp_page {
             found = true;
             content = content.child(self.mcp_settings(cx));
         }
-        if !self.machines_page && (searching || (self.group == 3 && !mcp_page)) {
+        if !self.machines_page && (searching || (self.group == AGENTS && !mcp_page)) {
             let machine = self.machine.clone();
             let matching_agent = self
                 .owner
                 .entity
                 .read_with(cx, |app, _| {
-                    app.catalog(&machine).entries.iter().any(|entry| {
-                        matches_query(
-                            &query,
-                            &[
-                                "Agents",
-                                &entry.definition.name,
-                                &entry.definition.model,
-                                &entry.definition.command,
-                            ],
-                        )
-                    })
+                    app.catalog(&machine)
+                        .entries
+                        .iter()
+                        .any(|entry| agent_matches(entry, &query))
                 })
                 .unwrap_or(false);
             if !searching || matching_agent || matches_query(&query, &["Agents"]) {
                 found = true;
                 if let Some(form) = self.agent_form.clone() {
-                    if self.group == 3 && (!searching || self.search_page.is_some()) {
+                    if self.group == AGENTS && (!searching || self.search_page.is_some()) {
                         let blocked = form.read(cx).blocked(cx);
                         content = content.child(form.clone());
                         let form = form.read(cx);

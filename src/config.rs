@@ -1,4 +1,5 @@
 //! Human-editable application preferences. Missing files are seeded, never replaced.
+//! Render paths read through `with`, which doesn't clone the settings.
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     cell::RefCell,
@@ -114,7 +115,6 @@ impl Default for Keymap {
     }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
-#[non_exhaustive]
 #[serde(default, deny_unknown_fields)]
 pub struct Modes {
     pub chats: Chats,
@@ -174,15 +174,13 @@ pub struct Chats {
     pub show_left_panel: bool,
     pub show_agent_activity: bool,
     pub hide_tool_calls: bool,
-    /// Enter sends the message and Shift+Enter starts a new line.
     pub submit_on_enter: bool,
-    /// Moved to the engine's own settings; kept so older files round-trip.
+    // Moved to the engine's settings. Kept so older files round-trip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     retry_limit: Option<usize>,
     pub thinking_animation: ThinkingAnimation,
-    /// Streams the agent's thoughts into the chat (scope R24).
     pub show_thinking: bool,
-    /// Minutes without agent traffic before the silence notice; 0 turns it off.
+    // 0 turns it off.
     pub silence_notice_minutes: u32,
 }
 impl Default for Chats {
@@ -201,7 +199,6 @@ impl Default for Chats {
         }
     }
 }
-/// How the "Thinking…" row moves while an agent works on a turn.
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ThinkingAnimation {
@@ -236,7 +233,6 @@ pub fn directory() -> Result<PathBuf, String> {
 pub fn current() -> Settings {
     ACTIVE.with(|s| s.borrow().settings.clone())
 }
-/// Reads one value without cloning all settings, for render paths.
 pub fn with<T>(f: impl FnOnce(&Settings) -> T) -> T {
     ACTIVE.with(|s| f(&s.borrow().settings))
 }
@@ -244,30 +240,22 @@ pub fn error() -> Option<String> {
     ACTIVE.with(|s| s.borrow().error.clone())
 }
 pub fn font() -> String {
-    crate::fonts::resolve(
-        &current().general.appearance.interface_font,
-        crate::fonts::DEFAULT,
-    )
+    with(|s| crate::fonts::resolve(&s.general.appearance.interface_font, crate::fonts::DEFAULT))
 }
 pub fn code_font() -> String {
-    crate::fonts::resolve(
-        &current().general.appearance.code_font,
-        crate::fonts::CODE_DEFAULT,
-    )
+    with(|s| crate::fonts::resolve(&s.general.appearance.code_font, crate::fonts::CODE_DEFAULT))
 }
 
 pub fn code_font_size() -> u16 {
-    ACTIVE.with(|s| {
-        s.borrow()
-            .settings
-            .general
+    with(|s| {
+        s.general
             .appearance
             .code_font_size
             .clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
     })
 }
 
-/// Virtual rows must be measured again when either font family or size changes.
+// Virtual rows must be measured again when any of these changes.
 #[derive(PartialEq)]
 pub struct Typography {
     interface: String,
@@ -288,10 +276,8 @@ pub const MIN_FONT_SIZE: u16 = 10;
 pub const MAX_FONT_SIZE: u16 = 24;
 
 pub fn font_size() -> u16 {
-    ACTIVE.with(|s| {
-        s.borrow()
-            .settings
-            .general
+    with(|s| {
+        s.general
             .appearance
             .font_size
             .clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
@@ -416,35 +402,19 @@ impl super::Adeline {
         let s = current();
         self.show_completed = s.modes.chats.show_completed_chats;
         self.show_archived = s.modes.chats.show_archived_chats;
-        self.left_panel_open = [
-            s.modes.chats.show_left_panel,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-        ];
-        self.side_panel_open = [
-            s.modes.chats.show_agent_activity,
-            false,
-            false,
-            false,
-            false,
-            false,
-            false,
-        ];
+        self.left_panel_open = s.modes.chats.show_left_panel;
+        self.side_panel_open = s.modes.chats.show_agent_activity;
     }
     pub(super) fn save_settings(&self, action: &super::Action) -> Result<(), String> {
-        use super::{Action, Section};
+        use super::Action;
         update(|s| match action {
             Action::ShowCompleted => s.modes.chats.show_completed_chats = self.show_completed,
             Action::ShowArchived => s.modes.chats.show_archived_chats = self.show_archived,
             Action::ToggleLeftPanel => {
-                s.modes.chats.show_left_panel = self.left_panel_open[Section::Chats as usize];
+                s.modes.chats.show_left_panel = self.left_panel_open;
             }
             Action::ToggleSidePanel => {
-                s.modes.chats.show_agent_activity = self.side_panel_open[Section::Chats as usize];
+                s.modes.chats.show_agent_activity = self.side_panel_open;
             }
             _ => (),
         })

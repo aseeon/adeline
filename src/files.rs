@@ -1,4 +1,6 @@
 //! Filesystem helpers shared by the settings, agent and project stores.
+//! Writes are synced before they replace anything, and a failed `replace`
+//! restores the original.
 use std::{
     fs::{self, OpenOptions},
     io::{self, Write},
@@ -8,12 +10,10 @@ use std::{
 
 static NEXT: AtomicU64 = AtomicU64::new(0);
 
-/// `{path}: {error}`.
 pub fn error(path: &Path, error: impl std::fmt::Display) -> String {
     format!("{}: {error}", path.display())
 }
 
-/// A name no other call in this process has produced: `{prefix}-{pid}-{n}`.
 pub fn unique(prefix: &str) -> String {
     format!(
         "{prefix}-{}-{}",
@@ -22,9 +22,9 @@ pub fn unique(prefix: &str) -> String {
     )
 }
 
-/// 32 random hex digits, from the standard library's per-process hash keys.
 pub fn random_id() -> String {
     use std::hash::{BuildHasher as _, Hasher as _};
+    // RandomState's keys are random per process, so no rand crate is needed.
     let half = || {
         let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
         hasher.write_u64(NEXT.fetch_add(1, Ordering::Relaxed));
@@ -33,7 +33,6 @@ pub fn random_id() -> String {
     format!("{:016x}{:016x}", half(), half())
 }
 
-/// A folder ID as `agents::normalize_name` would produce it.
 pub fn checked_id(id: &str) -> Result<(), String> {
     if crate::agents::normalize_name(id).as_deref() == Ok(id) {
         Ok(())
@@ -42,8 +41,6 @@ pub fn checked_id(id: &str) -> Result<(), String> {
     }
 }
 
-/// Creates a file that must not exist yet, synced to disk; nothing is left
-/// behind on failure.
 pub fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let mut file = OpenOptions::new()
         .write(true)
@@ -58,7 +55,6 @@ pub fn write_new(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// Creates a file unless one already exists, which is left untouched.
 pub fn seed(path: &Path, bytes: &[u8]) -> Result<(), String> {
     match OpenOptions::new().write(true).create_new(true).open(path) {
         Ok(mut file) => file.write_all(bytes).map_err(|e| error(path, e)),
@@ -67,8 +63,6 @@ pub fn seed(path: &Path, bytes: &[u8]) -> Result<(), String> {
     }
 }
 
-/// Replaces an existing file's contents. The new contents are fully synced
-/// before they take the file's place, and the original is restored if that fails.
 pub fn replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let temp = path.with_extension(unique("tmp"));
     write_new(&temp, bytes)?;
@@ -86,7 +80,6 @@ pub fn replace(path: &Path, bytes: &[u8]) -> Result<(), String> {
     Ok(())
 }
 
-/// A fresh directory under the system temp folder, removed on drop.
 #[cfg(test)]
 pub struct TempDir(std::path::PathBuf);
 #[cfg(test)]

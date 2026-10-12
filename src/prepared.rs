@@ -1,7 +1,9 @@
-//! Chat search preparation is independent of rendering and safe on a worker thread.
+//! Chat search preparation, independent of rendering and safe on a worker thread.
+//! `Group` is in display order and each group lists its chats newest first. The
+//! agent counts ignore the agent filter itself. Only the latest `Generation`
+//! ticket may publish a result.
 use std::sync::Arc;
 
-/// Keep the common prefix/suffix of ordered rows, including their measurements.
 pub fn changed_range<T: PartialEq>(
     old: &[T],
     new: &[T],
@@ -16,7 +18,6 @@ pub fn changed_range<T: PartialEq>(
     (prefix..old.len() - suffix, prefix..new.len() - suffix)
 }
 
-/// Each request owns a ticket. Cancelled or superseded results cannot publish.
 #[derive(Default)]
 pub struct Generation(u64);
 impl Generation {
@@ -32,25 +33,20 @@ impl Generation {
 #[derive(Clone)]
 pub struct SearchRecord {
     pub id: Arc<str>,
-    pub text: SearchText,
+    pub text: Arc<str>,
     pub completed: bool,
     pub archived: bool,
     pub blocked: bool,
     pub processing: bool,
     pub unread: bool,
-    /// The chat's agent, as stored on the thread.
     pub agent: Arc<str>,
-    /// Last activity in seconds since the epoch; 0 when unknown.
+    // Seconds since the epoch, 0 when unknown.
     pub activity: i64,
 }
 
-/// Sections of the chat list, in display order: live chats by state, then
-/// idle chats by when they were last active, then completed and archived chats.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Group {
-    /// Chats waiting on the user.
     NeedsInput,
-    /// Chats whose agent is running.
     Processing,
     Today,
     LastThreeDays,
@@ -73,19 +69,15 @@ impl Group {
     }
 }
 
-/// What the chat list shows. `filter` is 0 for all chats, 1 for chats that need
-/// input and 3 for unread chats.
 #[derive(Clone, Default, PartialEq)]
 pub struct Criteria {
     pub query: String,
-    pub filter: usize,
     pub completed: bool,
     pub archived: bool,
     pub agent: Option<Arc<str>>,
 }
 
 impl Criteria {
-    /// Completed and archived chats are left out unless their section is shown.
     fn hides(&self, record: &SearchRecord) -> bool {
         (record.completed && !self.completed) || (record.archived && !self.archived)
     }
@@ -93,11 +85,7 @@ impl Criteria {
 
 #[derive(Clone, Default)]
 pub struct Outcome {
-    /// Non-empty sections with their record indexes, most recent first.
     pub groups: Vec<(Group, Vec<usize>)>,
-    /// Chats each tab would show (all, needing input, unread) for this search and agent.
-    pub scopes: [usize; 3],
-    /// Chats each agent would show for this search and tab, ordered by agent.
     pub agents: Vec<(Arc<str>, usize)>,
 }
 
@@ -107,8 +95,6 @@ impl Outcome {
     }
 }
 
-/// One pass over the catalog: the visible sections plus the counts the tabs and
-/// agent menu need, so the controls always describe what choosing them would show.
 pub fn search<'a>(
     records: impl IntoIterator<Item = &'a SearchRecord>,
     criteria: &Criteria,
@@ -130,14 +116,6 @@ pub fn search<'a>(
             .agent
             .as_ref()
             .is_none_or(|agent| *agent == record.agent);
-        if agent_matches {
-            outcome.scopes[0] += 1;
-            outcome.scopes[1] += usize::from(record.blocked);
-            outcome.scopes[2] += usize::from(record.unread);
-        }
-        if !record.matches_filter(criteria.filter) {
-            continue;
-        }
         match outcome
             .agents
             .binary_search_by(|(agent, _)| agent.as_ref().cmp(&record.agent))
@@ -195,9 +173,6 @@ pub fn search<'a>(
     outcome
 }
 
-/// The chats the collapsed list scrolls through, as record indexes: every chat
-/// in list order, except the open chat, which the list pins above them.
-/// Search, tabs and the agent filter apply to the full list only.
 pub fn rail(
     records: &[SearchRecord],
     completed: bool,
@@ -214,25 +189,10 @@ pub fn rail(
         .groups
         .into_iter()
         .flat_map(|(_, rows)| rows)
+        // The list pins the open chat above the rail.
         .filter(|&row| Some(row) != selected)
         .collect()
 }
-
-impl SearchRecord {
-    pub fn matches_filter(&self, filter: usize) -> bool {
-        match filter {
-            1 => self.blocked,
-            2 => self.processing,
-            3 => self.unread,
-            _ => true,
-        }
-    }
-}
-
-pub type SearchCatalog = Vec<SearchRecord>;
-
-/// Lowercased title and message text, shared between the list and its search worker.
-pub type SearchText = Arc<str>;
 
 #[cfg(test)]
 mod tests {
@@ -260,10 +220,9 @@ mod tests {
             .collect()
     }
 
-    fn criteria(query: &str, filter: usize, completed: bool) -> Criteria {
+    fn criteria(query: &str, completed: bool) -> Criteria {
         Criteria {
             query: query.into(),
-            filter,
             completed,
             archived: false,
             agent: None,
@@ -290,7 +249,7 @@ mod tests {
         assert!(generation.accepts(second));
     }
     #[test]
-    fn search_results_keep_status_filters_and_reject_out_of_order_completion() {
+    fn search_results_reject_out_of_order_completion() {
         let records = [
             SearchRecord {
                 blocked: true,
@@ -302,22 +261,15 @@ mod tests {
                 ..record("b", "second body")
             },
         ];
-        let find = |query, filter, completed| {
-            visible(&search(&records, &criteria(query, filter, completed), 0))
-        };
-        assert_eq!(find("body", 0, true), [0, 1]);
-        assert_eq!(find("body", 0, false), [0]);
-        assert_eq!(find("", 1, true), [0]);
-        assert_eq!(find("", 3, true), [0]);
+        let find = |query, completed| visible(&search(&records, &criteria(query, completed), 0));
+        assert_eq!(find("body", true), [0, 1]);
+        assert_eq!(find("body", false), [0]);
         let mut generation = Generation::default();
         let older = generation.next();
         let latest = generation.next();
         let mut shown = vec![];
         // Latest query completes first; an older worker finishes afterwards.
-        for (ticket, result) in [
-            (latest, find("second", 0, true)),
-            (older, find("first", 0, true)),
-        ] {
+        for (ticket, result) in [(latest, find("second", true)), (older, find("first", true))] {
             if generation.accepts(ticket) {
                 shown = result;
             }
@@ -369,7 +321,7 @@ mod tests {
         ];
         let everything = Criteria {
             archived: true,
-            ..criteria("", 0, true)
+            ..criteria("", true)
         };
         let outcome = search(&records, &everything, NOW);
         let sections: Vec<_> = outcome
@@ -402,11 +354,11 @@ mod tests {
                 .map(|(group, _)| *group)
                 .collect()
         };
-        let default = shown(&criteria("", 0, true));
+        let default = shown(&criteria("", true));
         assert!(default.contains(&Group::Completed) && !default.contains(&Group::Archived));
         let archived_only = shown(&Criteria {
             archived: true,
-            ..criteria("", 0, false)
+            ..criteria("", false)
         });
         assert!(!archived_only.contains(&Group::Completed));
         assert!(archived_only.contains(&Group::Archived));
@@ -416,7 +368,7 @@ mod tests {
     fn rail_lists_every_chat_in_list_order_without_the_open_one() {
         const NOW: i64 = 1_790_510_400;
         let day = 86_400;
-        let catalog: SearchCatalog = [
+        let catalog: Vec<SearchRecord> = [
             SearchRecord {
                 activity: NOW - 3 * day,
                 ..record("older", "")
@@ -456,11 +408,11 @@ mod tests {
             ids(rail(&catalog, false, false, Some(1), NOW)),
             ["waiting", "older"]
         );
-        assert!(rail(&SearchCatalog::default(), true, true, None, NOW).is_empty());
+        assert!(rail(&Vec::new(), true, true, None, NOW).is_empty());
     }
 
     #[test]
-    fn counts_describe_what_each_tab_and_agent_would_show() {
+    fn counts_describe_what_each_agent_would_show() {
         let records = [
             SearchRecord {
                 blocked: true,
@@ -481,18 +433,14 @@ mod tests {
                 ..record("d", "fix tests")
             },
         ];
-        let mut wanted = criteria("fix", 3, true);
+        let mut wanted = criteria("fix", true);
         let outcome = search(&records, &wanted, 0);
-        // Tabs ignore the tab itself; the agent menu ignores the agent itself.
-        assert_eq!(outcome.scopes, [3, 1, 2]);
-        assert_eq!(outcome.agents, [("claude".into(), 1), ("codex".into(), 1)]);
-        assert_eq!(visible(&outcome), [0, 1]);
+        assert_eq!(outcome.agents, [("claude".into(), 1), ("codex".into(), 2)]);
+        assert_eq!(visible(&outcome), [0, 1, 3]);
+        // The agent menu ignores the agent itself.
         wanted.agent = Some("claude".into());
         let outcome = search(&records, &wanted, 0);
-        assert_eq!(outcome.scopes, [1, 0, 1]);
         assert_eq!(outcome.agents.len(), 2);
         assert_eq!(visible(&outcome), [1]);
-        wanted.completed = false;
-        assert_eq!(search(&records, &wanted, 0).scopes, [1, 0, 1]);
     }
 }

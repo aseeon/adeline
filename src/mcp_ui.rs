@@ -1,7 +1,9 @@
 //! MCP servers in Settings and the agent form: one row per server with Edit…
-//! and Remove, and the editor dialog (DD11).
+//! and Remove, and the editor dialog. A save error keeps the dialog open
+//! and shows it.
 use super::*;
 use crate::conversation::{McpServer, McpTransport};
+use crate::settings::text_input;
 use gpui_kit::component::{
     ActiveTheme as _, Sizable as _,
     button::{Button, ButtonVariants as _},
@@ -11,32 +13,17 @@ use gpui_kit::component::{
 };
 use std::rc::Rc;
 
-/// Saves an edited server; an error keeps the dialog open and shows it.
 pub(super) type Save = Rc<dyn Fn(McpServer, &mut Window, &mut App) -> Result<(), String>>;
 
 pub(super) struct McpEditor {
     name: Entity<InputState>,
-    /// 0 Command, 1 HTTP.
-    kind: usize,
+    http: bool,
     command: Entity<InputState>,
     arguments: Entity<TextareaState>,
     environment: Entity<TextareaState>,
     url: Entity<InputState>,
     headers: Entity<TextareaState>,
     error: Option<String>,
-}
-
-fn field(
-    value: &str,
-    placeholder: &'static str,
-    window: &mut Window,
-    cx: &mut App,
-) -> Entity<InputState> {
-    cx.new(|cx| {
-        let mut input = InputState::new(window, cx).placeholder(placeholder);
-        input.set_value(value.to_owned(), window, cx);
-        input
-    })
 }
 
 fn lines(
@@ -62,7 +49,6 @@ fn pairs_text(pairs: &[(String, String)], separator: &str) -> String {
         .join("\n")
 }
 
-/// `NAME=value` (or `Name: value`) lines as pairs.
 fn parse_pairs(text: &str, separator: char, what: &str) -> Result<Vec<(String, String)>, String> {
     text.lines()
         .map(str::trim)
@@ -82,10 +68,10 @@ impl McpEditor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (kind, command, arguments, environment, url, headers) =
+        let (http, command, arguments, environment, url, headers) =
             match server.map(|s| &s.transport) {
                 Some(McpTransport::Http { url, headers }) => (
-                    1,
+                    true,
                     String::new(),
                     Vec::new(),
                     Vec::new(),
@@ -97,7 +83,7 @@ impl McpEditor {
                     arguments,
                     environment,
                 }) => (
-                    0,
+                    false,
                     command.to_string_lossy().into_owned(),
                     arguments.clone(),
                     environment.clone(),
@@ -105,7 +91,7 @@ impl McpEditor {
                     Vec::new(),
                 ),
                 None => (
-                    0,
+                    false,
                     String::new(),
                     Vec::new(),
                     Vec::new(),
@@ -114,14 +100,14 @@ impl McpEditor {
                 ),
             };
         Self {
-            name: field(
+            name: text_input(
                 server.map_or("", |s| s.name.as_str()),
                 "docs-search",
                 window,
                 cx,
             ),
-            kind,
-            command: field(&command, "npx-free command, e.g. uvx or a path", window, cx),
+            http,
+            command: text_input(&command, "npx-free command, e.g. uvx or a path", window, cx),
             arguments: lines(arguments.join("\n"), "One argument per line", window, cx),
             environment: lines(
                 pairs_text(&environment, "="),
@@ -129,7 +115,7 @@ impl McpEditor {
                 window,
                 cx,
             ),
-            url: field(&url, "https://example.com/mcp", window, cx),
+            url: text_input(&url, "https://example.com/mcp", window, cx),
             headers: lines(
                 pairs_text(&headers, ": "),
                 "Name: value, one per line",
@@ -145,7 +131,16 @@ impl McpEditor {
         if name.is_empty() {
             return Err("Name is required.".into());
         }
-        let transport = if self.kind == 0 {
+        let transport = if self.http {
+            let url = self.url.read(cx).value().trim().to_owned();
+            if !url.starts_with("http://") && !url.starts_with("https://") {
+                return Err("Enter an http:// or https:// URL.".into());
+            }
+            McpTransport::Http {
+                url,
+                headers: parse_pairs(&self.headers.read(cx).value(), ':', "header")?,
+            }
+        } else {
             let command = self.command.read(cx).value().trim().to_owned();
             if command.is_empty() {
                 return Err("Command is required.".into());
@@ -162,15 +157,6 @@ impl McpEditor {
                     .map(str::to_owned)
                     .collect(),
                 environment: parse_pairs(&self.environment.read(cx).value(), '=', "variable")?,
-            }
-        } else {
-            let url = self.url.read(cx).value().trim().to_owned();
-            if !url.starts_with("http://") && !url.starts_with("https://") {
-                return Err("Enter an http:// or https:// URL.".into());
-            }
-            McpTransport::Http {
-                url,
-                headers: parse_pairs(&self.headers.read(cx).value(), ':', "header")?,
             }
         };
         Ok(McpServer { name, transport })
@@ -189,16 +175,27 @@ impl Render for McpEditor {
                 Field::new().label("Type").child(
                     TabBar::new("mcp-type")
                         .segmented()
-                        .selected_index(self.kind)
+                        .selected_index(usize::from(self.http))
                         .child(Tab::new().label("Command"))
                         .child(Tab::new().label("HTTP"))
                         .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                            this.kind = *ix;
+                            this.http = *ix == 1;
                             cx.notify();
                         })),
                 ),
             );
-        form = if self.kind == 0 {
+        form = if self.http {
+            form.child(
+                Field::new()
+                    .label("URL")
+                    .child(Input::new(&self.url).aria_label("URL")),
+            )
+            .child(
+                Field::new()
+                    .label("Headers")
+                    .child(Textarea::new(&self.headers).aria_label("Headers")),
+            )
+        } else {
             form.child(
                 Field::new()
                     .label("Command")
@@ -214,17 +211,6 @@ impl Render for McpEditor {
                     .label("Environment variables")
                     .child(Textarea::new(&self.environment).aria_label("Environment variables")),
             )
-        } else {
-            form.child(
-                Field::new()
-                    .label("URL")
-                    .child(Input::new(&self.url).aria_label("URL")),
-            )
-            .child(
-                Field::new()
-                    .label("Headers")
-                    .child(Textarea::new(&self.headers).aria_label("Headers")),
-            )
         };
         col()
             .gap_3()
@@ -235,7 +221,6 @@ impl Render for McpEditor {
     }
 }
 
-/// Opens the editor for a new server, or for `server`.
 pub(super) fn open_editor(
     server: Option<&McpServer>,
     save: Save,
@@ -300,7 +285,19 @@ pub(super) fn open_editor(
     });
 }
 
-/// One row per server, with Edit… and Remove, then "Add server…".
+pub(super) fn upsert(servers: &mut Vec<McpServer>, ix: Option<usize>, server: McpServer) {
+    match ix {
+        Some(ix) if ix < servers.len() => servers[ix] = server,
+        _ => servers.push(server),
+    }
+}
+
+pub(super) fn remove(servers: &mut Vec<McpServer>, ix: usize) {
+    if ix < servers.len() {
+        servers.remove(ix);
+    }
+}
+
 pub(super) fn server_list(
     id: &'static str,
     servers: &[McpServer],

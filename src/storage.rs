@@ -1,4 +1,11 @@
 //! Durable project definitions, conversation snapshots and ordered transcript events.
+//!
+//! A conversation's agent and launch settings are fixed at creation; only its
+//! option selections change. Its settings also keep what the agent last offered,
+//! so menus work while the agent is stopped. `queue_event` holds streamed events
+//! for `flush_due` to write within `FLUSH_INTERVAL_MS`; `record_event` writes at
+//! once, with everything queued before it. Event timestamps are epoch
+//! milliseconds, a project's `opened_at` epoch seconds.
 use crate::files::{self, checked_id, error as file_error};
 use crate::{
     agents::{self, AgentDefinition, InstructionsMode},
@@ -11,17 +18,12 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, BufRead, BufReader, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
 };
 
-/// The conversation format this version writes. Conversations saved in an
-/// earlier format stay on disk untouched but are not loaded (scope R37).
 pub const VERSION: u32 = 2;
 
-/// How long streamed events may wait in memory before they are written.
 pub const FLUSH_INTERVAL_MS: u64 = 250;
 
-/// What a conversation started with.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 #[non_exhaustive]
@@ -30,15 +32,11 @@ pub struct ExecutionConfig {
     pub harness: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub identity: String,
-    /// The resolved executable.
     pub command: String,
     #[serde(default)]
     pub arguments: Vec<String>,
-    /// Variables the registry sets for the agent.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub environment: Vec<(String, String)>,
-    /// Model, effort, mode and other options; the only part that changes
-    /// after creation, and only for this conversation (scope R17).
     #[serde(default)]
     pub selections: Selections,
     #[serde(default)]
@@ -59,7 +57,6 @@ impl ExecutionConfig {
     }
 }
 
-/// An executable and how to run it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Launch {
     pub command: String,
@@ -80,28 +77,23 @@ pub struct ConversationSettings {
     pub session_id: Option<String>,
     #[serde(default)]
     pub previous_session_ids: Vec<String>,
-    /// What the agent last offered, so the menus and the `/` list work while
-    /// it is stopped and come back after a restart.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub options: Vec<SessionOption>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub commands: Vec<AgentCommand>,
     #[serde(default)]
     pub features: Features,
-    /// The agent's TODO list, kept until the agent sends an empty one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub todo: Vec<TodoStep>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub forked_from: Option<ForkOrigin>,
 }
 
-/// The conversation and reply a fork was made from.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ForkOrigin {
     pub conversation_id: String,
     pub title: String,
-    /// The fork point: the index of the source's reply the fork ends with.
     pub message: usize,
 }
 
@@ -116,7 +108,7 @@ pub struct TranscriptEvent {
 impl TranscriptEvent {
     pub fn new(kind: &str, data: Value) -> Self {
         Self {
-            timestamp: now_millis(),
+            timestamp: crate::recency::now_ms(),
             kind: kind.to_owned(),
             data,
         }
@@ -128,7 +120,6 @@ impl TranscriptEvent {
 struct ProjectDefinition {
     name: String,
     directory: PathBuf,
-    /// When the project was last opened, in seconds since the Unix epoch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     opened_at: Option<i64>,
 }
@@ -140,7 +131,6 @@ pub struct StoredConversation {
     pub events: Vec<TranscriptEvent>,
     pub unsaved_events: Vec<TranscriptEvent>,
     pub storage_error: Option<String>,
-    /// When the oldest unsaved streamed event was queued, in milliseconds.
     unsaved_since: Option<u64>,
     persisted_len: u64,
     needs_rollback: bool,
@@ -291,7 +281,6 @@ impl StoredConversation {
     }
 }
 
-/// Whether a lifecycle event starts a new reply rather than continuing the last one.
 fn starts_reply(event: &TranscriptEvent) -> bool {
     let name = event.data.get("event").and_then(Value::as_str);
     name == Some("replacement_session_approved")
@@ -368,6 +357,26 @@ impl ProjectStore {
             .iter()
             .flat_map(|project| &project.conversations)
             .find(|conversation| conversation.id == id)
+    }
+
+    fn project(&self, id: &str) -> Result<&ProjectRecord, String> {
+        self.projects
+            .iter()
+            .find(|p| p.id == id)
+            .ok_or_else(|| format!("Project {id} no longer exists."))
+    }
+
+    fn conversation_mut(&mut self, id: &str) -> Result<(PathBuf, &mut StoredConversation), String> {
+        let root = self.root.as_ref().map_err(Clone::clone)?;
+        self.projects
+            .iter_mut()
+            .find_map(|p| {
+                p.conversations
+                    .iter_mut()
+                    .find(|c| c.id == id)
+                    .map(|c| (conversation_dir(root, &p.id, id), c))
+            })
+            .ok_or_else(|| format!("Conversation {id} no longer exists."))
     }
 
     fn reload(&mut self) {
@@ -480,7 +489,6 @@ impl ProjectStore {
             .sort_by_cached_key(|project| project.name.to_lowercase());
     }
 
-    /// Creates or edits a project. The caller must stop agents before deleting, not here.
     pub fn save_project(
         &mut self,
         original: Option<&str>,
@@ -493,16 +501,12 @@ impl ProjectStore {
         let root = self.root.as_ref().map_err(Clone::clone)?;
         if let Some(old) = original {
             checked_id(old)?;
-            let project = self
-                .projects
-                .iter()
-                .find(|p| p.id == old)
-                .ok_or_else(|| format!("Project {old} no longer exists."))?;
+            let project = self.project(old)?;
             if project.directory != directory
                 && project
                     .conversations
                     .iter()
-                    .any(|c| !matches!(c.settings.status.as_str(), "completed" | "archived"))
+                    .any(|c| !crate::conversation::closed(&c.settings.status))
             {
                 return Err(
                     "Complete or archive every conversation before changing the project directory."
@@ -574,15 +578,11 @@ impl ProjectStore {
         Ok(id)
     }
 
-    /// Call only after every live agent in this project has stopped successfully.
     pub fn delete_project(&mut self, id: &str) -> Result<(), String> {
+        // Callers stop every live agent in the project first.
         checked_id(id)?;
         let root = self.root.as_ref().map_err(Clone::clone)?;
-        let project = self
-            .projects
-            .iter()
-            .find(|p| p.id == id)
-            .ok_or_else(|| format!("Project {id} no longer exists."))?;
+        let project = self.project(id)?;
         outside_project_storage(&project.directory, root)?;
         safe_directory(root)?;
         let folder = root.join(id);
@@ -639,13 +639,13 @@ impl ProjectStore {
         safe_directory(&root.join(project_id))?;
         safe_directory(&base)?;
         outside_project_storage(&project.directory, root)?;
-        // A new conversation always starts with the definition's defaults (scope R16).
+        // A new conversation always starts with the definition's defaults.
         let settings = ConversationSettings {
             version: VERSION,
             agent_id,
             title: title.to_owned(),
             status: "idle".into(),
-            created_at: now_millis().to_string(),
+            created_at: crate::recency::now_ms().to_string(),
             execution: ExecutionConfig {
                 name: agent.name.clone(),
                 harness: agent.harness.clone(),
@@ -678,9 +678,6 @@ impl ProjectStore {
         Ok(id)
     }
 
-    /// Copies a conversation's visible history through its reply `message`
-    /// into a new conversation in the same project. Raw protocol traffic,
-    /// lifecycle records and permission decisions stay behind.
     pub fn fork_conversation(&mut self, source_id: &str, message: usize) -> Result<String, String> {
         checked_id(source_id)?;
         let root = self.root.as_ref().map_err(Clone::clone)?;
@@ -735,7 +732,7 @@ impl ProjectStore {
         let settings = ConversationSettings {
             title: format!("{} (fork)", source.settings.title),
             status: "idle".into(),
-            created_at: now_millis().to_string(),
+            created_at: crate::recency::now_ms().to_string(),
             session_id: None,
             previous_session_ids: Vec::new(),
             forked_from: Some(ForkOrigin {
@@ -786,15 +783,12 @@ impl ProjectStore {
         if let Some(error) = &conversation.storage_error {
             return Err(error.clone());
         }
-        let path = root
-            .join(project_id)
-            .join("conversations")
-            .join(id)
-            .join("conversation.yml");
-        flush_settings(conversation, &path)
+        flush_settings(
+            conversation,
+            &conversation_dir(root, project_id, id).join("conversation.yml"),
+        )
     }
 
-    /// Saves an event before returning, with everything queued before it.
     pub fn record_event(
         &mut self,
         conversation_id: &str,
@@ -804,55 +798,34 @@ impl ProjectStore {
         self.flush(conversation_id)
     }
 
-    /// Queues a streamed event; [`Self::flush_due`] writes it within
-    /// [`FLUSH_INTERVAL_MS`] (scope R41).
     pub fn queue_event(
         &mut self,
         conversation_id: &str,
         event: TranscriptEvent,
     ) -> Result<(), String> {
-        let conversation = self
-            .projects
-            .iter_mut()
-            .flat_map(|p| &mut p.conversations)
-            .find(|c| c.id == conversation_id)
-            .ok_or_else(|| format!("Conversation {conversation_id} no longer exists."))?;
+        let (_, conversation) = self.conversation_mut(conversation_id)?;
         conversation.unsaved_events.push(event);
-        conversation.unsaved_since.get_or_insert_with(now_millis);
+        conversation
+            .unsaved_since
+            .get_or_insert_with(crate::recency::now_ms);
         conversation.storage_error.clone().map_or(Ok(()), Err)
     }
 
     fn flush(&mut self, conversation_id: &str) -> Result<(), String> {
-        let (project_id, conversation) = self
-            .projects
-            .iter_mut()
-            .find_map(|p| {
-                p.conversations
-                    .iter_mut()
-                    .find(|c| c.id == conversation_id)
-                    .map(|c| (&p.id, c))
-            })
-            .ok_or_else(|| format!("Conversation {conversation_id} no longer exists."))?;
+        let (folder, conversation) = self.conversation_mut(conversation_id)?;
         if let Some(error) = &conversation.storage_error {
             return Err(error.clone());
         }
         if conversation.unsaved_events.is_empty() {
             return Ok(());
         }
-        let root = self.root.as_ref().map_err(Clone::clone)?;
-        let path = root
-            .join(project_id)
-            .join("conversations")
-            .join(conversation_id)
-            .join("transcript.jsonl");
         conversation.unsaved_since = None;
-        flush_events(conversation, &path)
+        flush_events(conversation, &folder.join("transcript.jsonl"))
     }
 
-    /// Writes every conversation's queued events that have waited long
-    /// enough, one batch each. Returns the conversations that failed.
     pub fn flush_due(&mut self) -> Vec<(String, String)> {
-        let due = now_millis().saturating_sub(FLUSH_INTERVAL_MS);
+        // Returns the conversations that failed, with their errors.
+        let due = crate::recency::now_ms().saturating_sub(FLUSH_INTERVAL_MS);
         let ids: Vec<String> = self
             .projects
             .iter()
@@ -865,7 +838,6 @@ impl ProjectStore {
             .collect()
     }
 
-    /// The conversation's recorded ACP traffic, newest last.
     pub fn traffic(&self, conversation_id: &str, limit: usize) -> Vec<Value> {
         let Some(conversation) = self.conversation(conversation_id) else {
             return Vec::new();
@@ -881,21 +853,7 @@ impl ProjectStore {
     }
 
     pub fn retry_unsaved(&mut self, conversation_id: &str) -> Result<(), String> {
-        let (project_id, conversation) = self
-            .projects
-            .iter_mut()
-            .find_map(|p| {
-                p.conversations
-                    .iter_mut()
-                    .find(|c| c.id == conversation_id)
-                    .map(|c| (&p.id, c))
-            })
-            .ok_or_else(|| format!("Conversation {conversation_id} no longer exists."))?;
-        let root = self.root.as_ref().map_err(Clone::clone)?;
-        let folder = root
-            .join(project_id)
-            .join("conversations")
-            .join(conversation_id);
+        let (folder, conversation) = self.conversation_mut(conversation_id)?;
         let had_pending_settings = conversation.pending_settings.is_some();
         if had_pending_settings {
             flush_settings(conversation, &folder.join("conversation.yml"))?;
@@ -915,27 +873,22 @@ impl ProjectStore {
     }
 }
 
-/// What changed on disk outside the engine, from [`ProjectStore::reconcile`].
 #[derive(Default)]
 pub struct Reconciled {
-    /// Added projects, and projects whose name or directory changed.
     pub projects: Vec<data::Workspace>,
     pub removed: Vec<String>,
-    /// Added or changed conversations.
     pub conversations: Vec<String>,
-    /// Problems the fresh load found that weren't known before.
     pub errors: Vec<String>,
 }
 
 impl ProjectStore {
-    /// Takes in a fresh load of the projects folder. Conversations in `busy`
-    /// and projects in `deleting` are the engine's own business and stay.
     pub fn reconcile(
         &mut self,
         fresh: Self,
         busy: &std::collections::HashSet<String>,
         deleting: &std::collections::HashSet<String>,
     ) -> Reconciled {
+        // Conversations in `busy` and projects in `deleting` are the engine's own business.
         let mut changes = Reconciled {
             errors: fresh
                 .errors
@@ -1005,14 +958,13 @@ impl ProjectStore {
     }
 }
 
-/// Saves a new conversation folder, leaving nothing behind on failure.
 fn write_conversation(
     base: &Path,
     settings: ConversationSettings,
     events: Vec<TranscriptEvent>,
 ) -> Result<StoredConversation, String> {
     let id = loop {
-        let id = files::unique(&format!("{:x}", now_nanos()));
+        let id = files::unique(&format!("{:x}", crate::recency::now_ms()));
         match fs::create_dir(base.join(&id)) {
             Ok(()) => break id,
             Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {}
@@ -1053,16 +1005,7 @@ fn write_conversation(
 fn flush_settings(conversation: &mut StoredConversation, path: &Path) -> Result<(), String> {
     let result = (|| {
         safe_conversation_path(path)?;
-        if !fs::symlink_metadata(path)
-            .map_err(|e| file_error(path, e))?
-            .file_type()
-            .is_file()
-        {
-            return Err(format!(
-                "{}: settings are not a regular file.",
-                path.display()
-            ));
-        }
+        ensure_regular_file(path)?;
         let settings = conversation
             .pending_settings
             .as_ref()
@@ -1085,16 +1028,7 @@ fn flush_settings(conversation: &mut StoredConversation, path: &Path) -> Result<
 fn flush_events(conversation: &mut StoredConversation, path: &Path) -> Result<(), String> {
     let result = (|| {
         safe_conversation_path(path)?;
-        if !fs::symlink_metadata(path)
-            .map_err(|e| file_error(path, e))?
-            .file_type()
-            .is_file()
-        {
-            return Err(format!(
-                "{}: transcript is not a regular file.",
-                path.display()
-            ));
-        }
+        ensure_regular_file(path)?;
         let mut file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -1167,7 +1101,7 @@ fn load_conversation(folder: &Path) -> Result<Option<StoredConversation>, String
     let text = fs::read_to_string(&settings_path).map_err(|e| file_error(&settings_path, e))?;
     let yaml: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&text).map_err(|e| file_error(&settings_path, e))?;
-    // An earlier format stays on disk untouched and is not shown (scope R37).
+    // An earlier format stays on disk untouched and is not shown.
     if yaml
         .get("version")
         .and_then(serde_yaml_ng::Value::as_u64)
@@ -1229,15 +1163,10 @@ fn load_conversation(folder: &Path) -> Result<Option<StoredConversation>, String
     }))
 }
 
-fn now_nanos() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_nanos()
+fn conversation_dir(root: &Path, project_id: &str, id: &str) -> PathBuf {
+    root.join(project_id).join("conversations").join(id)
 }
-fn now_millis() -> u64 {
-    u64::try_from(now_nanos() / 1_000_000).unwrap_or(u64::MAX)
-}
+
 fn outside_project_storage(directory: &Path, root: &Path) -> Result<(), String> {
     let root_path = fs::canonicalize(root).map_err(|e| file_error(root, e))?;
     if directory.starts_with(root)

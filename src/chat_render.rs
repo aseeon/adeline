@@ -1,5 +1,6 @@
 //! Drawing Chats: chat list rows and sidebar, transcript messages and their
 //! actions (Reply, Copy, Retry, Fork), decision rows and the composer.
+//! Sizes are in rems. The collapsed list is as wide as the mode rail beside it.
 use super::*;
 use crate::chat::{self, LABEL_GAP, ROW_HEIGHT, SECTION_HEIGHT};
 use crate::prepared::{Group, Outcome};
@@ -20,23 +21,16 @@ use std::fmt::Write as _;
 use std::sync::Arc;
 use std::time::Duration;
 
-/// The running indicator turns once per this many milliseconds.
 const RUNNING_TURN_MS: u64 = 2400;
 
-/// Where a section label is drawn.
 #[derive(Clone, Copy)]
 pub(super) enum LabelPlacement {
-    /// In the list, above its chats.
     Inline,
-    /// Stacked under the controls; the last one draws the edge to the chats.
     Top { last: bool },
 }
 
-/// Width of the collapsed list in rems: the width of the mode rail beside it.
 pub(super) const COLLAPSED_WIDTH: f32 = 2.75;
 
-/// One item of the collapsed list: a chat's agent icon in a square the height
-/// of a list row, centered in the rail.
 pub(super) fn collapsed_item(tile: AnyElement) -> impl IntoElement {
     div()
         .w_full()
@@ -46,11 +40,9 @@ pub(super) fn collapsed_item(tile: AnyElement) -> impl IntoElement {
         .child(tile)
 }
 
-/// A section label: a chevron, the title in capitals and the chat count.
-/// Needs Input takes the accent; the section being read takes the foreground.
 pub(super) fn section_label(
     group: Group,
-    count: usize,
+    chats: usize,
     folded: bool,
     current: bool,
     placement: LabelPlacement,
@@ -88,7 +80,11 @@ pub(super) fn section_label(
                     group.title()
                 )))
                 .role(Role::Button)
-                .aria_label(format!("{verb} {}, {}", group.title(), chat_count(count)))
+                .aria_label(format!(
+                    "{verb} {}, {}",
+                    group.title(),
+                    count(chats, "chat")
+                ))
                 .h(rems(SECTION_HEIGHT - LABEL_GAP))
                 .px_1p5()
                 .gap_1p5()
@@ -113,7 +109,7 @@ pub(super) fn section_label(
                         .truncate()
                         .child(group.title().to_uppercase()),
                 )
-                .child(div().flex_shrink_0().child(count.to_string())),
+                .child(div().flex_shrink_0().child(chats.to_string())),
         )
         // The pinned stack's edge sits inside the label's side padding. The stack
         // stops short of the scrollbar on the right, so the line gives up the
@@ -125,11 +121,6 @@ pub(super) fn section_label(
         .into_any_element()
 }
 
-fn chat_count(count: usize) -> String {
-    format!("{count} {}", if count == 1 { "chat" } else { "chats" })
-}
-
-/// The title with the searched text highlighted where the title contains it.
 fn highlighted_title(title: &str, query: &str, cx: &App) -> StyledText {
     let text = StyledText::new(title.to_owned());
     if query.is_empty() {
@@ -150,7 +141,6 @@ fn highlighted_title(title: &str, query: &str, cx: &App) -> StyledText {
     }
 }
 
-/// A track with a quarter arc that has turned `turn` of the way around.
 fn running_ring(turn: f32, track: Hsla, arc: Hsla) -> impl IntoElement {
     canvas(
         |_, _, _| {},
@@ -171,8 +161,11 @@ fn running_ring(turn: f32, track: Hsla, arc: Hsla) -> impl IntoElement {
     .size_full()
 }
 
-/// The right end of a list row: the time since the chat was active, or in its
-/// place a small spinner while the agent runs or the accent dot when it waits.
+fn updated(thread: &Thread) -> Option<String> {
+    let activity = thread.last_activity();
+    (activity > 0).then(|| recency::label(activity, recency::now()))
+}
+
 fn row_status(thread: &Thread, updated: Option<String>, cx: &App) -> AnyElement {
     let theme = cx.theme();
     match thread.status.as_str() {
@@ -206,7 +199,6 @@ fn row_status(thread: &Thread, updated: Option<String>, cx: &App) -> AnyElement 
     }
 }
 
-/// A command on the collapsed list, the same button as in the full list's header.
 pub(super) fn collapsed_button(id: &'static str, label: &'static str, icon_name: &str) -> Button {
     Button::new(id)
         .ghost()
@@ -216,7 +208,6 @@ pub(super) fn collapsed_button(id: &'static str, label: &'static str, icon_name:
         .tooltip(label)
 }
 
-/// The chat's status in words, for accessible labels.
 fn status_name(thread: &Thread) -> &'static str {
     match thread.status.as_str() {
         "processing" => "running",
@@ -227,7 +218,6 @@ fn status_name(thread: &Thread) -> &'static str {
     }
 }
 
-/// A list row's agent icon, also the whole of a chat in the collapsed list.
 pub(super) fn agent_mark((path, color): (String, Hsla)) -> themed_icon::ThemedIcon {
     themed_icon::ThemedIcon::path(&path)
         .flex_shrink_0()
@@ -236,8 +226,6 @@ pub(super) fn agent_mark((path, color): (String, Hsla)) -> themed_icon::ThemedIc
 }
 
 impl Adeline {
-    /// The icon path and color of the agent named `agent`: its avatar in text
-    /// colors, else the muted robot.
     pub(super) fn agent_icon(&self, agent: &str, cx: &App) -> (String, Hsla) {
         let path = self
             .agent_catalog()
@@ -256,7 +244,7 @@ impl Adeline {
         (path, color)
     }
 
-    fn agent_name(&self, agent: &str) -> String {
+    pub(super) fn agent_name(&self, agent: &str) -> String {
         if self.demo_mode {
             provider(agent).to_owned()
         } else {
@@ -264,22 +252,16 @@ impl Adeline {
         }
     }
 
-    /// A chat's row: its agent's icon, the title, and the time or live status.
-    /// The list and the collapsed list's flyout both draw it, then add their own
-    /// identity, fill and pointer handling.
     fn chat_line(&self, i: usize, selected: bool, cx: &Context<Self>) -> Div {
         let thread = &self.workspace().threads[i];
-        let activity = thread.last_activity();
-        let updated = (activity > 0).then(|| recency::label(activity, recency::now()));
         self.chat_title(i, selected, cx)
-            .child(row_status(thread, updated, cx))
+            .child(row_status(thread, updated(thread), cx))
     }
 
-    /// A row's agent icon and title, without the status at its right end.
     fn chat_title(&self, i: usize, selected: bool, cx: &Context<Self>) -> Div {
         let thread = &self.workspace().threads[i];
         let theme = cx.theme();
-        let done = matches!(thread.status.as_str(), "completed" | "archived");
+        let done = conversation::closed(&thread.status);
         let live = matches!(thread.status.as_str(), "blocked" | "processing");
         // Unread, waiting and running chats read bright; the rest recede.
         let title_color = if selected || thread.unread() || live {
@@ -307,13 +289,9 @@ impl Adeline {
             )
     }
 
-    /// A list row's right end. A completed chat trades its time for an Archive
-    /// button while the pointer is over the row.
     fn chat_row_end(&self, i: usize, group: &SharedString, cx: &Context<Self>) -> AnyElement {
         let thread = &self.workspace().threads[i];
-        let activity = thread.last_activity();
-        let updated = (activity > 0).then(|| recency::label(activity, recency::now()));
-        let status = row_status(thread, updated, cx);
+        let status = row_status(thread, updated(thread), cx);
         if thread.status != "completed" {
             return status;
         }
@@ -353,7 +331,6 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// A chat's accessible description: title, agent, size, age and state.
     fn chat_description(&self, i: usize) -> String {
         let thread = &self.workspace().threads[i];
         let mut description = format!(
@@ -362,9 +339,7 @@ impl Adeline {
             self.agent_name(&thread.provider),
             thread.messages.len()
         );
-        let activity = thread.last_activity();
-        if activity > 0 {
-            let updated = recency::label(activity, recency::now());
+        if let Some(updated) = updated(thread) {
             write!(description, ", updated {updated}").unwrap();
         }
         write!(description, ", {}", status_name(thread)).unwrap();
@@ -374,7 +349,6 @@ impl Adeline {
         description
     }
 
-    /// A chat in the list.
     pub(super) fn chat_card(&self, i: usize, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let selected = self.selected == Some(i);
@@ -406,9 +380,6 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// The collapsed list's search: the full list's search button, which unfurls
-    /// over the chats into the full list's search field and the number of
-    /// matches. It stays unfurled while the field has focus.
     pub(super) fn collapsed_search(
         &self,
         open: bool,
@@ -480,9 +451,6 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// A chat in the collapsed list: its agent icon. While the pointer is on it,
-    /// or keyboard focus, it unfurls toward the chats into the chat's row from
-    /// the full list; the rail itself keeps its width.
     pub(super) fn collapsed_chat(
         &self,
         i: usize,
@@ -566,8 +534,6 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// The agent control at the end of the search field: a robot that opens the
-    /// agent menu, or the chosen agent's icon, which clears the choice.
     fn agent_filter_button(&self, outcome: &Outcome, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let button = |id: &'static str| {
@@ -872,17 +838,11 @@ impl Adeline {
                 )
                 .into_any_element()
         } else {
-            let name = if self.demo_mode {
-                provider(&thread.provider).to_owned()
-            } else {
-                thread.provider.clone()
-            };
+            let name = self.agent_name(&thread.provider);
             // The reply being written gets its closing row when the turn ends.
             let writing = self.conversation_processing()
                 && thread
-                    .messages
-                    .iter()
-                    .rposition(|m| m.role == "user")
+                    .turn_of(thread.messages.len())
                     .is_some_and(|last| i > last);
             col()
                 .w_full()
@@ -944,7 +904,6 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// "Forked from" its source, above a fork's copied history.
     fn fork_marker(&self, fork: &Fork, cx: &Context<Self>) -> Stateful<Div> {
         let source = self
             .workspace()
@@ -991,7 +950,6 @@ impl Adeline {
             .when(fork.text_copy, |marker| marker.child(note))
     }
 
-    /// Reply, Copy and Retry for a finished turn's last reply, then what the turn did.
     fn closing_row(&self, thread: &Thread, i: usize, cx: &Context<Self>) -> Div {
         let theme = cx.theme();
         let turn = thread.turn_of(i);
@@ -1144,10 +1102,9 @@ impl Adeline {
             div().into_any_element()
         }
     }
-    /// `width` is the composer's width in rems; narrower composers shorten labels.
-    pub(super) fn composer_view(&self, width: f32, cx: &Context<Self>) -> Div {
+    pub(super) fn composer_view(&self, width_rems: f32, cx: &Context<Self>) -> Div {
         // The controls sit in the chat column, inside its side padding.
-        let fit = Fit::for_width(width.min(CHAT_COLUMN) - 4.);
+        let fit = Fit::for_width(width_rems.min(CHAT_COLUMN) - 4.);
         let theme = cx.theme();
         let bound = self.bound_definition();
         let selected = self.selected_definition();
@@ -1240,8 +1197,6 @@ impl Adeline {
                 .on_click(cx.listener(|app, _, window, cx| app.act(Action::AddAgent, window, cx)))
                 .into_any_element()
         } else if processing {
-            // During a turn the message waits in the queue; Send now is behind
-            // the caret, and Stop is its own button (DD2).
             let owner = cx.weak_entity();
             let send_now = if steering {
                 format!(
@@ -1353,7 +1308,6 @@ impl Adeline {
             .pb_2()
             .pl(rems(0.875))
             .pr(rems(0.625))
-            // Files dropped on the composer are attached (scope R23).
             .on_drop(cx.listener(|app, paths: &ExternalPaths, _, cx| {
                 for path in paths.paths() {
                     app.attach_local(path.clone(), cx);
@@ -1457,10 +1411,6 @@ impl Adeline {
 }
 
 impl Adeline {
-    /// A composer menu for one option category: Model, Effort, Mode, or More
-    /// options for every other option (DD1). Hidden when the agent offers
-    /// nothing for it (DD13). Works while the agent is stopped, from the
-    /// options its last session offered; disabled during a turn.
     fn option_menu(
         &self,
         category: conversation::Category,
@@ -1472,11 +1422,12 @@ impl Adeline {
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
         use conversation::{Category, OptionKind};
-        let (menu, id, heading, keys) = match category {
-            Category::Model => ("model", "chat-model", "Model", "Alt+M"),
-            Category::Effort => ("effort", "chat-effort", "Effort", "Alt+E"),
-            Category::Mode => ("mode", "chat-mode", "Mode", "Alt+O"),
-            Category::Other => ("more", "chat-more-options", "More options", "Alt+P"),
+        let menu = option_menu_name(category);
+        let (id, heading, keys) = match category {
+            Category::Model => ("chat-model", "Model", "Alt+M"),
+            Category::Effort => ("chat-effort", "Effort", "Alt+E"),
+            Category::Mode => ("chat-mode", "Mode", "Alt+O"),
+            Category::Other => ("chat-more-options", "More options", "Alt+P"),
         };
         let shown: Vec<conversation::SessionOption> = match category {
             Category::Other => options
@@ -1534,7 +1485,6 @@ impl Adeline {
         if processing {
             return Some(trigger.into_any_element());
         }
-        // One group per option, each holding its values; booleans are On and Off.
         let mut groups: Vec<(String, Vec<(String, String, String, bool)>)> = Vec::new();
         for option in &shown {
             let value = current(option);
@@ -1696,15 +1646,20 @@ impl Adeline {
     }
 }
 
-/// Height of the chat header, in rems. It floats over the top of the transcript.
+pub(super) fn option_menu_name(category: conversation::Category) -> &'static str {
+    match category {
+        conversation::Category::Model => "model",
+        conversation::Category::Effort => "effort",
+        conversation::Category::Mode => "mode",
+        conversation::Category::Other => "more",
+    }
+}
+
 pub(super) const CHAT_HEADER_HEIGHT: f32 = 3.;
-/// How far below the header the messages fade out as they scroll under it, in rems.
 pub(super) const HEADER_FADE: f32 = 1.75;
 
-/// Width of the chat column, in rems. The header, replies and composer share its edges.
 pub(super) const CHAT_COLUMN: f32 = 46.;
 
-/// The agent's icon and name that head its replies and its live progress.
 pub(super) fn agent_header(
     agent_icon: (String, Hsla),
     name: impl Into<SharedString>,
@@ -1733,15 +1688,9 @@ pub(super) fn agent_header(
         )
 }
 
-/// Braille frames ⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ as dot masks: bits 0-2 are the left column top
-/// to bottom, bits 3-5 the right. The bundled fonts have no braille glyphs, so
-/// the cell is drawn from dots.
 const BRAILLE_FRAMES: [u8; 10] = [0x0B, 0x19, 0x39, 0x38, 0x3C, 0x34, 0x26, 0x27, 0x07, 0x0F];
 const THINKING_WORDS: [&str; 4] = ["Thinking…", "Reasoning…", "Pondering…", "Working it out…"];
 
-/// The label after the agent's name while it works, animated as chosen in
-/// settings. Progress the agent reports replaces the cycling words, which only
-/// decorate.
 pub(super) fn thinking_label(progress: Option<String>, cx: &App) -> AnyElement {
     let muted: Hsla = rgb(theme::muted_foreground()).into();
     let accent = cx.theme().primary;
@@ -1819,6 +1768,8 @@ pub(super) fn thinking_label(progress: Option<String>, cx: &App) -> AnyElement {
                             let frame = (1..frames)
                                 .filter(|&i| delta * frames as f32 >= i as f32)
                                 .count();
+                            // Bits 0-2 are the left column top to bottom, 3-5
+                            // the right. The bundled fonts have no braille glyphs.
                             let mask = BRAILLE_FRAMES[frame];
                             cell.children((0..2).map(|column| {
                                 col().gap(dot * 0.6).children((0..3).map(move |dot_row| {
@@ -1860,13 +1811,10 @@ pub(super) fn thinking_label(progress: Option<String>, cx: &App) -> AnyElement {
     }
 }
 
-/// The centered column the chat header, transcript and composer align to.
 pub(super) fn chat_column() -> Div {
     div().w_full().max_w(rems(CHAT_COLUMN)).mx_auto().px_8()
 }
 
-/// How much of the agent's context the chat uses: `19%`, a bar, then the window
-/// size. Dashes stand in until the agent reports its usage.
 pub(super) fn context_meter(usage: Option<(u64, u64)>, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
     let share = match usage {
@@ -1907,12 +1855,10 @@ pub(super) fn context_meter(usage: Option<(u64, u64)>, cx: &App) -> Stateful<Div
         .child(window)
 }
 
-/// A model name without its provider path: `anthropic/claude-opus-5` is `claude-opus-5`.
 fn model_label(model: &str) -> String {
     model.rsplit('/').next().unwrap_or(model).to_owned()
 }
 
-/// An effort level as the composer shows it: `high` is `High`.
 fn effort_label(effort: &str) -> String {
     let mut chars = effort.chars();
     chars.next().map_or_else(String::new, |first| {
@@ -1920,9 +1866,7 @@ fn effort_label(effort: &str) -> String {
     })
 }
 
-/// How much of each composer label fits, by composer width.
 struct Fit {
-    /// Most characters of the agent, model, effort and mode labels.
     agent: usize,
     model: usize,
     effort: usize,
@@ -1952,7 +1896,6 @@ impl Fit {
     }
 }
 
-/// `text` cut to `max` characters, ending in an ellipsis when cut.
 fn shorten(text: &str, max: usize) -> String {
     if text.chars().count() <= max {
         text.to_owned()
@@ -1962,8 +1905,6 @@ fn shorten(text: &str, max: usize) -> String {
     }
 }
 
-/// A composer selector for a setting the agent owns. Its menu shows the
-/// current value and where to change it.
 fn execution_setting(
     id: &'static str,
     heading: &'static str,
@@ -1997,7 +1938,6 @@ fn execution_setting(
         })
 }
 
-/// A token count as the header shows it: `950`, `38k`, `1.5M`.
 pub(super) fn tokens(count: u64) -> String {
     if count >= 1_000_000 {
         format!("{:.1}M", count as f64 / 1_000_000.).replace(".0M", "M")
@@ -2008,12 +1948,10 @@ pub(super) fn tokens(count: u64) -> String {
     }
 }
 
-/// `1 file`, `4 files`.
-fn count(number: usize, noun: &str) -> String {
+pub(super) fn count(number: usize, noun: &str) -> String {
     format!("{number} {noun}{}", if number == 1 { "" } else { "s" })
 }
 
-/// When a message was sent, in local time: `2:43 PM` today, else with its date.
 pub(super) fn message_time(stamp: &str) -> Option<String> {
     use chrono::Datelike as _;
     let at = recency::parse(stamp)?;
@@ -2029,7 +1967,6 @@ pub(super) fn message_time(stamp: &str) -> Option<String> {
     Some(local.format(format).to_string())
 }
 
-/// The icon for a tool call, by its kind.
 pub(super) fn tool_icon(tool: conversation::ToolKind) -> &'static str {
     use conversation::ToolKind;
     match tool {
@@ -2043,7 +1980,6 @@ pub(super) fn tool_icon(tool: conversation::ToolKind) -> &'static str {
     }
 }
 
-/// A tool call's title without the status the runtime appends to it.
 fn step_title(call: &Activity) -> String {
     call.title
         .strip_suffix(" (completed)")
@@ -2051,7 +1987,6 @@ fn step_title(call: &Activity) -> String {
         .to_owned()
 }
 
-/// Tool calls as a compact list; running calls show a spinner.
 pub(super) fn tool_steps(calls: Vec<&Activity>, cx: &App) -> Div {
     let theme = cx.theme();
     col()

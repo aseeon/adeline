@@ -327,7 +327,6 @@ fn temporary_failure_obeys_retry_limit_and_preserves_original_until_work() {
             ..
         }]
     ));
-    assert!(continue_interrupted_turn().contains("Do not repeat completed work"));
 }
 
 #[test]
@@ -533,7 +532,6 @@ fn files_are_embedded_or_linked_and_images_need_support() {
     assert!(matches!(&blocks[1], wire::ContentBlock::Resource(_)));
 }
 
-// ---------------------------------------------------------------------------
 // Through the SDK: a scripted agent on the other end of line channels.
 
 /// A worker connected to a fake agent: lines the worker writes arrive on the
