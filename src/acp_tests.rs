@@ -794,3 +794,15 @@ async fn driver_reports_an_agent_that_exits_at_once() {
             .any(|kind| matches!(kind, EventKind::Crashed(stderr) if stderr.contains("boom")))
     );
 }
+
+#[test]
+fn a_broken_pipe_counts_as_the_agent_closing() {
+    #[cfg(unix)]
+    let code = 32;
+    #[cfg(windows)]
+    let code = 232;
+    let os = std::io::Error::from_raw_os_error(code);
+    assert!(broken_pipe(&sdk::Error::into_internal_error(os)));
+    let other = std::io::Error::from_raw_os_error(2);
+    assert!(!broken_pipe(&sdk::Error::into_internal_error(other)));
+}

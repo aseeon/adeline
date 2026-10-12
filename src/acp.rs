@@ -998,7 +998,7 @@ impl Worker {
                 .await;
             let error = match result {
                 Ok(()) => "Agent closed protocol output.".to_owned(),
-                Err(error) if sdk::is_incoming_transport_closed(&error) => {
+                Err(error) if sdk::is_incoming_transport_closed(&error) || broken_pipe(&error) => {
                     "Agent closed protocol output.".to_owned()
                 }
                 Err(error) => format!("ACP connection failed: {error}"),
@@ -2615,6 +2615,25 @@ fn error_text(error: &sdk::Error) -> String {
         }
         _ => error.message.clone(),
     }
+}
+
+// A write to an agent that already exited fails with a broken pipe before its exit is seen.
+// The SDK keeps only the error's text, so the OS error code is read back from it.
+fn broken_pipe(error: &sdk::Error) -> bool {
+    error
+        .data
+        .as_ref()
+        .and_then(Value::as_str)
+        .and_then(|text| {
+            text.rsplit_once("(os error ")?
+                .1
+                .strip_suffix(')')?
+                .parse()
+                .ok()
+        })
+        .is_some_and(|code| {
+            std::io::Error::from_raw_os_error(code).kind() == std::io::ErrorKind::BrokenPipe
+        })
 }
 
 fn engine_log(message: &str) {
