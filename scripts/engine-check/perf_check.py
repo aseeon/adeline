@@ -26,6 +26,7 @@ import ui_check as ui  # noqa: E402
 
 LONG_CHAT = "Search long conversations without pausing the interface"
 user32 = ctypes.windll.user32
+kernel32 = ctypes.windll.kernel32
 spans = []
 
 
@@ -37,9 +38,16 @@ def scenario(name, function, *args):
     if OPTIONS.only and OPTIONS.only.lower() not in name.lower():
         return
     time.sleep(0.5)
-    start = now_ms()
+    start, cpu = now_ms(), cpu_ms()
     function(*args)
-    spans.append((name, start, now_ms()))
+    spans.append((name, start, now_ms(), cpu_ms() - cpu))
+
+
+def cpu_ms():
+    """CPU time of the Adeline process so far, every thread included."""
+    times = [ctypes.c_ulonglong() for _ in range(4)]
+    kernel32.GetProcessTimes(int(PROCESS._handle), *map(ctypes.byref, times))
+    return (times[2].value + times[3].value) / 10_000
 
 
 def rect(element):
@@ -107,7 +115,9 @@ def stream(window):
 
 def launch(log, *args):
     os.environ["ADELINE_FRAME_LOG"] = str(log)
+    global PROCESS
     process, window = ui.launch(*args)
+    PROCESS = process
     window.set_focus()
     ui.named(window, "Message", timeout=20)
     time.sleep(2)
@@ -121,8 +131,8 @@ def percentile(values, fraction):
 def report(logs):
     rows = [row for log in logs if log.exists() for row in csv.DictReader(log.open())]
     print(f"{'scenario':<14}{'draws':>6}{'fps':>6}{'draw p50':>9}{'p95':>7}{'p99':>7}{'max':>7}"
-          f"{'>4.2ms':>7}{'>8.3ms':>7}{'present p50':>12}{'p95':>7}{'dirty→draw p95':>15}   (ms)")
-    for name, start, end in spans:
+          f"{'>4.2ms':>7}{'>8.3ms':>7}{'present p50':>12}{'p95':>7}{'dirty→draw p95':>15}{'CPU':>6}   (ms, CPU in % of one core)")
+    for name, start, end, cpu in spans:
         inside = [r for r in rows if start <= float(r["at_ms"]) <= end]
         draws = [float(r["duration_us"]) / 1000 for r in inside if r["kind"] == "draw"]
         presents = [float(r["duration_us"]) / 1000 for r in inside if r["kind"] == "present"]
@@ -131,7 +141,7 @@ def report(logs):
         print(f"{name:<14}{len(draws):>6}{len(draws) / seconds:>6.0f}{percentile(draws, .5):>9.2f}"
               f"{percentile(draws, .95):>7.2f}{percentile(draws, .99):>7.2f}{max(draws, default=0):>7.2f}"
               f"{sum(d > 4.17 for d in draws):>7}{sum(d > 8.33 for d in draws):>7}"
-              f"{percentile(presents, .5):>12.2f}{percentile(presents, .95):>7.2f}{percentile(dirty, .95):>15.2f}")
+              f"{percentile(presents, .5):>12.2f}{percentile(presents, .95):>7.2f}{percentile(dirty, .95):>15.2f}{cpu / (end - start) * 100:>6.0f}")
     if spans:
         print(f"\nmean draw over all scenarios: {statistics.mean(float(r['duration_us']) for r in rows if r['kind'] == 'draw') / 1000:.2f} ms")
 
@@ -174,6 +184,7 @@ def main():
 
 
 OPTIONS = None
+PROCESS = None
 
 if __name__ == "__main__":
     main()

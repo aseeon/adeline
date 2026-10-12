@@ -15,7 +15,6 @@ use gpui_kit::component::{
     menu::{ContextMenuExt as _, PopupMenuItem},
     popover::Popover,
     scroll::Scrollbar,
-    spinner::Spinner,
     tab::{Tab, TabBar},
 };
 use std::sync::Arc;
@@ -142,7 +141,7 @@ impl Adeline {
                     .gap_2()
                     .text_sm()
                     .text_color(cx.theme().muted_foreground)
-                    .child(Spinner::new().xsmall())
+                    .child(chat::spinner())
                     .child("Background tasks running"),
             );
         }
@@ -1118,7 +1117,7 @@ impl Adeline {
 
 fn step_glyph(status: StepStatus, muted: Hsla) -> AnyElement {
     match status {
-        StepStatus::InProgress => Spinner::new().xsmall().into_any_element(),
+        StepStatus::InProgress => chat::spinner(),
         StepStatus::Completed => icon("check")
             .size(rems(0.875))
             .text_color(muted)

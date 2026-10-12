@@ -1,5 +1,10 @@
 //! The transcript: messages and their actions (Reply, Copy, Retry, Fork), fork
 //! markers, the closing row and decision rows.
+//!
+//! A reply keeps its own text view, which gets only the newly streamed tail
+//! (`Thread::stream` only appends), so the Kit re-parses the last block, not the
+//! whole reply. Its key includes `created_at`: a reply replaced at the same
+//! index starts a new view.
 use super::*;
 
 impl Adeline {
@@ -33,10 +38,18 @@ impl Adeline {
             )
     }
 
-    pub(crate) fn message_row(&self, index: usize, i: usize, cx: &Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+    pub(crate) fn message_row(
+        &self,
+        index: usize,
+        i: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let thread = &self.workspace().threads[index];
         let message = &thread.messages[i];
+        let reply = (message.role != MessageRole::User && !self.demo_mode)
+            .then(|| reply_text(&thread.id, i, message, window, cx));
+        let theme = cx.theme();
         let user = message.role == MessageRole::User;
         // A reply that so far only thought shows as the Thinking row instead.
         let thinking = config::with(|s| s.modes.chats.show_thinking);
@@ -64,7 +77,7 @@ impl Adeline {
             // default fill is nearly the background and hides code spans. Links
             // take `chart_2` through the theme's link color.
             body = body.child(
-                TextView::markdown("response", message.text.clone())
+                TextView::new(&reply.expect("a reply outside demo mode"))
                     .style(
                         TextViewStyle::default()
                             .paragraph_gap(rems(0.5))
@@ -535,6 +548,35 @@ impl Transcript {
     }
 }
 
+fn reply_text(
+    thread: &str,
+    i: usize,
+    message: &Message,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<TextViewState> {
+    let key = SharedString::from(format!("reply:{thread}:{i}:{}", message.created_at));
+    let reply = window.use_keyed_state(key, cx, |_, cx| Reply {
+        fed: message.text.len(),
+        view: cx.new(|cx| TextViewState::markdown(&message.text, cx)),
+    });
+    reply.update(cx, |reply, cx| {
+        let text = message.text.as_str();
+        match text.get(reply.fed..) {
+            Some("") => {}
+            Some(tail) => reply.view.update(cx, |view, cx| view.push_str(tail, cx)),
+            None => reply.view.update(cx, |view, cx| view.set_text(text, cx)),
+        }
+        reply.fed = text.len();
+        reply.view.clone()
+    })
+}
+
+struct Reply {
+    view: Entity<TextViewState>,
+    fed: usize,
+}
+
 impl Render for Transcript {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let typography = fonts::typography();
@@ -556,11 +598,11 @@ impl Render for Transcript {
         let owner = self.owner.clone();
         let messages = self.messages;
         let footer_focus = self.footer_focus.clone();
-        let rows = list(self.state.clone(), move |row, _, cx| {
+        let rows = list(self.state.clone(), move |row, window, cx| {
             owner
                 .update(cx, |app, cx| {
                     if row < messages {
-                        app.message_row(selected, row, cx)
+                        app.message_row(selected, row, window, cx)
                     } else {
                         // Wrapped like message rows so the column centers in the row.
                         div()

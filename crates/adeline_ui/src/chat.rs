@@ -9,20 +9,23 @@
 //! `COLLAPSED_SEARCH` is NUL-prefixed because chat ids never are. `Transcript`'s
 //! `follow` and `reveal` leave redrawing the panel to the caller. The collapsed
 //! list is as wide as the mode rail beside it.
+//!
+//! Looping animations run at `ANIMATION_FPS`, and `spinner` is the Kit's
+//! `Spinner` with that cap: no view is cached yet, so every animation frame
+//! redraws the whole window (`docs/handoff-view-caching.md`).
 use super::*;
 use adeline_core::conversation::{MessageRole, ThreadStatus};
 use adeline_core::prepared::{Criteria, Group, Outcome};
 use gpui_kit::base::SelectableText;
 use gpui_kit::component::plot::shape::{Arc as ArcShape, ArcData};
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Selectable as _, Side, Sizable as _,
+    ActiveTheme as _, Disableable as _, IconName, Selectable as _, Side, Sizable as _,
     button::ButtonVariants as _,
     command::{Command, CommandGroup, CommandItem},
     input::Textarea,
     menu::{DropdownMenu as _, PopupMenuItem},
     scroll::Scrollbar,
-    spinner::Spinner,
-    text::{TextView, TextViewStyle},
+    text::{TextView, TextViewState, TextViewStyle},
     tooltip::Tooltip,
 };
 use std::f32::consts::TAU;
@@ -214,6 +217,22 @@ pub(super) fn agent_header(
         )
 }
 
+pub(super) const ANIMATION_FPS: f32 = 30.;
+
+pub(super) fn spinner() -> AnyElement {
+    Icon::new(IconName::Loader)
+        .xsmall()
+        .with_animation(
+            "spinner",
+            Animation::new(Duration::from_millis(800))
+                .repeat()
+                .with_easing(ease_in_out)
+                .with_max_fps(ANIMATION_FPS),
+            |icon, delta| icon.transform(Transformation::rotate(percentage(delta))),
+        )
+        .into_any_element()
+}
+
 const BRAILLE_FRAMES: [u8; 10] = [0x0B, 0x19, 0x39, 0x38, 0x3C, 0x34, 0x26, 0x27, 0x07, 0x0F];
 const THINKING_WORDS: [&str; 4] = ["Thinking…", "Reasoning…", "Pondering…", "Working it out…"];
 
@@ -239,7 +258,9 @@ pub(super) fn thinking_label(progress: Option<String>, cx: &App) -> AnyElement {
                         )
                         .with_animation(
                             "thinking-words",
-                            Animation::new(Duration::from_secs(8)).repeat(),
+                            Animation::new(Duration::from_secs(8))
+                                .repeat()
+                                .with_max_fps(ANIMATION_FPS),
                             move |words, delta| {
                                 let step = delta * THINKING_WORDS.len() as f32;
                                 let slide = ((step.fract() - 0.875) / 0.125).clamp(0., 1.);
@@ -254,29 +275,33 @@ pub(super) fn thinking_label(progress: Option<String>, cx: &App) -> AnyElement {
             let dot = size * 0.23;
             row()
                 .child(base.child(label.trim_end_matches(['…', '.']).to_owned()))
-                .child(row().gap(dot).ml(dot).with_animation(
-                    "thinking-dots",
-                    Animation::new(Duration::from_millis(1200)).repeat(),
-                    move |dots, delta| {
-                        dots.children((0..3).map(|i| {
-                            // Each dot rises and brightens in its own
-                            // part of the cycle, a beat after the last.
-                            let phase = (delta - i as f32 * 0.125).rem_euclid(1.);
-                            let lift = if phase < 0.6 {
-                                (phase / 0.6 * std::f32::consts::PI).sin()
-                            } else {
-                                0.
-                            };
-                            div()
-                                .size(dot)
-                                .rounded_full()
-                                .bg(muted)
-                                .opacity(0.4 + 0.6 * lift)
-                                .relative()
-                                .top(-dot * 1.3 * lift)
-                        }))
-                    },
-                ))
+                .child(
+                    row().gap(dot).ml(dot).with_animation(
+                        "thinking-dots",
+                        Animation::new(Duration::from_millis(1200))
+                            .repeat()
+                            .with_max_fps(ANIMATION_FPS),
+                        move |dots, delta| {
+                            dots.children((0..3).map(|i| {
+                                // Each dot rises and brightens in its own
+                                // part of the cycle, a beat after the last.
+                                let phase = (delta - i as f32 * 0.125).rem_euclid(1.);
+                                let lift = if phase < 0.6 {
+                                    (phase / 0.6 * std::f32::consts::PI).sin()
+                                } else {
+                                    0.
+                                };
+                                div()
+                                    .size(dot)
+                                    .rounded_full()
+                                    .bg(muted)
+                                    .opacity(0.4 + 0.6 * lift)
+                                    .relative()
+                                    .top(-dot * 1.3 * lift)
+                            }))
+                        },
+                    ),
+                )
                 .into_any_element()
         }
         config::ThinkingAnimation::Braille => {
@@ -328,7 +353,8 @@ pub(super) fn thinking_label(progress: Option<String>, cx: &App) -> AnyElement {
                             "thinking-fill",
                             Animation::new(Duration::from_millis(2400))
                                 .repeat()
-                                .with_easing(ease_in_out),
+                                .with_easing(ease_in_out)
+                                .with_max_fps(ANIMATION_FPS),
                             |fill, delta| fill.w(relative(delta)),
                         ),
                 )
@@ -448,7 +474,7 @@ pub(super) fn tool_steps(calls: Vec<&Activity>, cx: &App) -> Div {
                     theme.muted_foreground
                 })
                 .child(if call.running {
-                    Spinner::new().xsmall().into_any_element()
+                    spinner()
                 } else {
                     icon(tool_icon(call.tool))
                         .size(rems(0.75))

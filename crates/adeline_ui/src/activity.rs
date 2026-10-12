@@ -6,7 +6,7 @@ use crate::chat::{CHAT_HEADER_HEIGHT, agent_mark, message_time, tokens, tool_ico
 use adeline_core::conversation::MessageRole;
 use gpui_kit::component::{
     ActiveTheme as _, Selectable as _, Sizable as _, button::ButtonVariants as _,
-    scroll::Scrollbar, spinner::Spinner, tooltip::Tooltip,
+    scroll::Scrollbar, tooltip::Tooltip,
 };
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -500,7 +500,7 @@ impl Adeline {
                         .filter(|&i| thread.ends_turn(i))
                 });
                 let glyph = if call.running {
-                    Spinner::new().xsmall().into_any_element()
+                    chat::spinner()
                 } else {
                     icon(if error { "flag" } else { tool_icon(call.tool) })
                         .size(rems(0.75))

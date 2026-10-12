@@ -752,7 +752,9 @@ fn row_status(thread: &Thread, updated: Option<String>, cx: &App) -> AnyElement 
                 .size(rems(0.625))
                 .with_animation(
                     "chat-row-running",
-                    Animation::new(Duration::from_millis(RUNNING_TURN_MS)).repeat_synced(),
+                    Animation::new(Duration::from_millis(RUNNING_TURN_MS))
+                        .repeat_synced()
+                        .with_max_fps(ANIMATION_FPS),
                     move |ring, turn| ring.child(running_ring(turn, track, arc)),
                 )
                 .into_any_element()
