@@ -1,0 +1,821 @@
+//! The UI's model of projects, chats, messages and tool activity, plus the bundled
+//! demo workspace (`assets/workspace.json`).
+//!
+//! `u64` times are milliseconds since the epoch and `i64` times seconds. A 0 time
+//! is unknown.
+use crate::conversation::{Attachment, MessageRole, ThreadStatus, ToolKind, ToolStatus};
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Workspace {
+    // Set by the client. An engine leaves it empty.
+    pub machine: String,
+    pub config: Config,
+    pub threads: Vec<Thread>,
+    pub decisions: Vec<Decision>,
+}
+impl Workspace {
+    pub fn key(&self) -> String {
+        // Project IDs are unique only within one machine.
+        format!("{}:{}", self.machine, self.config.id)
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Config {
+    pub id: String,
+    pub name: String,
+    pub provider: String,
+    pub directory: PathBuf,
+    pub opened_at: Option<i64>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Thread {
+    #[serde(skip)]
+    pub unread_messages: Vec<usize>,
+    #[serde(skip)]
+    pub search_text: std::sync::Arc<str>,
+    // Streamed reply text is searchable once the turn's status changes.
+    #[serde(skip)]
+    pub search_stale: bool,
+    pub id: String,
+    pub title: String,
+    pub provider: String,
+    pub status: ThreadStatus,
+    pub messages: Vec<Message>,
+    pub activity: Vec<Activity>,
+    pub created_at: String,
+    // Tokens used and the window size.
+    pub context: Option<(u64, u64)>,
+    pub timing: Timing,
+    pub fork: Option<Fork>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Fork {
+    pub id: String,
+    pub title: String,
+    pub text_copy: bool,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Timing {
+    // Prompt sent, last answer.
+    pub turns: Vec<(u64, u64)>,
+    pub streamed_chars: u64,
+    pub streamed_ms: u64,
+    pub last_text: Option<u64>,
+}
+// A longer gap between pieces of reply text means the agent was doing
+// something other than writing.
+const STREAM_GAP_MS: u64 = 2_000;
+impl Timing {
+    pub fn prompt(&mut self, at: u64) {
+        self.turns.push((at, at));
+        self.last_text = None;
+    }
+    pub fn text(&mut self, chars: usize, at: u64) {
+        self.answer(at);
+        if let Some(previous) = self.last_text
+            && at >= previous
+            && at - previous <= STREAM_GAP_MS
+        {
+            self.streamed_chars += chars as u64;
+            self.streamed_ms += at - previous;
+        }
+        self.last_text = Some(at);
+    }
+    pub fn tool(&mut self, at: u64) {
+        self.answer(at);
+        self.last_text = None;
+    }
+    pub fn answer(&mut self, at: u64) {
+        if let Some(turn) = self.turns.last_mut() {
+            turn.1 = turn.1.max(at);
+        }
+    }
+    pub fn active_ms(&self) -> u64 {
+        self.turns.iter().map(|(start, end)| end - start).sum()
+    }
+    pub fn tokens_per_second(&self) -> Option<f64> {
+        (self.streamed_ms >= 500)
+            .then(|| self.streamed_chars as f64 / 4. / (self.streamed_ms as f64 / 1000.))
+    }
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Message {
+    // Chunks with another ID start a new message.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub id: String,
+    pub role: MessageRole,
+    pub text: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub thought: String,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub thought_started: u64,
+    #[serde(skip_serializing_if = "is_zero")]
+    pub thought_ended: u64,
+    pub created_at: String,
+    pub read: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub images: Vec<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub attachments: Vec<Attachment>,
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if signature"
+)]
+fn is_zero(value: &u64) -> bool {
+    *value == 0
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ToolReport {
+    pub id: String,
+    pub title: String,
+    pub status: ToolStatus,
+    pub detail: String,
+    pub kind: ToolKind,
+    pub paths: Vec<String>,
+}
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Activity {
+    pub kind: String,
+    pub title: String,
+    pub detail: String,
+    pub running: bool,
+    pub tool: ToolKind,
+    pub paths: Vec<String>,
+    pub turn: Option<usize>,
+    pub status: ToolStatus,
+    pub started: u64,
+    pub finished: u64,
+    // Reply bytes written when the call started, which places it in the reply.
+    pub after_text: usize,
+}
+impl Activity {
+    pub fn name(&self) -> &str {
+        self.title
+            .strip_suffix(&format!(" ({})", self.status.label()))
+            .unwrap_or(&self.title)
+    }
+    pub fn duration_ms(&self) -> Option<u64> {
+        (self.started > 0 && self.finished >= self.started).then(|| self.finished - self.started)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TurnSummary {
+    pub read: usize,
+    pub edited: usize,
+    pub tools: usize,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct Decision {
+    pub title: String,
+    pub body: String,
+    pub options: Vec<String>,
+    pub thread_id: String,
+    pub selected: Option<usize>,
+    pub resolved: bool,
+}
+#[derive(Deserialize)]
+struct Project {
+    workspace: Workspace,
+}
+#[derive(Deserialize)]
+struct Working {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    activity: Vec<Activity>,
+}
+#[derive(Deserialize)]
+struct DemoLive {
+    #[serde(rename = "threadId")]
+    thread_id: String,
+    live: crate::protocol::Live,
+    #[serde(default)]
+    traffic: Vec<crate::conversation::TrafficEntry>,
+}
+#[derive(Deserialize)]
+struct Scene {
+    working: Vec<Working>,
+    #[serde(default)]
+    live: Vec<DemoLive>,
+}
+#[derive(Deserialize)]
+struct Fixture {
+    workspace: Workspace,
+    projects: Vec<Project>,
+    scene: Scene,
+}
+
+fn fixture() -> Fixture {
+    serde_json::from_str(include_str!("../../../assets/workspace.json"))
+        .expect("valid bundled demo")
+}
+
+pub fn demo_live() -> std::collections::HashMap<String, crate::protocol::Live> {
+    let now = crate::recency::now_ms();
+    fixture()
+        .scene
+        .live
+        .into_iter()
+        .map(|demo| {
+            let mut live = demo.live;
+            // A demo's quiet turn has been silent for the minutes it says.
+            if let Some(minutes) = live.quiet_since {
+                live.quiet_since = Some(now.saturating_sub(minutes * 60_000));
+            }
+            (demo.thread_id, live)
+        })
+        .collect()
+}
+
+pub fn demo_traffic(id: &str) -> Vec<crate::conversation::TrafficEntry> {
+    let now = crate::recency::now_ms();
+    fixture()
+        .scene
+        .live
+        .into_iter()
+        .find(|demo| demo.thread_id == id)
+        .map(|demo| {
+            let count = demo.traffic.len() as u64;
+            demo.traffic
+                .into_iter()
+                .enumerate()
+                .map(|(ix, mut entry)| {
+                    entry.at = now - (count - ix as u64) * 1_300;
+                    entry
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+pub fn load() -> Vec<Workspace> {
+    let data = fixture();
+    let mut projects = vec![data.workspace];
+    projects.extend(data.projects.into_iter().map(|p| p.workspace));
+    // One demo project on each demo machine.
+    for (project, machine) in projects
+        .iter_mut()
+        .zip([crate::machines::LOCAL, "matrix", "vortex"])
+    {
+        project.machine = machine.into();
+    }
+    shift_to(&mut projects, crate::recency::now());
+    for project in &mut projects {
+        project.threads.reverse();
+        for thread in &mut project.threads {
+            if let Some(work) = data.scene.working.iter().find(|w| w.thread_id == thread.id) {
+                thread.status = ThreadStatus::Processing;
+                thread.activity = work.activity.clone();
+            }
+            thread.prepare_search();
+        }
+    }
+    projects
+}
+
+fn shift_to(projects: &mut [Workspace], now: i64) {
+    // A uniform shift keeps the bundled chats' relative ages, and so their sections.
+    let newest = projects
+        .iter()
+        .flat_map(|project| &project.threads)
+        .map(Thread::last_activity)
+        .max()
+        .unwrap_or(0);
+    if newest == 0 {
+        return;
+    }
+    let offset = now - newest;
+    let move_stamp = |stamp: &mut String| {
+        if let Some(at) = crate::recency::parse(stamp) {
+            *stamp = crate::recency::iso(at + offset);
+        }
+    };
+    for thread in projects.iter_mut().flat_map(|project| &mut project.threads) {
+        move_stamp(&mut thread.created_at);
+        for message in &mut thread.messages {
+            move_stamp(&mut message.created_at);
+        }
+    }
+}
+
+impl Thread {
+    pub fn push_message(&mut self, message: Message) {
+        if self.search_text.is_empty() || self.search_stale {
+            self.prepare_search();
+        }
+        let separator = if self.messages.is_empty() { "" } else { " " };
+        self.search_text = format!("{}{separator}{}", self.search_text, message.text)
+            .to_lowercase()
+            .into();
+        if message.role == MessageRole::Assistant && !message.read {
+            self.unread_messages.push(self.messages.len());
+        }
+        self.messages.push(message);
+    }
+    pub fn turn_of(&self, message: usize) -> Option<usize> {
+        self.messages
+            .get(..message)?
+            .iter()
+            .rposition(|m| m.role == MessageRole::User)
+    }
+    pub fn ends_turn(&self, message: usize) -> bool {
+        self.messages
+            .get(message)
+            .is_some_and(|m| m.role == MessageRole::Assistant)
+            && self
+                .messages
+                .get(message + 1)
+                .is_none_or(|next| next.role == MessageRole::User)
+    }
+    pub fn stream(
+        &mut self,
+        assistant: &mut Option<usize>,
+        message: Option<&str>,
+        text: &str,
+        thought: bool,
+        at: u64,
+    ) {
+        let current = assistant.filter(|&index| {
+            self.messages.get(index).is_some_and(|m| {
+                m.role == MessageRole::Assistant
+                    && message.is_none_or(|id| m.id.is_empty() || m.id == id)
+                    // A thought after reply text starts the next reply.
+                    && !(thought && !m.text.is_empty() && message.is_none())
+            })
+        });
+        let index = if let Some(index) = current {
+            index
+        } else {
+            *assistant = Some(self.messages.len());
+            self.push_message(Message {
+                id: message.unwrap_or_default().to_owned(),
+                role: MessageRole::Assistant,
+                created_at: at.to_string(),
+                ..Default::default()
+            });
+            self.messages.len() - 1
+        };
+        let entry = &mut self.messages[index];
+        if thought {
+            entry.thought.push_str(text);
+            if entry.thought_started == 0 {
+                entry.thought_started = at;
+            }
+            entry.thought_ended = at;
+            self.timing.answer(at);
+        } else {
+            entry.text.push_str(text);
+            self.timing.text(text.chars().count(), at);
+        }
+    }
+
+    pub fn apply_tool(&mut self, report: &ToolReport, at: u64) {
+        let turn = self
+            .messages
+            .iter()
+            .rposition(|m| m.role == MessageRole::User);
+        let key = format!("tool:{}", report.id);
+        let item = if let Some(index) = self.activity.iter().position(|a| a.kind == key) {
+            index
+        } else {
+            // The reply so far in this turn, which the call comes after.
+            let written = self
+                .messages
+                .last()
+                .filter(|m| m.role == MessageRole::Assistant)
+                .map_or(0, |m| m.text.len());
+            self.activity.push(Activity {
+                kind: key,
+                started: at,
+                after_text: written,
+                ..Default::default()
+            });
+            self.activity.len() - 1
+        };
+        let activity = &mut self.activity[item];
+        activity.title = format!("{} ({})", report.title, report.status.label());
+        report.detail.clone_into(&mut activity.detail);
+        activity.status = report.status;
+        activity.running = report.status.running();
+        if activity.running {
+            activity.finished = 0;
+        } else if activity.finished == 0 {
+            activity.finished = at;
+        }
+        if report.kind != ToolKind::Other || activity.tool == ToolKind::Other {
+            activity.tool = report.kind;
+        }
+        if !report.paths.is_empty() {
+            activity.paths.clone_from(&report.paths);
+        }
+        activity.turn = activity.turn.or(turn);
+        self.timing.tool(at);
+    }
+    pub fn turn_tools(&self, turn: usize) -> impl Iterator<Item = &Activity> {
+        self.activity
+            .iter()
+            .filter(move |a| a.kind.starts_with("tool:") && a.turn == Some(turn))
+    }
+    pub fn turn_summary(&self, turn: usize) -> TurnSummary {
+        let mut read = std::collections::HashSet::new();
+        let mut edited = std::collections::HashSet::new();
+        let mut tools = 0;
+        for call in self.turn_tools(turn) {
+            tools += 1;
+            let files = match call.tool {
+                ToolKind::Read => &mut read,
+                kind if kind.edits() => &mut edited,
+                _ => continue,
+            };
+            files.extend(call.paths.iter().map(String::as_str));
+        }
+        TurnSummary {
+            read: read.len(),
+            edited: edited.len(),
+            tools,
+        }
+    }
+    pub fn unread(&self) -> bool {
+        !self.unread_messages.is_empty()
+    }
+    pub fn last_activity(&self) -> i64 {
+        self.messages
+            .iter()
+            .rev()
+            .find_map(|message| crate::recency::parse(&message.created_at))
+            .or_else(|| crate::recency::parse(&self.created_at))
+            .unwrap_or(0)
+    }
+    pub fn mark_read(&mut self) {
+        for index in self.unread_messages.drain(..) {
+            self.messages[index].read = true;
+        }
+    }
+    pub fn search_record(&self) -> crate::prepared::SearchRecord {
+        crate::prepared::SearchRecord {
+            id: std::sync::Arc::from(self.id.as_str()),
+            text: std::sync::Arc::clone(&self.search_text),
+            completed: self.status == ThreadStatus::Completed,
+            archived: self.status == ThreadStatus::Archived,
+            blocked: self.status == ThreadStatus::Blocked,
+            processing: self.status == ThreadStatus::Processing,
+            unread: self.unread(),
+            agent: std::sync::Arc::from(self.provider.as_str()),
+            activity: self.last_activity(),
+        }
+    }
+    pub fn prepare_search(&mut self) {
+        self.search_stale = false;
+        self.unread_messages = self
+            .messages
+            .iter()
+            .enumerate()
+            .filter(|(_, m)| m.role == MessageRole::Assistant && !m.read)
+            .map(|(i, _)| i)
+            .collect();
+        self.search_text = format!(
+            "{} {}",
+            self.title,
+            self.messages
+                .iter()
+                .map(|m| m.text.as_str())
+                .collect::<Vec<_>>()
+                .join(" ")
+        )
+        .to_lowercase()
+        .into();
+    }
+}
+impl Workspace {
+    pub fn attention_count(&self) -> usize {
+        self.threads
+            .iter()
+            .filter(|thread| thread.status == ThreadStatus::Blocked || thread.unread())
+            .count()
+    }
+    pub fn busy(&self) -> bool {
+        self.attention_count() > 0
+            || self
+                .threads
+                .iter()
+                .any(|t| t.status == ThreadStatus::Processing)
+    }
+}
+
+pub fn image_asset(path: &str) -> &'static str {
+    if path.contains("dad60182") {
+        "notebook.png"
+    } else if path.contains("3c5e8b84") {
+        "studio.png"
+    } else {
+        "launch.png"
+    }
+}
+
+pub fn image_size(png: &[u8]) -> (u32, u32) {
+    let read = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+    (read(16), read(20))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prepared::{Criteria, search};
+
+    fn shows(thread: &Thread, query: &str, completed: bool, archived: bool) -> bool {
+        let criteria = Criteria {
+            query: query.to_lowercase(),
+            completed,
+            archived,
+            agent: None,
+        };
+        search([thread.search_record()].iter(), &criteria, 0).matches() == 1
+    }
+
+    #[test]
+    fn completed_and_archived_conversations_show_only_when_asked_for() {
+        let mut thread = Thread {
+            status: ThreadStatus::Completed,
+            ..Default::default()
+        };
+        assert!(!shows(&thread, "", false, true));
+        assert!(shows(&thread, "", true, false));
+        thread.status = ThreadStatus::Archived;
+        assert!(!shows(&thread, "", true, false));
+        assert!(shows(&thread, "", false, true));
+    }
+
+    #[test]
+    fn appended_messages_keep_search_semantics_and_unread_counts() {
+        let mut thread = Thread {
+            title: "ΟΣ İ ŻÓŁĆ".into(),
+            ..Default::default()
+        };
+        thread.prepare_search();
+        for body in [
+            "First body",
+            "Second message",
+            "ΟΔΟΣ",
+            "\u{301} İstanbul",
+            "",
+        ] {
+            let snapshot = std::sync::Arc::clone(&thread.search_text);
+            thread.push_message(Message {
+                role: MessageRole::Assistant,
+                text: body.into(),
+                ..Default::default()
+            });
+            let original = format!(
+                "{} {}",
+                thread.title,
+                thread
+                    .messages
+                    .iter()
+                    .map(|m| m.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+            .to_lowercase();
+            for query in [
+                "body second",
+                "ος",
+                "İstanbul",
+                "οδός",
+                "",
+                "absent",
+                "first",
+            ] {
+                let query = query.to_lowercase();
+                assert_eq!(
+                    thread.search_text.contains(&query),
+                    original.contains(&query)
+                );
+            }
+            assert!(thread.unread());
+            assert!(snapshot.len() <= thread.search_text.len());
+        }
+        thread.mark_read();
+        assert!(!thread.unread());
+        assert!(thread.messages.iter().all(|m| m.read));
+    }
+    #[test]
+    fn demo_chats_fill_every_section_whenever_the_demo_runs() {
+        use crate::prepared::Group;
+        // Noon UTC on two dates far apart; sections follow UTC days.
+        for now in [1_790_510_400, 4_102_488_000] {
+            let mut projects = load();
+            shift_to(&mut projects, now);
+            let newest = projects[0].threads.iter().map(Thread::last_activity).max();
+            assert_eq!(newest, Some(now));
+            let records: Vec<_> = projects[0]
+                .threads
+                .iter()
+                .map(Thread::search_record)
+                .collect();
+            let criteria = Criteria {
+                completed: true,
+                ..Criteria::default()
+            };
+            let sections: Vec<_> = search(&records, &criteria, now)
+                .groups
+                .into_iter()
+                .map(|(group, rows)| (group, rows.len()))
+                .collect();
+            let rows = |wanted: Group| {
+                sections
+                    .iter()
+                    .find(|&&(group, _)| group == wanted)
+                    .map_or(0, |&(_, rows)| rows)
+            };
+            // Four live chats split between waiting and running, and every period
+            // holds enough chats to scroll.
+            assert!(rows(Group::NeedsInput) > 0, "{sections:?}");
+            assert!(rows(Group::Processing) > 0, "{sections:?}");
+            assert_eq!(
+                rows(Group::NeedsInput) + rows(Group::Processing),
+                4,
+                "{sections:?}"
+            );
+            for period in [Group::Today, Group::LastThreeDays, Group::Earlier] {
+                assert!(rows(period) >= 6, "{sections:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn prepared_search_matches_original_full_text_semantics_and_edits() {
+        let mut thread = Thread {
+            title: "ŻÓŁĆ İstanbul ΟΣ".into(),
+            messages: vec![
+                Message {
+                    text: "First body".into(),
+                    ..Default::default()
+                },
+                Message {
+                    text: "Second message".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        thread.prepare_search();
+        for query in [
+            "",
+            "żółć",
+            "İstanbul",
+            "ος",
+            "ος first",
+            "body second",
+            "absent",
+        ] {
+            let original = format!(
+                "{} {}",
+                thread.title,
+                thread
+                    .messages
+                    .iter()
+                    .map(|m| m.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            )
+            .to_lowercase();
+            assert_eq!(
+                shows(&thread, query, true, true),
+                original.contains(&query.to_lowercase())
+            );
+        }
+        thread.messages.push(Message {
+            text: "Newly appended".into(),
+            ..Default::default()
+        });
+        thread.prepare_search();
+        assert!(shows(&thread, "newly APPENDED", true, true));
+        assert!(!shows(&thread, "anything", true, true));
+    }
+    #[test]
+    fn fixture_keeps_chat_activity_and_decisions_with_their_projects() {
+        let projects = load();
+        for (id, working) in [
+            ("demo-adeline", "adeline-search"),
+            ("demo-skills", "skills-eval"),
+            ("demo-relay", "relay-retry"),
+        ] {
+            let project = projects
+                .iter()
+                .find(|project| project.config.id == id)
+                .unwrap();
+            let thread = project
+                .threads
+                .iter()
+                .find(|thread| thread.id == working)
+                .unwrap();
+            assert_eq!(thread.status, ThreadStatus::Processing);
+            assert!(!thread.activity.is_empty());
+            for decision in &project.decisions {
+                let thread = project
+                    .threads
+                    .iter()
+                    .find(|thread| thread.id == decision.thread_id)
+                    .unwrap();
+                assert_eq!(thread.status, ThreadStatus::Blocked);
+            }
+        }
+    }
+    #[test]
+    fn a_turn_summary_counts_distinct_files_and_every_call() {
+        let message = |role| Message {
+            role,
+            ..Default::default()
+        };
+        let call = |id: &str, tool: ToolKind, paths: &[&str], turn: usize| Activity {
+            kind: format!("tool:{id}"),
+            tool,
+            paths: paths.iter().map(|&p| p.to_owned()).collect(),
+            turn: Some(turn),
+            ..Default::default()
+        };
+        let thread = Thread {
+            messages: vec![
+                message(MessageRole::User),
+                message(MessageRole::Assistant),
+                message(MessageRole::User),
+                message(MessageRole::Assistant),
+                message(MessageRole::Assistant),
+            ],
+            activity: vec![
+                call("1", ToolKind::Read, &["a.md"], 0),
+                call("2", ToolKind::Read, &["a.md", "b.md"], 2),
+                call("3", ToolKind::Edit, &["b.md"], 2),
+                call("4", ToolKind::Execute, &[], 2),
+                Activity {
+                    kind: "error".into(),
+                    turn: Some(2),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        assert_eq!(thread.turn_of(4), Some(2));
+        assert!(thread.ends_turn(1) && !thread.ends_turn(3) && thread.ends_turn(4));
+        assert!(!thread.ends_turn(2));
+        assert_eq!(
+            thread.turn_summary(2),
+            TurnSummary {
+                read: 2,
+                edited: 1,
+                tools: 3
+            }
+        );
+        assert_eq!(thread.turn_summary(0).tools, 1);
+    }
+
+    #[test]
+    fn timing_counts_turns_to_their_last_answer_and_steady_streams_only() {
+        let mut timing = Timing::default();
+        timing.prompt(1_000);
+        timing.text(40, 2_000);
+        timing.text(40, 2_500);
+        timing.tool(3_000);
+        // After a tool call, the first text starts a new stream.
+        timing.text(400, 9_000);
+        timing.text(40, 9_500);
+        timing.prompt(20_000);
+        timing.text(4, 21_000);
+        assert_eq!(timing.active_ms(), 8_500 + 1_000);
+        assert_eq!((timing.streamed_chars, timing.streamed_ms), (80, 1_000));
+        assert_eq!(timing.tokens_per_second(), Some(20.));
+    }
+
+    #[test]
+    fn search_and_completed_filter_compose() {
+        let p = load();
+        let t = p[0]
+            .threads
+            .iter()
+            .find(|t| t.id == "adeline-session")
+            .unwrap();
+        assert!(shows(t, "SESSION", false, false));
+        assert!(!shows(t, "no matching text", true, true));
+        let done = p[0]
+            .threads
+            .iter()
+            .find(|t| t.status == ThreadStatus::Completed)
+            .unwrap();
+        assert!(!shows(done, "", false, false));
+    }
+}

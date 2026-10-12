@@ -4,7 +4,7 @@ What Adeline binds today, read from the code. Where Windows/Linux and macOS diff
 
 ## App keymap
 
-Set in `general.keymap` in `settings.yml` (defaults in `Keymap::default`, `src/config.rs`). Changes need a restart. Settings > General > Keymap lists the current values.
+Set in `general.keymap` in `settings.yml` (defaults in `Keymap::default`, `crates/adeline_core/src/config.rs`). Changes need a restart. Settings > General > Keymap lists the current values.
 
 | Shortcut | Action | Setting |
 |---|---|---|
@@ -28,11 +28,11 @@ Set in `general.keymap` in `settings.yml` (defaults in `Keymap::default`, `src/c
 | `/` | At the start of the box, list the agent's commands; Up / Down move, Enter or Tab insert, Escape closes the list |
 | Ctrl+V / Cmd+V | Paste text, or attach a copied image |
 
-With "Submit on Enter" off, the text box inserts a line break for Enter, Shift+Enter and Ctrl+Enter alike and stops the key there, so the keyboard has no way to send. The send button's icon shows Shift+Enter in that state, which does not send either. (From reading the code in `src/main.rs` and gpui-base's `InputState::enter`, not tested.)
+With "Submit on Enter" off, the text box inserts a line break for Enter, Shift+Enter and Ctrl+Enter alike and stops the key there, so the keyboard has no way to send. The send button's icon shows Shift+Enter in that state, which does not send either. (From reading the code in `crates/adeline_ui/src/chat/composer.rs` and gpui-base's `InputState::enter`, not tested.)
 
 ## Conversation
 
-Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `src/config.rs`), not in the keymap setting. The four menus are the exception: Alt on Windows and Linux, Cmd+Shift on macOS, because Ctrl+Shift+M, E and O are global hotkeys of tools such as AMD Adrenalin, which take them before Adeline sees them.
+Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `crates/adeline_core/src/config.rs`), not in the keymap setting. The four menus are the exception: Alt on Windows and Linux, Cmd+Shift on macOS, because Ctrl+Shift+M, E and O are global hotkeys of tools such as AMD Adrenalin, which take them before Adeline sees them.
 
 | Shortcut | Action |
 |---|---|
@@ -104,7 +104,7 @@ All text fields (message box, search fields, dialog fields) get the kit's editin
 
 ## macOS menu bar
 
-The menus (`src/ui/menu_bar.rs`) show the keymap's shortcuts: Settings… (Cmd+,), New Chat (Cmd+N), Quit Adeline (Cmd+Q), and the system Edit items (Undo, Redo, Cut, Copy, Paste, Select All).
+The menus (`crates/adeline_ui/src/menu_bar.rs`) show the keymap's shortcuts: Settings… (Cmd+,), New Chat (Cmd+N), Quit Adeline (Cmd+Q), and the system Edit items (Undo, Redo, Cut, Copy, Paste, Select All).
 
 ## Actions without a shortcut
 

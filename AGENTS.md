@@ -23,8 +23,8 @@ When application code changes, run the checks CI runs, then rebuild the runnable
 - `cargo fmt --all -- --check`
 - `scripts/check-todos` (a bash script, run it through Git Bash on Windows)
 - clippy: `scripts/clippy.ps1` on Windows, `scripts/clippy` on macOS and Linux (checks the full and the headless build)
-- `cargo nextest run --locked --all-features`
-- `cargo nextest run --locked --no-default-features` (the headless build)
+- `cargo nextest run --locked --workspace --all-features`
+- `cargo nextest run --locked --workspace --exclude adeline_ui --no-default-features` (the headless build)
 
 Local clippy only sees code for the current OS. Code behind `cfg(target_os = ...)` for another OS is checked only by CI.
 
@@ -34,9 +34,9 @@ Changes limited to documentation or agent instructions do not require applicatio
 
 # Versioning
 
-Bump the version in `Cargo.toml` with every impactful change. A user-visible bug fix, behavior change or new feature bumps the patch (third) number. Bump the minor (second) number, resetting the patch to 0, only for a new Mode or a rework the user calls one. Leave the major (first) number unchanged. Documentation, agent-instruction, and internal-only changes keep the current version. Commit the bump with the change it versions, together with the updated `Cargo.lock` (`--locked` builds fail on a stale lock).
+Bump the version in `[workspace.package]` in the root `Cargo.toml` with every impactful change. A user-visible bug fix, behavior change or new feature bumps the patch (third) number. Bump the minor (second) number, resetting the patch to 0, only for a new Mode or a rework the user calls one. Leave the major (first) number unchanged. Documentation, agent-instruction, and internal-only changes keep the current version. Commit the bump with the change it versions, together with the updated `Cargo.lock` (`--locked` builds fail on a stale lock).
 
-Bump `PROTOCOL` in `src/protocol.rs` in the commit that changes the shape of any message between the engine and its clients. A client and an engine work together exactly when their `PROTOCOL` matches, whatever their Adeline versions, so an unbumped shape change breaks remote machines running another version.
+Bump `PROTOCOL` in `crates/adeline_core/src/protocol.rs` in the commit that changes the shape of any message between the engine and its clients. A client and an engine work together exactly when their `PROTOCOL` matches, whatever their Adeline versions, so an unbumped shape change breaks remote machines running another version.
 
 # UI testing
 

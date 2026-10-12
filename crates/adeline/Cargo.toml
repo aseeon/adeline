@@ -1,0 +1,25 @@
+[package]
+name = "adeline"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "A native GPUI desktop workspace"
+
+[dependencies]
+adeline_core.workspace = true
+adeline_engine.workspace = true
+adeline_ui = { workspace = true, optional = true }
+
+# The default build is the desktop app. `--no-default-features` builds the
+# headless one: engine, bridge and `--version`, with no window and no desktop
+# or GPU libraries (`docs/archive/scope-headless-build.md`).
+[features]
+default = ["gui"]
+gui = ["dep:adeline_ui", "adeline_engine/gui"]
+
+[build-dependencies]
+embed-resource.workspace = true
+resvg.workspace = true
+
+[lints]
+workspace = true

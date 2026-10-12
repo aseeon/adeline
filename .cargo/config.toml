@@ -1,0 +1,5 @@
+# LLVM's linker ships with the toolchain and links the app in about 2 s, where
+# MSVC's `link.exe` took 3.5 s, the slowest step of a rebuild on Windows.
+# macOS's linker is already fast, and x86_64 Linux uses rust-lld by default.
+[target.x86_64-pc-windows-msvc]
+linker = "rust-lld.exe"

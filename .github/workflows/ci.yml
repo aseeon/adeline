@@ -95,9 +95,9 @@ jobs:
         with:
           tool: cargo-nextest
       - name: cargo nextest
-        run: cargo nextest run --locked --all-features --profile ci --no-tests=warn
+        run: cargo nextest run --locked --workspace --all-features --profile ci --no-tests=warn
       - name: cargo nextest (headless)
-        run: cargo nextest run --locked --no-default-features --profile ci --no-tests=warn
+        run: cargo nextest run --locked --workspace --exclude adeline_ui --no-default-features --profile ci --no-tests=warn
 
   check_dependencies:
     runs-on: ubuntu-24.04

@@ -104,7 +104,7 @@ If you send a pull request that fixes a bug, run the same checks as CI first:
 ```bash
 cargo fmt --all -- --check
 ./scripts/clippy
-cargo nextest run --locked --all-features
+cargo nextest run --locked --workspace --all-features
 ```
 
 On Windows, use `scripts\clippy.ps1`. If you don't have nextest, `cargo test --locked` works too.

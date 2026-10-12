@@ -1,0 +1,36 @@
+[package]
+name = "adeline_engine"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+adeline_core.workspace = true
+# ACP v1 through the official SDK. Adeline spawns agents itself (job objects,
+# process groups), so the SDK's `process` feature stays off.
+agent-client-protocol = { workspace = true, features = ["unstable_session_fork"] }
+anyhow.workspace = true
+async-channel.workspace = true
+futures.workspace = true
+notify.workspace = true
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+serde_yaml_ng.workspace = true
+tokio = { workspace = true, features = ["rt-multi-thread", "io-util", "process", "sync", "time", "macros"] }
+tracing.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Threading"] }
+
+[dev-dependencies]
+adeline_core = { workspace = true, features = ["test-util"] }
+
+# Only reported in the engine's status, so clients can tell the headless build.
+[features]
+gui = []
+
+[lints]
+workspace = true

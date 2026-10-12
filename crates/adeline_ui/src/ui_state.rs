@@ -1,0 +1,96 @@
+//! What this UI remembers for itself and doesn't share with other clients:
+//! when it last opened each project, by machine and project ID. Local projects
+//! keep the bare IDs older versions wrote. `migrated` records that the first
+//! local snapshot's times, kept by older project files, were adopted.
+use serde::{Deserialize, Serialize};
+use std::{collections::BTreeMap, path::PathBuf, sync::Mutex};
+
+#[derive(Default, Serialize, Deserialize)]
+#[serde(default)]
+struct UiState {
+    migrated: bool,
+    opened_at: BTreeMap<String, i64>,
+}
+
+static STATE: Mutex<Option<UiState>> = Mutex::new(None);
+
+fn path() -> anyhow::Result<PathBuf> {
+    Ok(adeline_core::config::directory()?.join("ui-state.yml"))
+}
+
+fn key(machine: &str, id: &str) -> String {
+    if machine == adeline_core::machines::LOCAL {
+        id.to_owned()
+    } else {
+        format!("{machine}:{id}")
+    }
+}
+
+fn with<T>(change: impl FnOnce(&mut UiState) -> T) -> T {
+    let mut guard = STATE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let state = guard.get_or_insert_with(|| {
+        path()
+            .ok()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|text| serde_yaml_ng::from_str(&text).ok())
+            .unwrap_or_default()
+    });
+    change(state)
+}
+
+fn save(state: &UiState) -> anyhow::Result<()> {
+    let path = path()?;
+    adeline_core::config::seed_yaml(&path, state)
+        .and_then(|()| adeline_core::config::write_yaml(&path, state))
+}
+
+pub fn apply(machine: &str, projects: &mut [adeline_core::data::Workspace]) {
+    with(|state| {
+        if !state.migrated && machine == adeline_core::machines::LOCAL {
+            for project in projects.iter() {
+                if let Some(at) = project.config.opened_at {
+                    state.opened_at.insert(project.config.id.clone(), at);
+                }
+            }
+            state.migrated = true;
+            let _ = save(state);
+        }
+        for project in projects {
+            project.config.opened_at = state
+                .opened_at
+                .get(&key(machine, &project.config.id))
+                .copied();
+        }
+    });
+}
+
+pub fn opened_at(machine: &str, id: &str) -> Option<i64> {
+    with(|state| state.opened_at.get(&key(machine, id)).copied())
+}
+
+pub fn record_opened(machine: &str, id: &str, at: i64) -> anyhow::Result<()> {
+    with(|state| {
+        state.opened_at.insert(key(machine, id), at);
+        save(state)
+    })
+}
+
+pub fn rename(machine: &str, old: &str, new: &str) {
+    with(|state| {
+        if let Some(at) = state.opened_at.remove(&key(machine, old)) {
+            state.opened_at.insert(key(machine, new), at);
+            let _ = save(state);
+        }
+    });
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn local_projects_keep_bare_ids_and_remote_ones_add_their_machine() {
+        assert_eq!(super::key(adeline_core::machines::LOCAL, "app"), "app");
+        assert_eq!(super::key("m-1", "app"), "m-1:app");
+    }
+}

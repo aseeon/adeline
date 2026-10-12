@@ -95,16 +95,29 @@ dependencies = [
 name = "adeline"
 version = "0.1.15"
 dependencies = [
- "agent-client-protocol",
+ "adeline_core",
+ "adeline_engine",
+ "adeline_ui",
+ "embed-resource",
+ "resvg 0.45.1",
+]
+
+[[package]]
+name = "adeline_assets"
+version = "0.1.15"
+dependencies = [
+ "resvg 0.45.1",
+]
+
+[[package]]
+name = "adeline_core"
+version = "0.1.15"
+dependencies = [
+ "adeline_assets",
  "anyhow",
  "async-channel",
  "chrono",
- "embed-resource",
- "futures",
  "gethostname",
- "gpui-kit",
- "notify 8.2.0",
- "resvg 0.45.1",
  "serde",
  "serde_json",
  "serde_yaml_ng",
@@ -112,6 +125,41 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "adeline_engine"
+version = "0.1.15"
+dependencies = [
+ "adeline_core",
+ "agent-client-protocol",
+ "anyhow",
+ "async-channel",
+ "futures",
+ "notify 8.2.0",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tokio",
+ "tracing",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "adeline_ui"
+version = "0.1.15"
+dependencies = [
+ "adeline_assets",
+ "adeline_core",
+ "anyhow",
+ "async-channel",
+ "chrono",
+ "gpui-kit",
+ "serde",
+ "serde_json",
+ "serde_yaml_ng",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

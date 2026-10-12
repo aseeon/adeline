@@ -1,41 +1,37 @@
-[package]
-name = "adeline"
+[workspace]
+members = ["crates/*"]
+# A plain `cargo build` builds the app. Tests and clippy pass `--workspace`.
+default-members = ["crates/adeline"]
+resolver = "3"
+
+[workspace.package]
 version = "0.1.15"
 edition = "2024"
-description = "A native GPUI desktop workspace"
 license = "MIT"
 
-[dependencies]
-gpui-kit = { version = "=0.7.0", optional = true }
-chrono = "0.4"
-gethostname = "1.1"
-serde = { version = "1", features = ["derive", "rc"] }
-serde_json = "1"
+[workspace.dependencies]
+adeline_assets = { path = "crates/adeline_assets" }
+adeline_core = { path = "crates/adeline_core" }
+adeline_engine = { path = "crates/adeline_engine" }
+adeline_ui = { path = "crates/adeline_ui" }
+
+agent-client-protocol = "=3.3.0"
 anyhow = "1"
-serde_yaml_ng = "0.10"
-notify = "8"
 async-channel = "2"
-tokio = { version = "1.53", features = ["rt-multi-thread", "fs", "net", "io-util", "io-std", "process", "sync", "time", "macros"] }
-# ACP v1 through the official SDK. Adeline spawns agents itself (job objects,
-# process groups), so the SDK's `process` feature stays off.
-agent-client-protocol = { version = "=3.3.0", features = ["unstable_session_fork"] }
-futures = "0.3"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std"] }
-
-# The default build is the desktop app. `--no-default-features` builds the
-# headless one: engine, bridge and `--version`, with no window and no desktop
-# or GPU libraries (`docs/archive/scope-headless-build.md`).
-[features]
-default = ["gui"]
-gui = ["dep:gpui-kit"]
-
-[target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Security_Authorization", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Console"] }
-
-[build-dependencies]
+chrono = "0.4"
 embed-resource = "3.0"
+futures = "0.3"
+gethostname = "1.1"
+gpui-kit = "=0.7.0"
+notify = "8"
 resvg = { version = "0.45.1", default-features = false }
+serde = "1"
+serde_json = "1"
+serde_yaml_ng = "0.10"
+tokio = "1.53"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false }
+windows-sys = "0.61"
 
 [profile.dev]
 debug = 0
@@ -56,7 +52,7 @@ incremental = false
 # already type-checks; these lints add the checks basedpyright layers on top.
 # Warnings are errors in CI (see `.cargo/ci-config.toml` and `scripts/clippy`).
 # The explicit denies mirror Zed's `[workspace.lints]`.
-[lints.rust]
+[workspace.lints.rust]
 unsafe_code = "deny"
 unused_qualifications = "warn"
 # From the Pragmatic Rust Guidelines (M-STATIC-VERIFICATION).
@@ -68,7 +64,7 @@ trivial_numeric_casts = "warn"
 unsafe_op_in_unsafe_fn = "warn"
 unused_lifetimes = "warn"
 
-[lints.clippy]
+[workspace.lints.clippy]
 # Default groups (correctness, suspicious, style, complexity, perf) stay on.
 pedantic = { level = "warn", priority = -1 }
 
@@ -123,3 +119,8 @@ enum_glob_use = "allow"          # `use Action::*` inside large action matches
 default_trait_access = "allow"   # `..Default::default()` is the GPUI/Zed idiom
 redundant_closure_for_method_calls = "allow" # keep `.when(c, |d| d.pl_6())` builder closures
 unused_self = "allow"            # render helpers stay methods on their view
+
+# The crates are internal, not a published API, so their public functions
+# skip the `# Errors` and `# Panics` sections a library documents.
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"

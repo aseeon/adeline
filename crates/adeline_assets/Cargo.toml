@@ -1,0 +1,15 @@
+[package]
+name = "adeline_assets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+test = false
+doctest = false
+
+[build-dependencies]
+resvg.workspace = true
+
+[lints]
+workspace = true
