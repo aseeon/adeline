@@ -3,6 +3,7 @@
 Keywords in the prompt script each turn, applied in this order:
   FAIL <n>       fail the first n attempts with a temporary-looking error
   SLOW <secs>    stream one chunk every 0.5 s for that long
+  STREAM <n>     stream n markdown chunks, 100 per second, like a fast model
   PERMISSION     ask the client for an edit permission and wait for the answer
   HANG_ON_CLOSE  from now on ignore session/close and stdin EOF
   NO_FORK        later session/fork calls of this session fail
@@ -118,6 +119,12 @@ def prompt(message):
             if cancel.wait(0.5):
                 return finish("cancelled")
             chunk(session, f"tick {index + 1} ")
+    if match := re.search(r"STREAM (\d+)", text):
+        words = ["The ", "**render** ", "path ", "`draw()` ", "walks ", "each ", "view, ", "then ", "lays ", "out "]
+        for index in range(int(match[1])):
+            if cancel.wait(0.01):
+                return finish("cancelled")
+            chunk(session, words[index % len(words)] + ("\n\n" if index % 40 == 39 else ""))
     if "PERMISSION" in text:
         choice = ask_permission(session, cancel)
         if choice is None or cancel.is_set():

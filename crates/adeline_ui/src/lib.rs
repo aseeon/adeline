@@ -6,6 +6,8 @@ mod chat;
 mod client;
 mod conversation_ui;
 mod fonts;
+#[cfg(feature = "profiler")]
+mod frame_log;
 mod interaction;
 mod mcp_ui;
 mod menu_bar;
@@ -778,6 +780,8 @@ impl Render for Adeline {
 
 pub fn open(demo_mode: bool) {
     machines::init(demo_mode);
+    #[cfg(feature = "profiler")]
+    frame_log::start();
     application().with_assets(Assets).run(move |cx: &mut App| {
         init(cx);
         fonts::init(cx);

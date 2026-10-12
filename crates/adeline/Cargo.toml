@@ -16,6 +16,7 @@ adeline_ui = { workspace = true, optional = true }
 [features]
 default = ["gui"]
 gui = ["dep:adeline_ui", "adeline_engine/gui"]
+profiler = ["gui", "adeline_ui/profiler"]
 
 [build-dependencies]
 embed-resource.workspace = true
