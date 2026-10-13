@@ -1,5 +1,6 @@
-//! The Chats layout, command popovers (the menus), modal dialogs (including
-//! quit, SSH prompt and upgrade), and UI helpers shared across windows.
+//! The Chats layout and its chat header view, command popovers (the menus),
+//! modal dialogs (including quit, SSH prompt and upgrade), and UI helpers
+//! shared across windows.
 use super::*;
 use adeline_core::conversation::ThreadStatus;
 use gpui_kit::component::Disableable as _;

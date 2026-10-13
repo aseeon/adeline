@@ -13,6 +13,11 @@
 //!
 //! The mode rail continues the title bar's app-icon cell down to the bottom of
 //! the window: one icon per enabled mode, and the main menu at the foot.
+//!
+//! The tabs, menus and app icon are a cached view, `ProjectBar`, inside Kit's
+//! title bar. The title bar itself is drawn every frame: GPUI doesn't replay a
+//! cached view's window control areas, which carry dragging and the window
+//! buttons.
 use super::*;
 use adeline_core::conversation::ThreadStatus;
 use gpui_kit::component::checkbox::Checkbox;

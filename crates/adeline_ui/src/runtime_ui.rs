@@ -2,7 +2,7 @@
 //! sends every action to the engine.
 //!
 //! A streamed chunk of reply or thought redraws only the transcript and the
-//! side panel; the chat list changes only when the chunk starts a new message.
+//! side panel. The chat list changes only when the chunk starts a new message.
 //! Every other change goes through `refresh_runtime_views`, which redraws all
 //! the regions.
 use super::*;

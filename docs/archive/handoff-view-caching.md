@@ -1,4 +1,4 @@
-Status: Draft
+Status: Implemented in v0.1.20. This scope is history. Where it and the code differ, the code is right.
 
 # Handoff: cache the main window's views
 
@@ -38,3 +38,14 @@ While a reply streams, a frame's draw time grows with the reply's length: 2.5 ms
 ## Done when
 
 `perf_check.py` shows, on a 240 Hz display: draw p95 under 4 ms for hover, typing and scroll; animations at the display's rate with chats running; and stream draw times that stay flat as the reply grows.
+
+## Outcome
+
+Steps 1 to 3 and 5 shipped in v0.1.17 to v0.1.20, one version each. The chat list and the transcript cache each row instead of the whole view, the title bar stays uncached, and nothing is cached while assistive technology is connected (see `docs/architecture.md`). Step 4, lifting the frame cap, did not ship: uncapped animations ran at 240 fps but used a whole CPU core while any chat ran. It and the long-reply work moved to `docs/handoff-long-replies.md`.
+
+Draw p50 / p95 in ms, measured without the accessibility tree on a 240 Hz display:
+
+| | idle | scroll | typing | hover | stream |
+|---|---|---|---|---|---|
+| v0.1.16 | 5.40 / 6.36 | 5.39 / 6.31 | 5.00 / 6.14 | 5.01 / 6.00 | 4.39 / 5.77 |
+| v0.1.20 | 3.42 / 3.67 | 3.08 / 3.69 | 2.75 / 3.30 | 2.85 / 3.35 | 3.84 / 4.97 |

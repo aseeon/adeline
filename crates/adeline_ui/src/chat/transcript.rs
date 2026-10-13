@@ -1,6 +1,9 @@
 //! The transcript: messages and their actions (Reply, Copy, Retry, Fork), fork
 //! markers, the closing row and decision rows.
 //!
+//! Each row is a cached `Row` view that keeps its last measured size (see
+//! `chat.rs`).
+//!
 //! A reply keeps its own text view, which gets only the newly streamed tail
 //! (`Thread::stream` only appends), so the Kit re-parses the last block, not the
 //! whole reply. Its key includes `created_at`: a reply replaced at the same

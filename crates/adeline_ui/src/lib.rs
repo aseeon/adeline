@@ -1,11 +1,12 @@
 //! The desktop UI: the `Adeline` root view, its `Action`s and the window it opens.
 //! Every UI event is an `Action`. The headless build leaves this crate out.
 //!
-//! The large regions are cached views: a frame redraws only the views notified
-//! since the last one, and their ancestors. Cached views read `Adeline`'s state,
-//! so `notify_cached_views` notifies them whenever `Adeline` is notified. GPUI
-//! leaves a replayed view out of the accessibility tree, so while assistive
-//! technology is connected `chat::region` draws them uncached.
+//! A frame redraws the views notified since the last one and the views above
+//! them. Most regions are cached views (`chat::region`), and the chat list and
+//! the transcript cache each row instead (see `chat.rs`). They read `Adeline`'s
+//! state, so `notify_cached_views` notifies them whenever `Adeline` is notified.
+//! GPUI leaves a replayed view out of the accessibility tree, so while
+//! assistive technology is connected nothing is cached.
 mod activity;
 mod agent_form;
 mod chat;

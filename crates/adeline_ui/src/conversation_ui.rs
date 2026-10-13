@@ -1,7 +1,8 @@
 //! The conversation's live surfaces: the activity row and silence notice,
 //! queued messages, the permission and login cards, a crashed agent's output,
 //! attachment chips, the `/` command list, the TODO list in the chat header,
-//! thoughts in replies and the ACP traffic tab.
+//! thoughts in replies, and the side panel view with its activity and ACP
+//! traffic tabs.
 use super::*;
 use crate::activity::{clock, excerpt};
 use adeline_core::conversation::{

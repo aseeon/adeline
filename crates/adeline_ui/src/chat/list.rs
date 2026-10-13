@@ -1,5 +1,6 @@
 //! The chat list: search, sections with stacked labels, rows, the collapsed
-//! rail and the sidebar around it.
+//! rail and the sidebar around it. Each row is a cached `ChatCard` view, and
+//! the list notifies every card whenever it is notified itself.
 use super::*;
 
 impl Adeline {

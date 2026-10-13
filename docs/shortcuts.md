@@ -148,6 +148,8 @@ Chats:
 - Remove an attachment, preview an attached image
 - Copy the ACP traffic
 - Dismiss an error under a chat
+- Focus the message box
+- Select text in a message
 
 Composer pickers:
 

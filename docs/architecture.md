@@ -46,7 +46,7 @@ A large module becomes a directory: `foo.rs` keeps the types, the state and the 
 3. `runtime_ui.rs` sends a `protocol::Command` through `client.rs`, the UI's engine connection.
 4. `Engine::command` (`engine.rs`) handles it, persists through `storage.rs`, and sends `acp::Command`s to the conversation's worker.
 5. `acp.rs` runs one ACP stdio agent process per conversation. Its events come back to `Engine::driver_event`.
-6. The engine broadcasts a `protocol::Delta`, and `Adeline::apply_delta` (`runtime_ui.rs`) updates the UI's model (`data.rs`).
+6. The engine broadcasts a `protocol::Delta`, and `Adeline::apply_delta` (`runtime_ui.rs`) updates the UI's model (`data.rs`) and notifies the views that show the change (see The UI below).
 
 A new conversation feature usually touches every step: `Action`, `act`, `runtime_ui`, `Command`/`Delta` in `protocol.rs`, `Engine::command`, and often `acp.rs` and `storage.rs`.
 
@@ -92,7 +92,11 @@ The engine numbers every delta it broadcasts and keeps the latest ones. A reconn
 
 The UI crate's `lib.rs` holds the root view `Adeline`, the `Action` enum, shared drawing helpers (`row`, `col`, `text`, `icon`) and `open`, which builds the window. `Adeline`'s `impl` blocks are spread over its modules, one concern each: `interaction.rs` (dispatch), `runtime_ui.rs` (conversations, mirrored from the engine), `views.rs`, `panes.rs`, `project_bar.rs`, `project_ui.rs`, `conversation_ui.rs` and `settings.rs`.
 
-The chat regions are separate GPUI views, so typing or scrolling one doesn't redraw the others. `chat.rs` declares them and holds the drawing helpers other surfaces share. Each region lives in a child: `chat/list.rs` (the chat list and sidebar), `chat/transcript.rs` and `chat/composer.rs`.
+Each region of the main window is its own GPUI view: the chat list, the transcript, the composer, the chat header, the side panel and the project tabs. GPUI redraws a notified view and every view above it. Most regions are drawn cached through `chat::region`: GPUI reuses their last layout and paint until they are notified, so a keystroke in the composer doesn't redraw the side panel. A cached view that redraws also redraws every view inside it, so the chat list and the transcript, whose rows animate, are drawn uncached and cache each row instead. The regions read `Adeline`'s state, so `Adeline::notify_cached_views` notifies them whenever `Adeline` is notified. A change that `Adeline` doesn't notify for has to notify the region that shows it.
+
+Two GPUI limits shape this. GPUI leaves a replayed view out of the accessibility tree, so while assistive technology is connected nothing is cached. And it doesn't replay a cached view's window control areas, so the title bar is drawn uncached around its cached project tabs.
+
+`chat.rs` declares the chat regions and holds the drawing helpers other surfaces share. Each region lives in a child: `chat/list.rs` (the chat list and sidebar), `chat/transcript.rs` and `chat/composer.rs`.
 
 The Settings and agent windows are separate windows (`settings.rs`), one child per page. The agent form they share is in `agent_form.rs`.
 
