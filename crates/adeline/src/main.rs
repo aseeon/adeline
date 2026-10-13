@@ -1,6 +1,6 @@
 //! Entry point. `adeline engine` runs the conversation engine and `adeline bridge`
 //! joins an SSH session to it. Anything else opens the UI (`--demo` uses bundled
-//! data). Without the `gui` feature, the headless build has no UI and prints its
+//! data, `--verbose` shows debugging views such as ACP traffic). Without the `gui` feature, the headless build has no UI and prints its
 //! usage instead.
 #![cfg_attr(
     all(target_os = "windows", feature = "gui"),
@@ -32,7 +32,10 @@ fn main() {
         _ => {}
     }
     #[cfg(feature = "gui")]
-    adeline_ui::open(args.iter().any(|arg| arg == "--demo"));
+    adeline_ui::open(
+        args.iter().any(|arg| arg == "--demo"),
+        args.iter().any(|arg| arg == "--verbose"),
+    );
     #[cfg(not(feature = "gui"))]
     {
         platform::attach_parent_console();

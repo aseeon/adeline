@@ -86,6 +86,8 @@ Demo mode opens a sample workspace with simulated replies. It does not start age
 cargo run --release --locked -- --demo
 ```
 
+Add `--verbose` to show debugging views, such as the raw ACP traffic of a chat in the side panel.
+
 ## Getting started
 
 1. Install an ACP harness, for example OpenCode or Codex through codex-acp, and sign in to it.

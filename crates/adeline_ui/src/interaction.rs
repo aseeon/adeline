@@ -326,12 +326,14 @@ impl Adeline {
                 self.watch_traffic(cx);
             }
             Action::TrafficView => {
-                self.side_panel_open = true;
-                self.traffic_tab = true;
-                self.watch_traffic(cx);
+                if self.verbose {
+                    self.side_panel_open = true;
+                    self.traffic_tab = true;
+                    self.watch_traffic(cx);
+                }
             }
             Action::PanelTab(tab) => {
-                self.traffic_tab = tab == 1;
+                self.traffic_tab = self.verbose && tab == 1;
                 self.watch_traffic(cx);
             }
             Action::CopyTraffic => {

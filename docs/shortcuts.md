@@ -44,7 +44,7 @@ Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `crates
 | Alt+O / Cmd+Shift+O | Open the Mode menu |
 | Alt+P / Cmd+Shift+P | Open More options |
 | Ctrl+Shift+A / Cmd+Shift+A | Attach files |
-| Ctrl+Shift+L / Cmd+Shift+L | Show the ACP traffic tab of the side panel |
+| Ctrl+Shift+L / Cmd+Shift+L | Show the ACP traffic tab of the side panel (with `--verbose`) |
 | Ctrl+Shift+T / Cmd+Shift+T | Open the TODO list |
 
 ## Chat list

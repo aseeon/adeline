@@ -247,6 +247,19 @@ def check_demo():
         process.kill()
 
 
+@check("Verbose: the ACP traffic tab shows only with --verbose")
+def check_traffic_needs_verbose():
+    rc.stop_engine()
+    process, window = launch("--demo")
+    try:
+        open_chat(window, "Search long conversations without pausing the interface")
+        send_keys("^+l")
+        time.sleep(1)
+        assert find(window, "ACP traffic") is None, "ACP traffic shown without --verbose"
+    finally:
+        process.kill()
+
+
 def count(window, name):
     return sum(element.element_info.name == name for element in window.descendants())
 
@@ -295,7 +308,7 @@ def open_chat(window, title):
 @check("ACP rebuild AC (demo): TODO list, queue, traffic tab, hang notice, option menus, dismissing an error")
 def check_demo_conversation():
     rc.stop_engine()
-    process, window = launch("--demo")
+    process, window = launch("--demo", "--verbose")
     try:
         open_chat(window, "Search long conversations without pausing the interface")
         named(window, "TODO: Check matches across two messages, 3 of 4", "Button")
@@ -936,7 +949,7 @@ def main():
     try:
         only = sys.argv[1] if len(sys.argv) > 1 else ""
         for run in (check_launch, check_quit_background, check_quit_idle, check_quit_stop_all,
-                    check_settings_engine, check_unavailable, check_demo, check_demo_conversation,
+                    check_settings_engine, check_unavailable, check_demo, check_traffic_needs_verbose, check_demo_conversation,
                     check_transcript_selection, check_fork,
                     check_demo_machines, check_add_machine, check_drop, check_ssh_failures,
                     check_upgrade_and_browse, check_headless_cli, check_headless_remote):

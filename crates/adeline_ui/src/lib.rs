@@ -252,6 +252,8 @@ struct Adeline {
     open_projects: Vec<bool>,
     empty_workspace: Workspace,
     demo_mode: bool,
+    // `--verbose`: shows debugging views, such as the ACP traffic tab.
+    verbose: bool,
     catalogs: std::collections::HashMap<String, agents::AgentCatalog>,
     empty_catalog: agents::AgentCatalog,
     loaded_machines: std::collections::HashSet<String>,
@@ -326,6 +328,7 @@ struct Adeline {
 impl Adeline {
     fn new(
         demo_mode: bool,
+        verbose: bool,
         snapshot: Option<protocol::Snapshot>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -435,6 +438,7 @@ impl Adeline {
             open_projects: vec![true; projects.len()],
             project_tints: (0..projects.len()).map(|i| [0, 2, 3][i.min(2)]).collect(),
             demo_mode,
+            verbose,
             catalogs,
             empty_catalog: agents::AgentCatalog::remote(),
             loaded_machines,
@@ -803,7 +807,7 @@ impl Render for Adeline {
     }
 }
 
-pub fn open(demo_mode: bool) {
+pub fn open(demo_mode: bool, verbose: bool) {
     machines::init(demo_mode);
     #[cfg(feature = "profiler")]
     frame_log::start();
@@ -848,7 +852,7 @@ pub fn open(demo_mode: bool) {
                 ..titlebar::main_window_options()
             },
             move |window, cx| {
-                let view = cx.new(|cx| Adeline::new(demo_mode, snapshot, window, cx));
+                let view = cx.new(|cx| Adeline::new(demo_mode, verbose, snapshot, window, cx));
                 client::set_owner(view.downgrade(), cx);
                 let handle = window
                     .window_handle()

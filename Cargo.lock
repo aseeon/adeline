@@ -93,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "adeline"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "adeline_core",
  "adeline_engine",
@@ -104,14 +104,14 @@ dependencies = [
 
 [[package]]
 name = "adeline_assets"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "resvg 0.45.1",
 ]
 
 [[package]]
 name = "adeline_core"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "adeline_assets",
  "anyhow",
@@ -129,7 +129,7 @@ dependencies = [
 
 [[package]]
 name = "adeline_engine"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "adeline_core",
  "agent-client-protocol",
@@ -147,7 +147,7 @@ dependencies = [
 
 [[package]]
 name = "adeline_ui"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "adeline_assets",
  "adeline_core",

@@ -970,7 +970,9 @@ impl Adeline {
         col()
             .size_full()
             .bg(cx.theme().sidebar)
-            .child(div().px_2().pt_1().child(tabs))
+            .when(self.verbose, |column| {
+                column.child(div().px_2().pt_1().child(tabs))
+            })
             .child(div().flex_1().min_h_0().child(body))
             .into_any_element()
     }
