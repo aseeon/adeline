@@ -1,5 +1,10 @@
 //! The UI side of conversations: it mirrors what the engine reports and
 //! sends every action to the engine.
+//!
+//! A streamed chunk of reply or thought redraws only the transcript and the
+//! side panel; the chat list changes only when the chunk starts a new message.
+//! Every other change goes through `refresh_runtime_views`, which redraws all
+//! the regions.
 use super::*;
 use adeline_core::conversation::{MessageRole, ThreadStatus};
 use adeline_core::protocol::{Command, Delta, Live, Snapshot};
@@ -807,6 +812,7 @@ impl Adeline {
                     }
                     _ => None,
                 };
+                let streamed = matches!(delta, Delta::Text { .. } | Delta::Thought { .. });
                 protocol::apply(
                     &mut self.projects[range],
                     &mut self.runtime.conversations,
@@ -825,9 +831,22 @@ impl Adeline {
                         self.mark_conversation_read(cx);
                     }
                 }
+                if streamed && let Some(id) = id {
+                    self.refresh_streamed(&id, cx);
+                    return;
+                }
             }
         }
         self.refresh_runtime_views(cx);
+    }
+
+    fn refresh_streamed(&self, id: &str, cx: &mut Context<Self>) {
+        if self.current_id().as_deref() == Some(id) {
+            self.resync_transcript(cx);
+            self.side_panel.update(cx, |_, cx| cx.notify());
+        }
+        self.chat_list
+            .update(cx, |list, cx| list.update_streamed(self, id, cx));
     }
 
     pub(super) fn engine_stopped(

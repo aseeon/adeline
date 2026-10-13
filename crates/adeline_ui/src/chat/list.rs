@@ -946,33 +946,48 @@ impl ChatList {
             return;
         }
         self.selected = app.selected;
-        if let Some(index) = app.selected {
-            let thread = &app.workspace().threads[index];
-            if self.records[index].id.as_ref() != thread.id {
-                self.sync(app, self.criteria.clone(), cx);
-                return;
-            }
-            let old = &self.records[index];
-            let record = thread.search_record();
-            let unchanged = Arc::ptr_eq(&old.text, &record.text)
-                && old.completed == record.completed
-                && old.archived == record.archived
-                && old.blocked == record.blocked
-                && old.processing == record.processing
-                && old.unread == record.unread
-                && old.activity == record.activity;
-            if !unchanged {
-                self.search_bytes = self.search_bytes - old.text.len() + record.text.len();
-                self.records[index] = record;
-                // Status and activity move chats between sections, so the
-                // sections are rebuilt. Explicit actions skip the typing delay.
-                self.search(self.criteria.clone(), false, cx);
-                return;
-            }
+        if let Some(index) = app.selected
+            && self.update_record(app, index, cx)
+        {
+            return;
         }
         // Selection draws the row fill and hides the separator above it.
         invalidate_range(&self.state, 0..self.state.item_count());
         cx.notify();
+    }
+
+    pub(crate) fn update_streamed(&mut self, app: &Adeline, id: &str, cx: &mut Context<Self>) {
+        if self.project != app.project || self.records.len() != app.workspace().threads.len() {
+            self.sync(app, self.criteria.clone(), cx);
+        } else if let Some(index) = app.workspace().threads.iter().position(|t| t.id == id) {
+            self.update_record(app, index, cx);
+        }
+    }
+
+    fn update_record(&mut self, app: &Adeline, index: usize, cx: &mut Context<Self>) -> bool {
+        let thread = &app.workspace().threads[index];
+        if self.records[index].id.as_ref() != thread.id {
+            self.sync(app, self.criteria.clone(), cx);
+            return true;
+        }
+        let old = &self.records[index];
+        let record = thread.search_record();
+        let unchanged = Arc::ptr_eq(&old.text, &record.text)
+            && old.completed == record.completed
+            && old.archived == record.archived
+            && old.blocked == record.blocked
+            && old.processing == record.processing
+            && old.unread == record.unread
+            && old.activity == record.activity;
+        if unchanged {
+            return false;
+        }
+        self.search_bytes = self.search_bytes - old.text.len() + record.text.len();
+        self.records[index] = record;
+        // Status and activity move chats between sections, so the
+        // sections are rebuilt. Explicit actions skip the typing delay.
+        self.search(self.criteria.clone(), false, cx);
+        true
     }
 
     pub fn search(&mut self, criteria: Criteria, debounce: bool, cx: &mut Context<Self>) {
