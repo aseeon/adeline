@@ -31,7 +31,12 @@ struct Home {
 
 impl Home {
     fn new(name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("adeline-e2e-{name}-{}", std::process::id()));
+        // macOS limits a socket path to 104 bytes, and its temporary folder is long.
+        #[cfg(unix)]
+        let temp = PathBuf::from("/tmp");
+        #[cfg(not(unix))]
+        let temp = std::env::temp_dir();
+        let root = temp.join(format!("adeline-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         let config = root.join(".config").join("adeline");
         let work = root.join("work");
@@ -75,7 +80,7 @@ impl Home {
             .env("ADELINE_FAKE_STATE", self.root.join("fake-state"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::null())
+            .stderr(Stdio::inherit())
             .spawn()
             .unwrap();
         let input = bridge.stdin.take().unwrap();
