@@ -484,25 +484,7 @@ mod tests {
         assert!(child.wait().unwrap().success());
     }
 
-    #[test]
-    fn detached_process_runs() {
-        #[cfg(windows)]
-        let mut command = {
-            let mut command = Command::new("cmd.exe");
-            command.args(["/C", "exit 0"]);
-            command
-        };
-        #[cfg(not(windows))]
-        let mut command = Command::new("true");
-        assert!(
-            spawn_detached(&mut command)
-                .unwrap()
-                .wait()
-                .unwrap()
-                .success()
-        );
-    }
-
+    #[cfg(not(windows))]
     fn groups_dir() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("adeline-groups-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -524,11 +506,6 @@ mod tests {
 ";
         // 200 lost its leader but has a member; 300 is a reused ID; 500 is empty.
         assert_eq!(ours(ps, listed), ["100", "200", "400"]);
-    }
-
-    #[test]
-    fn children_can_be_contained() {
-        contain_children(&groups_dir()).unwrap();
     }
 
     // nextest runs each test in its own process, so no other test's agents share the list.

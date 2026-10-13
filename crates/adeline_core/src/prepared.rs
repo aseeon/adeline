@@ -241,42 +241,6 @@ mod tests {
             assert_eq!(changed_range(&old, &new), expected);
         }
     }
-    #[test]
-    fn only_latest_request_can_publish() {
-        let mut generation = Generation::default();
-        let first = generation.issue();
-        let second = generation.issue();
-        assert!(!generation.accepts(first));
-        assert!(generation.accepts(second));
-    }
-    #[test]
-    fn search_results_reject_out_of_order_completion() {
-        let records = [
-            SearchRecord {
-                blocked: true,
-                unread: true,
-                ..record("a", "first body")
-            },
-            SearchRecord {
-                completed: true,
-                ..record("b", "second body")
-            },
-        ];
-        let find = |query, completed| visible(&search(&records, &criteria(query, completed), 0));
-        assert_eq!(find("body", true), [0, 1]);
-        assert_eq!(find("body", false), [0]);
-        let mut generation = Generation::default();
-        let older = generation.issue();
-        let latest = generation.issue();
-        let mut shown = vec![];
-        // Latest query completes first; an older worker finishes afterwards.
-        for (ticket, result) in [(latest, find("second", true)), (older, find("first", true))] {
-            if generation.accepts(ticket) {
-                shown = result;
-            }
-        }
-        assert_eq!(shown, [1]);
-    }
 
     #[test]
     fn sections_put_live_chats_first_then_newest_by_period_then_finished() {

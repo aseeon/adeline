@@ -16,11 +16,13 @@ impl ThemedIcon {
         Self(svg().path(path.to_owned()))
     }
 
-    fn resolve_color(&mut self, inherited: Hsla) -> Option<Hsla> {
-        let color = &mut self.0.style().text.color;
-        let explicit = *color;
-        *color = Some(explicit.unwrap_or(inherited));
-        explicit
+    // Cached elements must inherit afresh on the next frame, including
+    // after pointer exit, selection changes, and theme changes.
+    fn with_color(&mut self, inherited: Hsla, paint: impl FnOnce(&mut Svg)) {
+        let explicit = self.0.style().text.color;
+        self.0.style().text.color = Some(explicit.unwrap_or(inherited));
+        paint(&mut self.0);
+        self.0.style().text.color = explicit;
     }
 }
 
@@ -84,19 +86,18 @@ impl Element for ThemedIcon {
         window: &mut Window,
         cx: &mut App,
     ) {
-        let explicit = self.resolve_color(window.text_style().color);
-        self.0.paint(
-            id,
-            inspector_id,
-            bounds,
-            request_layout,
-            prepaint,
-            window,
-            cx,
-        );
-        // Cached elements must inherit afresh on the next frame, including
-        // after pointer exit, selection changes, and theme changes.
-        self.0.style().text.color = explicit;
+        let inherited = window.text_style().color;
+        self.with_color(inherited, |svg| {
+            svg.paint(
+                id,
+                inspector_id,
+                bounds,
+                request_layout,
+                prepaint,
+                window,
+                cx,
+            );
+        });
     }
 }
 
@@ -107,18 +108,20 @@ mod tests {
 
     #[test]
     fn inherited_icon_color_tracks_states_and_preserves_overrides() {
+        let painted = |icon: &mut ThemedIcon, inherited: u32| {
+            let mut seen = None;
+            icon.with_color(rgb(inherited).into(), |svg| seen = svg.style().text.color);
+            seen
+        };
         let mut icon = ThemedIcon::new("chat");
+        // Hover, a theme change, then pointer exit: each frame takes the parent's color.
         for color in [0xeeeeee, 0x123456, 0xffffff, 0xeeeeee] {
-            let foreground: Hsla = rgb(color).into();
-            let explicit = icon.resolve_color(foreground);
-            assert_eq!(icon.style().text.color, Some(foreground));
-            assert_eq!(explicit, None);
-            icon.style().text.color = explicit;
+            assert_eq!(painted(&mut icon, color), Some(rgb(color).into()));
+            assert_eq!(icon.style().text.color, None);
         }
-        let foreground: Hsla = rgb(0xe06030).into();
-        let mut icon = ThemedIcon::new("project-circle").text_color(foreground);
-        let explicit = icon.resolve_color(rgb(0xffffff).into());
-        assert_eq!(explicit, Some(foreground));
-        assert_eq!(icon.style().text.color, Some(foreground));
+        let own: Hsla = rgb(0xe06030).into();
+        let mut icon = ThemedIcon::new("project-circle").text_color(own);
+        assert_eq!(painted(&mut icon, 0xffffff), Some(own));
+        assert_eq!(icon.style().text.color, Some(own));
     }
 }

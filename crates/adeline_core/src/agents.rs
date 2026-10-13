@@ -606,20 +606,6 @@ permission_mode: AllowEverything
     }
 
     #[test]
-    fn accepts_explicit_command_path_with_spaces_before_installation() {
-        let root = TempDir::new("adeline-agents");
-        let mut catalog = open_catalog(&root, false);
-        let mut definition = agent("Future");
-        definition.command = root
-            .join("Program Files")
-            .join("omp.exe")
-            .to_string_lossy()
-            .into_owned();
-        catalog.save(None, definition.clone(), None, false).unwrap();
-        assert_eq!(open_catalog(&root, false).entries[0].definition, definition);
-    }
-
-    #[test]
     fn persists_complete_definitions_and_refreshes_external_changes() {
         let root = TempDir::new("adeline-agents");
         let mut catalog = open_catalog(&root, false);
@@ -722,6 +708,12 @@ permission_mode: AllowEverything
         let mut good = agent("Good");
         good.system_instructions.clear();
         good.arguments.clear();
+        // A path with spaces is one command, and it may not be installed yet.
+        good.command = root
+            .join("Program Files")
+            .join("omp.exe")
+            .to_string_lossy()
+            .into_owned();
         catalog.save(None, good.clone(), None, false).unwrap();
         fs::create_dir(root.join("agents/bad")).unwrap();
         let mut bad = agent("Bad");

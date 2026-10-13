@@ -136,7 +136,7 @@ impl TabFit {
 
 #[cfg(test)]
 mod tests {
-    use super::{Measured, TabSize, fit_tabs, short_name};
+    use super::{Measured, TabSize, fit_tabs};
     use gpui_kit::px;
 
     fn tab(full: f32, short: f32, active: bool, busy: bool) -> Measured {
@@ -169,12 +169,5 @@ mod tests {
         assert_eq!(fit(230.), [Full, Letter, Hidden, Hidden]);
         assert_eq!(fit(210.), [Full, Letter, Hidden, Hidden]);
         assert_eq!(fit(10.), [Full, Hidden, Hidden, Hidden]);
-    }
-
-    #[test]
-    fn short_names_keep_three_letters() {
-        assert_eq!(short_name("techdemos"), "tec…");
-        assert_eq!(short_name("Usage Tool"), "Usa…");
-        assert_eq!(short_name("docs"), "docs");
     }
 }

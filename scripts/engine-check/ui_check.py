@@ -236,17 +236,6 @@ def check_unavailable():
         moved.rename(engine_dir)
 
 
-@check("AC26: demo mode never starts the engine")
-def check_demo():
-    rc.stop_engine()
-    process, window = launch("--demo")
-    try:
-        time.sleep(3)
-        assert engine_pid() is None, "demo mode started an engine"
-    finally:
-        process.kill()
-
-
 @check("Verbose: the ACP traffic tab shows only with --verbose")
 def check_traffic_needs_verbose():
     rc.stop_engine()
@@ -305,7 +294,7 @@ def open_chat(window, title):
     item.click_input()
 
 
-@check("ACP rebuild AC (demo): TODO list, queue, traffic tab, hang notice, option menus, dismissing an error")
+@check("AC26 + ACP rebuild AC (demo): no engine, TODO list, queue, traffic tab, hang notice, option menus, dismissing an error")
 def check_demo_conversation():
     rc.stop_engine()
     process, window = launch("--demo", "--verbose")

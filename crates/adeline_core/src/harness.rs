@@ -784,12 +784,22 @@ mod tests {
             [("FOO".to_owned(), "1".to_owned())]
         );
         assert_eq!(harnesses[0].executables, ["claude-agent-acp"]);
-        assert!(newer("0.86.0", "0.85.1") && !newer("0.85.1", "0.85.1") && !newer("1.0", ""));
+    }
+
+    #[test]
+    fn versions_compare_by_number_not_text() {
+        assert!(newer("0.86.0", "0.85.1"));
+        assert!(!newer("0.85.1", "0.85.1"));
         assert!(newer("1.10.0", "1.9.9"));
-        assert!(
-            guidance("Josh", "Be brief.").starts_with(
-                "You are an agent named Josh, running inside Adeline ADE (Agentic Development Environment)\nBe brief."
-            )
-        );
+        assert!(!newer("1.0", ""));
+    }
+
+    #[test]
+    fn guidance_names_the_agent_before_the_instructions() {
+        let text = guidance("Josh", "Be brief.");
+        let name = text.find("Josh").unwrap();
+        let instructions = text.find("Be brief.").unwrap();
+        assert!(name < instructions, "{text}");
+        assert!(!guidance("Josh", "  ").ends_with('\n'));
     }
 }

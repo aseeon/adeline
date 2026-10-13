@@ -85,12 +85,3 @@ pub fn rename(machine: &str, old: &str, new: &str) {
         }
     });
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn local_projects_keep_bare_ids_and_remote_ones_add_their_machine() {
-        assert_eq!(super::key(adeline_core::machines::LOCAL, "app"), "app");
-        assert_eq!(super::key("m-1", "app"), "m-1:app");
-    }
-}

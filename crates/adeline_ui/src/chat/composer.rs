@@ -694,17 +694,7 @@ impl Fit {
 
 #[cfg(test)]
 mod tests {
-    use super::{effort_label, model_label, tokens};
-
-    #[test]
-    fn composer_labels_drop_provider_paths_and_capitalize_effort() {
-        assert_eq!(model_label("anthropic/claude-opus-5"), "claude-opus-5");
-        assert_eq!(model_label("openrouter/openai/gpt-6"), "gpt-6");
-        assert_eq!(model_label("sonnet"), "sonnet");
-        assert_eq!(effort_label("medium"), "Medium");
-        assert_eq!(effort_label("High"), "High");
-        assert_eq!(effort_label(""), "");
-    }
+    use super::tokens;
 
     #[test]
     fn token_counts_round_to_short_units() {

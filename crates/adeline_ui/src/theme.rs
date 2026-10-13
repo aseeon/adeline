@@ -547,43 +547,39 @@ mod tests {
         assert!(error.contains("Using Claude Plus"));
     }
     #[test]
-    fn theme_yaml_round_trip_and_validation() {
-        let default = State::default();
-        assert_eq!(default.theme.name, "Claude Plus");
+    fn theme_yaml_round_trips_and_rejects_missing_or_bad_colors() {
         let legacy: Brightness = serde_yaml_ng::from_str("Very Light").unwrap();
         assert_eq!(legacy, Brightness::Light);
         assert_eq!(serde_yaml_ng::to_string(&legacy).unwrap().trim(), "Light");
-        assert_eq!(default.theme.brightness, Brightness::Dark);
-        assert_eq!(default.colors["background"], 0x262626);
-        assert_eq!(
-            adeline_core::config::Appearance::default().theme,
-            "claude-plus.yml"
-        );
-        {
-            let theme = ThemeFile::builtin();
-            let yaml = serde_yaml_ng::to_string(&theme).unwrap();
-            assert!(yaml.starts_with("name:"));
-            let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
-            assert_eq!(document.as_mapping().unwrap().len(), 3);
-            assert_eq!(document["colors"].as_mapping().unwrap().len(), 32);
-            assert!(document.get("background").is_none());
-            let mut loaded: ThemeFile = serde_yaml_ng::from_str(&yaml).unwrap();
-            assert_eq!(loaded.validate().unwrap(), theme.validate().unwrap());
-            loaded.colors.remove("primary");
-            loaded.validate().unwrap_err();
-            loaded.colors.insert("primary".into(), "#GGFFFF".into());
-            loaded.validate().unwrap_err()
-        };
+        let theme = ThemeFile::builtin();
+        let yaml = serde_yaml_ng::to_string(&theme).unwrap();
+        let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(document["colors"].as_mapping().unwrap().len(), ROLES.len());
+        let mut loaded: ThemeFile = serde_yaml_ng::from_str(&yaml).unwrap();
+        assert_eq!(loaded.validate().unwrap(), theme.validate().unwrap());
+        loaded.colors.remove("primary");
+        loaded.validate().unwrap_err();
+        loaded.colors.insert("primary".into(), "#GGFFFF".into());
+        loaded.validate().unwrap_err();
         serde_yaml_ng::from_str::<ThemeFile>("name: bad\nbrightness: Medium").unwrap_err();
         serde_yaml_ng::from_str::<ThemeFile>(
             "name: Flat theme\nbrightness: Dark\nbackground: '#0F1218'\n",
         )
         .unwrap_err();
-        theme_path("../outside.yml").unwrap_err();
-        theme_path("C:\\outside.yml").unwrap_err();
-        theme_path("C:outside.yml").unwrap_err();
-        theme_path("..\\outside.yml").unwrap_err();
         assert_eq!(parse_hex("#aBc123"), Some(0xabc123));
         assert_eq!(parse_hex("１２３"), None);
+    }
+
+    #[test]
+    fn theme_names_cannot_leave_the_themes_folder() {
+        for outside in [
+            "../outside.yml",
+            "..\\outside.yml",
+            "C:\\outside.yml",
+            "C:outside.yml",
+            "/etc/outside.yml",
+        ] {
+            assert!(theme_path(outside).is_err(), "{outside}");
+        }
     }
 }

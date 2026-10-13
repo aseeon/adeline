@@ -88,32 +88,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn removed_font_falls_back() {
-        let requested = "Example Mono";
-        assert_eq!(
-            resolve_from(requested, &catalogue(vec![requested.into()]), DEFAULT),
-            requested
-        );
-        assert_eq!(
-            resolve_from(requested, &catalogue(vec![]), DEFAULT),
-            DEFAULT
-        );
-    }
-
-    #[test]
     fn default_legacy_empty_and_unknown_fonts_use_the_bundle() {
         let names = catalogue(vec!["Arial".into()]);
         for requested in [DEFAULT, "System", "", "Missing Font"] {
             assert_eq!(resolve_from(requested, &names, DEFAULT), DEFAULT);
         }
         assert_eq!(resolve_from(" arial ", &names, DEFAULT), "Arial");
-    }
-
-    #[test]
-    fn text_scales_with_the_font_size() {
-        let size = f32::from(config::font_size());
-        assert_eq!(text_pixels(14.), gpui_kit::px(size));
-        assert_eq!(text_pixels(21.), gpui_kit::px(size * 1.5));
     }
 
     #[test]

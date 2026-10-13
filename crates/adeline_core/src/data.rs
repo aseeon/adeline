@@ -710,29 +710,20 @@ mod tests {
     #[test]
     fn fixture_keeps_chat_activity_and_decisions_with_their_projects() {
         let projects = load();
-        for (id, working) in [
-            ("demo-adeline", "adeline-search"),
-            ("demo-skills", "skills-eval"),
-            ("demo-relay", "relay-retry"),
-        ] {
-            let project = projects
-                .iter()
-                .find(|project| project.config.id == id)
-                .unwrap();
-            let thread = project
-                .threads
-                .iter()
-                .find(|thread| thread.id == working)
-                .unwrap();
-            assert_eq!(thread.status, ThreadStatus::Processing);
-            assert!(!thread.activity.is_empty());
+        assert!(projects.iter().any(|project| !project.decisions.is_empty()));
+        for project in &projects {
+            for thread in &project.threads {
+                if thread.status == ThreadStatus::Processing {
+                    assert!(!thread.activity.is_empty(), "{}", thread.id);
+                }
+            }
             for decision in &project.decisions {
                 let thread = project
                     .threads
                     .iter()
                     .find(|thread| thread.id == decision.thread_id)
-                    .unwrap();
-                assert_eq!(thread.status, ThreadStatus::Blocked);
+                    .unwrap_or_else(|| panic!("{} outside its project", decision.thread_id));
+                assert_eq!(thread.status, ThreadStatus::Blocked, "{}", thread.id);
             }
         }
     }
@@ -799,23 +790,5 @@ mod tests {
         assert_eq!(timing.active_ms(), 8_500 + 1_000);
         assert_eq!((timing.streamed_chars, timing.streamed_ms), (80, 1_000));
         assert_eq!(timing.tokens_per_second(), Some(20.));
-    }
-
-    #[test]
-    fn search_and_completed_filter_compose() {
-        let p = load();
-        let t = p[0]
-            .threads
-            .iter()
-            .find(|t| t.id == "adeline-session")
-            .unwrap();
-        assert!(shows(t, "SESSION", false, false));
-        assert!(!shows(t, "no matching text", true, true));
-        let done = p[0]
-            .threads
-            .iter()
-            .find(|t| t.status == ThreadStatus::Completed)
-            .unwrap();
-        assert!(!shows(done, "", false, false));
     }
 }

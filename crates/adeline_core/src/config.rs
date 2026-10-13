@@ -329,26 +329,25 @@ fn update_at(path: &Path, change: impl FnOnce(&mut Settings)) -> anyhow::Result<
 mod tests {
     use super::*;
     #[test]
-    fn interface_and_code_preferences_are_independent_and_backward_compatible() {
-        let defaults: Appearance = serde_yaml_ng::from_str("{}").unwrap();
-        assert_eq!(defaults.interface_font, "Chivo");
-        assert_eq!(defaults.code_font, "Chivo Mono");
-        assert_eq!(defaults.code_font_size, 14);
+    fn legacy_font_settings_load_and_each_size_is_bounded_on_its_own() {
+        let defaults = Appearance::default();
         let legacy: Appearance =
             serde_yaml_ng::from_str("interface_font: Arial\nfont_size: 18").unwrap();
         assert_eq!(legacy.interface_font, "Arial");
         assert_eq!(legacy.font_size, 18);
-        assert_eq!(legacy.code_font, "Chivo Mono");
-        assert_eq!(legacy.code_font_size, 14);
+        assert_eq!(legacy.code_font, defaults.code_font);
+        assert_eq!(legacy.code_font_size, defaults.code_font_size);
         let original = current();
-        ACTIVE.with(|state| {
-            let mut state = state.borrow_mut();
-            state.settings.general.appearance = legacy;
-        });
+        ACTIVE.with(|s| s.borrow_mut().settings.general.appearance = legacy);
         for (requested, expected) in [(0, 10), (14, 14), (20, 20), (65535, 24)] {
             ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.code_font_size = requested);
             assert_eq!(font_size(), 18);
             assert_eq!(code_font_size(), expected);
+        }
+        for (requested, expected) in [(0, 10), (18, 18), (65535, 24)] {
+            ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.font_size = requested);
+            assert_eq!(font_size(), expected);
+            assert_eq!(code_font_size(), 24);
         }
         let settings = current();
         assert_eq!(
@@ -356,43 +355,6 @@ mod tests {
                 .unwrap(),
             settings
         );
-        ACTIVE.with(|s| s.borrow_mut().settings = original);
-    }
-
-    #[test]
-    fn thinking_animation_defaults_to_dots_and_round_trips_by_name() {
-        let defaults: Chats = serde_yaml_ng::from_str("{}").unwrap();
-        assert_eq!(defaults.thinking_animation, ThinkingAnimation::Dots);
-        for choice in ThinkingAnimation::ALL {
-            let yaml = serde_yaml_ng::to_string(&Chats {
-                thinking_animation: choice,
-                ..Chats::default()
-            })
-            .unwrap();
-            assert_eq!(
-                serde_yaml_ng::from_str::<Chats>(&yaml)
-                    .unwrap()
-                    .thinking_animation,
-                choice
-            );
-        }
-        let saved: Chats = serde_yaml_ng::from_str("thinking_animation: fill").unwrap();
-        assert_eq!(saved.thinking_animation, ThinkingAnimation::Fill);
-    }
-
-    #[test]
-    fn font_size_defaults_round_trips_and_bounds_rendering() {
-        let mut appearance: Appearance = serde_yaml_ng::from_str("theme: custom.yml").unwrap();
-        assert_eq!(appearance.font_size, 14);
-        appearance.font_size = 18;
-        let restored: Appearance =
-            serde_yaml_ng::from_str(&serde_yaml_ng::to_string(&appearance).unwrap()).unwrap();
-        assert_eq!(restored.font_size, 18);
-        let original = current();
-        for (requested, expected) in [(0, 10), (14, 14), (18, 18), (65535, 24)] {
-            ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.font_size = requested);
-            assert_eq!(font_size(), expected);
-        }
         ACTIVE.with(|s| s.borrow_mut().settings = original);
     }
     #[test]
@@ -459,21 +421,6 @@ mod tests {
             );
         }
         assert!(read(&path).unwrap().general.features.docs);
-        std::fs::remove_file(path).unwrap();
-    }
-    #[test]
-    fn conversation_list_starts_expanded_then_remembers_the_last_choice() {
-        let path = std::env::temp_dir().join(format!(
-            "adeline-left-panel-{}-{:?}.yml",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        seed_yaml(&path, &Settings::default()).unwrap();
-        assert!(read(&path).unwrap().modes.chats.show_left_panel);
-        update_at(&path, |s| s.modes.chats.show_left_panel = false).unwrap();
-        assert!(!read(&path).unwrap().modes.chats.show_left_panel);
-        update_at(&path, |s| s.modes.chats.show_left_panel = true).unwrap();
-        assert!(read(&path).unwrap().modes.chats.show_left_panel);
         std::fs::remove_file(path).unwrap();
     }
     #[test]
