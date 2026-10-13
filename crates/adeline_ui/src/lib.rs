@@ -411,7 +411,7 @@ impl Adeline {
             },
         ));
         let owner = cx.weak_entity();
-        let chat_list = cx.new(|_| chat::ChatList::new(owner.clone()));
+        let chat_list = cx.new(|cx| chat::ChatList::new(owner.clone(), cx));
         let composer_height = std::rc::Rc::new(std::cell::Cell::new(px(0.)));
         let transcript = cx.new(|cx| {
             chat::Transcript::new(owner.clone(), std::rc::Rc::clone(&composer_height), cx)
@@ -534,7 +534,7 @@ impl Adeline {
                         .current_live()
                         .is_some_and(|live| live.quiet_since.is_some())
                     {
-                        app.transcript.update(cx, |_, cx| cx.notify());
+                        app.transcript.update(cx, chat::Transcript::invalidate);
                     }
                 });
                 if alive.is_err() {
@@ -597,7 +597,7 @@ impl Adeline {
     }
 
     fn notify_cached_views(&mut self, cx: &mut Context<Self>) {
-        self.transcript.update(cx, |_, cx| cx.notify());
+        self.transcript.update(cx, chat::Transcript::invalidate);
         self.chat_list.update(cx, |_, cx| cx.notify());
         self.side_panel.update(cx, |_, cx| cx.notify());
         self.chat_header.update(cx, |_, cx| cx.notify());

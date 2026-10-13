@@ -758,7 +758,7 @@ impl SettingsWindow {
                     }
                 };
                 let _ = this.owner.entity.update(cx, |app, cx| {
-                    app.transcript.update(cx, |_, cx| cx.notify());
+                    app.transcript.update(cx, chat::Transcript::invalidate);
                 });
                 cx.notify();
             },

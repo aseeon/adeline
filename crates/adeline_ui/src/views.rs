@@ -11,7 +11,12 @@ pub(super) struct ChatHeader(pub WeakEntity<Adeline>);
 impl Render for ChatHeader {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.0
-            .update(cx, |app, cx| app.chat_header(cx).into_any_element())
+            .update(cx, |app, cx| {
+                div()
+                    .size_full()
+                    .child(app.chat_header(cx))
+                    .into_any_element()
+            })
             .unwrap_or_else(|_| div().into_any_element())
     }
 }
@@ -114,7 +119,7 @@ impl Adeline {
             .relative()
             .size_full()
             .min_w_0()
-            .child(chat::region(&self.transcript, chat::full(), window))
+            .child(self.transcript.clone())
             .child(fade)
             .child(
                 div()

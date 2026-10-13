@@ -6,6 +6,8 @@
 //! whole reply. Its key includes `created_at`: a reply replaced at the same
 //! index starts a new view.
 use super::*;
+use std::cell::{Cell, RefCell};
+use std::rc::Rc;
 
 impl Adeline {
     pub(crate) fn resync_transcript(&self, cx: &mut Context<Self>) {
@@ -417,12 +419,14 @@ impl Adeline {
 pub(crate) struct Transcript {
     owner: WeakEntity<Adeline>,
     state: ListState,
+    rows: Rc<RefCell<Vec<Entity<Row>>>>,
+    width: Rc<Cell<Pixels>>,
     typography: fonts::Typography,
     thread: Option<(usize, String)>,
     selected: Option<usize>,
     messages: usize,
     footer_focus: FocusHandle,
-    composer_height: std::rc::Rc<std::cell::Cell<Pixels>>,
+    composer_height: Rc<Cell<Pixels>>,
     left_to_end: Pixels,
     following: bool,
 }
@@ -430,7 +434,7 @@ pub(crate) struct Transcript {
 impl Transcript {
     pub fn new(
         owner: WeakEntity<Adeline>,
-        composer_height: std::rc::Rc<std::cell::Cell<Pixels>>,
+        composer_height: Rc<Cell<Pixels>>,
         cx: &mut Context<Self>,
     ) -> Self {
         let state = ListState::new(0, ListAlignment::Top, px(250.));
@@ -454,6 +458,8 @@ impl Transcript {
         Self {
             owner,
             state,
+            rows: Rc::default(),
+            width: Rc::default(),
             typography: fonts::typography(),
             thread: None,
             selected: None,
@@ -481,6 +487,13 @@ impl Transcript {
             offset_in_item: px(0.),
         });
         self.following = self.state.is_following_tail();
+        cx.notify();
+    }
+
+    pub fn invalidate(&mut self, cx: &mut Context<Self>) {
+        for row in self.rows.borrow().iter() {
+            row.update(cx, |row, _| row.fresh = true);
+        }
         cx.notify();
     }
 
@@ -536,6 +549,20 @@ impl Transcript {
                 (start..count).map(|i| (i == messages).then(|| self.footer_focus.clone())),
             );
         }
+        let mut rows = self.rows.borrow_mut();
+        if changed_thread {
+            rows.clear();
+        }
+        rows.truncate(count);
+        for row in rows.iter().skip(start) {
+            row.update(cx, |row, _| row.fresh = true);
+        }
+        let transcript = cx.weak_entity();
+        while rows.len() < count {
+            let row = Row::new(transcript.clone(), rows.len());
+            rows.push(cx.new(|_| row));
+        }
+        drop(rows);
         if scroll_to_end || changed_thread {
             self.state.set_follow_mode(FollowMode::Tail);
         } else if !self.state.is_following_tail() {
@@ -583,54 +610,133 @@ impl Render for Transcript {
         if self.typography != typography {
             self.typography = typography;
             self.state.remeasure();
+            for row in self.rows.borrow().iter() {
+                row.update(cx, |row, _| row.fresh = true);
+            }
         }
         // The header and composer float over the transcript so its scrollbar runs
         // the full height; the messages start and end clear of both.
         let gap = window.rem_size() * 0.5;
         let top = window.rem_size() * CHAT_HEADER_HEIGHT + gap;
         let bottom = self.composer_height.get() + gap;
-        let Some(selected) = self.selected else {
+        if self.selected.is_none() {
             return self
                 .owner
                 .update(cx, |app, _cx| app.welcome().size_full().into_any_element())
                 .unwrap_or_else(|_| div().into_any_element());
-        };
-        let owner = self.owner.clone();
-        let messages = self.messages;
-        let footer_focus = self.footer_focus.clone();
-        let rows = list(self.state.clone(), move |row, window, cx| {
-            owner
-                .update(cx, |app, cx| {
-                    if row < messages {
-                        app.message_row(selected, row, window, cx)
-                    } else {
-                        // Wrapped like message rows so the column centers in the row.
-                        div()
-                            .w_full()
-                            .min_w_0()
-                            .track_focus(&footer_focus)
-                            .child(chat_column().flex().flex_col().child(if app.demo_mode {
-                                col()
-                                    .child(app.decision_row(selected, cx))
-                                    .child(app.runtime_footer(selected, cx))
-                                    .into_any_element()
-                            } else {
-                                app.runtime_footer(selected, cx)
-                            }))
-                            .into_any_element()
-                    }
-                })
-                .unwrap_or_else(|_| div().into_any_element())
+        }
+        let rows = Rc::clone(&self.rows);
+        let width = Rc::clone(&self.width);
+        let list = list(self.state.clone(), move |ix, window, cx| {
+            let Some(row) = rows.borrow().get(ix).cloned() else {
+                return div().into_any_element();
+            };
+            let (fresh, size) = {
+                let row = row.read(cx);
+                (row.fresh, row.size.get())
+            };
+            match size {
+                Some(size)
+                    if !fresh
+                        && !window.is_a11y_active()
+                        && (size.width - width.get()).abs() < px(0.5) =>
+                {
+                    row.cached(StyleRefinement::default().w_full().h(size.height))
+                        .into_any_element()
+                }
+                _ => {
+                    row.update(cx, |row, _| row.fresh = false);
+                    row.into_any_element()
+                }
+            }
         })
         .size_full()
         .pt(top)
         .pb(bottom);
+        let width = Rc::clone(&self.width);
         div()
             .relative()
             .size_full()
             .min_h_0()
-            .child(rows)
+            // Prepaints before the list, so its rows see this frame's width.
+            .child(
+                canvas(
+                    move |bounds, _, _| width.set(bounds.size.width),
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .child(list)
             .child(Scrollbar::vertical(&self.state))
+            .into_any_element()
+    }
+}
+
+pub(crate) struct Row {
+    transcript: WeakEntity<Transcript>,
+    index: usize,
+    size: Rc<Cell<Option<Size<Pixels>>>>,
+    fresh: bool,
+}
+
+impl Row {
+    fn new(transcript: WeakEntity<Transcript>, index: usize) -> Self {
+        Self {
+            transcript,
+            index,
+            size: Rc::default(),
+            fresh: true,
+        }
+    }
+}
+
+impl Render for Row {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let Some(transcript) = self.transcript.upgrade() else {
+            return div().into_any_element();
+        };
+        let (owner, selected, messages, footer_focus) = {
+            let transcript = transcript.read(cx);
+            (
+                transcript.owner.clone(),
+                transcript.selected,
+                transcript.messages,
+                transcript.footer_focus.clone(),
+            )
+        };
+        let Some(selected) = selected else {
+            return div().into_any_element();
+        };
+        let row = self.index;
+        let content = owner
+            .update(cx, |app, cx| {
+                if row < messages {
+                    app.message_row(selected, row, window, cx)
+                } else {
+                    // Wrapped like message rows so the column centers in the row.
+                    div()
+                        .w_full()
+                        .min_w_0()
+                        .track_focus(&footer_focus)
+                        .child(chat_column().flex().flex_col().child(if app.demo_mode {
+                            col()
+                                .child(app.decision_row(selected, cx))
+                                .child(app.runtime_footer(selected, cx))
+                                .into_any_element()
+                        } else {
+                            app.runtime_footer(selected, cx)
+                        }))
+                        .into_any_element()
+                }
+            })
+            .unwrap_or_else(|_| div().into_any_element());
+        let size = Rc::clone(&self.size);
+        div()
+            .relative()
+            .w_full()
+            .child(content)
+            .child(size_probe(move |measured, _| size.set(Some(measured))))
             .into_any_element()
     }
 }

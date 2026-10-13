@@ -94,7 +94,7 @@ impl Adeline {
                 .flex_shrink_0()
                 .bg(cx.theme().background)
                 .text_color(cx.theme().foreground)
-                .child(chat::region(&self.chat_list, chat::full(), window))
+                .child(self.chat_list.clone())
                 .child(fading_line(cx).absolute().top_0().right_0())
         });
         let panels = h_resizable("chat-panels")
@@ -116,7 +116,7 @@ impl Adeline {
                             .size_full()
                             .bg(cx.theme().background)
                             .text_color(cx.theme().foreground)
-                            .child(chat::region(&self.chat_list, chat::full(), window)),
+                            .child(self.chat_list.clone()),
                     ),
             )
             .child(

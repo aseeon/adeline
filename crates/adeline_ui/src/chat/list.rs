@@ -587,6 +587,22 @@ pub(crate) struct ChatList {
     collapsed_hover: Option<Arc<str>>,
     collapsed_scroll: UniformListScrollHandle,
     folded: Vec<Group>,
+    cards: std::rc::Rc<std::cell::RefCell<Vec<Entity<ChatCard>>>>,
+    _redraw_cards: Subscription,
+}
+
+pub(crate) struct ChatCard {
+    owner: WeakEntity<Adeline>,
+    row: usize,
+}
+
+impl Render for ChatCard {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let row = self.row;
+        self.owner
+            .update(cx, |app, cx| app.chat_card(row, cx))
+            .unwrap_or_else(|_| div().into_any_element())
+    }
 }
 
 const RUNNING_TURN_MS: u64 = 2400;
@@ -851,9 +867,15 @@ impl Layout {
 }
 
 impl ChatList {
-    pub fn new(owner: WeakEntity<Adeline>) -> Self {
+    pub fn new(owner: WeakEntity<Adeline>, cx: &mut Context<Self>) -> Self {
         let state = ListState::new(0, ListAlignment::Top, px(180.));
         Self {
+            cards: std::rc::Rc::default(),
+            _redraw_cards: cx.observe_self(|list, cx| {
+                for card in list.cards.borrow().iter() {
+                    card.update(cx, |_, cx| cx.notify());
+                }
+            }),
             owner,
             state,
             typography: fonts::typography(),
@@ -902,6 +924,16 @@ impl ChatList {
             self.state.reset(0);
         }
         self.project = app.project;
+        let mut cards = self.cards.borrow_mut();
+        cards.truncate(records.len());
+        while cards.len() < records.len() {
+            let card = ChatCard {
+                owner: self.owner.clone(),
+                row: cards.len(),
+            };
+            cards.push(cx.new(|_| card));
+        }
+        drop(cards);
         self.search_bytes = records.iter().map(|r| r.text.len()).sum();
         self.records = records;
         self.selected = app.selected;
@@ -1359,11 +1391,19 @@ impl Render for ChatList {
             };
             let list_view = {
                 let section_view = section_view.clone();
-                list(self.state.clone(), move |ix, _, cx| match items[ix] {
+                let cards = std::rc::Rc::clone(&self.cards);
+                list(self.state.clone(), move |ix, window, cx| match items[ix] {
                     Item::Section(slot) => section_view(slot, LabelPlacement::Inline, cx),
-                    Item::Chat(row) => owner
-                        .update(cx, |app, cx| app.chat_card(row, cx))
-                        .unwrap_or_else(|_| div().into_any_element()),
+                    Item::Chat(row) => match cards.borrow().get(row) {
+                        Some(card) => region(
+                            card,
+                            StyleRefinement::default().w_full().h(rems(ROW_HEIGHT)),
+                            window,
+                        ),
+                        None => owner
+                            .update(cx, |app, cx| app.chat_card(row, cx))
+                            .unwrap_or_else(|_| div().into_any_element()),
+                    },
                     Item::End => div().h(rems(END_HEIGHT)).into_any_element(),
                     Item::Tail => div().h(tail).into_any_element(),
                 })

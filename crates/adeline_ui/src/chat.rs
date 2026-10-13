@@ -1,6 +1,14 @@
-//! Chats: the chat list and sidebar, the transcript and the composer, each an
-//! independently invalidated view, plus the parts other surfaces draw with.
-//! The shell remains the shared data/action coordinator.
+//! Chats: the chat list and sidebar, the transcript and the composer, each its
+//! own view, plus the parts other surfaces draw with. The shell remains the
+//! shared data/action coordinator.
+//!
+//! GPUI redraws a notified view and every view above it, and a cached view that
+//! redraws also redraws every view inside it. So the chat list and the
+//! transcript are drawn uncached, and each of their rows is a cached view: a
+//! hover or an animation redraws its own row. Chat rows have a fixed height.
+//! Transcript rows keep the height they last measured at the list's current
+//! width, and measure again after `Transcript::sync` or `invalidate`. `region`
+//! draws other fixed-size views cached.
 //!
 //! Sizes are in rems. Chat rows and section labels (which include the gap above
 //! them) have fixed heights, so the list places its stacked labels by arithmetic.
@@ -11,8 +19,7 @@
 //! list is as wide as the mode rail beside it.
 //!
 //! Looping animations run at `ANIMATION_FPS`, and `spinner` is the Kit's
-//! `Spinner` with that cap: no view is cached yet, so every animation frame
-//! redraws the whole window (`docs/handoff-view-caching.md`).
+//! `Spinner` with that cap.
 use super::*;
 use adeline_core::conversation::{MessageRole, ThreadStatus};
 use adeline_core::prepared::{Criteria, Group, Outcome};

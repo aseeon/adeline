@@ -708,7 +708,7 @@ impl Adeline {
         };
         if lit != self.activity.lit {
             self.activity.lit = lit;
-            self.transcript.update(cx, |_, cx| cx.notify());
+            self.transcript.update(cx, chat::Transcript::invalidate);
         }
     }
 
