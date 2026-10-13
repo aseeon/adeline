@@ -103,12 +103,15 @@ pub(super) fn flush_events(conversation: &mut StoredConversation, path: &Path) -
         file.seek(SeekFrom::Start(conversation.persisted_len))
             .with_context(|| path.display().to_string())?;
         let write_result = (|| {
+            // One write, so a killed engine leaves whole lines behind.
+            let mut lines = Vec::new();
             for event in &conversation.unsaved_events {
-                serde_json::to_writer(&mut file, event)
+                serde_json::to_writer(&mut lines, event)
                     .with_context(|| path.display().to_string())?;
-                file.write_all(b"\n")
-                    .with_context(|| path.display().to_string())?;
+                lines.push(b'\n');
             }
+            file.write_all(&lines)
+                .with_context(|| path.display().to_string())?;
             file.sync_all()
                 .with_context(|| path.display().to_string())?;
             file.stream_position()

@@ -36,7 +36,11 @@ Changes limited to documentation or agent instructions do not require applicatio
 
 Bump the version in `[workspace.package]` in the root `Cargo.toml` with every impactful change. A user-visible bug fix, behavior change or new feature bumps the patch (third) number. Bump the minor (second) number, resetting the patch to 0, only for a new Mode or a rework the user calls one. Leave the major (first) number unchanged. Documentation, agent-instruction, and internal-only changes keep the current version. Commit the bump with the change it versions, together with the updated `Cargo.lock` (`--locked` builds fail on a stale lock).
 
-Bump `PROTOCOL` in `crates/adeline_core/src/protocol.rs` in the commit that changes the shape of any message between the engine and its clients. A client and an engine work together exactly when their `PROTOCOL` matches, whatever their Adeline versions, so an unbumped shape change breaks remote machines running another version.
+Bump `PROTOCOL` in `crates/adeline_core/src/protocol.rs` in the commit that changes the shape of any message between the engine and its clients. A client and an engine work together exactly when their `PROTOCOL` matches, whatever their Adeline versions, so an unbumped shape change breaks remote machines running another version. `crates/adeline_core/tests/protocol.rs` pins every message's shape and fails on such a change; its header says how to record the new shape.
+
+# Testing
+
+Test behavior a user or another machine would notice: state machines, failures, persistence, the engine through its protocol. No tests of constants, styling, one-line helpers or framework internals.
 
 # UI testing
 

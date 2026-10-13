@@ -18,6 +18,9 @@ default = ["gui"]
 gui = ["dep:adeline_ui", "adeline_engine/gui"]
 profiler = ["gui", "adeline_ui/profiler"]
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [build-dependencies]
 embed-resource.workspace = true
 resvg.workspace = true

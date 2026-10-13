@@ -7,7 +7,11 @@ Keywords in the prompt script each turn, applied in this order:
   PERMISSION     ask the client for an edit permission and wait for the answer
   HANG_ON_CLOSE  from now on ignore session/close and stdin EOF
   NO_FORK        later session/fork calls of this session fail
-Without keywords the turn streams a short greeting. Every wait honors
+  LOSE_SESSION   later session/resume and session/load of this session fail
+  STRAY          also stream text for a session that isn't this one
+  EXIT           stream one chunk, then exit with code 3
+  SILENT         stream one chunk, then send nothing and ignore session/cancel
+Without keywords the turn streams a short greeting. Every other wait honors
 session/cancel and then replies stopReason "cancelled".
 
 Environment:
@@ -104,6 +108,17 @@ def prompt(message):
 
     if "NO_FORK" in text:
         attempts_file(session + ".no-fork").touch()
+    if "LOSE_SESSION" in text:
+        attempts_file(session + ".lost").touch()
+    if "STRAY" in text:
+        chunk("not-" + session, "stray text ")
+    if "EXIT" in text:
+        chunk(session, "about to crash ")
+        log("crashing on purpose")
+        os._exit(3)
+    if "SILENT" in text:
+        chunk(session, "thinking ")
+        threading.Event().wait()
     if "HANG_ON_CLOSE" in text:
         hang_on_close.set()
     if match := re.search(r"FAIL (\d+)", text):
@@ -163,7 +178,10 @@ def handle(message):
             else:
                 reply({"sessionId": str(uuid.uuid4()), "configOptions": [MODEL_OPTION]})
         case "session/resume" | "session/load":
-            reply({"configOptions": [MODEL_OPTION]})
+            if attempts_file(params.get("sessionId", "") + ".lost").exists():
+                send({"id": message["id"], "error": {"code": -32602, "message": "Session not found"}})
+            else:
+                reply({"configOptions": [MODEL_OPTION]})
         case "session/set_config_option":
             option = dict(MODEL_OPTION)
             if params.get("configId") == "model":

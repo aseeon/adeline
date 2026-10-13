@@ -113,4 +113,6 @@ The Settings and agent windows are separate windows (`settings.rs`), one child p
 ## Tests
 
 - Rust unit tests sit next to the code (`#[cfg(test)]`). The large suites are `storage/tests.rs` and `acp/tests.rs`.
+- `adeline_core/tests/protocol.rs` pins the wire format against `tests/wire/<PROTOCOL>.jsonl`.
+- `adeline/tests/engine.rs` runs the real binary's engine in a temporary home on every OS, with `scripts/engine-check/fake_agent.py` as the agent, so `cargo nextest` needs Python 3 on PATH.
 - End-to-end engine and UI checks are in `scripts/engine-check/`, Windows only. See its README.
