@@ -102,6 +102,53 @@ The Settings and agent windows are separate windows (`settings.rs`), one child p
 
 `client.rs` holds the engine connections as a GPUI global. `ui_state.rs` keeps what this UI remembers for itself and doesn't share with other clients. `theme.rs` and `fonts.rs` turn `config.rs`'s preferences into GPUI themes and fonts.
 
+## Modes (planned)
+
+None of this is built yet. It's the agreed shape for the modes beyond chat (Docs, Issues, Workflows, Services, Group chats, Whiteboard) and for extensions.
+
+Each mode is a first-party crate (`adeline_docs`, `adeline_issues`, …), not an extension. Its engine half has no GPUI. It turns conversation state into cards and answers the mode's own `Command`s (reading a doc, fetching an issue). Its view half sits behind a `ui` feature, so the headless build compiles the crate without GPUI.
+
+Modes reach into chat only through data:
+
+- `adeline_core/src/card.rs` holds `Card`: a stable `EntityRef` (`adeline://docs/notes/plan.md`, `adeline://issues/github/acme/app/42`), an icon, a title, a subtitle, at most 4 facts and at most 3 actions from a closed `CardAction` (`Open`, `OpenExternal`, `Copy`).
+- The engine makes cards, because it owns tool calls and runs on remote machines. A closed `enum Mode` and one `match` call each enabled mode's detector on a finished `Activity` (Docs: an `Edit` whose `paths` hold a `.md` file that exists in the project) or on reply text (Issues: a URL on a tracker the user configured). Cards are built from agent output, so a card exists only for an entity the engine has checked, and actions never carry commands.
+- `Delta::Card` carries a card to clients and needs a `PROTOCOL` bump. A card whose `EntityRef` matches an earlier one replaces it, so ticket updates refresh a card instead of stacking.
+- The transcript draws every card with one generic component, placed after the activity that made it, and never names a mode.
+- Opening a card goes through one UI router that matches `EntityRef::mode()` to that mode's view, falling back to opening it as a link. The shell shows it as `Surface::Mode { entity, chat }`: the mode's view in the main area, the conversation still live in a sidebar. Every mode reuses that layout.
+- The mode's view loads its data through engine `Command`s, never the local disk, so it works for a remote machine's project.
+
+Each mode has an enable flag in engine settings. A disabled mode runs no detector, hides its navigation, and its existing cards show as plain links. Demo mode gets sample cards from `assets/workspace.json` and answers mode reads from fixtures.
+
+### `adeline://` routes
+
+An `EntityRef` is an `adeline://<mode>/<path>` URI. The authority names the owning mode, and the path is opaque to everyone but that mode:
+
+- `adeline://docs/notes/plan.md`: a file, relative to the project root.
+- `adeline://issues/github/acme/app/42`: tracker, repository and issue number.
+- `adeline://workflows/<id>`, `adeline://whiteboard/<id>`: records the mode stores itself.
+
+A route is relative to a project. The card sits in a chat, and that chat supplies the machine and project (`Workspace::key()`), so the same route opens the right file on whichever machine the chat runs on.
+
+The router in the UI is a single `match` on `EntityRef::mode()`:
+
+1. It finds the mode for the authority. An unknown or disabled authority falls back to opening the card as a plain link, or does nothing if the card has no external URL.
+2. It calls that mode's `view(entity)`, which parses its own path.
+3. It sets `Surface::Mode { entity, chat }`. Opening a route that is already showing focuses it instead of opening it again.
+
+Everything that opens a mode goes through this router: card clicks, its keyboard shortcut, and `adeline://` links in agent replies. A route never runs anything. At most it opens a view, and that view asks the engine for data like any other client request. Routes from the OS (clicking an `adeline://` link in another app) come later, and need the machine and project added to the URI.
+
+### WASM extensions
+
+Third-party extensions come later. They plug into the same two seams as built-in modes, cards and routes, and built-in modes don't change when they arrive.
+
+- **Where they run:** in the engine, through a WASM host crate (`adeline_ext`) on `wasmtime` with the component model. The engine owns the data an extension reads, runs on remote machines and is headless, so extensions work wherever the engine does. A crashing or looping extension is stopped by the sandbox (fuel or epoch limits) and doesn't take the engine down.
+- **What they get:** a small WIT world, versioned in folders (`wit/v1/`, `wit/v2/`, …). The host keeps every published version, and an extension declares the one it targets. The first world has two exports: `cards(activity) -> list<card>` and the route authority the extension owns. Imports are limited to what the extension's manifest asks for and the user grants at install: reading project files, HTTP to listed hosts, running listed commands. A call without a grant returns an error.
+- **The adapter:** turns WIT records into `adeline_core::Card` and back, and nothing more. No `wasmtime` or WIT type reaches the core, the engine or the UI.
+- **Wiring:** `Mode` gains an `Extension(ExtensionMode)` variant, where `ExtensionMode` is a named struct around the loaded component. The detector `match` calls it like any built-in mode, and its cards get the same checks: they are dropped unless their route uses the extension's own authority.
+- **Their views:** the router's fallback arm sends an extension's authority to a host-drawn view. The extension returns a tree from a closed set of components (list, detail, form, Markdown), and the UI draws it in the app's theme, with the app's keyboard handling and accessibility. Extensions never run code in the UI process.
+
+Until a real extension needs them, there is no `trait Mode`, no extension view tree, no webview and no post-back action from cards.
+
 ## Demo mode
 
 `--demo` never starts or connects to the engine. The UI loads `assets/workspace.json` through `data::load`, and `runtime_ui.rs` handles actions locally (look for the `if self.demo_mode` branches). A UI feature has to work in both paths. Demo mode also fakes the machines: `machines.rs` keeps Matrix and Vortex in memory, `data::load` puts one project on each machine, and `client::init` shows Vortex disconnected.

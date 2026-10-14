@@ -14,6 +14,8 @@ Before changing code that spans modules, read `docs/architecture.md`. It traces 
 
 Scopes in `docs/` are live specs, with `Status: Draft` or `Status: Confirmed`. In the commit that ships a scope, change its first line to `Status: Implemented in vX.Y.Z. This scope is history. Where it and the code differ, the code is right.` using the version that commit sets, then `git mv` it to `docs/archive/` and update any paths that point to it. Before relying on a claim from an archived scope, check it against the code.
 
+Research reports go in `docs/reports/`, and the notes behind each report go in `docs/research_notes/<report title>/`.
+
 # Completion
 
 Agents develop Adeline on Windows and macOS. Keep instructions OS agnostic, and name the per-OS command wherever one differs.
