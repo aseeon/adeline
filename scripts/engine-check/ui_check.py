@@ -287,6 +287,43 @@ def check_fork():
         process.kill()
 
 
+@check("Panels: a selection dragged from the Viewer onto blank space stays out of the conversation beside it")
+def check_selection_stays_in_panel():
+    (rc.work / "guide.md").write_text("# Guide\n\n" + "\n\n".join(
+        f"Paragraph {i} of the guide, long enough to select." for i in range(12)), encoding="utf-8")
+    process, window = launch()
+    try:
+        named(window, "Message", timeout=30)
+        # Short messages stacked down the conversation are what the selection used to jump into.
+        probes = ["leak probe one", "leak probe two", "leak probe three"]
+        for probe in probes:
+            send(window, probe)
+            # Message text isn't in the UI Automation tree; the fake agent answers within this.
+            time.sleep(4)
+        window.set_focus()
+        send_keys("^2")
+        named(window, "Docs tree", "Tree")
+        open_doc(window, "guide", 1)
+        v = named(window, "guide.md, Viewer", "Document", timeout=10).rectangle()
+        time.sleep(1)
+        # Selecting text has no keyboard path. This drags from mid-doc up and left, past the
+        # doc's text into the docs tree.
+        start, end = (v.left + 300, v.top + 330), (v.left - 120, v.top + 40)
+        mouse.press(coords=start)
+        for step in range(1, 21):
+            mouse.move(coords=(start[0] + (end[0] - start[0]) * step // 20, start[1] + (end[1] - start[1]) * step // 20))
+            time.sleep(0.01)
+        mouse.release(coords=end)
+        set_clipboard("sentinel")
+        send_keys("^c")
+        copied = wait(lambda: clipboard() != "sentinel" and clipboard(), 3, what="the selection to copy")
+        assert "Paragraph 0 of the guide" in copied, f"the selection missed the doc: {copied!r}"
+        leaked = [text for text in probes + ["Hello from fake agent"] if text in copied]
+        assert not leaked, f"the selection reached the conversation: {leaked}"
+    finally:
+        process.kill()
+
+
 def open_chat(window, title):
     """Opens a chat by its title. The chat list has no shortcut to a chat by name, so this clicks."""
     item = wait(lambda: next(e for e in window.descendants() if e.element_info.control_type == "ListItem"
@@ -383,7 +420,22 @@ def check_docs_demo():
         click(window, "Open notes/deleted-draft.md")
         named(window, "notes/deleted-draft.md no longer exists", timeout=5)
         click(window, "Open docs/architecture.md")
-        named(window, "docs/architecture.md, Viewer", "Document", timeout=5)
+        viewer = named(window, "docs/architecture.md, Viewer", "Document", timeout=5)
+        # Selecting text has no keyboard path, so this drags across the Viewer. The
+        # selection stays in the doc, and the note button sends it to the composer.
+        v = viewer.rectangle()
+        start, end = (v.left + 30, v.top + 60), (v.left + v.width() * 2 // 3, v.top + 160)
+        mouse.press(coords=start)
+        for step in range(1, 21):
+            mouse.move(coords=(start[0] + (end[0] - start[0]) * step // 20, start[1] + (end[1] - start[1]) * step // 20))
+            time.sleep(0.01)
+        mouse.release(coords=end)
+        set_clipboard("sentinel")
+        send_keys("^c")
+        copied = wait(lambda: clipboard() != "sentinel" and clipboard(), 3, what="the Viewer selection to copy")
+        assert SELECTION_CHAT not in copied and "Reply" not in copied, f"the selection reached the conversation: {copied!r}"
+        named(window, "Note on selection", "Button", timeout=5).click_input()
+        wait(lambda: message.iface_value.CurrentValue.find("`docs/architecture.md`, line") >= 0, 5, what="the Viewer note draft")
         # Quitting with unsaved edits asks first; Cancel keeps Adeline open. The doc
         # opens in the Editor it was left in.
         open_doc(window, "notes/plan", 2)
@@ -1013,7 +1065,7 @@ def main():
         only = sys.argv[1] if len(sys.argv) > 1 else ""
         for run in (check_launch, check_quit_background, check_quit_idle, check_quit_stop_all,
                     check_settings_engine, check_unavailable, check_traffic_needs_verbose, check_demo_conversation, check_docs_demo,
-                    check_transcript_selection, check_fork,
+                    check_transcript_selection, check_fork, check_selection_stays_in_panel,
                     check_demo_machines, check_add_machine, check_drop, check_ssh_failures,
                     check_upgrade_and_browse, check_headless_cli, check_headless_remote):
             if only.lower() in run.label.lower():

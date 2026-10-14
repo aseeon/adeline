@@ -192,12 +192,20 @@ impl Adeline {
                     .size_range(fonts::text_pixels(160.)..fonts::text_pixels(520.))
                     .flex_grow_0()
                     .flex_shrink_1()
-                    .child(self.docs_tree(window, cx)),
+                    .child(panes::panel_area(
+                        "docs-tree",
+                        self.docs_tree(window, cx),
+                        cx,
+                    )),
             )
             .child(
                 resizable_panel()
                     .size_range(MAIN_PANEL_MIN..Pixels::MAX)
-                    .child(self.docs_main(window, cx)),
+                    .child(panes::panel_area(
+                        panes::DOCS_MAIN,
+                        self.docs_main(window, cx),
+                        cx,
+                    )),
             )
             .child(
                 resizable_panel()
@@ -206,13 +214,15 @@ impl Adeline {
                     .size_range(fonts::text_pixels(260.)..fonts::text_pixels(720.))
                     .flex_grow_0()
                     .flex_shrink_1()
-                    .child(
+                    .child(panes::panel_area(
+                        panes::DOCS_CHAT,
                         div()
                             .size_full()
                             .border_l_1()
                             .border_color(cx.theme().border)
                             .child(self.chats(window, cx)),
-                    ),
+                        cx,
+                    )),
             )
             .into_any_element()
     }
@@ -551,8 +561,8 @@ impl Adeline {
                 .on_mouse_up(MouseButton::Left, move |event, _, cx| {
                     let at = event.position;
                     let _ = owner.update(cx, |app, cx| {
-                        let selected = !app.docs.viewer.read(cx).selected_text().is_empty();
-                        app.docs.note_at = selected.then_some(at);
+                        let range = app.docs.viewer.read(cx).selected_source_range();
+                        app.docs.note_at = range.filter(|r| !r.is_empty()).map(|r| (at, r));
                         cx.notify();
                     });
                 })
@@ -570,6 +580,7 @@ impl Adeline {
                         &path,
                         &self.docs.images,
                         config::with(|s| s.modes.docs.load_remote_images),
+                        panes::selectable_in(panes::DOCS_MAIN, cx),
                     )
                     .size_full(),
                 )
@@ -585,8 +596,8 @@ impl Adeline {
                     let at = event.position;
                     let _ = owner.update(cx, |app, cx| {
                         let viewer = app.docs_open_doc().is_some_and(|(_, d)| !d.editor);
-                        let selected = !app.docs.editor.read(cx).selected_range().is_empty();
-                        app.docs.note_at = (viewer && selected).then_some(at);
+                        let range = app.docs.editor.read(cx).selected_range();
+                        app.docs.note_at = (viewer && !range.is_empty()).then_some((at, range));
                         cx.notify();
                     });
                 })
@@ -603,25 +614,29 @@ impl Adeline {
                 )
                 .into_any_element()
         };
-        let note = self.docs.note_at.map(|at| {
-            deferred(
+        let note =
+            self.docs.note_at.clone().map(|(at, range)| {
+                deferred(
                 anchored()
                     .position(at + point(px(8.), px(8.)))
                     .snap_to_window_with_margin(px(8.))
                     .child(
+                        // Occluded, so pressing it doesn't count as a press on the doc.
+                        div().occlude().child(
                         Button::new("doc-note-selection")
                             .small()
                             .primary()
                             .icon(Icon::default().path("note-pencil.svg"))
                             .label("Note on selection")
                             .tooltip("Send a note about the selection to the chat (Ctrl+Shift+N)")
-                            .on_click(cx.listener(|app, _, window, cx| {
-                                app.act(Action::Docs(Act::Note), window, cx);
+                            .on_click(cx.listener(move |app, _, window, cx| {
+                                app.docs_note(Some(range.clone()), window, cx);
                             })),
+                        ),
                     ),
             )
             .with_priority(1)
-        });
+            });
         let _ = window;
         col()
             .id("doc-panel")

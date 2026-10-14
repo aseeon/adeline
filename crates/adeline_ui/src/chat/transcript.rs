@@ -54,6 +54,12 @@ impl Adeline {
         let message = &thread.messages[i];
         let reply = (message.role != MessageRole::User && !self.demo_mode)
             .then(|| reply_text(&thread.id, i, message, window, cx));
+        let panel = if self.section == Section::Docs {
+            panes::DOCS_CHAT
+        } else {
+            panes::CHATS_MAIN
+        };
+        let selectable = panes::selectable_in(panel, cx);
         let theme = cx.theme();
         let user = message.role == MessageRole::User;
         // A reply that so far only thought shows as the Thinking row instead.
@@ -70,11 +76,25 @@ impl Adeline {
         let mut body = col().w_full().min_w_0().gap_2();
         if user || self.demo_mode {
             for (n, paragraph) in message.text.split("\n\n").enumerate() {
+                let quote = unquote(paragraph);
+                let text = quote.clone().unwrap_or_else(|| paragraph.to_owned());
                 body = body.child(
                     div()
                         .min_w_0()
                         .text_sm()
-                        .child(SelectableText::new(("paragraph", n), paragraph.to_owned())),
+                        .when(quote.is_some(), |div| {
+                            div.border_l(px(3.))
+                                .border_color(theme.muted_foreground.alpha(0.5))
+                                .pl_3()
+                                .text_color(theme.muted_foreground)
+                        })
+                        .map(|div| {
+                            if selectable {
+                                div.child(SelectableText::new(("paragraph", n), text))
+                            } else {
+                                div.child(text)
+                            }
+                        }),
                 );
             }
         } else {
@@ -83,6 +103,7 @@ impl Adeline {
             // take `chart_2` through the theme's link color.
             body = body.child(
                 TextView::new(&reply.expect("a reply outside demo mode"))
+                    .selectable(selectable)
                     .style(
                         TextViewStyle::default()
                             .paragraph_gap(rems(0.5))
@@ -586,6 +607,18 @@ impl Transcript {
     }
 }
 
+/// The text of a paragraph quoted with `>` on every line, without the markers.
+fn unquote(paragraph: &str) -> Option<String> {
+    let lines = paragraph
+        .lines()
+        .map(|line| {
+            line.strip_prefix('>')
+                .map(|rest| rest.strip_prefix(' ').unwrap_or(rest))
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some(lines.join("\n"))
+}
+
 fn reply_text(
     thread: &str,
     i: usize,
@@ -749,5 +782,20 @@ impl Render for Row {
             .child(content)
             .child(size_probe(move |measured, _| size.set(Some(measured))))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unquote;
+
+    #[test]
+    fn a_paragraph_quoted_on_every_line_unquotes() {
+        assert_eq!(
+            unquote("> Navigation\n>\n> Read it."),
+            Some("Navigation\n\nRead it.".into())
+        );
+        assert_eq!(unquote("> quoted\nplain"), None);
+        assert_eq!(unquote("plain"), None);
     }
 }

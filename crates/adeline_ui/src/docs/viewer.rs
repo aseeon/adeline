@@ -184,8 +184,9 @@ fn link_handler(url: &SharedString, _: &ClickEvent, window: &mut Window, cx: &mu
     window.dispatch_action(Box::new(OpenLink { url: url.clone() }), cx);
 }
 
-fn nested(id: impl Into<ElementId>, body: &SharedString) -> TextView {
+fn nested(id: impl Into<ElementId>, body: &SharedString, cx: &App) -> TextView {
     TextView::markdown(id, body.clone())
+        .selectable(crate::panes::selectable_in(crate::panes::DOCS_MAIN, cx))
         .on_link_click(link_handler)
         .w_full()
         .min_w_0()
@@ -227,6 +228,7 @@ fn render_alert(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyElement
         .child(nested(
             ("alert", node.source_range().map_or(0, |r| r.start)),
             &alert.body,
+            cx,
         ))
         .into_any_element()
 }
@@ -265,7 +267,7 @@ fn render_task(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyElement 
             div()
                 .flex_1()
                 .min_w_0()
-                .child(nested(("task-body", task.mark), &task.body)),
+                .child(nested(("task-body", task.mark), &task.body, cx)),
         )
         .into_any_element()
 }
@@ -405,6 +407,7 @@ pub(crate) fn markdown(
     path: &str,
     images: &Images,
     remote_images: bool,
+    selectable: bool,
 ) -> TextView {
     let mut extensions = MarkdownExtensions::default()
         .frontmatter()
@@ -424,7 +427,7 @@ pub(crate) fn markdown(
     TextView::new(state)
         .markdown_extensions(extensions)
         .scrollable(true)
-        .selectable(true)
+        .selectable(selectable)
         .on_link_click(link_handler)
         .image_source(move |uri| {
             let url = uri.as_ref();

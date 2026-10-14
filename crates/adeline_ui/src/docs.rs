@@ -195,7 +195,8 @@ pub(crate) struct Docs {
     path_input: Entity<InputState>,
     projects: HashMap<String, Project>,
     images: viewer::Images,
-    note_at: Option<Point<Pixels>>,
+    // Where the note button shows, and the source range it notes.
+    note_at: Option<(Point<Pixels>, std::ops::Range<usize>)>,
     // The doc a dialog acts on, and what follows the unsaved-docs prompt.
     target: Option<String>,
     then: Option<Then>,
