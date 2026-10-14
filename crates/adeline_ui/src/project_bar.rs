@@ -174,8 +174,9 @@ impl Adeline {
             })
             .collect();
         let tab_fit = std::rc::Rc::clone(&self.tab_fit);
+        let bar_id = self.project_bar.entity_id();
         let measure = canvas(
-            move |bounds, window, _| tab_fit.measure(&fit, bounds.size.width, window),
+            move |bounds, window, cx| tab_fit.measure(&fit, bounds.size.width, bar_id, window, cx),
             |_, (), _, _| {},
         )
         .absolute()

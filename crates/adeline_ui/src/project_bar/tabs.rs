@@ -83,7 +83,14 @@ impl TabFit {
             .map_or(TabSize::Full, |(_, size)| *size)
     }
 
-    pub(super) fn measure(&self, tabs: &[FitTab], available: Pixels, window: &mut Window) {
+    pub(super) fn measure(
+        &self,
+        tabs: &[FitTab],
+        available: Pixels,
+        bar: EntityId,
+        window: &mut Window,
+        cx: &mut App,
+    ) {
         if available <= Pixels::ZERO {
             return;
         }
@@ -129,7 +136,9 @@ impl TabFit {
             .collect();
         if *self.sizes.borrow() != sizes {
             *self.sizes.borrow_mut() = sizes;
-            window.refresh();
+            // The bar is a cached view, so a refresh alone would replay it with
+            // the old sizes, and a notify during the draw is dropped.
+            cx.defer(move |cx| cx.notify(bar));
         }
     }
 }
