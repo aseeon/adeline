@@ -12,6 +12,7 @@ import ctypes
 import ctypes.wintypes
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -19,6 +20,7 @@ import time
 import traceback
 
 import win32clipboard
+from PIL import ImageChops, ImageGrab
 from pywinauto import Desktop, mouse
 from pywinauto.controls.hwndwrapper import HwndWrapper
 from pywinauto.keyboard import send_keys
@@ -583,6 +585,65 @@ def check_transcript_selection():
         process.kill()
 
 
+FOLD_PROJECTS = [f"a-project-with-a-long-name-{n}" for n in range(8)]
+
+
+def title_bar_image(left, top, right, height):
+    # Off the title bar, so no hover tints it.
+    mouse.move(coords=(left + 400, top + 300))
+    time.sleep(1.5)
+    return ImageGrab.grab((left, top, right, top + height), all_screens=True)
+
+
+@check("View caching: project tabs shorten and fold into a menu in a narrow window")
+def check_tabs_fold():
+    rc.stop_engine()
+    for name in FOLD_PROJECTS:
+        rc.write_project(name, name, rc.work)
+    try:
+        process, window = launch()
+        try:
+            window.set_focus()
+            wait(lambda: "a-project-with-a-long-name-0" in tabs(window), 30, what="the projects' tabs")
+            r = window.rectangle()
+            user32.MoveWindow(ctypes.c_void_p(window.handle), r.left, r.top, 800, 600, True)
+            more = wait(lambda: containing(window, "more projects", "Button"), 10, what="the +N menu")
+            r = window.rectangle()
+            shown = [e for e in window.descendants() if e.element_info.control_type == "TabItem"]
+            active = max(shown, key=lambda e: e.rectangle().width())
+            assert all(e.rectangle().width() < active.rectangle().width() for e in shown if e != active), \
+                "the inactive tabs didn't shorten"
+            projects = named(window, "Projects", "Button").rectangle()
+            # Kit's window controls sit right of the Projects menu; UI Automation gives them no bounds.
+            assert projects.right < r.right - 100, "the Projects menu runs into the window controls"
+            height = active.rectangle().height()
+            expected = title_bar_image(r.left, r.top, r.right, height)
+            note = f"{len(shown)} tabs, {more.element_info.name}"
+        finally:
+            process.kill()
+        # The bar is a cached view, drawn uncached while UI Automation is on, so the
+        # same window without it has to draw the same folded bar.
+        process, hwnd = launch_blind()
+        try:
+            time.sleep(3)
+            # The window reopens at 800 wide; the tabs refit on a resize while it runs.
+            user32.MoveWindow(ctypes.c_void_p(hwnd), r.left, r.top, 1600, 600, True)
+            time.sleep(1.5)
+            user32.MoveWindow(ctypes.c_void_p(hwnd), r.left, r.top, 800, 600, True)
+            actual = title_bar_image(r.left, r.top, r.right, height)
+            if ImageChops.difference(expected, actual).getbbox():
+                expected.save(rc.work / "title-bar-expected.png")
+                actual.save(rc.work / "title-bar-actual.png")
+                raise AssertionError(f"without UI Automation the title bar draws differently; see {rc.work}")
+            return note
+        finally:
+            process.kill()
+    finally:
+        rc.stop_engine()
+        for name in FOLD_PROJECTS:
+            shutil.rmtree(rc.config / "projects" / name, ignore_errors=True)
+
+
 # ---------------------------------------------------------------------------
 # Remote machines, through fake_ssh.py: each destination is a separate home
 # with its own engine on this computer.
@@ -1065,7 +1126,7 @@ def main():
         only = sys.argv[1] if len(sys.argv) > 1 else ""
         for run in (check_launch, check_quit_background, check_quit_idle, check_quit_stop_all,
                     check_settings_engine, check_unavailable, check_traffic_needs_verbose, check_demo_conversation, check_docs_demo,
-                    check_transcript_selection, check_fork, check_selection_stays_in_panel,
+                    check_transcript_selection, check_tabs_fold, check_fork, check_selection_stays_in_panel,
                     check_demo_machines, check_add_machine, check_drop, check_ssh_failures,
                     check_upgrade_and_browse, check_headless_cli, check_headless_remote):
             if only.lower() in run.label.lower():

@@ -65,7 +65,9 @@ pub(super) fn region<V: Render>(
     window: &Window,
 ) -> AnyElement {
     if window.is_a11y_active() {
-        view.clone().into_any_element()
+        let mut uncached = div();
+        *uncached.style() = style;
+        uncached.child(view.clone()).into_any_element()
     } else {
         view.clone().cached(style).into_any_element()
     }
