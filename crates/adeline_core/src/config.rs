@@ -205,7 +205,8 @@ impl Default for Chats {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
+// Not `deny_unknown_fields`: files from before 0.2.0 carry draft Docs keys.
+#[serde(default)]
 pub struct Docs {
     pub respect_gitignore: bool,
     pub show_left_panel: bool,
@@ -451,7 +452,7 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let original = "general:\n  features:\n    services: true\n    issues: true\nmodes:\n  workflows: 42\n  services: [true, {obsolete: false}]\n  groupchats: {show_left_panel: definitely-not-a-boolean, custom: [one, two]}\n  issues: false\n  whiteboard: this was a scalar\n";
+        let original = "general:\n  features:\n    services: true\n    issues: true\nmodes:\n  docs: {show_raw_markdown: false, show_left_panel: false}\n  workflows: 42\n  services: [true, {obsolete: false}]\n  groupchats: {show_left_panel: definitely-not-a-boolean, custom: [one, two]}\n  issues: false\n  whiteboard: this was a scalar\n";
         std::fs::write(&path, original).unwrap();
         let before: serde_yaml_ng::Value = serde_yaml_ng::from_str(original).unwrap();
         update_at(&path, |s| s.general.appearance.font_size = 18).unwrap();
@@ -472,6 +473,8 @@ mod tests {
         }
         let settings = read(&path).unwrap();
         assert_eq!(settings.general.appearance.font_size, 18);
+        assert!(!settings.modes.docs.show_left_panel);
+        assert!(settings.modes.docs.respect_gitignore);
         assert!(settings.general.features.services);
         assert!(settings.general.features.issues);
         std::fs::remove_file(path).unwrap();
