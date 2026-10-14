@@ -12,6 +12,8 @@ extend-exclude = [
     # Third-party agent skills, kept as published.
     ".agents/skills/",
     ".claude/skills/",
+    # Research notes quote their sources as written.
+    "docs/research_notes/",
 ]
 
 [default]
