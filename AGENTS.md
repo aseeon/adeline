@@ -8,7 +8,7 @@ Prefer sparse - top of the module level comments. Avoid class and function level
 
 # Navigation
 
-Before changing code that spans modules, read `docs/architecture.md`. It traces a user action from UI to engine to agent and back, and covers demo mode and assets.
+`docs/architecture.md` traces a user action from UI to engine to agent and back, and covers demo mode and assets. Read it before your first code change in a session, or when you need to find where something lives. When a change moves a module or alters a flow it describes, update it in the same commit.
 
 # Scope docs
 
