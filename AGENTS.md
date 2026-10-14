@@ -44,6 +44,8 @@ Bump `PROTOCOL` in `crates/adeline_core/src/protocol.rs` in the commit that chan
 
 Test behavior a user or another machine would notice: state machines, failures, persistence, the engine through its protocol. No tests of constants, styling, one-line helpers or framework internals.
 
+Prefer high-impact integration tests: one test that drives a real flow across modules, through the protocol or the UI, over several unit tests of its parts. Write a unit test where the logic is intricate enough that an integration test would not pin down which case broke.
+
 # UI testing
 
 On Windows, test UI by extending `scripts/engine-check/ui_check.py`, which drives the real window through UI Automation (pywinauto), `--demo` included. See `scripts/engine-check/README.md`. Fall back to computer use only for what UI Automation cannot reach. The `scripts/engine-check/` suite is Windows only, so on macOS use computer use for UI checks.
