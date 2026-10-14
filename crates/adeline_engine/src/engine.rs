@@ -31,6 +31,7 @@ use tokio::{sync::mpsc, task::block_in_place};
 
 mod cli;
 mod conversations;
+mod docs;
 mod events;
 mod projects;
 mod serve;
@@ -68,7 +69,7 @@ fn load_settings() -> EngineSettings {
     let defaults = EngineSettings {
         keep_running: false,
         retry_limit: 5,
-        mcp_servers: Vec::new(),
+        ..EngineSettings::default()
     };
     let Ok(path) = settings_path() else {
         return defaults;
@@ -128,6 +129,7 @@ enum Input {
         client: u64,
     },
     Watch(Vec<PathBuf>),
+    Docs(Vec<PathBuf>),
     ProjectsLoaded {
         store: ProjectStore,
         started: Instant,
@@ -205,6 +207,12 @@ struct Engine {
     watched: Vec<PathBuf>,
     watch_due: Option<Instant>,
     _watcher: Option<notify::RecommendedWatcher>,
+    // The project each client watches the docs of.
+    docs_watching: HashMap<u64, String>,
+    docs_watched: HashSet<PathBuf>,
+    docs_watcher: Option<notify::RecommendedWatcher>,
+    doc_events: Vec<PathBuf>,
+    docs_due: Option<Instant>,
     status: Status,
     exit: bool,
     identity: String,
@@ -405,6 +413,11 @@ impl Engine {
             touched: HashMap::new(),
             watched: Vec::new(),
             watch_due: None,
+            docs_watching: HashMap::new(),
+            docs_watched: HashSet::new(),
+            docs_watcher: None,
+            doc_events: Vec::new(),
+            docs_due: None,
             status: Status::default(),
             exit: false,
             identity: ipc::engine_id().unwrap_or_else(|error| {
@@ -604,6 +617,9 @@ impl Engine {
                 self.probes.retain(|(owner, _), _| *owner != client);
                 self.logins.retain(|(owner, _), _| *owner != client);
                 self.watching.remove(&client);
+                if self.docs_watching.remove(&client).is_some() {
+                    self.watch_docs();
+                }
                 if self.clients.remove(&client).is_some_and(|c| c.subscribed) {
                     tracing::event!(
                         name: "engine.client.disconnected",
@@ -618,6 +634,7 @@ impl Engine {
                 self.watched.extend(paths);
                 self.watch_due = Some(Instant::now() + WATCH_SETTLE);
             }
+            Input::Docs(paths) => self.doc_events(paths),
             Input::ProjectsLoaded { store, started } => self.reconcile(store, started),
             Input::Harnesses(catalog) => {
                 self.harnesses = catalog;
@@ -932,6 +949,13 @@ impl Engine {
             Command::ListDirectory { path } => block_in_place(|| list_directory(path))
                 .map_err(|e| format!("{e:#}"))
                 .and_then(|listing| serde_json::to_value(listing).map_err(|e| e.to_string())),
+            command @ (Command::ListDocs { .. }
+            | Command::ReadDoc { .. }
+            | Command::WriteDoc { .. }
+            | Command::RenameDoc { .. }
+            | Command::DeleteDoc { .. }
+            | Command::ReadImage { .. }
+            | Command::WatchDocs { .. }) => self.docs_command(client, command),
             Command::StopAll => {
                 self.begin_stop_all(Some((client, request)), false);
                 return None;
@@ -1005,6 +1029,10 @@ impl Engine {
         if self.watch_due.is_some_and(|due| Instant::now() >= due) {
             self.watch_due = None;
             self.reload_watched();
+        }
+        if self.docs_due.is_some_and(|due| Instant::now() >= due) {
+            self.docs_due = None;
+            self.docs_settled();
         }
         if let Some(stop) = &mut self.stop_all
             && Instant::now() >= stop.deadline

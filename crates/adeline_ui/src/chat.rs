@@ -45,6 +45,7 @@ mod list;
 mod transcript;
 pub(super) use composer::Composer;
 pub(super) use list::{COLLAPSED_WIDTH, ChatList};
+pub(crate) use list::{ROW_HEIGHT, status_name};
 pub(super) use transcript::Transcript;
 
 pub(super) fn size_probe(

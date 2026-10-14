@@ -525,3 +525,198 @@ fn text_for_another_session_never_reaches_the_conversation() {
         .collect();
     assert_eq!(texts, "Hello from fake agent");
 }
+
+impl Client {
+    /// Waits for a delta that passes `test`, reading on from what arrived so far.
+    fn wait_delta(&mut self, test: impl Fn(&Value) -> bool) -> Value {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            if let Some(delta) = self.deltas.iter().find(|delta| test(delta)) {
+                return delta.clone();
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            let message = self
+                .messages
+                .recv_timeout(left)
+                .expect("the delta never came");
+            self.handle(&message);
+        }
+    }
+
+    fn cards(&self, conversation: &str) -> Vec<Value> {
+        self.deltas
+            .iter()
+            .filter(|delta| delta["delta"] == "card" && delta["id"] == conversation)
+            .map(|delta| delta["card"].clone())
+            .collect()
+    }
+
+    fn docs(&mut self, command: Command) -> Result<Value, String> {
+        self.call(command)
+    }
+}
+
+#[test]
+fn docs_an_agent_writes_get_one_card_each_and_watching_clients_see_disk_changes() {
+    let mut home = Home::new("docs");
+    let work = home.root.join("work");
+    fs::write(work.join(".gitignore"), "target/\n").unwrap();
+    let mut client = home.connect();
+    let project = || PROJECT.to_owned();
+    client
+        .docs(Command::WatchDocs {
+            project_id: Some(project()),
+        })
+        .unwrap();
+    let id = client.send(
+        None,
+        "WRITE notes/plan.md WRITE main.rs WRITE ../outside.md WRITE target/build.md",
+    );
+    client.wait_turn(&id);
+    client.settle();
+    let cards = client.cards(&id);
+    assert_eq!(cards.len(), 1, "{cards:?}");
+    assert_eq!(cards[0]["entity"], "adeline://docs/notes/plan.md");
+    assert_eq!(cards[0]["title"], "plan.md");
+    assert_eq!(cards[0]["turn"], 0);
+    assert!(cards[0]["edited"].as_u64().unwrap() > 0);
+
+    // A later turn updates the card in place; a new doc gets its own.
+    client.send(Some(&id), "WRITE notes/plan.md WRITE a.md");
+    client.wait_turn(&id);
+    client.settle();
+    let mut fresh = home.connect();
+    let thread = fresh.snapshot.as_ref().unwrap()["projects"][0]["threads"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|thread| thread["id"] == id.as_str())
+        .cloned()
+        .unwrap();
+    let saved: Vec<(String, Value)> = thread["cards"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|card| {
+            (
+                card["subtitle"].as_str().unwrap().to_owned(),
+                card["turn"].clone(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        saved,
+        [
+            ("notes/plan.md".to_owned(), json!(0)),
+            ("a.md".to_owned(), json!(2))
+        ]
+    );
+
+    let listed = fresh.docs(Command::ListDocs {
+        project_id: project(),
+    });
+    assert_eq!(listed, Ok(json!(["a.md", "notes/plan.md"])));
+
+    // A save keeps the file's line endings and missing final newline.
+    fs::write(work.join("crlf.md"), "one\r\ntwo\r\nthree").unwrap();
+    let read = fresh
+        .docs(Command::ReadDoc {
+            project_id: project(),
+            path: "crlf.md".into(),
+        })
+        .unwrap();
+    assert_eq!(read["text"], "one\r\ntwo\r\nthree");
+    assert_eq!(read["read_only"], Value::Null);
+    fresh
+        .docs(Command::WriteDoc {
+            project_id: project(),
+            path: "crlf.md".into(),
+            text: "one\nTWO\nthree\n".into(),
+            create: false,
+        })
+        .unwrap();
+    assert_eq!(
+        fs::read(work.join("crlf.md")).unwrap(),
+        b"one\r\nTWO\r\nthree"
+    );
+
+    // Nothing is overwritten, and names that aren't docs are refused.
+    let refused = |result: Result<Value, String>| result.unwrap_err();
+    let error = refused(fresh.docs(Command::WriteDoc {
+        project_id: project(),
+        path: "a.md".into(),
+        text: "replaced".into(),
+        create: true,
+    }));
+    assert!(error.contains("already exists"), "{error}");
+    assert_eq!(
+        fs::read_to_string(work.join("a.md")).unwrap(),
+        "written by the fake agent\n"
+    );
+    let error = refused(fresh.docs(Command::RenameDoc {
+        project_id: project(),
+        from: "a.md".into(),
+        to: "notes/plan.md".into(),
+    }));
+    assert!(error.contains("already exists"), "{error}");
+    for bad in ["a.rs", "../a.md", "notes/x?.md"] {
+        assert!(
+            fresh
+                .docs(Command::RenameDoc {
+                    project_id: project(),
+                    from: "a.md".into(),
+                    to: bad.into(),
+                })
+                .is_err(),
+            "{bad}"
+        );
+    }
+    fresh
+        .docs(Command::RenameDoc {
+            project_id: project(),
+            from: "a.md".into(),
+            to: "notes/b.md".into(),
+        })
+        .unwrap();
+    assert!(work.join("notes/b.md").is_file() && !work.join("a.md").exists());
+
+    // Changes on disk reach the watching client, and a deleted doc's card turns gone.
+    fs::write(work.join("outside-change.md"), "new").unwrap();
+    let change = client.wait_delta(|delta| {
+        delta["delta"] == "docs"
+            && delta["changes"]
+                .as_array()
+                .is_some_and(|changes| changes.iter().any(|c| c["path"] == "outside-change.md"))
+    });
+    assert_eq!(change["project_id"], PROJECT);
+    fs::remove_file(work.join("notes/plan.md")).unwrap();
+    client.wait_delta(|delta| {
+        delta["delta"] == "card"
+            && delta["card"]["subtitle"] == "notes/plan.md"
+            && delta["card"]["gone"] == true
+    });
+    let error = refused(fresh.docs(Command::ReadDoc {
+        project_id: project(),
+        path: "notes/plan.md".into(),
+    }));
+    assert!(error.contains("no longer exists"), "{error}");
+
+    // With Docs disabled, no new cards are made.
+    let before = client.cards(&id).len();
+    client
+        .call(Command::SetSettings {
+            settings: EngineSettings {
+                retry_limit: 5,
+                docs: adeline_core::protocol::DocsSettings {
+                    enabled: false,
+                    respect_gitignore: true,
+                },
+                ..EngineSettings::default()
+            },
+        })
+        .unwrap();
+    client.send(Some(&id), "WRITE c.md");
+    client.wait_turn(&id);
+    client.settle();
+    assert_eq!(client.cards(&id).len(), before);
+}

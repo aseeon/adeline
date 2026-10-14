@@ -1,0 +1,15 @@
+[package]
+name = "adeline_docs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+doctest = false
+
+[dependencies]
+ignore.workspace = true
+nucleo-matcher.workspace = true
+
+[lints]
+workspace = true

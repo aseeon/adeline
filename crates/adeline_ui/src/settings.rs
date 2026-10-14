@@ -59,7 +59,7 @@ impl Group {
     fn subgroups(self) -> &'static [&'static str] {
         match self {
             Self::General => &["Features", "Appearance", "Keymap"],
-            Self::Modes => &["Chats"],
+            Self::Modes => &["Chats", "Docs"],
             Self::Licenses => &["Phosphor Icons", "GPUI", "Chivo & Chivo Mono"],
             Self::Agents => &["MCP servers"],
             Self::Engine => &["Engine"],
@@ -71,7 +71,7 @@ impl Group {
     }
 
     fn of_mode(mode: Option<Section>) -> Self {
-        if mode == Some(Section::Chats) {
+        if matches!(mode, Some(Section::Chats | Section::Docs)) {
             Self::Modes
         } else {
             Self::General
@@ -122,6 +122,41 @@ const THINKING_DESCRIPTION: &str = "How the row under your message moves while t
 
 impl Adeline {
     pub(super) fn mode_options(&self, section: Section) -> Vec<SettingOption> {
+        if section == Section::Docs {
+            let docs = config::current().modes.docs;
+            return vec![
+                (
+                    "Respect .gitignore",
+                    "Leave out files that .gitignore ignores and files in hidden folders.",
+                    docs.respect_gitignore,
+                    Action::Docs(docs::Act::Gitignore),
+                ),
+                (
+                    "Show left panel",
+                    "Display the docs tree.",
+                    docs.show_left_panel,
+                    Action::Docs(docs::Act::LeftPanel),
+                ),
+                (
+                    "Show conversation panel",
+                    "Display a conversation beside the doc.",
+                    docs.show_conversation_panel,
+                    Action::Docs(docs::Act::ChatPanel),
+                ),
+                (
+                    "Open files in the Editor",
+                    "Open docs in the Editor instead of the Viewer.",
+                    docs.open_in == config::DocView::Editor,
+                    Action::Docs(docs::Act::OpenIn),
+                ),
+                (
+                    "Load remote images",
+                    "Show images from the web in the Viewer.",
+                    docs.load_remote_images,
+                    Action::Docs(docs::Act::RemoteImages),
+                ),
+            ];
+        }
         if section != Section::Chats {
             return Vec::new();
         }
@@ -985,7 +1020,12 @@ impl SettingsWindow {
                 self.last_query.clear();
                 self.query
                     .update(cx, |input, cx| input.set_value("", window, cx));
-                self.after_agent(AfterAgent::Child(Group::of_mode(Some(mode)), 0), window, cx);
+                let child = usize::from(mode == Section::Docs);
+                self.after_agent(
+                    AfterAgent::Child(Group::of_mode(Some(mode)), child),
+                    window,
+                    cx,
+                );
             }
             AfterAgent::Agent(id) => self.show_agent(id, window, cx),
             AfterAgent::Delete(id) => self.confirm_delete_after_leaving(id, window, cx),
@@ -1135,7 +1175,7 @@ impl Render for SettingsWindow {
                 .enumerate()
                 .filter(|(child, title)| {
                     if group == Group::General {
-                        (self.demo || *child != 0) && general_matches(*child, &query)
+                        general_matches(*child, &query)
                     } else {
                         matches_query(&query, &[name, title])
                     }
@@ -1301,7 +1341,7 @@ impl Render for SettingsWindow {
         }
         if let Some(owner) = self.owner.entity.upgrade() {
             let app = owner.read(cx);
-            if self.demo && show(Group::General, 0) && general_matches(0, &query) {
+            if show(Group::General, 0) && general_matches(0, &query) {
                 pages.push(self.features_settings(&query, searching, cx));
             }
             if show(Group::General, 1) && general_matches(1, &query) {
@@ -1312,6 +1352,9 @@ impl Render for SettingsWindow {
             }
             if show(Group::Modes, 0) {
                 pages.extend(self.chats_settings(app, &query, searching, cx));
+            }
+            if show(Group::Modes, 1) {
+                pages.extend(self.docs_settings(app, &query, searching, cx));
             }
         }
         if show(Group::Engine, 0) && engine_matches(&query) {

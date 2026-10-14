@@ -10,7 +10,7 @@ Set in `general.keymap` in `settings.yml` (defaults in `Keymap::default`, `crate
 |---|---|---|
 | Ctrl+, / Cmd+, | Open Settings | `open_settings` |
 | Ctrl+N / Cmd+N | New chat | `new_chat` |
-| Ctrl+F / Cmd+F | Search chats (Chats mode with a project open), otherwise open the projects menu | `focus_search` |
+| Ctrl+F / Cmd+F | Search chats (Chats mode with a project open), search docs (Docs mode, outside the Editor), otherwise open the projects menu | `focus_search` |
 | Ctrl+Enter / Cmd+Enter | Send message | `send_message` |
 | Escape | Close the open dialog, popup or menu; in Settings and the agent form, leave (asks about unsaved changes) | `close_dialog_or_popup` |
 | Tab | Move focus to the next control | `next_control` |
@@ -46,6 +46,60 @@ Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `crates
 | Ctrl+Shift+A / Cmd+Shift+A | Attach files |
 | Ctrl+Shift+L / Cmd+Shift+L | Show the ACP traffic tab of the side panel (with `--verbose`) |
 | Ctrl+Shift+T / Cmd+Shift+T | Open the TODO list |
+
+## Modes
+
+Registered with both the Ctrl and the Cmd form on every OS, not in the keymap setting.
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+1 … Ctrl+9 / Cmd+1 … Cmd+9 | Switch to the mode at that position on the mode rail (enabled modes only) |
+
+## Docs
+
+Registered with both the Ctrl and the Cmd form on every OS (`docs::key_bindings`, `crates/adeline_ui/src/docs.rs`), not in the keymap setting. They work while Docs mode shows.
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+P / Cmd+P | Search docs (focus the tree's search field) |
+| Ctrl+Shift+V / Cmd+Shift+V | Switch the open doc between the Viewer and the Editor |
+| Ctrl+S / Cmd+S | Save the open doc (recreates a deleted one) |
+| Ctrl+Alt+N / Cmd+Alt+N | New doc |
+| Ctrl+Shift+K / Cmd+Shift+K | Choose the conversation on the right |
+| Ctrl+Shift+N / Cmd+Shift+N | Note on the selection: quote it with its path and lines in the message box |
+
+In the tree search field, Down moves into the tree. With the tree focused, no modifier:
+
+| Shortcut | Action |
+|---|---|
+| Up / Down | Move to the previous / next row |
+| Home / End | Move to the first / last row |
+| Right / Left | Expand / collapse a folder; Left on a doc moves to its folder |
+| Enter or Space | Open the doc, or expand or collapse the folder |
+| F2 | Rename the doc |
+| Delete | Delete the doc (asks first) |
+
+In the Editor (the toolbar's tools):
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+Alt+1, 2, 3 / Cmd+Alt+1, 2, 3 | Heading 1, 2, 3 |
+| Ctrl+B / Cmd+B | Bold |
+| Ctrl+I / Cmd+I | Italic |
+| Ctrl+Shift+X / Cmd+Shift+X | Strikethrough |
+| Ctrl+Alt+C / Cmd+Alt+C | Inline code |
+| Ctrl+Alt+B / Cmd+Alt+B | Code block |
+| Ctrl+K / Cmd+K | Link |
+| Ctrl+Shift+8 / Cmd+Shift+8 | Bullet list |
+| Ctrl+Shift+7 / Cmd+Shift+7 | Numbered list |
+| Ctrl+Shift+9 / Cmd+Shift+9 | Task list |
+| Ctrl+Shift+. / Cmd+Shift+. | Quote |
+| Ctrl+Alt+T / Cmd+Alt+T | Table |
+| Ctrl+Z / Cmd+Z, Ctrl+Y / Cmd+Shift+Z | Undo, redo (from GPUI Kit) |
+| Ctrl+F / Cmd+F | Find in the doc (from GPUI Kit) |
+| Ctrl+H / Cmd+H | Find and replace (from GPUI Kit) |
+
+A doc card under a reply opens with Tab to its Open button and Enter.
 
 ## Chat list
 
@@ -131,7 +185,6 @@ Projects:
 
 Chats:
 
-- Switch mode (Chats, Group chats, and the feature-flagged Docs, Workflows, Services, Issues, Whiteboard)
 - Filter chats by agent, clear chat filters
 - Show completed chats, show archived chats
 - Mark a chat complete
@@ -161,6 +214,7 @@ Panels:
 
 - Toggle the left panel
 - Toggle the side panel
+- Docs: toggle the tree and the conversation panel; resize the panels
 
 Machines and engine:
 

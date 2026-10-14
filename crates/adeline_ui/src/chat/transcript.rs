@@ -180,7 +180,9 @@ impl Adeline {
                     content.child(div().mt_1().child(body))
                 })
                 .when(thread.ends_turn(i) && !writing, |content| {
-                    content.child(self.closing_row(thread, i, cx))
+                    content
+                        .children(self.turn_cards(thread, i, cx))
+                        .child(self.closing_row(thread, i, cx))
                 })
                 .into_any_element()
         };
@@ -498,6 +500,12 @@ impl Transcript {
             row.update(cx, |row, _| row.fresh = true);
         }
         cx.notify();
+    }
+
+    // Doc cards change under earlier turns, so every row redraws and remeasures.
+    pub fn refresh_all(&mut self, cx: &mut Context<Self>) {
+        self.state.remeasure();
+        self.invalidate(cx);
     }
 
     fn note_following(&mut self, cx: &mut Context<Self>) {

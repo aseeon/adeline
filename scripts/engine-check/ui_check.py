@@ -338,6 +338,80 @@ def check_demo_conversation():
         process.kill()
 
 
+def open_doc(window, query, rows_down):
+    """Opens a doc from the tree search by keyboard: Ctrl+P, the query, Down into the tree."""
+    send_keys("^p")
+    send_keys("^a{BACKSPACE}" + query, with_spaces=True)
+    send_keys("{DOWN}" * rows_down + "{ENTER}")
+
+
+@check("Docs AC4/AC8/AC10/AC12/AC15/AC21/AC22/AC24/AC29/AC30/AC35/AC36/AC44 (demo): tree, Viewer, Editor, notes, chooser, cards, unsaved prompt, remembered doc")
+def check_docs_demo():
+    rc.stop_engine()
+    process, window = launch("--demo")
+    try:
+        named(window, "Message", timeout=30)
+        window.set_focus()
+        # Ctrl+2 picks the second mode on the rail.
+        send_keys("^2")
+        named(window, "Docs tree", "Tree")
+        open_doc(window, "mdguide", 2)
+        named(window, "docs/markdown-guide.md, Viewer", "Document")
+        send_keys("^+v")
+        named(window, "docs/markdown-guide.md, Editor", "Edit", timeout=5)
+        named(window, "Bold (Ctrl+B)", "Button")
+        send_keys("^{END}")
+        send_keys("hello", with_spaces=True)
+        named(window, "markdown-guide.md, unsaved", "TreeItem", timeout=5)
+        send_keys("^s")
+        named(window, "markdown-guide.md", "TreeItem", timeout=5)
+        # A note quotes the selection with its path and line into the composer.
+        open_doc(window, "notes/plan", 2)
+        send_keys("^+v")
+        named(window, "notes/plan.md, Editor", "Edit", timeout=5)
+        send_keys("^{HOME}+{DOWN}^+n")
+        message = named(window, "Message", "Edit")
+        wait(lambda: message.iface_value.CurrentValue.startswith("`notes/plan.md`, line 1:"), 5, what="the note draft")
+        # The chooser finds a chat by its title; its reply shows doc cards.
+        send_keys("^+k")
+        named(window, "Search conversations", timeout=5)
+        send_keys("Make document edits{ENTER}", with_spaces=True)
+        named(window, "2 more docs, hidden", "Button", timeout=10)
+        # The cards and the conversation have no shortcuts to them; their buttons are invoked.
+        click(window, "2 more docs, hidden")
+        named(window, "2 more docs, shown", "Button", timeout=5)
+        click(window, "Open notes/deleted-draft.md")
+        named(window, "notes/deleted-draft.md no longer exists", timeout=5)
+        click(window, "Open docs/architecture.md")
+        named(window, "docs/architecture.md, Viewer", "Document", timeout=5)
+        # Quitting with unsaved edits asks first; Cancel keeps Adeline open. The doc
+        # opens in the Editor it was left in.
+        open_doc(window, "notes/plan", 2)
+        named(window, "notes/plan.md, Editor", "Edit", timeout=5)
+        send_keys("xyz")
+        send_keys("%{F4}")
+        named(window, "Save changes to 1 doc?", timeout=5)
+        click(window, "Cancel")
+        time.sleep(1)
+        assert process.poll() is None, "Cancel quit Adeline"
+        send_keys("%{F4}")
+        named(window, "Save changes to 1 doc?", timeout=5)
+        click(window, "Discard")
+        wait(lambda: process.poll() is not None, 10, what="Adeline to quit")
+    finally:
+        process.kill()
+    # Docs reopens the project's doc and view where they were left.
+    process, window = launch("--demo")
+    try:
+        named(window, "Message", timeout=30)
+        window.set_focus()
+        send_keys("^2")
+        named(window, "notes/plan.md, Editor", "Edit", timeout=10)
+        assert engine_pid() is None, "demo Docs started an engine"
+    finally:
+        process.kill()
+
+
 def clipboard():
     win32clipboard.OpenClipboard()
     try:
@@ -938,7 +1012,7 @@ def main():
     try:
         only = sys.argv[1] if len(sys.argv) > 1 else ""
         for run in (check_launch, check_quit_background, check_quit_idle, check_quit_stop_all,
-                    check_settings_engine, check_unavailable, check_demo, check_traffic_needs_verbose, check_demo_conversation,
+                    check_settings_engine, check_unavailable, check_traffic_needs_verbose, check_demo_conversation, check_docs_demo,
                     check_transcript_selection, check_fork,
                     check_demo_machines, check_add_machine, check_drop, check_ssh_failures,
                     check_upgrade_and_browse, check_headless_cli, check_headless_remote):

@@ -1,7 +1,8 @@
 //! What this UI remembers for itself and doesn't share with other clients:
-//! when it last opened each project, by machine and project ID. Local projects
-//! keep the bare IDs older versions wrote. `migrated` records that the first
-//! local snapshot's times, kept by older project files, were adopted.
+//! when it last opened each project and how it last left Docs mode there, by
+//! machine and project ID. Local projects keep the bare IDs older versions
+//! wrote. `migrated` records that the first local snapshot's times, kept by
+//! older project files, were adopted.
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, sync::Mutex};
 
@@ -10,6 +11,20 @@ use std::{collections::BTreeMap, path::PathBuf, sync::Mutex};
 struct UiState {
     migrated: bool,
     opened_at: BTreeMap<String, i64>,
+    docs: BTreeMap<String, Docs>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Docs {
+    pub open: Option<String>,
+    pub editor: bool,
+    // The Viewer's top block and offset into it, or the Editor's offset.
+    pub scroll: (usize, f32),
+    pub tree_width: Option<f32>,
+    pub chat_width: Option<f32>,
+    pub expanded: Vec<String>,
+    pub chat: Option<String>,
 }
 
 static STATE: Mutex<Option<UiState>> = Mutex::new(None);
@@ -79,9 +94,33 @@ pub fn record_opened(machine: &str, id: &str, at: i64) -> anyhow::Result<()> {
 
 pub fn rename(machine: &str, old: &str, new: &str) {
     with(|state| {
+        let docs = state.docs.remove(&key(machine, old));
+        if let Some(docs) = docs {
+            state.docs.insert(key(machine, new), docs);
+        }
         if let Some(at) = state.opened_at.remove(&key(machine, old)) {
             state.opened_at.insert(key(machine, new), at);
-            let _ = save(state);
         }
+        let _ = save(state);
     });
+}
+
+pub fn docs(machine: &str, id: &str) -> Docs {
+    with(|state| {
+        state
+            .docs
+            .get(&key(machine, id))
+            .cloned()
+            .unwrap_or_default()
+    })
+}
+
+pub fn record_docs(machine: &str, id: &str, docs: Docs) -> anyhow::Result<()> {
+    with(|state| {
+        if state.docs.get(&key(machine, id)) == Some(&docs) {
+            return Ok(());
+        }
+        state.docs.insert(key(machine, id), docs);
+        save(state)
+    })
 }

@@ -1,4 +1,4 @@
-//! General › Features and Keymap, and Modes › Chats.
+//! General › Features and Keymap, and Modes › Chats and Docs.
 use super::*;
 
 fn keymap_rows() -> Vec<String> {
@@ -30,7 +30,12 @@ impl SettingsWindow {
             .child("Choose which features are available in the main view. Chats is always enabled."));
         let features = config::current().general.features;
         let mut modes = Vec::new();
-        for (section, name) in MODES.into_iter().skip(1) {
+        // Modes still in the works show only in the demo.
+        for (section, name) in MODES
+            .into_iter()
+            .skip(1)
+            .filter(|(section, _)| self.demo || *section == Section::Docs)
+        {
             if matches_query(
                 query,
                 &["General", "Features", name, "Enable mode in the main view"],
@@ -129,6 +134,39 @@ impl SettingsWindow {
         }
         if silence_matches {
             rows.push(self.silence_row(cx));
+        }
+        Some(page.children(card(rows, cx)))
+    }
+
+    pub(super) fn docs_settings(
+        &self,
+        app: &Adeline,
+        query: &str,
+        searching: bool,
+        cx: &Context<Self>,
+    ) -> Option<Div> {
+        let rows: Vec<Div> = app
+            .mode_options(Section::Docs)
+            .into_iter()
+            .enumerate()
+            .filter(|(_, option)| matches_query(query, &["Modes", "Docs", option.0, option.1]))
+            .map(|(index, (label, description, checked, action))| {
+                self.setting_row(
+                    format!("docs-setting-{index}"),
+                    label,
+                    description,
+                    checked,
+                    action,
+                    cx,
+                )
+            })
+            .collect();
+        if rows.is_empty() {
+            return None;
+        }
+        let mut page = div().w_full().flex().flex_col().gap_3();
+        if searching || self.subgroup.is_none() {
+            page = page.child(div().text_lg().child("Docs"));
         }
         Some(page.children(card(rows, cx)))
     }

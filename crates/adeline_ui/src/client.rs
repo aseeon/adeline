@@ -724,6 +724,7 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
             let target = machine.to_owned();
             update_owner(cx, move |app, cx| {
                 app.apply_snapshot(&target, *snapshot, cx);
+                app.docs_connected(&target, cx);
             });
             flush_queued(machine, cx);
             cx.refresh_windows();
@@ -733,7 +734,11 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
             connection.state = State::Connected;
             connection.retries = 0;
             flush_queued(machine, cx);
-            update_owner(cx, |app, cx| app.refresh_runtime_views(cx));
+            let target = machine.to_owned();
+            update_owner(cx, move |app, cx| {
+                app.refresh_runtime_views(cx);
+                app.docs_connected(&target, cx);
+            });
             cx.refresh_windows();
         }
         Incoming::Message(EngineMessage::Delta(delta)) => {

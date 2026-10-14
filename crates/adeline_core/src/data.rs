@@ -52,6 +52,7 @@ pub struct Thread {
     pub context: Option<(u64, u64)>,
     pub timing: Timing,
     pub fork: Option<Fork>,
+    pub cards: Vec<crate::card::Card>,
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -310,6 +311,9 @@ fn shift_to(projects: &mut [Workspace], now: i64) {
         for message in &mut thread.messages {
             move_stamp(&mut message.created_at);
         }
+        for card in &mut thread.cards {
+            card.edited = card.edited.saturating_add_signed(offset * 1000);
+        }
     }
 }
 
@@ -425,6 +429,16 @@ impl Thread {
         }
         activity.turn = activity.turn.or(turn);
         self.timing.tool(at);
+    }
+    pub fn put_card(&mut self, card: crate::card::Card) {
+        // A card keeps the turn that first made it.
+        if let Some(existing) = self.cards.iter_mut().find(|c| c.entity == card.entity) {
+            let turn = existing.turn;
+            *existing = card;
+            existing.turn = turn;
+        } else {
+            self.cards.push(card);
+        }
     }
     pub fn turn_tools(&self, turn: usize) -> impl Iterator<Item = &Activity> {
         self.activity

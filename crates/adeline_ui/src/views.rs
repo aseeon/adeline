@@ -33,14 +33,19 @@ impl Adeline {
             .flex()
             .items_center()
             .gap(rems(0.375))
-            .child(
+            .child(if self.section == Section::Docs {
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .child(self.chat_chooser(&title, cx))
+            } else {
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child(title),
-            )
+                    .child(title)
+            })
             .children(thread.and_then(|_| self.todo_button(cx)))
             .when_some(thread, |header, thread| {
                 header.child(chat::context_meter(thread.context, cx).mr_2())
@@ -210,11 +215,16 @@ impl Adeline {
             }
             "mode-settings" => {
                 entries.extend(
-                    self.mode_options(Section::Chats)
+                    self.mode_options(self.section)
                         .into_iter()
                         .map(|(label, _, _, action)| (label.into(), action)),
                 );
-                entries.push(("Full chat settings…".into(), Action::ConfigureModeSettings));
+                let full = if self.section == Section::Docs {
+                    "Full docs settings…"
+                } else {
+                    "Full chat settings…"
+                };
+                entries.push((full.into(), Action::ConfigureModeSettings));
             }
             _ => {
                 entries.push(("Add an agent…".into(), Action::AddAgent));
@@ -257,7 +267,7 @@ impl Adeline {
         let content_owner = owner.clone();
         let entries = self.command_entries(menu);
         let toggles = if menu == "mode-settings" {
-            self.mode_options(Section::Chats)
+            self.mode_options(self.section)
         } else {
             Vec::new()
         };
@@ -360,6 +370,7 @@ impl Adeline {
                                                 | Action::HideToolCalls
                                                 | Action::ShowThinking
                                                 | Action::SubmitOnEnter
+                                                | Action::Docs(_)
                                         ) {
                                             popover
                                                 .update(cx, |state, cx| state.dismiss(window, cx));
@@ -433,6 +444,8 @@ impl Adeline {
                             Some("settings") => Some(Action::SaveSettings),
                             Some("rename-project") => Some(Action::SaveRename),
                             Some("prompt") => Some(Action::AnswerPrompt(true)),
+                            Some("doc-new") => Some(Action::Docs(docs::Act::Create)),
+                            Some("doc-rename") => Some(Action::Docs(docs::Act::ConfirmRename)),
                             _ => None,
                         };
                         if let Some(action) = action {
@@ -445,8 +458,10 @@ impl Adeline {
                     let _ = owner.update(cx, |app, cx| {
                         // Closing an SSH prompt cancels it. The next prompt, or one
                         // that came while another dialog was open, shows.
-                        if app.modal.take() == Some("prompt") {
-                            client::answer_prompt(None, cx);
+                        match app.modal.take() {
+                            Some("prompt") => client::answer_prompt(None, cx),
+                            Some("doc-unsaved") => app.docs_cancel(),
+                            _ => {}
                         }
                         if client::prompt(cx).is_some() {
                             app.show_prompt(cx);
@@ -463,6 +478,9 @@ impl Adeline {
         }
         if self.modal == Some("prompt") {
             window.focus(&self.prompt_input.focus_handle(cx), cx);
+        }
+        if matches!(self.modal, Some("doc-new" | "doc-rename")) {
+            self.docs_focus_path(window, cx);
         }
     }
 
@@ -615,6 +633,7 @@ impl Render for ModalContent {
                 Some("upgrade") => app.upgrade_dialog(cx),
                 Some("prompt") => app.prompt_dialog(cx),
                 Some("quit") => app.quit_dialog(cx),
+                Some(modal) if modal.starts_with("doc-") => app.docs_dialog(cx),
                 _ => app.project_modal(cx),
             })
             .unwrap_or_else(|_| div().into_any_element())

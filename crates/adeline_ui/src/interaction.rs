@@ -51,6 +51,15 @@ impl Adeline {
                     | Action::SaveRename
                     | Action::ToggleProjectSort
                     | Action::OpenFolder
+                    | Action::Docs(
+                        docs::Act::SaveAll
+                            | docs::Act::Discard
+                            | docs::Act::Gitignore
+                            | docs::Act::LeftPanel
+                            | docs::Act::ChatPanel
+                            | docs::Act::OpenIn
+                            | docs::Act::RemoteImages
+                    )
             )
         {
             return;
@@ -159,6 +168,7 @@ impl Adeline {
             }
             Action::Close => {
                 self.cancel_project_delete(cx);
+                self.docs_cancel();
                 if self.menu.take().is_some() {
                     self.refocus_after_menu(window, cx);
                 }
@@ -166,6 +176,11 @@ impl Adeline {
                 window.close_dialog(cx);
             }
             Action::Project(ix) => {
+                let docs = self.section == Section::Docs;
+                let same = self.project == ix && self.open_projects[ix];
+                if !same {
+                    self.docs_leave(window, cx);
+                }
                 self.open_projects[ix] = true;
                 if self.project != ix {
                     self.selected = None;
@@ -179,9 +194,14 @@ impl Adeline {
                     }
                 }
                 self.project = ix;
-                self.section = Section::Chats;
+                if !(docs && same) {
+                    self.section = Section::Chats;
+                }
                 window.set_window_title(&format!("{} · Adeline", self.workspace().config.name));
                 self.record_project_opened(ix, window, cx);
+                if docs && !same {
+                    self.docs_enter(None, window, cx);
+                }
             }
             Action::RemoveClosedProject(id) => self.remove_closed_project(&id, window, cx),
             Action::UndoProjectRemoval(id) => self.undo_project_removal(&id, window, cx),
@@ -250,12 +270,14 @@ impl Adeline {
             }
             Action::BrowseTo(path) => self.browse(Some(path), cx),
             Action::BrowsePick(file) => self.browse_pick(file, window, cx),
+            Action::CloseProject(ix) if !self.docs_may_close(docs::Then::Close(ix), cx) => {}
             Action::CloseProject(ix) => {
                 if let Some(next) = close_project_tab(&mut self.open_projects, self.project, ix) {
                     if next != self.project {
                         self.act(Action::Project(next), window, cx);
                     }
                 } else {
+                    self.docs_leave(window, cx);
                     self.selected = None;
                     self.section = Section::Chats;
                     self.composer
@@ -267,9 +289,15 @@ impl Adeline {
                 if !config::current().general.features.enabled(section) {
                     return;
                 }
-                self.section = section;
+                if section != Section::Docs {
+                    self.docs_leave(window, cx);
+                    self.section = section;
+                }
                 self.query
                     .update(cx, |state, cx| state.set_value("", window, cx));
+                if section == Section::Docs {
+                    self.docs_enter(None, window, cx);
+                }
             }
             Action::Chat(ix) => {
                 self.selected = Some(ix);
@@ -281,7 +309,9 @@ impl Adeline {
                 self.mark_conversation_read(cx);
             }
             Action::NewChat => {
-                self.section = Section::Chats;
+                if self.section != Section::Docs {
+                    self.section = Section::Chats;
+                }
                 self.selected = None;
                 self.query
                     .update(cx, |state, cx| state.set_value("", window, cx));
@@ -430,7 +460,17 @@ impl Adeline {
                     window.push_notification(format!("Could not save settings: {error:#}"), cx);
                 }
                 if !config::current().general.features.enabled(self.section) {
+                    self.docs_leave(window, cx);
                     self.section = Section::Chats;
+                }
+                if section == Section::Docs {
+                    let machines: Vec<String> = client::connections(cx)
+                        .iter()
+                        .map(|c| c.machine.clone())
+                        .collect();
+                    for machine in machines {
+                        self.docs_sync_engine(&machine, cx);
+                    }
                 }
                 cx.refresh_windows();
             }
@@ -533,6 +573,8 @@ impl Adeline {
                 .detach();
             }
             Action::Tint(ix) => self.selected_tint = ix,
+            Action::Docs(act) => self.docs_act(act, window, cx),
+            Action::OpenCard { route, chat } => self.open_route(&route, Some(chat), window, cx),
             Action::AppMenu
             | Action::ModeSettings
             | Action::Machines
@@ -597,7 +639,7 @@ impl Adeline {
     }
 
     fn send(&mut self, now: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if self.section != Section::Chats {
+        if !matches!(self.section, Section::Chats | Section::Docs) {
             return;
         }
         if !self.demo_mode {
@@ -673,7 +715,7 @@ fn can_quit(owner: WindowHandle<Root>, entity: &WeakEntity<Adeline>, cx: &mut Ap
     cx.update_window(owner.into(), |_, window, cx| {
         entity
             .update(cx, |app, cx| {
-                let opening = app.modal != Some("quit");
+                let opening = !matches!(app.modal, Some("quit" | "doc-unsaved"));
                 let ready = app.request_quit(cx);
                 if !ready && opening {
                     app.open_modal(window, cx);

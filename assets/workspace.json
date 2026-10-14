@@ -3050,6 +3050,72 @@
         "context": [
           142681,
           200000
+        ],
+        "cards": [
+          {
+            "entity": "adeline://docs/docs/markdown-guide.md",
+            "title": "markdown-guide.md",
+            "subtitle": "docs/markdown-guide.md",
+            "turn": 0,
+            "edited": 1790330100000,
+            "gone": false
+          },
+          {
+            "entity": "adeline://docs/docs/diagrams.md",
+            "title": "diagrams.md",
+            "subtitle": "docs/diagrams.md",
+            "turn": 0,
+            "edited": 1790330107000,
+            "gone": false
+          },
+          {
+            "entity": "adeline://docs/docs/architecture.md",
+            "title": "architecture.md",
+            "subtitle": "docs/architecture.md",
+            "turn": 0,
+            "edited": 1790330114000,
+            "gone": false
+          },
+          {
+            "entity": "adeline://docs/docs/scopes/scope-search.md",
+            "title": "scope-search.md",
+            "subtitle": "docs/scopes/scope-search.md",
+            "turn": 0,
+            "edited": 1790330121000,
+            "gone": false
+          },
+          {
+            "entity": "adeline://docs/notes/review-checklist.md",
+            "title": "review-checklist.md",
+            "subtitle": "notes/review-checklist.md",
+            "turn": 0,
+            "edited": 1790330128000,
+            "gone": false
+          },
+          {
+            "entity": "adeline://docs/config/app.yaml",
+            "title": "app.yaml",
+            "subtitle": "config/app.yaml",
+            "turn": 0,
+            "edited": 1790330135000,
+            "gone": false
+          },
+          {
+            "entity": "adeline://docs/notes/plan.md",
+            "title": "plan.md",
+            "subtitle": "notes/plan.md",
+            "turn": 2,
+            "edited": 1790330370000,
+            "gone": false
+          },
+          {
+            "entity": "adeline://docs/notes/deleted-draft.md",
+            "title": "deleted-draft.md",
+            "subtitle": "notes/deleted-draft.md",
+            "turn": 2,
+            "edited": 1790330350000,
+            "gone": true
+          }
         ]
       },
       {

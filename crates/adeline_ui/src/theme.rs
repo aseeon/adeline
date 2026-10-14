@@ -4,7 +4,7 @@
 use anyhow::{Context as _, Result, bail};
 use gpui_kit::{
     App, Hsla,
-    component::{Colorize as _, Theme as KitTheme, ThemeMode},
+    component::{Colorize as _, Theme as KitTheme, ThemeMode, highlighter::HighlightTheme},
     px, rgb,
 };
 use serde::{Deserialize, Serialize};
@@ -274,6 +274,17 @@ pub fn apply(cx: &mut App) {
         };
         theme.background = c("background");
         theme.foreground = c("foreground");
+        // Code in the Docs Editor follows the theme's brightness and background.
+        let mut highlight = if state.theme.brightness.is_dark() {
+            HighlightTheme::default_dark()
+        } else {
+            HighlightTheme::default_light()
+        };
+        let style = &mut std::sync::Arc::make_mut(&mut highlight).style;
+        style.editor_background = Some(theme.background);
+        style.editor_gutter_background = Some(theme.background);
+        style.editor_foreground = Some(theme.foreground);
+        theme.highlight_theme = highlight;
         theme.group_box = c("card");
         theme.title_bar = c("sidebar");
         theme.title_bar_border = c("sidebar_border");

@@ -795,7 +795,7 @@ pub(crate) fn collapsed_button(id: &'static str, label: &'static str, icon_name:
         .tooltip(label)
 }
 
-fn status_name(thread: &Thread) -> &'static str {
+pub(crate) fn status_name(thread: &Thread) -> &'static str {
     match thread.status {
         ThreadStatus::Processing => "running",
         ThreadStatus::Completed => "completed",

@@ -145,10 +145,11 @@ impl Engine {
                     serde_json::to_value(&report).unwrap_or_default(),
                 );
                 self.broadcast(Delta::Tool {
-                    id,
-                    report,
+                    id: id.clone(),
+                    report: report.clone(),
                     at: adeline_core::recency::now_ms(),
                 });
+                self.tool_cards(&id, &report);
                 return;
             }
             acp::EventKind::Usage { used, size } => {

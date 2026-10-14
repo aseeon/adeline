@@ -45,7 +45,7 @@ pub struct Features {
 impl Default for Features {
     fn default() -> Self {
         Self {
-            docs: false,
+            docs: true,
             workflows: false,
             services: false,
             groupchats: true,
@@ -128,12 +128,7 @@ impl Default for Keymap {
 #[serde(default, deny_unknown_fields)]
 pub struct Modes {
     pub chats: Chats,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "legacy_value"
-    )]
-    docs: Option<serde_yaml_ng::Value>,
+    pub docs: Docs,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -208,6 +203,33 @@ impl Default for Chats {
             silence_notice_minutes: 10,
         }
     }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Docs {
+    pub respect_gitignore: bool,
+    pub show_left_panel: bool,
+    pub show_conversation_panel: bool,
+    pub open_in: DocView,
+    pub load_remote_images: bool,
+}
+impl Default for Docs {
+    fn default() -> Self {
+        Self {
+            respect_gitignore: true,
+            show_left_panel: true,
+            show_conversation_panel: true,
+            open_in: DocView::Viewer,
+            load_remote_images: false,
+        }
+    }
+}
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocView {
+    #[default]
+    Viewer,
+    Editor,
 }
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
@@ -373,7 +395,7 @@ mod tests {
         ] {
             assert_eq!(
                 settings.general.features.enabled(section),
-                section == Section::Groupchats
+                matches!(section, Section::Docs | Section::Groupchats)
             );
             settings.general.features.toggle(section);
         }
@@ -392,7 +414,7 @@ mod tests {
         ] {
             assert_eq!(
                 restored.general.features.enabled(section),
-                section != Section::Groupchats
+                !matches!(section, Section::Docs | Section::Groupchats)
             );
         }
     }
@@ -408,7 +430,6 @@ mod tests {
         let saved = std::fs::read_to_string(&path).unwrap();
         let modes: serde_yaml_ng::Value = serde_yaml_ng::from_str(&saved).unwrap();
         for mode in [
-            "docs",
             "workflows",
             "services",
             "groupchats",
@@ -430,14 +451,13 @@ mod tests {
             std::process::id(),
             std::thread::current().id()
         ));
-        let original = "general:\n  features:\n    services: true\n    issues: true\nmodes:\n  docs: null\n  workflows: 42\n  services: [true, {obsolete: false}]\n  groupchats: {show_left_panel: definitely-not-a-boolean, custom: [one, two]}\n  issues: false\n  whiteboard: this was a scalar\n";
+        let original = "general:\n  features:\n    services: true\n    issues: true\nmodes:\n  workflows: 42\n  services: [true, {obsolete: false}]\n  groupchats: {show_left_panel: definitely-not-a-boolean, custom: [one, two]}\n  issues: false\n  whiteboard: this was a scalar\n";
         std::fs::write(&path, original).unwrap();
         let before: serde_yaml_ng::Value = serde_yaml_ng::from_str(original).unwrap();
         update_at(&path, |s| s.general.appearance.font_size = 18).unwrap();
         let saved = std::fs::read_to_string(&path).unwrap();
         let after: serde_yaml_ng::Value = serde_yaml_ng::from_str(&saved).unwrap();
         for mode in [
-            "docs",
             "workflows",
             "services",
             "groupchats",

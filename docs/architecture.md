@@ -102,9 +102,18 @@ The Settings and agent windows are separate windows (`settings.rs`), one child p
 
 `client.rs` holds the engine connections as a GPUI global. `ui_state.rs` keeps what this UI remembers for itself and doesn't share with other clients. `theme.rs` and `fonts.rs` turn `config.rs`'s preferences into GPUI themes and fonts.
 
+## Docs mode
+
+Docs is the first mode beyond chat. It follows the plan below in a simpler form; where they differ, this section is what the code does.
+
+- `adeline_docs` holds the logic without a UI, shared by the engine and the UI: which files are docs (`.gitignore` aware), checking paths against the project root, decoding and saving text without changing line endings, the docs tree with its fuzzy search, and the Editor's formatting tools.
+- The UI never reads the disk. `protocol.rs` has `ListDocs`, `ReadDoc`, `WriteDoc`, `RenameDoc`, `DeleteDoc`, `ReadImage` and `WatchDocs`, which `adeline_engine/src/engine/docs.rs` answers. A client that watches a project gets `Delta::Docs` for disk changes, so remote projects work like local ones. `--demo` answers the same commands from `assets/demo-docs.json`.
+- Cards: when an agent's `Edit` or `Move` tool call finishes on a doc inside the project, the engine (`engine/docs.rs` `tool_cards`) puts one `Card` per doc on the chat (`adeline_core/src/card.rs`, `Thread::cards`) and sends `Delta::Card`. A later edit updates the card in place, and storage replays the `card` event. The engine's `DocsSettings` (sent by the UI with `SetSettings`) say whether Docs is enabled and whether `.gitignore` applies.
+- The UI half is `adeline_ui/src/docs.rs` (state, engine requests, actions) with `docs/view.rs` (panels, tree, toolbar, dialogs, the chat chooser, cards under a reply), `docs/viewer.rs` (Markdown extensions: alerts, task lists, mermaid, remote images) and `docs/mermaid.rs` (offline diagrams to PNG). The conversation panel on the right is the Chats mode transcript and composer. `Action::OpenCard` routes an `adeline://docs/<path>` card into Docs with the card's chat.
+
 ## Modes (planned)
 
-None of this is built yet. It's the agreed shape for the modes beyond chat (Docs, Issues, Workflows, Services, Group chats, Whiteboard) and for extensions.
+Docs is built (see Docs mode). The rest is the agreed shape for the other modes (Issues, Workflows, Services, Group chats, Whiteboard) and for extensions.
 
 Each mode is a first-party crate (`adeline_docs`, `adeline_issues`, …), not an extension. Its engine half has no GPUI. It turns conversation state into cards and answers the mode's own `Command`s (reading a doc, fetching an issue). Its view half sits behind a `ui` feature, so the headless build compiles the crate without GPUI.
 

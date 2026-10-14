@@ -12,6 +12,7 @@ mod agent_form;
 mod chat;
 mod client;
 mod conversation_ui;
+mod docs;
 mod fonts;
 #[cfg(feature = "profiler")]
 mod frame_log;
@@ -209,6 +210,11 @@ enum Action {
     AddFile,
     AddDirectory,
     Tint(usize),
+    Docs(docs::Act),
+    OpenCard {
+        route: adeline_core::card::EntityRef,
+        chat: String,
+    },
 }
 impl Action {
     fn menu_target(&self) -> Option<&'static str> {
@@ -324,6 +330,7 @@ struct Adeline {
     side_panel: Entity<conversation_ui::SidePanel>,
     chat_header: Entity<views::ChatHeader>,
     project_bar: Entity<project_bar::ProjectBar>,
+    docs: docs::Docs,
 }
 impl Adeline {
     fn new(
@@ -427,6 +434,21 @@ impl Adeline {
         let chat_header = cx.new(|_| views::ChatHeader(owner.clone()));
         let project_bar = cx.new(|_| project_bar::ProjectBar(owner.clone()));
         subscriptions.push(cx.observe_self(Self::notify_cached_views));
+        let docs = docs::Docs::new(window, cx);
+        subscriptions.push(
+            cx.subscribe(&docs.editor, |app, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    app.docs_edited(cx);
+                }
+            }),
+        );
+        subscriptions.push(
+            cx.subscribe(&docs.search, |app, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    app.docs_refresh_rows(cx);
+                }
+            }),
+        );
         let mut app = Self {
             main_window: window
                 .window_handle()
@@ -510,6 +532,7 @@ impl Adeline {
             side_panel,
             chat_header,
             project_bar,
+            docs,
         };
         app.load_settings();
         if demo_mode || app.agent_catalog().entries.len() == 1 {
@@ -702,6 +725,9 @@ impl Render for Adeline {
                 .into_any_element()
         } else if self.section == Section::Chats {
             self.workspace_panels(window, cx)
+        } else if self.section == Section::Docs {
+            self.docs_load_images(cx);
+            self.docs_panels(window, cx)
         } else {
             div().size_full().into_any_element()
         };
@@ -722,7 +748,9 @@ impl Render for Adeline {
                 cx.listener(|app, _: &NewThread, window, cx| app.act(Action::NewChat, window, cx)),
             )
             .on_action(cx.listener(|app, _: &Search, window, cx| {
-                if app.has_open_project() && app.section == Section::Chats {
+                if app.has_open_project() && app.section == Section::Docs {
+                    window.focus(&app.docs.search.focus_handle(cx), cx);
+                } else if app.has_open_project() && app.section == Section::Chats {
                     app.focus_chat_search(window, cx);
                 } else {
                     app.act(Action::Projects, window, cx);
@@ -775,6 +803,15 @@ impl Render for Adeline {
             )
             .on_action(cx.listener(|_, _: &NextFocus, window, cx| window.focus_next(cx)))
             .on_action(cx.listener(|_, _: &PreviousFocus, window, cx| window.focus_prev(cx)))
+            .on_action(cx.listener(|app, action: &docs::SwitchMode, window, cx| {
+                if let Some(section) = project_bar::rail_sections().get(action.index) {
+                    app.act(Action::Section(*section), window, cx);
+                }
+            }))
+            .when(
+                self.section == Section::Docs && self.has_open_project(),
+                |content| self.docs_actions(content, cx),
+            )
             .child(self.header_region.clone())
             .children(self.engine_banner(cx))
             .child(
@@ -936,5 +973,6 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new(&menu("o"), ModeMenu, None),
         KeyBinding::new(&menu("p"), MoreMenu, None),
     ]);
+    bindings.extend(docs::key_bindings());
     cx.bind_keys(bindings);
 }

@@ -10,10 +10,13 @@ doctest = false
 [dependencies]
 adeline_assets.workspace = true
 adeline_core.workspace = true
+adeline_docs.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
 chrono.workspace = true
-gpui-kit.workspace = true
+gpui-kit = { workspace = true, features = ["tree-sitter-markdown", "tree-sitter-yaml", "tree-sitter-toml"] }
+mermaid-rs-renderer.workspace = true
+resvg = { workspace = true, features = ["text", "system-fonts"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 serde_yaml_ng.workspace = true

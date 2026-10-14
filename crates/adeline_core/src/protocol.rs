@@ -15,11 +15,19 @@
 //! `SaveProject` a project ID, `SaveAgent` an agent ID, `TakeQueued` the
 //! message's text, `Probe` a `Result<Probed, ProbeError>`, `PlanInstall` a
 //! `Vec<install::Planned>`, `ListDirectory` a `Listing` (of the home folder
-//! without a path) and `WatchTraffic` the traffic recorded so far.
+//! without a path), `WatchTraffic` the traffic recorded so far, `ListDocs` the
+//! project's doc paths, `ReadDoc` a `DocFile`, `WriteDoc` the saved file's
+//! modification time and `ReadImage` the image's bytes in base64.
+//!
+//! Doc paths are relative to the project root with `/` separators. While a
+//! client watches a project's docs (`WatchDocs`), `Delta::Docs` reports docs
+//! created, changed or removed on disk; `relist` means a folder changed, so
+//! the client lists the docs again.
 //! `DeleteProject`, `StopAll`, `Shutdown` and `Login` reply once done, and
 //! `Install` streams `Output` lines first.
 use crate::{
     agents::{AgentDefinition, AgentEntry, ExecutionConfig},
+    card::Card,
     conversation::{
         AgentCommand, Attachment, AuthMethod, Category, Features, McpServer, MessageRole,
         PermissionOption, SessionOption, ThreadStatus, TodoStep, TrafficEntry, TurnState,
@@ -34,7 +42,7 @@ use std::{
     path::PathBuf,
 };
 
-pub const PROTOCOL: u32 = 4;
+pub const PROTOCOL: u32 = 5;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probed {
@@ -226,6 +234,36 @@ pub enum Command {
     ListDirectory {
         path: Option<PathBuf>,
     },
+    ListDocs {
+        project_id: String,
+    },
+    ReadDoc {
+        project_id: String,
+        path: String,
+    },
+    // `create` refuses to replace an existing file.
+    WriteDoc {
+        project_id: String,
+        path: String,
+        text: String,
+        create: bool,
+    },
+    RenameDoc {
+        project_id: String,
+        from: String,
+        to: String,
+    },
+    DeleteDoc {
+        project_id: String,
+        path: String,
+    },
+    ReadImage {
+        project_id: String,
+        path: String,
+    },
+    WatchDocs {
+        project_id: Option<String>,
+    },
     Status,
     StopAll,
     Shutdown,
@@ -238,6 +276,39 @@ pub struct EngineSettings {
     pub retry_limit: usize,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub mcp_servers: Vec<McpServer>,
+    pub docs: DocsSettings,
+}
+
+// The UI's Docs settings that decide which files get cards.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct DocsSettings {
+    pub enabled: bool,
+    pub respect_gitignore: bool,
+}
+
+impl Default for DocsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            respect_gitignore: true,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocFile {
+    pub text: String,
+    pub modified: u64,
+    // Why the file opens read-only, if it does.
+    pub read_only: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DocChange {
+    pub path: String,
+    // `None` when the doc is gone.
+    pub modified: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -424,6 +495,15 @@ pub enum Delta {
     Notice {
         message: String,
     },
+    Card {
+        id: String,
+        card: Card,
+    },
+    Docs {
+        project_id: String,
+        changes: Vec<DocChange>,
+        relist: bool,
+    },
     OpenUrl {
         url: String,
     },
@@ -525,6 +605,11 @@ pub fn apply(projects: &mut [Workspace], live: &mut HashMap<String, Live>, delta
                     message.read = true;
                 }
                 thread.prepare_search();
+            }
+        }
+        Delta::Card { id, card } => {
+            if let Some(thread) = locate(projects, id) {
+                thread.put_card(card.clone());
             }
         }
         Delta::Thread { project_id, thread } => {

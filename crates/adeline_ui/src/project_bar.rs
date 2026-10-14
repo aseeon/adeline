@@ -67,6 +67,25 @@ impl Render for ProjectBar {
     }
 }
 
+const RAIL: [(Section, &str, &str); 7] = [
+    (Section::Chats, "Chats", "chat.svg"),
+    (Section::Docs, "Docs", "file.svg"),
+    (Section::Workflows, "Workflows", "workflow.svg"),
+    (Section::Services, "Services", "service.svg"),
+    (Section::Groupchats, "Groupchats", "group.svg"),
+    (Section::Issues, "Issues", "flag.svg"),
+    (Section::Whiteboard, "Whiteboard", "whiteboard.svg"),
+];
+
+/// The modes the rail shows, in its order; Ctrl+1 to Ctrl+9 pick them.
+pub(super) fn rail_sections() -> Vec<Section> {
+    let features = config::current().general.features;
+    RAIL.iter()
+        .map(|(section, _, _)| *section)
+        .filter(|section| features.enabled(*section))
+        .collect()
+}
+
 impl Adeline {
     pub(super) fn header(&self, window: &Window, cx: &Context<Self>) -> Div {
         let theme = cx.theme();
@@ -430,15 +449,7 @@ impl Adeline {
             .items_center()
             .gap_1();
         if self.has_open_project() {
-            for (section, name, icon_path) in [
-                (Section::Chats, "Chats", "chat.svg"),
-                (Section::Docs, "Docs", "file.svg"),
-                (Section::Workflows, "Workflows", "workflow.svg"),
-                (Section::Services, "Services", "service.svg"),
-                (Section::Groupchats, "Groupchats", "group.svg"),
-                (Section::Issues, "Issues", "flag.svg"),
-                (Section::Whiteboard, "Whiteboard", "whiteboard.svg"),
-            ] {
+            for (section, name, icon_path) in RAIL {
                 if !config::current().general.features.enabled(section) {
                     continue;
                 }

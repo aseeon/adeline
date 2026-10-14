@@ -514,6 +514,9 @@ impl Adeline {
     }
 
     pub(super) fn request_quit(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.docs_may_close(docs::Then::Quit, cx) {
+            return false;
+        }
         if self.demo_mode || self.runtime.quitting {
             return true;
         }
@@ -796,6 +799,14 @@ impl Adeline {
                 catalog.errors = errors;
                 self.agents_changed(None, None, false, cx);
             }
+            Delta::Docs {
+                project_id,
+                changes,
+                relist,
+            } => {
+                self.docs_changed(machine, &project_id, changes, relist, cx);
+                return;
+            }
             Delta::Notice { message } => {
                 self.notify_toast(&self.about_machine(machine, &message), cx);
             }
@@ -813,6 +824,9 @@ impl Adeline {
                     _ => None,
                 };
                 let streamed = matches!(delta, Delta::Text { .. } | Delta::Thought { .. });
+                if matches!(delta, Delta::Card { .. }) {
+                    self.transcript.update(cx, chat::Transcript::refresh_all);
+                }
                 protocol::apply(
                     &mut self.projects[range],
                     &mut self.runtime.conversations,

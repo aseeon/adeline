@@ -11,6 +11,8 @@ Keywords in the prompt script each turn, applied in this order:
   STRAY          also stream text for a session that isn't this one
   EXIT           stream one chunk, then exit with code 3
   SILENT         stream one chunk, then send nothing and ignore session/cancel
+  WRITE <path>   write the file (relative to the agent's folder) and report a
+                 finished edit tool call at its absolute path; may repeat
 Without keywords the turn streams a short greeting. Every other wait honors
 session/cancel and then replies stopReason "cancelled".
 
@@ -61,6 +63,26 @@ def chunk(session, text):
         "params": {
             "sessionId": session,
             "update": {"sessionUpdate": "agent_message_chunk", "content": {"type": "text", "text": text}},
+        },
+    })
+
+
+def write_file(session, path):
+    target = Path(path).resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_bytes(b"written by the fake agent\n")
+    send({
+        "method": "session/update",
+        "params": {
+            "sessionId": session,
+            "update": {
+                "sessionUpdate": "tool_call",
+                "toolCallId": str(uuid.uuid4()),
+                "title": f"Write {path}",
+                "kind": "edit",
+                "status": "completed",
+                "locations": [{"path": str(target)}],
+            },
         },
     })
 
@@ -140,6 +162,8 @@ def prompt(message):
             if cancel.wait(0.01):
                 return finish("cancelled")
             chunk(session, words[index % len(words)] + ("\n\n" if index % 40 == 39 else ""))
+    for path in re.findall(r"WRITE (\S+)", text):
+        write_file(session, path)
     if "PERMISSION" in text:
         choice = ask_permission(session, cancel)
         if choice is None or cancel.is_set():

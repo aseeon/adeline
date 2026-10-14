@@ -9,6 +9,7 @@ doctest = false
 
 [dependencies]
 adeline_core.workspace = true
+adeline_docs.workspace = true
 # ACP v1 through the official SDK. Adeline spawns agents itself (job objects,
 # process groups), so the SDK's `process` feature stays off.
 agent-client-protocol = { workspace = true, features = ["unstable_session_fork"] }

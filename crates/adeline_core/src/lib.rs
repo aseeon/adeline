@@ -3,6 +3,7 @@
 //! that reach an engine. No GPUI.
 pub mod agents;
 pub mod askpass;
+pub mod card;
 pub mod config;
 pub mod conversation;
 pub mod data;

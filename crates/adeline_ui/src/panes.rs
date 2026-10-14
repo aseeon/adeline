@@ -69,6 +69,48 @@ impl Render for ControlPane {
                             )
                         },
                     )
+                    .when(
+                        app.has_open_project() && app.section == Section::Docs,
+                        |row| {
+                            let docs = config::current().modes.docs;
+                            row.child(
+                                app.icon_button(
+                                    "docs-left-panel",
+                                    "Docs tree",
+                                    Icon::default().path("panel-left.svg"),
+                                    Action::Docs(docs::Act::LeftPanel),
+                                    cx,
+                                )
+                                .selected(docs.show_left_panel),
+                            )
+                            .child(
+                                app.command_popover(
+                                    "mode-settings",
+                                    Button::new("docs-settings")
+                                        .icon(Icon::default().path("settings.svg"))
+                                        .accessibility_label("Docs settings")
+                                        .tooltip("Docs settings")
+                                        .small()
+                                        .ghost(),
+                                    Anchor::BottomLeft,
+                                    cx,
+                                ),
+                            )
+                            .child(div().flex_1())
+                            .child(
+                                app.icon_button(
+                                    "docs-right-panel",
+                                    "Conversation panel",
+                                    Icon::default()
+                                        .path("panel-left.svg")
+                                        .rotate(Radians(std::f32::consts::PI)),
+                                    Action::Docs(docs::Act::ChatPanel),
+                                    cx,
+                                )
+                                .selected(docs.show_conversation_panel),
+                            )
+                        },
+                    )
                     .into_any_element()
             })
             .unwrap_or_else(|_| div().into_any_element())

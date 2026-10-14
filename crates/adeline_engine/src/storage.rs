@@ -188,6 +188,13 @@ impl StoredConversation {
                         thread.apply_tool(&call, event.timestamp);
                     }
                 }
+                "card" => {
+                    if let Ok(card) =
+                        serde_json::from_value::<adeline_core::card::Card>(event.data.clone())
+                    {
+                        thread.put_card(card);
+                    }
+                }
                 "usage" => {
                     if let (Some(used), Some(size)) = (
                         event.data.get("used").and_then(Value::as_u64),
