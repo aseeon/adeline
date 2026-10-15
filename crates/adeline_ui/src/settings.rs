@@ -1260,6 +1260,17 @@ impl Render for SettingsWindow {
                     })),
                 );
             }
+            if group == Group::Agents && !searching {
+                navigation = navigation.child(
+                    navigation_button("settings-add-agent", "Add agent", "plus.svg", false, cx)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            let (window, machine) = (this.owner.window, this.machine.clone());
+                            let _ = this.owner.entity.update(cx, |_, cx| {
+                                open_agent(window, cx.weak_entity(), machine, cx);
+                            });
+                        })),
+                );
+            }
         }
         let sidebar_width = window.rem_size() * 15.;
         // The sidebar shows the window blur, like the main window's mode rail, and runs up
