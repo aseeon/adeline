@@ -319,7 +319,14 @@ impl Adeline {
         let mut listed: Vec<usize> = (0..self.projects.len())
             .filter(|&ix| Some(self.projects[ix].key().as_str()) != pending)
             .filter(|&ix| {
-                query.is_empty() || self.projects[ix].config.name.to_lowercase().contains(query)
+                let project = &self.projects[ix];
+                let haystack = format!(
+                    "{} {}",
+                    project.config.name,
+                    machines::name(&project.machine)
+                )
+                .to_lowercase();
+                query.split_whitespace().all(|term| haystack.contains(term))
             })
             .collect();
         let name = |ix: usize| self.projects[ix].config.name.to_lowercase();
