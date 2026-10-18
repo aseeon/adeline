@@ -10,6 +10,10 @@ Prefer sparse - top of the module level comments. Avoid class and function level
 
 `docs/architecture.md` traces a user action from UI to engine to agent and back, and covers demo mode and assets. Read it before your first code change in a session, or when you need to find where something lives. When a change moves a module or alters a flow it describes, update it in the same commit.
 
+# Stale build output
+
+At the start of a session, check `target/` and the `target/` folders of worktrees under `.claude/worktrees/` for stale build output, and delete it without asking. Keep `target/release` (the runnable app) and the packaged app (`dist/` on Windows, `target/dist/Adeline.app` on macOS). Everything else rebuilds on demand: `target/debug`, other profiles, cross-compile folders, extra target dirs made by earlier agents, and loose logs and screenshots. Delete only `target/` in a worktree, since its branch may hold unmerged commits. Leave a folder alone while a cargo, nextest or Adeline process is running from it.
+
 # Scope docs
 
 Scopes in `docs/` are live specs, with `Status: Draft` or `Status: Confirmed`. In the commit that ships a scope, change its first line to `Status: Implemented in vX.Y.Z. This scope is history. Where it and the code differ, the code is right.` using the version that commit sets, then `git mv` it to `docs/archive/` and update any paths that point to it. Before relying on a claim from an archived scope, check it against the code.
