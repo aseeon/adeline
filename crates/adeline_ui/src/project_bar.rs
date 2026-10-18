@@ -301,6 +301,7 @@ impl Adeline {
         let owner = cx.weak_entity();
         row()
             .id(SharedString::from(format!("project-{id}")))
+            .test_support()
             .group(group.clone())
             .role(Role::Tab)
             .aria_label(label)

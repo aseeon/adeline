@@ -295,6 +295,7 @@ impl Adeline {
             .child(
                 div()
                     .id("docs-tree")
+                    .test_support()
                     .role(Role::Tree)
                     .aria_label("Docs tree")
                     .flex_1()
@@ -352,6 +353,7 @@ impl Adeline {
             .child(
                 row()
                     .id(SharedString::from(format!("doc:{path}")))
+                    .test_support()
                     .role(Role::TreeItem)
                     .aria_label(label)
                     .aria_selected(open)
@@ -506,6 +508,7 @@ impl Adeline {
                     .child(
                         div()
                             .id("doc-missing")
+                            .test_support()
                             .role(Role::Status)
                             .aria_label(message.clone())
                             .text_color(theme.muted_foreground)
@@ -552,6 +555,7 @@ impl Adeline {
             let owner = cx.weak_entity();
             div()
                 .id("doc-viewer")
+                .test_support()
                 .role(Role::Document)
                 .aria_label(format!("{path}, Viewer"))
                 .relative()
@@ -927,6 +931,7 @@ impl Adeline {
         };
         col()
             .id("dialog-content")
+            .test_support()
             .role(Role::Group)
             .aria_label(title.clone())
             .gap_3()

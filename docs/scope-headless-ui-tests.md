@@ -44,10 +44,10 @@ These go in `crates/adeline_ui/tests/`.
 - R12. `check_demo_machines`: machine labels, show and hide, the disconnected look, and the Settings machine dropdown.
 - R13. `check_selection_stays_in_panel`, with a demo doc and a demo chat.
 - R14. `check_close_tab`, through hover and the close button.
-- R15. `check_tabs_fold`: in a narrow window (`simulate_resize`) the inactive tabs shorten, the rest fold into the "+N more projects" menu, and the Projects menu stays clear of the window controls. The test then repeats the resize with accessibility off and checks that the tabs have the same bounds.
-- R16. `check_transcript_selection`: a selection across a reply survives hovering the chat list, and copies the same text with accessibility on and off.
+- R15. `check_tabs_fold`: in a narrow window (`simulate_resize`) the inactive tabs shorten, the rest fold into the "+N more projects" menu, and the Projects menu stays clear of the window controls. The test then widens and narrows the window again, and opens a second window at the narrow size, and checks that the tabs have the same bounds each time.
+- R16. `check_transcript_selection`: a selection across a reply survives hovering the chat list, and copies the same text before and after.
 
-R15 and R16 replace the pixel comparisons with bounds and copied text. With accessibility off, `find` can't see elements, so these tests read `debug_bounds` and the model.
+R15 and R16 replace the pixel comparisons with bounds and copied text. GPUI's test platform never connects assistive technology (its window's `a11y_init` does nothing), so every headless test draws the regions as cached views, the path the view caching bugs were on. The uncached path that a screen reader gets is left to the smoke test (R28). `find` still sees elements, because the Kit reads their accessibility properties directly. The test helper draws frames the way the platform does, redrawing only notified views: Kit's `render_frame` and its interaction helpers refresh the whole window first, which would hide a caching bug.
 
 ### Engine checks
 
@@ -128,7 +128,7 @@ Each phase deletes the Python checks it replaces (R29).
 - AC2. `open` and the tests call the same setup function.
 - AC3. Each of the 21 checks in today's `ui_check.py` has a Rust test, and `ui_check.py` holds only the smoke test.
 - AC4. Each ported test fails when its feature breaks. For each one, break the feature once by hand and see the test fail.
-- AC5. The view caching tests (R15, R16) fail when a cached view draws differently with accessibility off. Check this by reverting the fix from `docs/archive/handoff-view-caching.md` once.
+- AC5. The view caching tests (R15, R16) fail when a cached view draws stale content. Check this by reverting a caching fix once. Result: replacing the title bar's deferred notify in `project_bar/tabs.rs` with a plain refresh fails R15. Caching the whole transcript again does not fail R16, so the selection loss described in `docs/archive/handoff-view-caching.md` no longer happens with gpui-kit 0.7.
 - AC6. A UI test failure with several seeds prints the seed, and `SEED=n` reproduces it.
 - AC7. The remote tests pass on Windows, macOS and Linux with the fake SSH.
 - AC8. The headless nextest run (`--exclude adeline_ui --no-default-features`) passes, builds no GPUI, and runs the headless CLI test.
@@ -147,6 +147,6 @@ Each phase deletes the Python checks it replaces (R29).
 
 - Answered in phase 1: `config::init` and `fonts::init` both work on the test platform. `config::init` reads and seeds `settings.yml` under `HOME` (`USERPROFILE` on Windows), so each test points both at its own temporary folder. That is safe because nextest runs each test in its own process. `fonts::init` adds the bundled Chivo fonts to the test platform's text system and lists its font names. `TestAppContext` has no asset source, so SVG icons don't load, and no check depends on them.
 - Answered in phase 1: Kit components such as `Button` and `Input` register themselves with their accessibility labels. Plain elements need `.test_support()` after their `.id(...)`: so far the chat rows, the TODO list, the queue and its items, the hang notice and the ACP traffic log. Many IDs hold generated project and chat IDs, so `tests/ui.rs` finds elements by accessibility label, the same names UI Automation used, through `gpui_kit::base::test_support::snapshots`. That function is `#[doc(hidden)]`, so a gpui-kit upgrade can change it. `ElementSnapshot::focused()` panics on an element whose focus binding wasn't observed, so ask it only of elements that track focus.
-- Can a test reach the quit dialog through the `Quit` action, given that the test window can't fire the native close request? If not, the test calls `interaction::request_close`.
+- Answered in phase 2: `VisualTestContext::simulate_close` runs the window's close handler, as the close button does, so a test reaches the quit dialog without calling `interaction::request_close`. Quitting removes the main window, so a test checks `cx.windows()`.
 - Does the quit path on the test platform match a real process exit closely enough for R18? If the engine notices the client leaving only when the process exits, the test drops the connection by hand.
 - For R23, a Rust fake SSH or a reworked `fake_ssh.py`? Rust drops the Python dependency for these tests, but `fake_agent.py` still needs Python.

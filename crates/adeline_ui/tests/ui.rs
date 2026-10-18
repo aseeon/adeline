@@ -1,142 +1,27 @@
-//! Headless UI tests: the real `Adeline` view on GPUI's test platform, driven by
-//! its shortcuts (`docs/shortcuts.md`). Elements are found by their accessibility
-//! labels, the names a user and UI Automation see. Each test runs in its own
-//! process under nextest, in its own temporary home.
+//! Headless UI tests of demo mode: the real `Adeline` view on GPUI's test platform,
+//! with no engine. Each test runs in its own process under nextest, in its own
+//! temporary home.
+mod support;
+
 use adeline_core::{conversation::Category, ipc};
-use gpui_kit::base::test_support::{ElementSnapshot, snapshots};
-use gpui_kit::test::TestWindowExt;
-use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Bounds, Entity, TestAppContext, Window, WindowBounds,
-    WindowOptions, point, px, size,
-};
+use gpui_kit::{TestAppContext, point, px};
+use support::{END_OF_TEXT, MENU, START_OF_TEXT, Ui};
 
-// The option menus: Alt on Windows and Linux, Cmd+Shift on macOS.
-const MENU: &str = if cfg!(target_os = "macos") {
-    "cmd-shift"
-} else {
-    "alt"
-};
+const SELECTION_CHAT: &str = "Make document edits safe when the preview is still updating";
 
-struct Ui<'a> {
-    cx: &'a mut TestAppContext,
-    window: AnyWindowHandle,
-    adeline: Entity<adeline_ui::Adeline>,
-}
-
-impl<'a> Ui<'a> {
-    #[expect(
-        unsafe_code,
-        reason = "the config folder follows HOME, read from the environment"
-    )]
-    fn demo(cx: &'a mut TestAppContext, verbose: bool) -> Self {
-        let home = std::env::temp_dir().join(format!("adeline-ui-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&home);
-        std::fs::create_dir_all(&home).unwrap();
-        for name in ["HOME", "USERPROFILE"] {
-            // SAFETY: nextest runs each test in its own process, and nothing reads the environment yet.
-            unsafe { std::env::set_var(name, &home) };
-        }
-        let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(Bounds {
-                origin: point(px(0.), px(0.)),
-                size: size(px(1440.), px(940.)),
-            })),
-            ..Default::default()
-        };
-        let adeline = cx.update(|cx| adeline_ui::start(true, verbose, options, cx));
-        let window = cx.windows()[0];
-        let mut ui = Self {
-            cx,
-            window,
-            adeline,
-        };
-        ui.settle();
-        ui
-    }
-
-    fn with<R>(&mut self, f: impl FnOnce(&mut Window, &mut App) -> R) -> R {
-        self.cx
-            .update_window(self.window, |_, window, cx| f(window, cx))
-            .expect("Adeline window")
-    }
-
-    fn settle(&mut self) {
-        self.cx.run_until_parked();
-        self.with(|window, cx| window.render_frame(cx));
-    }
-
-    fn press(&mut self, keys: &str) {
-        self.with(|window, cx| window.press(keys, cx));
-        self.settle();
-    }
-
-    fn input(&mut self, text: &str) {
-        self.with(|window, cx| window.input(text, cx));
-        self.settle();
-    }
-
-    fn try_named(&mut self, label: &str) -> Option<ElementSnapshot> {
-        self.with(|window, _| {
-            snapshots(window)
-                .into_iter()
-                .find(|element| element.label() == Some(label) && element.visible())
-        })
-    }
-
-    fn named(&mut self, label: &str) -> ElementSnapshot {
-        self.try_named(label)
-            .unwrap_or_else(|| panic!("no element named {label:?}. Named: {:?}", self.names()))
-    }
-
-    fn gone(&mut self, label: &str) {
-        assert!(self.try_named(label).is_none(), "{label:?} still shows");
-    }
-
-    fn names(&mut self) -> Vec<String> {
-        self.with(|window, _| {
-            let mut names: Vec<_> = snapshots(window)
-                .iter()
-                .filter_map(|element| element.label().map(str::to_owned))
-                .collect();
-            names.sort();
-            names
-        })
-    }
-
-    fn click(&mut self, label: &str) {
-        let id = self.named(label).path().last().cloned().unwrap();
-        self.with(|window, cx| window.click(id, cx));
-        self.settle();
-    }
-
-    // The chat list has no shortcut to a chat by name, so this clicks its row.
-    fn open_chat(&mut self, title: &str) {
-        let prefix = format!("{title},");
-        let id = self
-            .with(|window, _| {
-                snapshots(window).into_iter().find(|element| {
-                    element
-                        .label()
-                        .is_some_and(|label| label.starts_with(&prefix))
-                })
-            })
-            .unwrap_or_else(|| panic!("no chat {title:?}. Named: {:?}", self.names()))
-            .path()
-            .last()
-            .cloned()
-            .unwrap();
-        self.with(|window, cx| window.click(id, cx));
-        self.settle();
-        let open = self
-            .cx
-            .read(|cx| self.adeline.read(cx).open_chat().map(str::to_owned));
-        assert_eq!(open.as_deref(), Some(title));
-    }
-
-    fn chat_option(&mut self, category: Category) -> Option<String> {
-        self.cx
-            .read(|cx| self.adeline.read(cx).chat_option(category))
-    }
+fn no_engine() {
+    assert!(
+        !ipc::engine_dir().unwrap().exists(),
+        "demo mode made an engine folder"
+    );
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    assert!(
+        runtime.block_on(ipc::connect()).is_err(),
+        "an engine answers in demo mode"
+    );
 }
 
 #[gpui_kit::test]
@@ -160,21 +45,25 @@ fn demo_conversation(cx: &mut TestAppContext) {
     ui.named("Agent silent for 12 min");
 
     // An idle chat's menus open from the keyboard and list the agent's choices.
-    ui.open_chat("Make document edits safe when the preview is still updating");
+    ui.open_chat(SELECTION_CHAT);
     ui.named("Model: Opus");
     ui.press(&format!("{MENU}-m"));
     ui.named("Search model");
     ui.input("Sonnet");
     ui.press("enter");
     ui.named("Model: Sonnet");
-    assert_eq!(ui.chat_option(Category::Model).as_deref(), Some("sonnet"));
+    assert_eq!(
+        ui.read(|app, _| app.chat_option(Category::Model))
+            .as_deref(),
+        Some("sonnet")
+    );
     ui.press(&format!("{MENU}-o"));
     ui.named("Search mode");
     ui.input("Accept");
     ui.press("enter");
     ui.named("Mode: Accept edits");
     assert_eq!(
-        ui.chat_option(Category::Mode).as_deref(),
+        ui.read(|app, _| app.chat_option(Category::Mode)).as_deref(),
         Some("acceptEdits")
     );
     ui.press(&format!("{MENU}-p"));
@@ -187,17 +76,326 @@ fn demo_conversation(cx: &mut TestAppContext) {
     ui.click("Dismiss error");
     ui.gone("Dismiss error");
 
-    // Demo mode never starts an engine.
+    no_engine();
+}
+
+#[gpui_kit::test]
+fn traffic_needs_verbose(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.open_chat("Search long conversations without pausing the interface");
+    ui.press("ctrl-shift-l");
+    ui.gone("ACP traffic");
+}
+
+/// Opens a doc from the tree search by keyboard: Ctrl+P, the query, Down into the tree.
+fn open_doc(ui: &mut Ui, query: &str, rows_down: usize) {
+    ui.press("ctrl-p secondary-a backspace");
+    ui.input(query);
+    for _ in 0..rows_down {
+        ui.press("down");
+    }
+    ui.press("enter");
+}
+
+fn message(ui: &mut Ui) -> String {
+    ui.named("Message").value().unwrap_or_default().to_owned()
+}
+
+#[gpui_kit::test]
+fn docs_demo(cx: &mut TestAppContext, second: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    // Ctrl+2 picks the second mode on the rail.
+    ui.press("ctrl-2");
+    ui.named("Docs tree");
+    open_doc(&mut ui, "mdguide", 2);
+    ui.named("docs/markdown-guide.md, Viewer");
+    ui.press("ctrl-shift-v");
+    ui.named("docs/markdown-guide.md, Editor");
+    ui.named("Bold (Ctrl+B)");
+    ui.press(END_OF_TEXT);
+    ui.input("hello");
+    ui.named("markdown-guide.md, unsaved");
+    ui.press("ctrl-s");
+    ui.named("markdown-guide.md");
+
+    // A note quotes the selection with its path and line into the composer.
+    open_doc(&mut ui, "notes/plan", 2);
+    ui.press("ctrl-shift-v");
+    ui.named("notes/plan.md, Editor");
+    ui.press(&format!("{START_OF_TEXT} shift-down ctrl-shift-n"));
+    let draft = message(&mut ui);
     assert!(
-        !ipc::engine_dir().unwrap().exists(),
-        "demo mode made an engine folder"
+        draft.starts_with("`notes/plan.md`, line 1:"),
+        "note draft {draft:?}"
     );
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
+
+    // The chooser finds a chat by its title; its reply shows doc cards.
+    ui.press("ctrl-shift-k");
+    ui.named("Search conversations");
+    ui.input("Make document edits");
+    ui.press("enter");
+    // The cards have no shortcuts to them; their buttons are clicked.
+    ui.click("2 more docs, hidden");
+    ui.named("2 more docs, shown");
+    ui.click("Open notes/deleted-draft.md");
+    ui.named("notes/deleted-draft.md no longer exists");
+    ui.click("Open docs/architecture.md");
+    let viewer = ui.named("docs/architecture.md, Viewer").bounds();
+
+    // Selecting text has no keyboard path, so this drags across the Viewer. The
+    // selection stays in the doc, and the note button sends it to the composer.
+    ui.drag(
+        viewer.origin + point(px(30.), px(60.)),
+        viewer.origin + point(viewer.size.width * (2. / 3.), px(160.)),
+    );
+    ui.set_clipboard("sentinel");
+    ui.press("ctrl-c");
+    let copied = ui.clipboard();
+    assert_ne!(copied, "sentinel", "the Viewer selection didn't copy");
     assert!(
-        runtime.block_on(ipc::connect()).is_err(),
-        "an engine answers in demo mode"
+        !copied.contains(SELECTION_CHAT) && !copied.contains("Reply"),
+        "the selection reached the conversation: {copied:?}"
+    );
+    ui.click("Note on selection");
+    let draft = message(&mut ui);
+    assert!(
+        draft.contains("`docs/architecture.md`, line"),
+        "Viewer note draft {draft:?}"
+    );
+
+    // Quitting with unsaved edits asks first; Cancel keeps Adeline open.
+    open_doc(&mut ui, "notes/plan", 2);
+    ui.named("notes/plan.md, Editor");
+    ui.input("xyz");
+    ui.close_window();
+    ui.named("Save changes to 1 doc?");
+    ui.click("Cancel");
+    assert!(ui.is_open(), "Cancel quit Adeline");
+    ui.close_window();
+    ui.named("Save changes to 1 doc?");
+    ui.click("Discard");
+    assert!(!ui.is_open(), "Discard didn't quit Adeline");
+    drop(ui);
+
+    // Docs reopens the project's doc and view where they were left.
+    let mut ui = Ui::open(second, true, false);
+    ui.press("ctrl-2");
+    ui.named("notes/plan.md, Editor");
+    no_engine();
+}
+
+#[gpui_kit::test]
+fn demo_machines(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    // Tabs read "name · machine", and ", disconnected" for a dropped machine.
+    let tabs = ui.tabs();
+    assert!(tabs.iter().any(|t| t.contains("· Matrix")), "{tabs:?}");
+    assert!(
+        tabs.iter()
+            .any(|t| t.contains("· Vortex") && t.ends_with(", disconnected")),
+        "{tabs:?}"
+    );
+    // The machine selector has no shortcut.
+    ui.click("Machines");
+    ui.named("Vortex, Disconnected");
+    ui.named("Matrix, Connected");
+    ui.click("Show Matrix");
+    assert!(
+        !ui.tabs().iter().any(|t| t.contains("Matrix")),
+        "{:?}",
+        ui.tabs()
+    );
+    ui.click("Show Matrix");
+    assert!(
+        ui.tabs().iter().any(|t| t.contains("Matrix")),
+        "{:?}",
+        ui.tabs()
+    );
+    ui.press("escape");
+
+    let before = ui.cx.windows();
+    ui.press("ctrl-,");
+    ui.new_window(&before);
+    ui.named("Search settings");
+    let general = |ui: &mut Ui| {
+        ui.find(|l| l == "Show General" || l == "Hide General")
+            .is_some()
+    };
+    assert!(general(&mut ui), "General is missing for the local machine");
+    // The machine dropdown has no shortcut.
+    ui.click("Machine");
+    ui.press("down enter");
+    assert!(!general(&mut ui), "General shows for a remote machine");
+    assert!(
+        ui.find(|l| l == "Show Engine" || l == "Hide Engine")
+            .is_some(),
+        "Engine is missing for a remote machine"
+    );
+    ui.click("Machine");
+    ui.press("up enter");
+    assert!(
+        general(&mut ui),
+        "General didn't return for the local machine"
+    );
+    no_engine();
+}
+
+#[gpui_kit::test]
+fn close_tab(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    let tabs = ui.tabs();
+    let name = tabs.last().unwrap().clone();
+    let tab = ui.tab(&name);
+    // The close button shows on hover, and has no shortcut.
+    ui.hover(&tab);
+    let close = ui
+        .all(|l| l == "Close project tab")
+        .into_iter()
+        .find(|button| tab.bounds().contains(&button.bounds().center()))
+        .expect("the hovered tab's close button");
+    ui.click_element(&close);
+    assert!(!ui.tabs().contains(&name), "{:?}", ui.tabs());
+    ui.pause(std::time::Duration::from_millis(500));
+    assert!(!ui.tabs().contains(&name), "the tab came back");
+}
+
+#[gpui_kit::test]
+fn selection_stays_in_panel(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.press("ctrl-2");
+    // The conversation beside the doc: its messages are what the selection used to jump into.
+    ui.press("ctrl-shift-k");
+    ui.input("Make document edits");
+    ui.press("enter");
+    open_doc(&mut ui, "mdguide", 2);
+    let viewer = ui.named("docs/markdown-guide.md, Viewer").bounds();
+    // Selecting text has no keyboard path. This drags from mid-doc up and left, past
+    // the doc's text into the docs tree.
+    ui.drag(
+        viewer.origin + point(px(300.), px(330.)),
+        viewer.origin - point(px(120.), px(-40.)),
+    );
+    ui.set_clipboard("sentinel");
+    ui.press("ctrl-c");
+    let copied = ui.clipboard();
+    assert!(
+        copied.len() > 20 && copied != "sentinel",
+        "copied {copied:?}"
+    );
+    let docs = include_str!("../../../assets/demo-docs.json");
+    let first = copied.lines().find(|line| line.trim().len() > 10).unwrap();
+    assert!(
+        docs.contains(first.trim()),
+        "the selection missed the doc: {copied:?}"
+    );
+    for leak in [
+        "older parse result",
+        "tick two checklist items",
+        "paragraph insertion",
+    ] {
+        assert!(
+            !copied.contains(leak),
+            "the selection reached the conversation: {copied:?}"
+        );
+    }
+}
+
+// GPUI's test platform never connects assistive technology, so these windows draw
+// the regions as cached views: the path the view caching bugs were on.
+
+#[gpui_kit::test]
+fn transcript_selection(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    assert!(!ui.with(|window, _| window.is_a11y_active()));
+    let rows: Vec<_> = ui
+        .elements()
+        .into_iter()
+        .filter(|e| e.visible() && e.role() == Some(gpui_kit::Role::ListBoxOption))
+        .map(|e| e.bounds().center())
+        .collect();
+    ui.open_chat(SELECTION_CHAT);
+    let mut replies: Vec<_> = ui
+        .all(|l| l == "Reply")
+        .iter()
+        .map(|e| e.bounds())
+        .collect();
+    replies.sort_by(|a, b| a.top().partial_cmp(&b.top()).unwrap());
+    assert!(replies.len() >= 2, "the chat has fewer than two replies");
+    // Reply text sits above each reply's own buttons. Selecting text has no
+    // keyboard path, so this drags from the second message across the second reply.
+    let (first, second) = (replies[0], replies[1]);
+    ui.drag(
+        point(second.left() + px(2.), first.bottom() + px(40.)),
+        point(second.left() + px(402.), second.top() - px(20.)),
+    );
+    ui.set_clipboard("sentinel");
+    ui.press("ctrl-c");
+    let copied = ui.clipboard();
+    assert!(copied.contains("paragraph insertion"), "copied {copied:?}");
+    // Hovering the chat list redraws it and not the transcript.
+    for row in rows.iter().take(6) {
+        ui.move_to(*row);
+    }
+    ui.set_clipboard("sentinel");
+    ui.press("ctrl-c");
+    assert_eq!(
+        ui.clipboard(),
+        copied,
+        "redrawing the chat list lost the selection"
+    );
+}
+
+const NARROW: (f32, f32) = (800., 600.);
+
+fn tab_bounds(ui: &mut Ui) -> Vec<gpui_kit::Bounds<gpui_kit::Pixels>> {
+    ui.elements()
+        .into_iter()
+        .filter(|e| e.visible() && e.role() == Some(gpui_kit::Role::Tab))
+        .map(|e| e.bounds())
+        .collect()
+}
+
+#[gpui_kit::test]
+fn tabs_fold(cx: &mut TestAppContext, narrow: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.resize(NARROW.0, NARROW.1);
+    let more = ui
+        .containing("more projects")
+        .expect("the +N more projects menu")
+        .bounds();
+    let tabs = tab_bounds(&mut ui);
+    let widest = tabs
+        .iter()
+        .map(|t| t.size.width)
+        .fold(px(0.), |a, b| a.max(b));
+    assert!(
+        tabs.iter().filter(|t| t.size.width == widest).count() == 1,
+        "the inactive tabs didn't shorten: {tabs:?}"
+    );
+    let projects = ui.named("Projects").bounds();
+    // Kit's window controls sit right of the Projects menu.
+    assert!(
+        projects.right() < px(NARROW.0 - 100.),
+        "the Projects menu runs into the window controls: {projects:?}"
+    );
+    // The bar is a cached view: it has to refit on every resize, and match a
+    // window that opened narrow.
+    ui.resize(1600., NARROW.1);
+    assert!(
+        ui.containing("more projects").is_none(),
+        "the tabs stayed folded"
+    );
+    ui.resize(NARROW.0, NARROW.1);
+    assert_eq!(tab_bounds(&mut ui), tabs, "the tabs refit differently");
+    drop(ui);
+    let mut ui = Ui::open_sized(narrow, true, false, NARROW.0, NARROW.1);
+    assert_eq!(
+        tab_bounds(&mut ui),
+        tabs,
+        "a narrow window lays the tabs out differently"
+    );
+    assert_eq!(
+        ui.containing("more projects").map(|e| e.bounds()),
+        Some(more)
     );
 }

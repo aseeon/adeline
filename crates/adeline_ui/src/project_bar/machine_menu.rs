@@ -53,6 +53,7 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
     let checked = machines::checked();
     let mut list = col()
         .id("machine-list")
+        .test_support()
         .role(Role::List)
         .aria_label("Machines")
         .w(rems(24.))
@@ -91,6 +92,7 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
         list = list.child(
             col()
                 .id(("machine-row", ix))
+                .test_support()
                 .role(Role::ListItem)
                 .aria_label(format!("{name}, {status}"))
                 .px_2()

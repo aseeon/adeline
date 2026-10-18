@@ -1104,7 +1104,7 @@ fn group_header(
     count: usize,
     folded: bool,
     cx: &mut Context<SettingsWindow>,
-) -> Stateful<Div> {
+) -> impl IntoElement {
     let theme = cx.theme();
     let name = group.label();
     row()
@@ -1112,6 +1112,7 @@ fn group_header(
             "settings-group-{}",
             group as usize
         )))
+        .test_support()
         .role(Role::Button)
         .aria_label(format!("{} {name}", if folded { "Show" } else { "Hide" }))
         .mt_3()

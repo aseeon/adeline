@@ -8,21 +8,15 @@ Start engine, and demo mode without an engine. Run from the repo root:
     python scripts/engine-check/ui_check.py
 """
 import contextlib
-import ctypes
-import ctypes.wintypes
 import os
 import re
-import shutil
 import socket
 import subprocess
 import sys
 import time
 import traceback
 
-import win32clipboard
-from PIL import ImageChops, ImageGrab
-from pywinauto import Desktop, mouse
-from pywinauto.controls.hwndwrapper import HwndWrapper
+from pywinauto import Desktop
 from pywinauto.keyboard import send_keys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -30,7 +24,6 @@ import run_checks as rc  # noqa: E402
 from engine_client import Client  # noqa: E402
 
 results = []
-user32 = ctypes.windll.user32
 
 
 def wait(predicate, timeout=20, interval=0.2, what="condition"):
@@ -238,19 +231,6 @@ def check_unavailable():
         moved.rename(engine_dir)
 
 
-@check("Verbose: the ACP traffic tab shows only with --verbose")
-def check_traffic_needs_verbose():
-    rc.stop_engine()
-    process, window = launch("--demo")
-    try:
-        open_chat(window, "Search long conversations without pausing the interface")
-        send_keys("^+l")
-        time.sleep(1)
-        assert find(window, "ACP traffic") is None, "ACP traffic shown without --verbose"
-    finally:
-        process.kill()
-
-
 def count(window, name):
     return sum(element.element_info.name == name for element in window.descendants())
 
@@ -287,344 +267,6 @@ def check_fork():
         assert engine_pid() is None, "a demo fork started the engine"
     finally:
         process.kill()
-
-
-@check("Panels: a selection dragged from the Viewer onto blank space stays out of the conversation beside it")
-def check_selection_stays_in_panel():
-    (rc.work / "guide.md").write_text("# Guide\n\n" + "\n\n".join(
-        f"Paragraph {i} of the guide, long enough to select." for i in range(12)), encoding="utf-8")
-    process, window = launch()
-    try:
-        named(window, "Message", timeout=30)
-        # Short messages stacked down the conversation are what the selection used to jump into.
-        probes = ["leak probe one", "leak probe two", "leak probe three"]
-        for probe in probes:
-            send(window, probe)
-            # Message text isn't in the UI Automation tree; the fake agent answers within this.
-            time.sleep(4)
-        window.set_focus()
-        send_keys("^2")
-        named(window, "Docs tree", "Tree")
-        open_doc(window, "guide", 1)
-        v = named(window, "guide.md, Viewer", "Document", timeout=10).rectangle()
-        time.sleep(1)
-        # Selecting text has no keyboard path. This drags from mid-doc up and left, past the
-        # doc's text into the docs tree.
-        start, end = (v.left + 300, v.top + 330), (v.left - 120, v.top + 40)
-        mouse.press(coords=start)
-        for step in range(1, 21):
-            mouse.move(coords=(start[0] + (end[0] - start[0]) * step // 20, start[1] + (end[1] - start[1]) * step // 20))
-            time.sleep(0.01)
-        mouse.release(coords=end)
-        set_clipboard("sentinel")
-        send_keys("^c")
-        copied = wait(lambda: clipboard() != "sentinel" and clipboard(), 3, what="the selection to copy")
-        assert "Paragraph 0 of the guide" in copied, f"the selection missed the doc: {copied!r}"
-        leaked = [text for text in probes + ["Hello from fake agent"] if text in copied]
-        assert not leaked, f"the selection reached the conversation: {leaked}"
-    finally:
-        process.kill()
-
-
-def open_chat(window, title):
-    """Opens a chat by its title. The chat list has no shortcut to a chat by name, so this clicks."""
-    item = wait(lambda: next(e for e in window.descendants() if e.element_info.control_type == "ListItem"
-                             and e.element_info.name.startswith(title + ",")), 15, what=f"chat '{title}'")
-    item.click_input()
-
-
-def open_doc(window, query, rows_down):
-    """Opens a doc from the tree search by keyboard: Ctrl+P, the query, Down into the tree."""
-    send_keys("^p")
-    send_keys("^a{BACKSPACE}" + query, with_spaces=True)
-    send_keys("{DOWN}" * rows_down + "{ENTER}")
-
-
-@check("Docs AC4/AC8/AC10/AC12/AC15/AC21/AC22/AC24/AC29/AC30/AC35/AC36/AC44 (demo): tree, Viewer, Editor, notes, chooser, cards, unsaved prompt, remembered doc")
-def check_docs_demo():
-    rc.stop_engine()
-    process, window = launch("--demo")
-    try:
-        named(window, "Message", timeout=30)
-        window.set_focus()
-        # Ctrl+2 picks the second mode on the rail.
-        send_keys("^2")
-        named(window, "Docs tree", "Tree")
-        open_doc(window, "mdguide", 2)
-        named(window, "docs/markdown-guide.md, Viewer", "Document")
-        send_keys("^+v")
-        named(window, "docs/markdown-guide.md, Editor", "Edit", timeout=5)
-        named(window, "Bold (Ctrl+B)", "Button")
-        send_keys("^{END}")
-        send_keys("hello", with_spaces=True)
-        named(window, "markdown-guide.md, unsaved", "TreeItem", timeout=5)
-        send_keys("^s")
-        named(window, "markdown-guide.md", "TreeItem", timeout=5)
-        # A note quotes the selection with its path and line into the composer.
-        open_doc(window, "notes/plan", 2)
-        send_keys("^+v")
-        named(window, "notes/plan.md, Editor", "Edit", timeout=5)
-        send_keys("^{HOME}+{DOWN}^+n")
-        message = named(window, "Message", "Edit")
-        wait(lambda: message.iface_value.CurrentValue.startswith("`notes/plan.md`, line 1:"), 5, what="the note draft")
-        # The chooser finds a chat by its title; its reply shows doc cards.
-        send_keys("^+k")
-        named(window, "Search conversations", timeout=5)
-        send_keys("Make document edits{ENTER}", with_spaces=True)
-        named(window, "2 more docs, hidden", "Button", timeout=10)
-        # The cards and the conversation have no shortcuts to them; their buttons are invoked.
-        click(window, "2 more docs, hidden")
-        named(window, "2 more docs, shown", "Button", timeout=5)
-        click(window, "Open notes/deleted-draft.md")
-        named(window, "notes/deleted-draft.md no longer exists", timeout=5)
-        click(window, "Open docs/architecture.md")
-        viewer = named(window, "docs/architecture.md, Viewer", "Document", timeout=5)
-        # Selecting text has no keyboard path, so this drags across the Viewer. The
-        # selection stays in the doc, and the note button sends it to the composer.
-        v = viewer.rectangle()
-        start, end = (v.left + 30, v.top + 60), (v.left + v.width() * 2 // 3, v.top + 160)
-        mouse.press(coords=start)
-        for step in range(1, 21):
-            mouse.move(coords=(start[0] + (end[0] - start[0]) * step // 20, start[1] + (end[1] - start[1]) * step // 20))
-            time.sleep(0.01)
-        mouse.release(coords=end)
-        set_clipboard("sentinel")
-        send_keys("^c")
-        copied = wait(lambda: clipboard() != "sentinel" and clipboard(), 3, what="the Viewer selection to copy")
-        assert SELECTION_CHAT not in copied and "Reply" not in copied, f"the selection reached the conversation: {copied!r}"
-        named(window, "Note on selection", "Button", timeout=5).click_input()
-        wait(lambda: message.iface_value.CurrentValue.find("`docs/architecture.md`, line") >= 0, 5, what="the Viewer note draft")
-        # Quitting with unsaved edits asks first; Cancel keeps Adeline open. The doc
-        # opens in the Editor it was left in.
-        open_doc(window, "notes/plan", 2)
-        named(window, "notes/plan.md, Editor", "Edit", timeout=5)
-        send_keys("xyz")
-        send_keys("%{F4}")
-        named(window, "Save changes to 1 doc?", timeout=5)
-        click(window, "Cancel")
-        time.sleep(1)
-        assert process.poll() is None, "Cancel quit Adeline"
-        send_keys("%{F4}")
-        named(window, "Save changes to 1 doc?", timeout=5)
-        click(window, "Discard")
-        wait(lambda: process.poll() is not None, 10, what="Adeline to quit")
-    finally:
-        process.kill()
-    # Docs reopens the project's doc and view where they were left.
-    process, window = launch("--demo")
-    try:
-        named(window, "Message", timeout=30)
-        window.set_focus()
-        send_keys("^2")
-        named(window, "notes/plan.md, Editor", "Edit", timeout=10)
-        assert engine_pid() is None, "demo Docs started an engine"
-    finally:
-        process.kill()
-
-
-def clipboard():
-    win32clipboard.OpenClipboard()
-    try:
-        return win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
-    except TypeError:
-        return ""
-    finally:
-        win32clipboard.CloseClipboard()
-
-
-def set_clipboard(text):
-    win32clipboard.OpenClipboard()
-    try:
-        win32clipboard.EmptyClipboard()
-        win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
-    finally:
-        win32clipboard.CloseClipboard()
-
-
-def top_window(pid):
-    found = []
-
-    @ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-    def visit(hwnd, _):
-        owner = ctypes.c_ulong()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(owner))
-        if owner.value == pid and user32.IsWindowVisible(hwnd) and window_rect(hwnd)[2] > window_rect(hwnd)[0]:
-            found.append(hwnd)
-        return True
-    user32.EnumWindows(visit, 0)
-    return found[0] if found else None
-
-
-def window_rect(hwnd):
-    r = ctypes.wintypes.RECT()
-    user32.GetWindowRect(ctypes.c_void_p(hwnd), ctypes.byref(r))
-    return r.left, r.top, r.right, r.bottom
-
-
-def launch_blind(*args):
-    """Launches without UI Automation. A UI Automation client switches on the window's
-    accessibility tree, and with it on, the window draws every region uncached."""
-    process = subprocess.Popen([str(rc.EXE), *args])
-    hwnd = wait(lambda: top_window(process.pid), 30, what="the Adeline window")
-    HwndWrapper(hwnd).set_focus()
-    return process, hwnd
-
-
-def relative(element, window):
-    r, w = element.rectangle(), window.rectangle()
-    return r.left - w.left, r.top - w.top, r.right - w.left, r.bottom - w.top
-
-
-def at(origin, x, y):
-    return origin[0] + x, origin[1] + y
-
-
-SELECTION_CHAT = "Make document edits safe when the preview is still updating"
-
-
-def select_and_copy(origin, layout):
-    mouse.click(coords=at(origin, *layout["chat"]))
-    time.sleep(1)
-    first, second = layout["replies"][:2]
-    # Reply text isn't in the UI Automation tree; it sits above each reply's own buttons.
-    # Selecting text has no keyboard path, so this drags across the second reply.
-    top, bottom = first[3] + 40, second[1] - 20
-    mouse.press(coords=at(origin, second[0] + 2, top))
-    for step in range(1, 21):
-        mouse.move(coords=at(origin, second[0] + 2 + step * 20, top + step * (bottom - top) // 20))
-        time.sleep(0.01)
-    mouse.release(coords=at(origin, second[0] + 402, bottom))
-    # Hovering the chat list redraws it and not the transcript.
-    for x, y in layout["items"][:6]:
-        mouse.move(coords=at(origin, x, y))
-        time.sleep(0.1)
-    time.sleep(0.5)
-    set_clipboard("sentinel")
-    send_keys("^c")
-    return wait(lambda: clipboard() != "sentinel" and clipboard(), 3, what="the selection to copy")
-
-
-@check("View caching: a transcript selection survives redraws of the regions around it")
-def check_transcript_selection():
-    rc.stop_engine()
-    process, window = launch("--demo")
-    try:
-        window.set_focus()
-        named(window, "Message", timeout=20)
-        items = [e for e in window.descendants() if e.element_info.control_type == "ListItem"]
-        chat = next(e for e in items if e.element_info.name.startswith(SELECTION_CHAT + ","))
-        open_chat(window, SELECTION_CHAT)
-        time.sleep(1)
-        replies = sorted((relative(e, window) for e in window.descendants()
-                          if e.element_info.name == "Reply" and e.element_info.control_type == "Button"),
-                         key=lambda r: r[1])
-        assert len(replies) >= 2, "the chat has fewer than two replies"
-        middle = lambda r: ((r[0] + r[2]) // 2, (r[1] + r[3]) // 2)  # noqa: E731
-        layout = {"chat": middle(relative(chat, window)), "replies": replies,
-                  "items": [middle(relative(e, window)) for e in items]}
-        size = window.rectangle().width(), window.rectangle().height()
-        r = window.rectangle()
-        assert len(select_and_copy((r.left, r.top), layout)) > 20
-        # With the accessibility tree on, the transcript stays in it while other regions redraw.
-        assert count(window, "Reply") >= 2, "the transcript left the accessibility tree"
-    finally:
-        process.kill()
-    process, hwnd = launch_blind("--demo")
-    try:
-        time.sleep(3)
-        left, top, right, bottom = window_rect(hwnd)
-        assert (right - left, bottom - top) == size, "the window opened at another size"
-        copied = select_and_copy((left, top), layout)
-        assert len(copied) > 20, f"copied {copied!r}"
-        return f"copied {len(copied)} characters"
-    finally:
-        process.kill()
-
-
-FOLD_PROJECTS = [f"a-project-with-a-long-name-{n}" for n in range(8)]
-
-
-def title_bar_image(left, top, right, height):
-    # Off the title bar, so no hover tints it.
-    mouse.move(coords=(left + 400, top + 300))
-    time.sleep(1.5)
-    return ImageGrab.grab((left, top, right, top + height), all_screens=True)
-
-
-@check("View caching: project tabs shorten and fold into a menu in a narrow window")
-def check_tabs_fold():
-    rc.stop_engine()
-    for name in FOLD_PROJECTS:
-        rc.write_project(name, name, rc.work)
-    try:
-        process, window = launch()
-        try:
-            window.set_focus()
-            wait(lambda: "a-project-with-a-long-name-0" in tabs(window), 30, what="the projects' tabs")
-            r = window.rectangle()
-            user32.MoveWindow(ctypes.c_void_p(window.handle), r.left, r.top, 800, 600, True)
-            more = wait(lambda: containing(window, "more projects", "Button"), 10, what="the +N menu")
-            r = window.rectangle()
-            shown = [e for e in window.descendants() if e.element_info.control_type == "TabItem"]
-            active = max(shown, key=lambda e: e.rectangle().width())
-            assert all(e.rectangle().width() < active.rectangle().width() for e in shown if e != active), \
-                "the inactive tabs didn't shorten"
-            projects = named(window, "Projects", "Button").rectangle()
-            # Kit's window controls sit right of the Projects menu; UI Automation gives them no bounds.
-            assert projects.right < r.right - 100, "the Projects menu runs into the window controls"
-            height = active.rectangle().height()
-            expected = title_bar_image(r.left, r.top, r.right, height)
-            note = f"{len(shown)} tabs, {more.element_info.name}"
-        finally:
-            process.kill()
-        # The bar is a cached view, drawn uncached while UI Automation is on, so the
-        # same window without it has to draw the same folded bar.
-        process, hwnd = launch_blind()
-        try:
-            time.sleep(3)
-            # The window reopens at 800 wide; the tabs refit on a resize while it runs.
-            user32.MoveWindow(ctypes.c_void_p(hwnd), r.left, r.top, 1600, 600, True)
-            time.sleep(1.5)
-            user32.MoveWindow(ctypes.c_void_p(hwnd), r.left, r.top, 800, 600, True)
-            actual = title_bar_image(r.left, r.top, r.right, height)
-            if ImageChops.difference(expected, actual).getbbox():
-                expected.save(rc.work / "title-bar-expected.png")
-                actual.save(rc.work / "title-bar-actual.png")
-                raise AssertionError(f"without UI Automation the title bar draws differently; see {rc.work}")
-            return note
-        finally:
-            process.kill()
-    finally:
-        rc.stop_engine()
-        for name in FOLD_PROJECTS:
-            shutil.rmtree(rc.config / "projects" / name, ignore_errors=True)
-
-
-@check("Project tabs: the close button on a tab closes it")
-def check_close_tab():
-    rc.stop_engine()
-    for name in ("close-a", "close-b"):
-        rc.write_project(name, name, rc.work)
-    try:
-        process, window = launch()
-        try:
-            window.set_focus()
-            wait(lambda: "close-b" in tabs(window), 30, what="the close-b tab")
-            target = tab(window, "close-b")
-            # The close button shows on hover, and the click has to go through the pointer.
-            mouse.move(coords=target.rectangle().mid_point())
-            button = next(e for e in target.descendants() if e.element_info.name == "Close project tab")
-            button.click_input()
-            wait(lambda: "close-b" not in tabs(window), 5, what="the tab to close")
-            time.sleep(1)
-            assert "close-b" not in tabs(window), "the tab came back"
-            return ", ".join(tabs(window))
-        finally:
-            process.kill()
-    finally:
-        rc.stop_engine()
-        for name in ("close-a", "close-b"):
-            shutil.rmtree(rc.config / "projects" / name, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -759,37 +401,6 @@ def type_into(window, name, text):
     named(window, name, "Edit").click_input()
     send_keys("^a{BACKSPACE}")
     send_keys(text, with_spaces=True)
-
-
-@check("Remote AC36: demo machines, labels, checking, the disconnected look and the settings dropdown")
-def check_demo_machines():
-    rc.stop_engine()
-    process, window = launch("--demo")
-    try:
-        # Tabs read "name · machine (needs you)", and ", disconnected" for a dropped machine.
-        wait(lambda: any("· Matrix" in t for t in tabs(window)), 15, what="a Matrix tab")
-        assert any("· Vortex" in t and t.endswith(", disconnected") for t in tabs(window)), tabs(window)
-        rows = selector(window)
-        assert rows.keys() == {"Nexus", "Matrix", "Vortex"}, rows
-        assert "Vortex, Disconnected" in rows.values() and "Matrix, Connected" in rows.values(), rows
-        named(window, "Show Matrix").click_input()
-        wait(lambda: not any("Matrix" in t for t in tabs(window)), 10, what="the Matrix tab to go")
-        named(window, "Show Matrix").click_input()
-        wait(lambda: any("Matrix" in t for t in tabs(window)), 10, what="the Matrix tab to return")
-        close_menu(window)
-        settings = settings_window(process, window)
-        assert find(settings, "Show General") or find(settings, "Hide General")
-        choose_machine(settings, 1)
-        wait(lambda: not (find(settings, "Show General") or find(settings, "Hide General")), 10,
-             what="General to hide for a remote machine")
-        assert find(settings, "Show Engine") or find(settings, "Hide Engine")
-        choose_machine(settings, 0)
-        wait(lambda: find(settings, "Show General") or find(settings, "Hide General"), 10,
-             what="General to return for the local machine")
-        settings.close()
-        assert engine_pid() is None, "demo mode started an engine"
-    finally:
-        process.kill()
 
 
 @check("Remote AC5/AC1/AC25/AC26/AC7/AC10/AC12: add a machine, Adeline installs itself there, a prompt runs there")
@@ -1108,9 +719,8 @@ def main():
     try:
         only = sys.argv[1] if len(sys.argv) > 1 else ""
         for run in (check_launch, check_quit_background, check_quit_idle, check_quit_stop_all,
-                    check_settings_engine, check_unavailable, check_traffic_needs_verbose, check_docs_demo,
-                    check_transcript_selection, check_tabs_fold, check_close_tab, check_fork, check_selection_stays_in_panel,
-                    check_demo_machines, check_add_machine, check_drop, check_ssh_failures,
+                    check_settings_engine, check_unavailable, check_fork,
+                    check_add_machine, check_drop, check_ssh_failures,
                     check_upgrade_and_browse, check_headless_cli, check_headless_remote):
             if only.lower() in run.label.lower():
                 run()
