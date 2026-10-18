@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Deletes stale build output from target/ in the main checkout and in every
+# worktree under .claude/worktrees/. Keeps target/release (the runnable app)
+# and target/dist/Adeline.app (the macOS package).
+
+set -uo pipefail
+
+root=$(dirname "$(git -C "$(dirname "$0")" rev-parse --path-format=absolute --git-common-dir)")
+
+if ps -W >/dev/null 2>&1; then procs=$(ps -W); else procs=$(ps -A -o comm=); fi
+# ponytail: skips all cleanup while any build or test runs anywhere, check each
+# process's working folder if this skips too often.
+if grep -qiE '[/\\](cargo|cargo-nextest|rustc)(\.exe)?[[:space:]]*$' <<<"$procs" ||
+  grep -iE '[/\\]target[/\\].*adeline[^/\\]*$' <<<"$procs" | grep -qviE '[/\\]target[/\\]release[/\\]'; then
+  echo "clean-build: a build, test or debug Adeline is running, skipping"
+  exit 1
+fi
+
+clean() {
+  local target=$1 entry
+  [[ -d $target ]] || return 0
+  for entry in "$target"/* "$target"/.[!.]* "$target"/dist/*; do
+    case $entry in "$target/release" | "$target/dist" | "$target/dist/Adeline.app") continue ;; esac
+    [[ -e $entry ]] || continue
+    echo "clean-build: deleting $entry"
+    rm -rf "$entry" || echo "clean-build: could not delete $entry"
+  done
+}
+
+clean "$root/target"
+for worktree in "$root"/.claude/worktrees/*/; do
+  clean "${worktree%/}/target"
+done
