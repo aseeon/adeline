@@ -333,50 +333,6 @@ def open_chat(window, title):
     item.click_input()
 
 
-@check("AC26 + ACP rebuild AC (demo): no engine, TODO list, queue, traffic tab, hang notice, option menus, dismissing an error")
-def check_demo_conversation():
-    rc.stop_engine()
-    process, window = launch("--demo", "--verbose")
-    try:
-        open_chat(window, "Search long conversations without pausing the interface")
-        named(window, "TODO: Check matches across two messages, 3 of 4", "Button")
-        send_keys("^+t")
-        named(window, "TODO", "List", timeout=5)
-        send_keys("{ESC}")
-        named(window, "Queued messages")
-        named(window, "Queued: Also keep the match count visible while typing.")
-        send_keys("^+l")
-        named(window, "ACP traffic", timeout=5)
-        named(window, "Copy all", "Button", timeout=5)
-        # A turn with no traffic for longer than the notice delay (10 min) offers Stop and Restart.
-        open_chat(window, "Import sessions from the old workspace format")
-        named(window, "Agent silent for 12 min")
-        # An idle chat's menus open from the keyboard (Alt, since Ctrl+Shift+M/E/O are
-        # often global hotkeys of GPU tools) and list the agent's choices.
-        open_chat(window, "Make document edits safe when the preview is still updating")
-        named(window, "Model: Opus", "Button")
-        # Menu items aren't exposed to UI Automation; search, pick with Enter, read the trigger.
-        send_keys("%m")
-        named(window, "Search model", timeout=5)
-        send_keys("Sonnet{ENTER}")
-        named(window, "Model: Sonnet", "Button", timeout=5)
-        send_keys("%o")
-        named(window, "Search mode", timeout=5)
-        send_keys("Accept{ENTER}")
-        named(window, "Mode: Accept edits", "Button", timeout=5)
-        send_keys("%p")
-        named(window, "Search more options", timeout=5)
-        send_keys("{ESC}")
-        wait(lambda: gone(window, "Search more options"), 5, what="More options to close")
-        # An error under a chat can be dismissed by hand.
-        open_chat(window, "Keep the composer usable in a narrow desktop window")
-        click(window, "Dismiss error")
-        wait(lambda: gone(window, "Dismiss error"), 5, what="the error to go")
-        assert engine_pid() is None, "demo mode started an engine"
-    finally:
-        process.kill()
-
-
 def open_doc(window, query, rows_down):
     """Opens a doc from the tree search by keyboard: Ctrl+P, the query, Down into the tree."""
     send_keys("^p")
@@ -1152,7 +1108,7 @@ def main():
     try:
         only = sys.argv[1] if len(sys.argv) > 1 else ""
         for run in (check_launch, check_quit_background, check_quit_idle, check_quit_stop_all,
-                    check_settings_engine, check_unavailable, check_traffic_needs_verbose, check_demo_conversation, check_docs_demo,
+                    check_settings_engine, check_unavailable, check_traffic_needs_verbose, check_docs_demo,
                     check_transcript_selection, check_tabs_fold, check_close_tab, check_fork, check_selection_stays_in_panel,
                     check_demo_machines, check_add_machine, check_drop, check_ssh_failures,
                     check_upgrade_and_browse, check_headless_cli, check_headless_remote):

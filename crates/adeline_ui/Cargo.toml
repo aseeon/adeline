@@ -23,6 +23,9 @@ serde_yaml_ng.workspace = true
 tokio = { workspace = true, features = ["rt-multi-thread", "process", "sync", "time", "macros"] }
 tracing.workspace = true
 
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+
 [features]
 # Frame timings for profiling builds, see `frame_log.rs`.
 profiler = ["gpui-kit/profiler"]

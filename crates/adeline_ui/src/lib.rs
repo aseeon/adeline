@@ -252,7 +252,7 @@ actions!(
         TodoList
     ]
 );
-struct Adeline {
+pub struct Adeline {
     main_window: WindowHandle<Root>,
     projects: Vec<Workspace>,
     open_projects: Vec<bool>,
@@ -331,6 +331,11 @@ struct Adeline {
     chat_header: Entity<views::ChatHeader>,
     project_bar: Entity<project_bar::ProjectBar>,
     docs: docs::Docs,
+}
+impl std::fmt::Debug for Adeline {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Adeline").finish_non_exhaustive()
+    }
 }
 impl Adeline {
     fn new(
@@ -638,6 +643,16 @@ impl Adeline {
             .copied()
             .unwrap_or(false)
     }
+    // Read by the UI tests.
+    pub fn open_chat(&self) -> Option<&str> {
+        self.selected
+            .and_then(|i| self.workspace().threads.get(i))
+            .map(|thread| thread.title.as_str())
+    }
+    pub fn chat_option(&self, category: conversation::Category) -> Option<String> {
+        let live = self.runtime.conversations.get(&self.current_id()?)?;
+        conversation::option(&live.options, category).map(conversation::SessionOption::current)
+    }
     fn workspace(&self) -> &Workspace {
         if !self.has_open_project() {
             return &self.empty_workspace;
@@ -851,77 +866,92 @@ impl Render for Adeline {
 }
 
 pub fn open(demo_mode: bool, verbose: bool) {
-    machines::init(demo_mode);
     #[cfg(feature = "profiler")]
     frame_log::start();
     application().with_assets(Assets).run(move |cx: &mut App| {
-        init(cx);
-        fonts::init(cx);
-        config::init();
-        theme::init();
-        theme::apply(cx);
-        cx.set_global(Harnesses(harness::Catalog {
-            harnesses: if demo_mode {
-                harness::load()
-            } else {
-                Vec::new()
-            },
-            detected: demo_mode,
-            demo: demo_mode,
-            ..Default::default()
-        }));
-        let mut initial = (!demo_mode && machines::is_checked(machines::LOCAL))
-            .then(client::connect_existing)
-            .flatten();
-        let snapshot = initial.as_mut().and_then(|initial| initial.snapshot.take());
-        client::init(demo_mode, initial, snapshot.as_ref(), cx);
-        bind_keys(cx);
-        cx.on_action(|_: &NextFocus, cx| {
-            if let Some(handle) = cx.active_window() {
-                let _ = cx.update_window(handle, |_, window, cx| window.focus_next(cx));
-            }
-        });
-        cx.on_action(|_: &PreviousFocus, cx| {
-            if let Some(handle) = cx.active_window() {
-                let _ = cx.update_window(handle, |_, window, cx| window.focus_prev(cx));
-            }
-        });
         // These pixels describe native window geometry, not control spacing.
         let bounds = Bounds::centered(None, size(px(1440.), px(940.)), cx);
-        cx.open_window(
+        start(
+            demo_mode,
+            verbose,
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(800.), px(600.))),
                 ..titlebar::main_window_options()
             },
-            move |window, cx| {
-                let view = cx.new(|cx| Adeline::new(demo_mode, verbose, snapshot, window, cx));
-                client::set_owner(view.downgrade(), cx);
-                let handle = window
-                    .window_handle()
-                    .downcast::<Root>()
-                    .expect("Kit root window");
-                let owner = view.downgrade();
-                let closing_owner = owner.clone();
-                window.on_window_should_close(cx, move |_, cx| {
-                    interaction::request_close(handle, closing_owner.clone(), cx);
-                    false
-                });
-                menu_bar::init(handle, owner, demo_mode, cx);
-                cx.on_window_closed(move |cx, closed| {
-                    if closed == handle.window_id() {
-                        settings::close_for(handle, cx);
-                    }
-                })
-                .detach();
-                view.update(cx, |app, cx| window.focus(&app.focus, cx));
-                // Kit's root paints the background, which would hide the window blur.
-                cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
-            },
-        )
-        .expect("open Adeline window");
+            cx,
+        );
         cx.activate(true);
     });
+}
+
+// Everything `open` sets up inside the platform application, so tests run it on GPUI's test platform.
+pub fn start(
+    demo_mode: bool,
+    verbose: bool,
+    options: WindowOptions,
+    cx: &mut App,
+) -> Entity<Adeline> {
+    machines::init(demo_mode);
+    init(cx);
+    fonts::init(cx);
+    config::init();
+    theme::init();
+    theme::apply(cx);
+    cx.set_global(Harnesses(harness::Catalog {
+        harnesses: if demo_mode {
+            harness::load()
+        } else {
+            Vec::new()
+        },
+        detected: demo_mode,
+        demo: demo_mode,
+        ..Default::default()
+    }));
+    let mut initial = (!demo_mode && machines::is_checked(machines::LOCAL))
+        .then(client::connect_existing)
+        .flatten();
+    let snapshot = initial.as_mut().and_then(|initial| initial.snapshot.take());
+    client::init(demo_mode, initial, snapshot.as_ref(), cx);
+    bind_keys(cx);
+    cx.on_action(|_: &NextFocus, cx| {
+        if let Some(handle) = cx.active_window() {
+            let _ = cx.update_window(handle, |_, window, cx| window.focus_next(cx));
+        }
+    });
+    cx.on_action(|_: &PreviousFocus, cx| {
+        if let Some(handle) = cx.active_window() {
+            let _ = cx.update_window(handle, |_, window, cx| window.focus_prev(cx));
+        }
+    });
+    let mut adeline = None;
+    cx.open_window(options, |window, cx| {
+        let view = cx.new(|cx| Adeline::new(demo_mode, verbose, snapshot, window, cx));
+        adeline = Some(view.clone());
+        client::set_owner(view.downgrade(), cx);
+        let handle = window
+            .window_handle()
+            .downcast::<Root>()
+            .expect("Kit root window");
+        let owner = view.downgrade();
+        let closing_owner = owner.clone();
+        window.on_window_should_close(cx, move |_, cx| {
+            interaction::request_close(handle, closing_owner.clone(), cx);
+            false
+        });
+        menu_bar::init(handle, owner, demo_mode, cx);
+        cx.on_window_closed(move |cx, closed| {
+            if closed == handle.window_id() {
+                settings::close_for(handle, cx);
+            }
+        })
+        .detach();
+        view.update(cx, |app, cx| window.focus(&app.focus, cx));
+        // Kit's root paints the background, which would hide the window blur.
+        cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
+    })
+    .expect("open Adeline window");
+    adeline.expect("Adeline view")
 }
 
 fn bind_keys(cx: &mut App) {

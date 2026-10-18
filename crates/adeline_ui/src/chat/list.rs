@@ -141,6 +141,7 @@ impl Adeline {
                 self.chat_title(i, selected, cx)
                     .child(self.chat_row_end(i, &id, cx))
                     .id(id.clone())
+                    .test_support()
                     .group(id)
                     .role(Role::ListBoxOption)
                     .aria_selected(selected)

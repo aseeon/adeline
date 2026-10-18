@@ -243,10 +243,11 @@ impl Adeline {
             )
     }
 
-    fn hang_notice(&self, minutes: u64, cx: &Context<Self>) -> Stateful<Div> {
+    fn hang_notice(&self, minutes: u64, cx: &Context<Self>) -> impl IntoElement {
         let title = format!("Agent silent for {minutes} min");
         col()
             .id("hang-notice")
+            .test_support()
             .role(Role::Alert)
             .aria_label(title.clone())
             .gap_2()
@@ -271,7 +272,7 @@ impl Adeline {
             )
     }
 
-    fn queued_entries(&self, live: &Live, cx: &Context<Self>) -> Stateful<Div> {
+    fn queued_entries(&self, live: &Live, cx: &Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let steering = live.features.steering;
         let send_now_help = if steering {
@@ -281,6 +282,7 @@ impl Adeline {
         };
         let mut list = col()
             .id("queued-messages")
+            .test_support()
             .role(Role::List)
             .aria_label("Queued messages")
             .w_full()
@@ -299,6 +301,7 @@ impl Adeline {
             list = list.child(
                 row()
                     .id(SharedString::from(format!("queued:{id}")))
+                    .test_support()
                     .role(Role::ListItem)
                     .aria_label(format!("Queued: {}", item.text))
                     .w_full()
@@ -864,6 +867,7 @@ impl Adeline {
                     let theme = cx.theme();
                     col()
                         .id("todo-list")
+                        .test_support()
                         .role(Role::List)
                         .aria_label("TODO")
                         .w(rems(22.))
@@ -1058,6 +1062,7 @@ impl Adeline {
         });
         col()
             .id("acp-traffic")
+            .test_support()
             .role(Role::Log)
             .aria_label("ACP traffic")
             .size_full()

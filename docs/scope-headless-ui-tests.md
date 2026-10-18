@@ -145,8 +145,8 @@ Each phase deletes the Python checks it replaces (R29).
 
 ## Open questions
 
-- Does `config::init` or `fonts::init` read the real home or system fonts in a way the test platform can't handle? Phase 1 answers this.
-- Which elements need IDs for `find`? Our UI Automation names come from accessibility labels, which may not match element IDs.
+- Answered in phase 1: `config::init` and `fonts::init` both work on the test platform. `config::init` reads and seeds `settings.yml` under `HOME` (`USERPROFILE` on Windows), so each test points both at its own temporary folder. That is safe because nextest runs each test in its own process. `fonts::init` adds the bundled Chivo fonts to the test platform's text system and lists its font names. `TestAppContext` has no asset source, so SVG icons don't load, and no check depends on them.
+- Answered in phase 1: Kit components such as `Button` and `Input` register themselves with their accessibility labels. Plain elements need `.test_support()` after their `.id(...)`: so far the chat rows, the TODO list, the queue and its items, the hang notice and the ACP traffic log. Many IDs hold generated project and chat IDs, so `tests/ui.rs` finds elements by accessibility label, the same names UI Automation used, through `gpui_kit::base::test_support::snapshots`. That function is `#[doc(hidden)]`, so a gpui-kit upgrade can change it. `ElementSnapshot::focused()` panics on an element whose focus binding wasn't observed, so ask it only of elements that track focus.
 - Can a test reach the quit dialog through the `Quit` action, given that the test window can't fire the native close request? If not, the test calls `interaction::request_close`.
 - Does the quit path on the test platform match a real process exit closely enough for R18? If the engine notices the client leaving only when the process exits, the test drops the connection by hand.
 - For R23, a Rust fake SSH or a reworked `fake_ssh.py`? Rust drops the Python dependency for these tests, but `fake_agent.py` still needs Python.

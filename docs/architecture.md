@@ -90,7 +90,7 @@ The engine numbers every delta it broadcasts and keeps the latest ones. A reconn
 
 ## The UI
 
-The UI crate's `lib.rs` holds the root view `Adeline`, the `Action` enum, shared drawing helpers (`row`, `col`, `text`, `icon`) and `open`, which builds the window. `Adeline`'s `impl` blocks are spread over its modules, one concern each: `interaction.rs` (dispatch), `runtime_ui.rs` (conversations, mirrored from the engine), `views.rs`, `panes.rs`, `project_bar.rs`, `project_ui.rs`, `conversation_ui.rs` and `settings.rs`.
+The UI crate's `lib.rs` holds the root view `Adeline`, the `Action` enum, shared drawing helpers (`row`, `col`, `text`, `icon`), `open`, which runs the platform application, and `start`, which builds the window inside it. `Adeline`'s `impl` blocks are spread over its modules, one concern each: `interaction.rs` (dispatch), `runtime_ui.rs` (conversations, mirrored from the engine), `views.rs`, `panes.rs`, `project_bar.rs`, `project_ui.rs`, `conversation_ui.rs` and `settings.rs`.
 
 Each region of the main window is its own GPUI view: the chat list, the transcript, the composer, the chat header, the side panel and the project tabs. GPUI redraws a notified view and every view above it. Most regions are drawn cached through `chat::region`: GPUI reuses their last layout and paint until they are notified, so a keystroke in the composer doesn't redraw the side panel. A cached view that redraws also redraws every view inside it, so the chat list and the transcript, whose rows animate, are drawn uncached and cache each row instead. The regions read `Adeline`'s state, so `Adeline::notify_cached_views` notifies them whenever `Adeline` is notified. A change that `Adeline` doesn't notify for has to notify the region that shows it.
 
@@ -171,4 +171,5 @@ Until a real extension needs them, there is no `trait Mode`, no extension view t
 - Rust unit tests sit next to the code (`#[cfg(test)]`). The large suites are `storage/tests.rs` and `acp/tests.rs`.
 - `adeline_core/tests/protocol.rs` pins the wire format against `tests/wire/<PROTOCOL>.jsonl`.
 - `adeline/tests/engine.rs` runs the real binary's engine in a temporary home on every OS, with `scripts/engine-check/fake_agent.py` as the agent, so `cargo nextest` needs Python 3 on PATH.
+- `adeline_ui/tests/ui.rs` runs the real `Adeline` view headless on GPUI's test platform, on every OS. `adeline_ui::start` does the setup for both `open` and the tests, apart from the platform application and the native window options.
 - End-to-end engine and UI checks are in `scripts/engine-check/`, Windows only. See its README.
