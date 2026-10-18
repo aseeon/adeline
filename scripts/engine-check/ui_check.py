@@ -644,6 +644,33 @@ def check_tabs_fold():
             shutil.rmtree(rc.config / "projects" / name, ignore_errors=True)
 
 
+@check("Project tabs: the close button on a tab closes it")
+def check_close_tab():
+    rc.stop_engine()
+    for name in ("close-a", "close-b"):
+        rc.write_project(name, name, rc.work)
+    try:
+        process, window = launch()
+        try:
+            window.set_focus()
+            wait(lambda: "close-b" in tabs(window), 30, what="the close-b tab")
+            target = tab(window, "close-b")
+            # The close button shows on hover, and the click has to go through the pointer.
+            mouse.move(coords=target.rectangle().mid_point())
+            button = next(e for e in target.descendants() if e.element_info.name == "Close project tab")
+            button.click_input()
+            wait(lambda: "close-b" not in tabs(window), 5, what="the tab to close")
+            time.sleep(1)
+            assert "close-b" not in tabs(window), "the tab came back"
+            return ", ".join(tabs(window))
+        finally:
+            process.kill()
+    finally:
+        rc.stop_engine()
+        for name in ("close-a", "close-b"):
+            shutil.rmtree(rc.config / "projects" / name, ignore_errors=True)
+
+
 # ---------------------------------------------------------------------------
 # Remote machines, through fake_ssh.py: each destination is a separate home
 # with its own engine on this computer.
@@ -1126,7 +1153,7 @@ def main():
         only = sys.argv[1] if len(sys.argv) > 1 else ""
         for run in (check_launch, check_quit_background, check_quit_idle, check_quit_stop_all,
                     check_settings_engine, check_unavailable, check_traffic_needs_verbose, check_demo_conversation, check_docs_demo,
-                    check_transcript_selection, check_tabs_fold, check_fork, check_selection_stays_in_panel,
+                    check_transcript_selection, check_tabs_fold, check_close_tab, check_fork, check_selection_stays_in_panel,
                     check_demo_machines, check_add_machine, check_drop, check_ssh_failures,
                     check_upgrade_and_browse, check_headless_cli, check_headless_remote):
             if only.lower() in run.label.lower():

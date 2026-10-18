@@ -659,7 +659,10 @@ impl Adeline {
         Button::new(id)
             .label(label)
             .small()
-            .on_click(cx.listener(move |app, _, window, cx| app.act(action.clone(), window, cx)))
+            .on_click(cx.listener(move |app, _, window, cx| {
+                cx.stop_propagation();
+                app.act(action.clone(), window, cx);
+            }))
     }
     fn icon_button(
         &self,
@@ -676,7 +679,10 @@ impl Adeline {
             .tooltip(label)
             .small()
             .ghost()
-            .on_click(cx.listener(move |app, _, window, cx| app.act(action.clone(), window, cx)))
+            .on_click(cx.listener(move |app, _, window, cx| {
+                cx.stop_propagation();
+                app.act(action.clone(), window, cx);
+            }))
     }
     fn focus_chat_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.chat_search_open = true;
