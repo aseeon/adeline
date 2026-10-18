@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo fmt *)",
+      "Bash(cargo build *)",
+      "Bash(cargo nextest run *)",
+      "Bash(scripts/check-todos)",
+      "Bash(bash scripts/check-todos)",
+      "Bash(scripts/clippy)",
+      "Bash(scripts/clippy *)",
+      "Bash(scripts/macos-app)",
+      "PowerShell(cargo fmt *)",
+      "PowerShell(cargo build *)",
+      "PowerShell(cargo nextest run *)",
+      "PowerShell(./scripts/clippy.ps1)",
+      "PowerShell(./scripts/clippy.ps1 *)",
+      "PowerShell(./scripts/package.ps1)",
+      "PowerShell(./scripts/package.ps1 *)"
+    ]
+  }
+}
