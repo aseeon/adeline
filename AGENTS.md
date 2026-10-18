@@ -46,9 +46,9 @@ Prefer high-impact integration tests: one test that drives a real flow across mo
 
 # UI testing
 
-On Windows, test UI by extending `scripts/engine-check/ui_check.py`, which drives the real window through UI Automation (pywinauto), `--demo` included. See `scripts/engine-check/README.md`. Fall back to computer use only for what UI Automation cannot reach. The `scripts/engine-check/` suite is Windows only, so on macOS use computer use for UI checks.
+Test UI with headless `cargo nextest` tests on GPUI's test platform, which run on every OS in CI: demo mode in `crates/adeline_ui/tests/ui.rs`, a live engine or remote machines in `crates/adeline/tests/ui.rs`. Both use the `Ui` helper in `crates/adeline_ui/tests/support/mod.rs`, which finds elements by accessibility label. A plain element a test finds needs `.test_support()` after its `.id(...)`. `scripts/engine-check/ui_check.py` is one smoke test of the real release window on Windows. Use computer use only for what the test platform cannot show, such as real drawing.
 
-Navigate the app with keyboard shortcuts (listed in `docs/shortcuts.md`) wherever one exists, in UI Automation and computer use alike, rather than moving the pointer and clicking. Each time a test has to click because no shortcut reaches a control, tell the user which shortcut is missing, then add it.
+Navigate the app with keyboard shortcuts (listed in `docs/shortcuts.md`) wherever one exists, in tests and computer use alike, rather than moving the pointer and clicking. Each time a test has to click because no shortcut reaches a control, tell the user which shortcut is missing, then add it.
 
 # Releases
 

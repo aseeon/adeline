@@ -135,6 +135,7 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
                 .children(detail.filter(|_| on).map(|detail| {
                     div()
                         .id(("machine-detail", ix))
+                        .test_support()
                         .role(Role::Status)
                         .aria_label(detail.clone())
                         .pl(rems(1.75))

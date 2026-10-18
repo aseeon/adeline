@@ -16,7 +16,8 @@ use std::{
 
 pub const PROJECT: &str = "demo";
 
-/// Creates the home `adeline-<name>-<pid>` in the temporary folder.
+/// Creates the home `adeline-<name>-<pid>` in the temporary folder, with the
+/// project `demo`.
 pub fn home(name: &str) -> PathBuf {
     // macOS limits a socket path to 104 bytes, and its temporary folder is long.
     #[cfg(unix)]
@@ -25,6 +26,12 @@ pub fn home(name: &str) -> PathBuf {
     let temp = std::env::temp_dir();
     let root = temp.join(format!("adeline-{name}-{}", std::process::id()));
     let _ = fs::remove_dir_all(&root);
+    populate(&root, PROJECT);
+    root
+}
+
+/// Gives `root` the fake agent and a project named `project` in `root/work`.
+pub fn populate(root: &Path, project: &str) {
     let config = root.join(".config").join("adeline");
     let work = root.join("work");
     fs::create_dir_all(&work).unwrap();
@@ -38,20 +45,29 @@ pub fn home(name: &str) -> PathBuf {
     fs::write(
         agent.join("agent.yml"),
         format!(
-            "version: 1\nname: Fake\nharness: custom\ncommand: {}\narguments: [{}]\n",
+            "version: 1
+name: Fake
+harness: custom
+command: {}
+arguments: [{}]
+",
             json!(python()),
             json!(script)
         ),
     )
     .unwrap();
-    let project = config.join("projects").join(PROJECT);
-    fs::create_dir_all(project.join("conversations")).unwrap();
+    let folder = config.join("projects").join(project);
+    fs::create_dir_all(folder.join("conversations")).unwrap();
     fs::write(
-        project.join("project.yml"),
-        format!("name: {PROJECT}\ndirectory: {}\n", json!(work)),
+        folder.join("project.yml"),
+        format!(
+            "name: {project}
+directory: {}
+",
+            json!(work)
+        ),
     )
     .unwrap();
-    root
 }
 
 pub fn python() -> String {
@@ -92,11 +108,11 @@ pub fn engine_pid(home: &Path) -> Option<u32> {
     engine_status(home, "PID").and_then(|pid| pid.parse().ok())
 }
 
-/// The saved events of a conversation in the project.
-pub fn transcript(home: &Path, conversation: &str) -> String {
+/// The saved events of a conversation in `project`.
+pub fn transcript(home: &Path, project: &str, conversation: &str) -> String {
     fs::read_to_string(
         home.join(".config/adeline/projects")
-            .join(PROJECT)
+            .join(project)
             .join("conversations")
             .join(conversation)
             .join("transcript.jsonl"),
@@ -104,10 +120,10 @@ pub fn transcript(home: &Path, conversation: &str) -> String {
     .unwrap_or_default()
 }
 
-pub fn conversations(home: &Path) -> Vec<String> {
+pub fn conversations(home: &Path, project: &str) -> Vec<String> {
     fs::read_dir(
         home.join(".config/adeline/projects")
-            .join(PROJECT)
+            .join(project)
             .join("conversations"),
     )
     .map(|entries| {
@@ -116,4 +132,11 @@ pub fn conversations(home: &Path) -> Vec<String> {
             .collect()
     })
     .unwrap_or_default()
+}
+
+/// The PE subsystem of a Windows program: 2 for a GUI program, 3 for a console one.
+pub fn windows_subsystem(exe: &Path) -> u16 {
+    let data = fs::read(exe).unwrap();
+    let pe = u32::from_le_bytes(data[0x3C..0x40].try_into().unwrap()) as usize;
+    u16::from_le_bytes(data[pe + 24 + 68..pe + 24 + 70].try_into().unwrap())
 }

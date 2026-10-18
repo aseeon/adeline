@@ -599,6 +599,7 @@ impl Adeline {
             };
             let mut row = row()
                 .id(("browser-entry", ix))
+                .test_support()
                 .role(Role::ListItem)
                 .aria_label(label.clone())
                 .gap_2()
@@ -865,6 +866,7 @@ impl Adeline {
         match label {
             Some(label) => col()
                 .id("dialog-content")
+                .test_support()
                 .role(Role::Group)
                 .aria_label(label)
                 .child(content)

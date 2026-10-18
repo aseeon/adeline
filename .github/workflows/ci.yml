@@ -94,8 +94,16 @@ jobs:
       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: cargo-nextest
+      # The headless build, for the UI test that installs it on a fake remote.
+      - name: build headless
+        run: cargo build --locked --no-default-features --target-dir target/headless
       - name: cargo nextest
+        env:
+          ADELINE_HEADLESS_EXE: ${{ github.workspace }}/target/headless/debug/adeline${{ runner.os == 'Windows' && '.exe' || '' }}
         run: cargo nextest run --locked --workspace --all-features --profile ci --no-tests=warn
+      # Tests that download an old release, kept off the main step's network path.
+      - name: cargo nextest (ignored)
+        run: cargo nextest run --locked --workspace --all-features --profile ci --run-ignored only --no-tests=warn
       - name: cargo nextest (headless)
         run: cargo nextest run --locked --workspace --exclude adeline_ui --no-default-features --profile ci --no-tests=warn
 

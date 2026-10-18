@@ -86,7 +86,7 @@ One client shows the projects of every checked machine. `machines.rs` keeps the 
 
 The engine numbers every delta it broadcasts and keeps the latest ones. A reconnecting client sends its place (`Hello.resume`). It gets `Resumed` plus only the deltas it missed, or a full snapshot if the engine restarted or the gap is too long. A dropped remote machine keeps its last state on screen, read-only, while `client.rs` reconnects with growing delays. `runtime_ui/screens.rs` draws what shows while an engine isn't usable.
 
-`ADELINE_SSH` replaces the `ssh` command line. `scripts/engine-check/fake_ssh.py` uses it to simulate remote Windows machines on one computer.
+`ADELINE_SSH` replaces the `ssh` command line. `scripts/engine-check/fake_ssh.py` uses it to simulate remote machines on one computer.
 
 ## The UI
 
@@ -171,5 +171,5 @@ Until a real extension needs them, there is no `trait Mode`, no extension view t
 - Rust unit tests sit next to the code (`#[cfg(test)]`). The large suites are `storage/tests.rs` and `acp/tests.rs`.
 - `adeline_core/tests/protocol.rs` pins the wire format against `tests/wire/<PROTOCOL>.jsonl`.
 - `adeline/tests/engine.rs` runs the real binary's engine in a temporary home on every OS, with `scripts/engine-check/fake_agent.py` as the agent, so `cargo nextest` needs Python 3 on PATH.
-- `adeline_ui/tests/ui.rs` runs the real `Adeline` view headless on GPUI's test platform, on every OS. `adeline_ui::start` does the setup for both `open` and the tests, apart from the platform application and the native window options.
-- End-to-end engine and UI checks are in `scripts/engine-check/`, Windows only. See its README.
+- `adeline_ui/tests/ui.rs` runs the real `Adeline` view headless on GPUI's test platform, on every OS, in demo mode. `adeline/tests/ui.rs` does the same against the binary's engine and fake remote machines (`fake_ssh.py`), behind the binary's `test-support` feature so the headless tests build no GPUI. `ADELINE_EXE` names the binary that Adeline runs as its engine and installs remotely, since a test process isn't it. `adeline_ui::start` does the setup for both `open` and the tests, apart from the platform application and the native window options.
+- `scripts/engine-check/` holds the Windows engine checks and the one UI smoke test of the release window. See its README.

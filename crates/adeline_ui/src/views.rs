@@ -517,6 +517,7 @@ impl Adeline {
             );
         col()
             .id("dialog-content")
+            .test_support()
             .role(Role::Group)
             .aria_label(format!("Upgrade {name}?"))
             .child(content)
@@ -532,6 +533,7 @@ impl Adeline {
             };
             col()
                 .id("ssh-prompt")
+                .test_support()
                 .role(Role::Group)
                 .aria_label(title.clone())
                 .gap_3()
@@ -539,6 +541,7 @@ impl Adeline {
                 .child(
                     div()
                         .id("ssh-prompt-text")
+                        .test_support()
                         .role(Role::Status)
                         .aria_label(text.clone())
                         .text_xs()
