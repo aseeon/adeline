@@ -71,9 +71,10 @@ fn demo_conversation(cx: &mut TestAppContext) {
     ui.press("escape");
     ui.gone("Search more options");
 
-    // An error under a chat can be dismissed by hand. No shortcut reaches Dismiss.
+    // An error under a chat can be dismissed by hand.
     ui.open_chat("Keep the composer usable in a narrow desktop window");
-    ui.click("Dismiss error");
+    ui.named("Dismiss error");
+    ui.press("ctrl-shift-d");
     ui.gone("Dismiss error");
 
     no_engine();
@@ -134,16 +135,16 @@ fn docs_demo(cx: &mut TestAppContext, second: &mut TestAppContext) {
     ui.named("Search conversations");
     ui.input("Make document edits");
     ui.press("enter");
-    // The cards have no shortcuts to them; their buttons are clicked.
-    ui.click("2 more docs, hidden");
+    // Cards come and go with the replies, so Tab reaches them instead of a shortcut.
+    ui.activate("2 more docs, hidden");
     ui.named("2 more docs, shown");
-    ui.click("Open notes/deleted-draft.md");
+    ui.activate("Open notes/deleted-draft.md");
     ui.named("notes/deleted-draft.md no longer exists");
-    ui.click("Open docs/architecture.md");
+    ui.activate("Open docs/architecture.md");
     let viewer = ui.named("docs/architecture.md, Viewer").bounds();
 
     // Selecting text has no keyboard path, so this drags across the Viewer. The
-    // selection stays in the doc, and the note button sends it to the composer.
+    // selection stays in the doc, and Ctrl+Shift+N sends it to the composer.
     ui.drag(
         viewer.origin + point(px(30.), px(60.)),
         viewer.origin + point(viewer.size.width * (2. / 3.), px(160.)),
@@ -156,7 +157,7 @@ fn docs_demo(cx: &mut TestAppContext, second: &mut TestAppContext) {
         !copied.contains(SELECTION_CHAT) && !copied.contains("Reply"),
         "the selection reached the conversation: {copied:?}"
     );
-    ui.click("Note on selection");
+    ui.press("ctrl-shift-n");
     let draft = message(&mut ui);
     assert!(
         draft.contains("`docs/architecture.md`, line"),
@@ -196,17 +197,17 @@ fn demo_machines(cx: &mut TestAppContext) {
             .any(|t| t.contains("· Vortex") && t.ends_with(", disconnected")),
         "{tabs:?}"
     );
-    // The machine selector has no shortcut.
-    ui.click("Machines");
+    // Each machine's toggle in the selector is reached with Tab.
+    ui.press(&format!("{MENU}-h"));
     ui.named("Vortex, Disconnected");
     ui.named("Matrix, Connected");
-    ui.click("Show Matrix");
+    ui.activate("Show Matrix");
     assert!(
         !ui.tabs().iter().any(|t| t.contains("Matrix")),
         "{:?}",
         ui.tabs()
     );
-    ui.click("Show Matrix");
+    ui.activate("Show Matrix");
     assert!(
         ui.tabs().iter().any(|t| t.contains("Matrix")),
         "{:?}",
@@ -223,17 +224,14 @@ fn demo_machines(cx: &mut TestAppContext) {
             .is_some()
     };
     assert!(general(&mut ui), "General is missing for the local machine");
-    // The machine dropdown has no shortcut.
-    ui.click("Machine");
-    ui.press("down enter");
+    ui.press(&format!("{MENU}-h enter down enter"));
     assert!(!general(&mut ui), "General shows for a remote machine");
     assert!(
         ui.find(|l| l == "Show Engine" || l == "Hide Engine")
             .is_some(),
         "Engine is missing for a remote machine"
     );
-    ui.click("Machine");
-    ui.press("up enter");
+    ui.press(&format!("{MENU}-h enter up enter"));
     assert!(
         general(&mut ui),
         "General didn't return for the local machine"
@@ -246,15 +244,8 @@ fn close_tab(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
     let tabs = ui.tabs();
     let name = tabs.last().unwrap().clone();
-    let tab = ui.tab(&name);
-    // The close button shows on hover, and has no shortcut.
-    ui.hover(&tab);
-    let close = ui
-        .all(|l| l == "Close project tab")
-        .into_iter()
-        .find(|button| tab.bounds().contains(&button.bounds().center()))
-        .expect("the hovered tab's close button");
-    ui.click_element(&close);
+    ui.open_tab(&name);
+    ui.press("ctrl-w");
     assert!(!ui.tabs().contains(&name), "{:?}", ui.tabs());
     ui.pause(std::time::Duration::from_millis(500));
     assert!(!ui.tabs().contains(&name), "the tab came back");
@@ -405,8 +396,7 @@ fn tabs_fold(cx: &mut TestAppContext, narrow: &mut TestAppContext) {
 fn demo_fork(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
     ui.open_chat(SELECTION_CHAT);
-    // Fork has no shortcut.
-    ui.click("Fork");
+    ui.press("ctrl-shift-f");
     ui.named(&format!("Forked from {SELECTION_CHAT}"));
     no_engine();
 }

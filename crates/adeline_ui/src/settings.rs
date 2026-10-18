@@ -1483,6 +1483,10 @@ impl Render for SettingsWindow {
             .on_action(cx.listener(|this, _: &Cancel, window, cx| {
                 this.leave(AfterAgent::CloseSettings, window, cx);
             }))
+            .on_action(cx.listener(|this, _: &MachinesMenu, window, cx| {
+                let picker = this.machine_picker.focus_handle(cx);
+                window.focus(&picker, cx);
+            }))
             .child(sidebar)
             .child(
                 div()

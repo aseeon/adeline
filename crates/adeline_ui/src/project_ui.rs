@@ -3,6 +3,7 @@
 //! project everywhere once its agents stop. Closing the stopping dialog
 //! keeps the project, but agents already asked to stop keep stopping.
 use super::*;
+use gpui_kit::component::Disableable as _;
 use std::path::{Path, PathBuf};
 
 pub(super) enum BrowserPurpose {
@@ -597,31 +598,24 @@ impl Adeline {
             } else {
                 entry.name.clone()
             };
-            let mut row = row()
-                .id(("browser-entry", ix))
-                .test_support()
-                .role(Role::ListItem)
-                .aria_label(label.clone())
-                .gap_2()
-                .px_2()
-                .py_1()
-                .rounded(theme.radius)
-                .text_sm()
-                .child(
-                    icon(if entry.directory { "folder" } else { "file" })
-                        .text_color(theme.muted_foreground),
-                )
-                .child(div().truncate().child(label));
-            if let Some(action) = action {
-                row = row
-                    .cursor_pointer()
-                    .hover(|style| style.bg(theme.accent))
-                    .on_click(cx.listener(move |app, _, window, cx| {
-                        app.act(action.clone(), window, cx);
-                    }));
-            } else {
-                row = row.text_color(theme.muted_foreground);
-            }
+            // Buttons, so Tab reaches each row and Enter opens it.
+            let row = Button::new(("browser-entry", ix))
+                .ghost()
+                .small()
+                .w_full()
+                .icon(Icon::default().path(if entry.directory {
+                    "folder.svg"
+                } else {
+                    "file.svg"
+                }))
+                .accessibility_label(label.clone())
+                .child(div().w_full().truncate().text_left().child(label));
+            let row = match action {
+                Some(action) => row.on_click(cx.listener(move |app, _, window, cx| {
+                    app.act(action.clone(), window, cx);
+                })),
+                None => row.disabled(true),
+            };
             rows = rows.child(row);
         }
         if listing.entries.is_empty() {

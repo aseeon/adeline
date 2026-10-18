@@ -249,7 +249,16 @@ actions!(
         MoreMenu,
         AttachFile,
         TrafficView,
-        TodoList
+        TodoList,
+        NextProject,
+        PreviousProject,
+        CloseProjectTab,
+        OpenFolder,
+        MachinesMenu,
+        FocusMessage,
+        DismissErrors,
+        ForkChat,
+        ForkSource
     ]
 );
 pub struct Adeline {
@@ -381,20 +390,32 @@ impl Adeline {
         let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Project name"));
         let project_search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search projects"));
-        let mut subscriptions = vec![cx.subscribe(&query, |app, _, event: &InputEvent, cx| {
-            match event {
-                InputEvent::Change => app.search_sidebar(cx),
-                // The search icon lights up while the field is focused; an empty
-                // search folds away once focus leaves it.
-                InputEvent::Focus | InputEvent::Blur => {
-                    if matches!(event, InputEvent::Blur) && app.query.read(cx).value().is_empty() {
-                        app.chat_search_open = false;
-                    }
-                    app.chat_list.update(cx, |_, cx| cx.notify());
-                }
-                InputEvent::PressEnter { .. } => {}
-            }
-        })];
+        let mut subscriptions =
+            vec![
+                cx.subscribe_in(
+                    &query,
+                    window,
+                    |app, _, event: &InputEvent, window, cx| match event {
+                        InputEvent::Change => app.search_sidebar(cx),
+                        // The search icon lights up while the field is focused; an empty
+                        // search folds away once focus leaves it.
+                        InputEvent::Focus | InputEvent::Blur => {
+                            if matches!(event, InputEvent::Blur)
+                                && app.query.read(cx).value().is_empty()
+                            {
+                                app.chat_search_open = false;
+                            }
+                            app.chat_list.update(cx, |_, cx| cx.notify());
+                        }
+                        // Enter opens the first chat the search lists.
+                        InputEvent::PressEnter { .. } => {
+                            if let Some(ix) = app.chat_list.read(cx).first_result() {
+                                app.act(Action::Chat(ix), window, cx);
+                            }
+                        }
+                    },
+                ),
+            ];
         subscriptions.push(
             cx.subscribe(
                 &project_search,
@@ -822,6 +843,49 @@ impl Render for Adeline {
             .on_action(
                 cx.listener(|app, _: &TodoList, window, cx| app.act(Action::TodoList, window, cx)),
             )
+            .on_action(cx.listener(|app, _: &NextProject, window, cx| {
+                app.step_project(true, window, cx);
+            }))
+            .on_action(cx.listener(|app, _: &PreviousProject, window, cx| {
+                app.step_project(false, window, cx);
+            }))
+            .on_action(cx.listener(|app, _: &CloseProjectTab, window, cx| {
+                if app.has_open_project() {
+                    app.act(Action::CloseProject(app.project), window, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &OpenFolder, window, cx| {
+                app.act(Action::OpenFolder, window, cx);
+            }))
+            .on_action(cx.listener(|app, _: &MachinesMenu, window, cx| {
+                if !machines::remotes().is_empty() {
+                    app.act(Action::Machines, window, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &FocusMessage, window, cx| {
+                window.focus(&app.composer.focus_handle(cx), cx);
+            }))
+            .on_action(
+                cx.listener(|app, _: &DismissErrors, window, cx| app.dismiss_errors(window, cx)),
+            )
+            .on_action(cx.listener(|app, _: &ForkChat, window, cx| {
+                let thread = app.selected.map(|ix| &app.workspace().threads[ix]);
+                if let Some(reply) =
+                    thread.and_then(|t| (0..t.messages.len()).rfind(|&i| t.ends_turn(i)))
+                {
+                    app.act(Action::Fork(reply), window, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &ForkSource, window, cx| {
+                let threads = &app.workspace().threads;
+                let source = app
+                    .selected
+                    .and_then(|ix| threads[ix].fork.as_ref())
+                    .and_then(|fork| threads.iter().position(|t| t.id == fork.id));
+                if let Some(ix) = source {
+                    app.act(Action::Chat(ix), window, cx);
+                }
+            }))
             .on_action(cx.listener(|_, _: &NextFocus, window, cx| window.focus_next(cx)))
             .on_action(cx.listener(|_, _: &PreviousFocus, window, cx| window.focus_prev(cx)))
             .on_action(cx.listener(|app, action: &docs::SwitchMode, window, cx| {
@@ -914,15 +978,21 @@ pub fn start(
     let snapshot = initial.as_mut().and_then(|initial| initial.snapshot.take());
     client::init(demo_mode, initial, snapshot.as_ref(), cx);
     bind_keys(cx);
+    // Outside the main view (dialogs, Settings). Deferred, because the window is
+    // still busy with the key press and can't be updated until it's done.
     cx.on_action(|_: &NextFocus, cx| {
-        if let Some(handle) = cx.active_window() {
-            let _ = cx.update_window(handle, |_, window, cx| window.focus_next(cx));
-        }
+        cx.defer(|cx| {
+            if let Some(handle) = cx.active_window() {
+                let _ = cx.update_window(handle, |_, window, cx| window.focus_next(cx));
+            }
+        });
     });
     cx.on_action(|_: &PreviousFocus, cx| {
-        if let Some(handle) = cx.active_window() {
-            let _ = cx.update_window(handle, |_, window, cx| window.focus_prev(cx));
-        }
+        cx.defer(|cx| {
+            if let Some(handle) = cx.active_window() {
+                let _ = cx.update_window(handle, |_, window, cx| window.focus_prev(cx));
+            }
+        });
     });
     let mut adeline = None;
     cx.open_window(options, |window, cx| {
@@ -992,10 +1062,22 @@ fn bind_keys(cx: &mut App) {
             KeyBinding::new(&key("shift-a"), AttachFile, None),
             KeyBinding::new(&key("shift-l"), TrafficView, None),
             KeyBinding::new(&key("shift-t"), TodoList, None),
+            KeyBinding::new(&key("w"), CloseProjectTab, None),
+            KeyBinding::new(&key("o"), OpenFolder, None),
+            KeyBinding::new(&key("l"), FocusMessage, None),
+            KeyBinding::new(&key("shift-d"), DismissErrors, None),
+            KeyBinding::new(&key("shift-f"), ForkChat, None),
+            KeyBinding::new(&key("shift-g"), ForkSource, None),
         ]);
     }
-    // The option menus. Ctrl+Shift+M, E and O are global hotkeys of common
-    // Windows tools (AMD Adrenalin among them), so Windows and Linux use Alt.
+    // Cmd+Tab is the macOS app switcher, so tabs switch with Ctrl alone.
+    bindings.extend([
+        KeyBinding::new("ctrl-tab", NextProject, None),
+        KeyBinding::new("ctrl-shift-tab", PreviousProject, None),
+    ]);
+    // The option menus and the machines menu. Ctrl+Shift+M, E and O are global
+    // hotkeys of common Windows tools (AMD Adrenalin among them), so Windows and
+    // Linux use Alt.
     let menu = |letter: &str| {
         if cfg!(target_os = "macos") {
             format!("cmd-shift-{letter}")
@@ -1008,6 +1090,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new(&menu("e"), EffortMenu, None),
         KeyBinding::new(&menu("o"), ModeMenu, None),
         KeyBinding::new(&menu("p"), MoreMenu, None),
+        KeyBinding::new(&menu("h"), MachinesMenu, None),
     ]);
     bindings.extend(docs::key_bindings());
     cx.bind_keys(bindings);

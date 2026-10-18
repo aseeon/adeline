@@ -87,6 +87,23 @@ pub(super) fn rail_sections() -> Vec<Section> {
 }
 
 impl Adeline {
+    /// Switches to the next or previous open project tab, wrapping at the ends.
+    pub(super) fn step_project(
+        &mut self,
+        forward: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let open: Vec<usize> = (0..self.projects.len())
+            .filter(|&ix| self.open_projects[ix])
+            .collect();
+        let Some(at) = open.iter().position(|&ix| ix == self.project) else {
+            return;
+        };
+        let next = (if forward { at + 1 } else { at + open.len() - 1 }) % open.len();
+        self.act(Action::Project(open[next]), window, cx);
+    }
+
     pub(super) fn header(&self, window: &Window, cx: &Context<Self>) -> Div {
         let theme = cx.theme();
         // Absolute, so the tabs add nothing to the min width of Kit's bar row,

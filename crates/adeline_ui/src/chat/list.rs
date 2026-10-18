@@ -992,6 +992,15 @@ impl ChatList {
         true
     }
 
+    pub(crate) fn first_result(&self) -> Option<usize> {
+        self.outcome
+            .groups
+            .iter()
+            .flat_map(|(_, rows)| rows)
+            .next()
+            .copied()
+    }
+
     pub fn search(&mut self, criteria: Criteria, debounce: bool, cx: &mut Context<Self>) {
         self.pending.take();
         self.criteria = criteria.clone();

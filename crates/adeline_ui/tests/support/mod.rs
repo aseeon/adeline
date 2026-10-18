@@ -9,9 +9,9 @@
 
 use gpui_kit::base::test_support::{ElementSnapshot, snapshots};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Bounds, ClipboardItem, Entity, Keystroke, Modifiers,
-    MouseButton, Pixels, Point, TestAppContext, VisualTestContext, Window, WindowBounds,
-    WindowOptions, point, px, size,
+    AnyWindowHandle, App, AppContext, Bounds, ClipboardItem, Entity, KeyDownEvent, KeyUpEvent,
+    Keystroke, Modifiers, MouseButton, Pixels, Point, TestAppContext, VisualTestContext, Window,
+    WindowBounds, WindowOptions, point, px, size,
 };
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -349,15 +349,58 @@ impl<'a> Ui<'a> {
         self.settle();
     }
 
-    // The chat list has no shortcut to a chat by name, so this clicks its row.
+    /// Opens a chat from the chat search: Ctrl+F, the title, Enter.
     pub fn open_chat(&mut self, title: &str) {
-        let prefix = format!("{title},");
-        let row = self
-            .find(|label| label.starts_with(&prefix))
-            .unwrap_or_else(|| panic!("no chat {title:?}. Named: {:?}", self.names()));
-        self.click_element(&row);
+        self.press("ctrl-f secondary-a backspace");
+        self.input(title);
+        self.press("enter");
         let open = self.read(|app, _| app.open_chat().map(str::to_owned));
         assert_eq!(open.as_deref(), Some(title));
+    }
+
+    /// Presses Tab until the control named `label` has focus, for controls in
+    /// lists that have no shortcut of their own.
+    pub fn tab_to(&mut self, label: &str) {
+        // Tab outside the main view moves focus in the active window, and the
+        // test platform starts with none.
+        self.with(|window, _| window.activate_window());
+        for _ in 0..200 {
+            if self
+                .all(|name| name == label)
+                .iter()
+                .any(|element| element.focused() == Some(true))
+            {
+                return;
+            }
+            self.press("tab");
+        }
+        panic!("Tab never reached {label:?}. Named: {:?}", self.names());
+    }
+
+    /// Tabs to the control named `label` and presses it with Space. GPUI clicks a
+    /// focused control on key up, which `press` doesn't send.
+    pub fn activate(&mut self, label: &str) {
+        self.tab_to(label);
+        let key = Keystroke::parse("space").expect("Space is a keystroke");
+        let mut cx = VisualTestContext::from_window(self.window, self.cx);
+        cx.simulate_event(KeyDownEvent {
+            keystroke: key.clone(),
+            is_held: false,
+            prefer_character_input: false,
+        });
+        cx.simulate_event(KeyUpEvent { keystroke: key });
+        self.settle();
+    }
+
+    /// Switches project tabs with Ctrl+Tab until `name` is the active one.
+    pub fn open_tab(&mut self, name: &str) {
+        for _ in 0..=self.tabs().len() {
+            if self.tab(name).selected() == Some(true) {
+                return;
+            }
+            self.press("ctrl-tab");
+        }
+        panic!("Ctrl+Tab never reached the tab {name:?}");
     }
 
     /// Project tab labels, without the "(n)" of chats needing the user.

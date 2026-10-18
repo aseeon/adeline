@@ -103,7 +103,7 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
                 .child(
                     row()
                         .gap_2()
-                        .child(
+                        .child(on_confirm(
                             Checkbox::new(("machine-check", ix))
                                 .checked(on)
                                 .label(name.clone())
@@ -113,7 +113,9 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
                                         app.act(Action::Machine(toggle.clone()), window, cx);
                                     });
                                 }),
-                        )
+                            owner,
+                            Action::Machine(machine.clone()),
+                        ))
                         .child(div().flex_1())
                         .child(
                             div()
@@ -126,10 +128,14 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
                                 .child(status),
                         )
                         .children(action.map(|(label, action)| {
-                            Button::new(("machine-action", ix))
-                                .xsmall()
-                                .label(label)
-                                .on_click(owner_action(owner, action))
+                            on_confirm(
+                                Button::new(("machine-action", ix))
+                                    .xsmall()
+                                    .label(label)
+                                    .on_click(owner_action(owner, action.clone())),
+                                owner,
+                                action,
+                            )
                         })),
                 )
                 .children(detail.filter(|_| on).map(|detail| {
@@ -146,15 +152,32 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
         );
     }
     list.child(
-        div().border_t_1().border_color(theme.border).pt_1().child(
-            Button::new("manage-machines")
-                .ghost()
-                .small()
-                .w_full()
-                .icon(Icon::default().path("settings.svg"))
-                .label("Manage machines…")
-                .on_click(owner_action(owner, Action::ManageMachines)),
-        ),
+        div()
+            .border_t_1()
+            .border_color(theme.border)
+            .pt_1()
+            .child(on_confirm(
+                Button::new("manage-machines")
+                    .ghost()
+                    .small()
+                    .w_full()
+                    .icon(Icon::default().path("settings.svg"))
+                    .label("Manage machines…")
+                    .on_click(owner_action(owner, Action::ManageMachines)),
+                owner,
+                Action::ManageMachines,
+            )),
     )
     .into_any_element()
+}
+
+// Kit's popover binds Enter and Space to its Confirm, which closes the menu before
+// the focused control sees the key, so each control answers Confirm itself.
+fn on_confirm(control: impl IntoElement, owner: &WeakEntity<Adeline>, action: Action) -> Div {
+    let owner = owner.clone();
+    div()
+        .on_action(move |_: &base::actions::Confirm, window, cx| {
+            let _ = owner.update(cx, |app, cx| app.act(action.clone(), window, cx));
+        })
+        .child(control)
 }

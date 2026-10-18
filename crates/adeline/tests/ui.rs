@@ -15,7 +15,7 @@ use gpui_kit::TestAppContext;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use support::Ui;
+use support::{MENU, Ui};
 
 const WAIT: Duration = Duration::from_secs(30);
 
@@ -107,7 +107,7 @@ fn send(ui: &mut Ui, prompt: &str) {
     ui.wait("the message box", WAIT, |ui| {
         ui.try_named("Message").is_some()
     });
-    ui.click("Message");
+    ui.press("ctrl-l");
     ui.input(prompt);
     ui.press("enter");
 }
@@ -197,8 +197,8 @@ fn settings_engine(cx: &mut TestAppContext) {
     let before = ui.cx.windows();
     ui.press("ctrl-,");
     ui.new_window(&before);
-    ui.click("Show Engine");
-    ui.click("Engine");
+    // The search reaches every settings page.
+    ui.input("engine");
     ui.named("Keep conversation engine running");
     ui.named("Automatic retry limit");
     ui.click("Stop engine");
@@ -240,8 +240,7 @@ fn fork(cx: &mut TestAppContext) {
     let mut ui = open(cx);
     send(&mut ui, "hello");
     ui.wait_named("Fork", WAIT);
-    // Fork has no shortcut.
-    ui.click("Fork");
+    ui.press("ctrl-shift-f");
     ui.wait_named("Forked from hello", WAIT);
     ui.wait("the fork in the chat list", WAIT, |ui| {
         ui.find(|label| label.starts_with("hello (fork),"))
@@ -252,8 +251,8 @@ fn fork(cx: &mut TestAppContext) {
         ui.all(|l| l == "Fork").len() == 2
     });
     ui.named("Forked from hello");
-    // The link back to the source has no shortcut.
-    ui.click("hello");
+    // Ctrl+Shift+G goes back to the chat the fork came from.
+    ui.press("ctrl-shift-g");
     ui.wait_gone("Forked from hello", WAIT);
 }
 
@@ -329,9 +328,8 @@ fn type_into(ui: &mut Ui, label: &str, text: &str) {
 }
 
 /// Each machine's row in the machine selector, such as "Desktop, Connected".
-/// The selector has no shortcut, so this clicks it, then closes it with Escape.
 fn machine_rows(ui: &mut Ui) -> Vec<String> {
-    ui.click("Machines");
+    ui.press(&format!("{MENU}-h"));
     let rows = ui
         .elements()
         .into_iter()
@@ -351,12 +349,6 @@ fn machine_state(ui: &mut Ui, name: &str) -> Option<String> {
 
 fn has_tab(ui: &mut Ui, name: &str) -> bool {
     ui.tabs().iter().any(|tab| tab == name)
-}
-
-// Switching to a project tab has no shortcut.
-fn open_tab(ui: &mut Ui, name: &str) {
-    let tab = ui.tab(name);
-    ui.click_element(&tab);
 }
 
 fn remote_turn_finishes(ui: &mut Ui, remote: &Path) {
@@ -382,8 +374,7 @@ fn add_machine(cx: &mut TestAppContext) {
     );
     settings(&mut ui);
     // The machine dropdown lists this computer, then "Add machine…".
-    ui.click("Machine");
-    ui.press("down enter");
+    ui.press(&format!("{MENU}-h enter down enter"));
     type_into(&mut ui, "Machine name", "Desktop");
     type_into(&mut ui, "Destination", "me@desktop");
     ui.click("Add machine");
@@ -403,7 +394,7 @@ fn add_machine(cx: &mut TestAppContext) {
         desktop.join(".adeline/bin").join(EXE).is_file(),
         "nothing was installed"
     );
-    open_tab(&mut ui, "app · Desktop");
+    ui.open_tab("app · Desktop");
     send(&mut ui, "hello");
     remote_turn_finishes(&mut ui, &desktop);
     assert!(live.machines().contains("engine: "), "{}", live.machines());
@@ -417,7 +408,7 @@ fn drop_and_reconnect(cx: &mut TestAppContext, second: &mut TestAppContext) {
     live.save_machines(&[("m-desktop", "Desktop", &["desktop"], None)]);
     let mut ui = open(cx);
     ui.wait("the remote tab", LONG, |ui| has_tab(ui, "app · Desktop"));
-    open_tab(&mut ui, "app · Desktop");
+    ui.open_tab("app · Desktop");
     send(&mut ui, "SLOW 6");
     ui.wait("a remote turn", WAIT, |_| active(&desktop) > 0);
     let conversation = common::conversations(&desktop, "app").pop().unwrap();
@@ -438,8 +429,8 @@ fn drop_and_reconnect(cx: &mut TestAppContext, second: &mut TestAppContext) {
     });
     ui.wait("the remote turn to end", WAIT, |_| active(&desktop) == 0);
     // Unchecking a machine disconnects it.
-    ui.click("Machines");
-    ui.click("Show Desktop");
+    ui.press(&format!("{MENU}-h"));
+    ui.activate("Show Desktop");
     ui.press("escape");
     ui.wait("Desktop's tab to go", WAIT, |ui| {
         !ui.tabs().iter().any(|t| t.contains("Desktop"))
@@ -454,8 +445,8 @@ fn drop_and_reconnect(cx: &mut TestAppContext, second: &mut TestAppContext) {
         !ui.tabs().iter().any(|t| t.contains("Desktop")),
         "an unchecked machine came back on restart"
     );
-    ui.click("Machines");
-    ui.click("Show Desktop");
+    ui.press(&format!("{MENU}-h"));
+    ui.activate("Show Desktop");
     ui.press("escape");
     ui.wait("Desktop's tab to return", LONG, |ui| {
         has_tab(ui, "app · Desktop")
@@ -500,7 +491,7 @@ fn ssh_failures(cx: &mut TestAppContext) {
         ui.find(|l| l == "Sign in to Wrong").is_none() && wrong == asked,
         "Wrong kept retrying"
     );
-    ui.click("Machines");
+    ui.press(&format!("{MENU}-h"));
     ui.named("Away, Disconnected");
     assert!(
         ui.containing("Connection timed out").is_some(),
@@ -542,7 +533,7 @@ fn ssh_host_keys(cx: &mut TestAppContext) {
     ui.wait("Fresh to be refused", WAIT, |ui| {
         machine_state(ui, "Fresh").as_deref() == Some("Disconnected")
     });
-    ui.click("Machines");
+    ui.press(&format!("{MENU}-h"));
     assert!(ui.containing("Host key verification failed").is_some());
     // Retry sits in the selector, under the refused machine.
     ui.click("Retry");
@@ -583,7 +574,7 @@ fn headless_remote(cx: &mut TestAppContext) {
     ui.wait("the headless remote's tab", LONG, |ui| {
         has_tab(ui, "app · Server")
     });
-    open_tab(&mut ui, "app · Server");
+    ui.open_tab("app · Server");
     send(&mut ui, "SLOW 4");
     ui.wait("the remote turn", WAIT, |_| active(&server) > 0);
     assert_eq!(
@@ -649,18 +640,17 @@ fn old_adeline() -> PathBuf {
 }
 
 fn browse_to_site(ui: &mut Ui) {
-    // The projects menu, the machine choice and the folder rows have no shortcuts.
-    ui.click("Projects");
-    ui.click("Open folder");
+    // The machine choice and the folder rows are lists, reached with Tab.
+    ui.press("ctrl-o");
     ui.wait_named("Open a folder on which machine?", WAIT);
-    ui.click("Desktop");
+    ui.activate("Desktop");
     ui.wait_named("Open folder on Desktop", WAIT);
     ui.wait_named("code/", WAIT);
-    ui.click("code/");
+    ui.activate("code/");
     ui.wait_named("site/", WAIT);
-    ui.click("site/");
+    ui.activate("site/");
     ui.wait_gone("site/", WAIT);
-    ui.click("Choose this folder");
+    ui.activate("Choose this folder");
 }
 
 fn site_projects(desktop: &Path) -> Vec<String> {
@@ -715,7 +705,7 @@ fn upgrade_and_browse(cx: &mut TestAppContext) {
         std::fs::read_to_string(newer.join("version")).unwrap(),
         "99.0.0"
     );
-    ui.click("Machines");
+    ui.press(&format!("{MENU}-h"));
     assert!(
         ui.containing("No Adeline build for").is_some(),
         "the unsupported platform isn't named"

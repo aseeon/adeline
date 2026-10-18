@@ -217,6 +217,25 @@ impl Adeline {
         content.into_any_element()
     }
 
+    /// Dismisses every error shown under the open chat.
+    pub(super) fn dismiss_errors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(thread) = self.selected.map(|ix| &self.workspace().threads[ix]) else {
+            return;
+        };
+        let turn = thread.turn_of(thread.messages.len());
+        let live = self.runtime.conversations.get(&thread.id);
+        let errors: Vec<String> = thread
+            .activity
+            .iter()
+            .filter(|a| a.kind == "error" && (a.turn.is_none() || a.turn == turn))
+            .map(|a| a.title.clone())
+            .chain(live.and_then(|live| live.error.clone()))
+            .collect();
+        for error in errors {
+            self.act(Action::DismissError(error), window, cx);
+        }
+    }
+
     fn error_line(&self, message: &str, cx: &Context<Self>) -> Div {
         let message = message.to_owned();
         row()

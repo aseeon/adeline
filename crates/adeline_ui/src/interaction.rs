@@ -598,6 +598,11 @@ impl Adeline {
             self.open_modal(window, cx);
         } else if self.modal.is_none() && previous_modal.is_some() {
             window.close_dialog(cx);
+            // Focus may stay on a control that closed with a menu, where shortcuts
+            // don't reach the main view.
+            if !self.focus.contains_focused(window, cx) {
+                window.focus(&self.focus, cx);
+            }
         }
         cx.notify();
     }

@@ -32,7 +32,7 @@ With "Submit on Enter" off, the text box inserts a line break for Enter, Shift+E
 
 ## Conversation
 
-Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `crates/adeline_core/src/config.rs`), not in the keymap setting. The four menus are the exception: Alt on Windows and Linux, Cmd+Shift on macOS, because Ctrl+Shift+M, E and O are global hotkeys of tools such as AMD Adrenalin, which take them before Adeline sees them.
+Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `crates/adeline_ui/src/lib.rs`), not in the keymap setting. The menus are the exception: Alt on Windows and Linux, Cmd+Shift on macOS, because Ctrl+Shift+M, E and O are global hotkeys of tools such as AMD Adrenalin, which take them before Adeline sees them.
 
 | Shortcut | Action |
 |---|---|
@@ -46,6 +46,23 @@ Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `crates
 | Ctrl+Shift+A / Cmd+Shift+A | Attach files |
 | Ctrl+Shift+L / Cmd+Shift+L | Show the ACP traffic tab of the side panel (with `--verbose`) |
 | Ctrl+Shift+T / Cmd+Shift+T | Open the TODO list |
+| Ctrl+L / Cmd+L | Focus the message box |
+| Ctrl+Shift+D / Cmd+Shift+D | Dismiss the errors under the chat |
+| Ctrl+Shift+F / Cmd+Shift+F | Fork the chat at its latest reply |
+| Ctrl+Shift+G / Cmd+Shift+G | In a fork, open the chat it was forked from |
+
+## Projects and machines
+
+Registered with both the Ctrl and the Cmd form on every OS, not in the keymap setting. Project tabs switch with Ctrl alone, since Cmd+Tab is the macOS app switcher. The machines menu follows the option menus: Alt on Windows and Linux, Cmd+Shift on macOS.
+
+| Shortcut | Action |
+|---|---|
+| Ctrl+Tab / Ctrl+Shift+Tab | Switch to the next / previous project tab, wrapping at the ends |
+| Ctrl+W / Cmd+W | Close the project tab |
+| Ctrl+O / Cmd+O | Open a folder as a project (asks for the machine when several are checked) |
+| Alt+H / Cmd+Shift+H | Open the machines menu (with a remote machine saved). In Settings, focus the Machine dropdown, which Enter opens |
+
+The machines menu, the machine choice for a folder and the folder browser list one control per machine or folder, so they get no shortcut of their own: Tab moves to a machine's box, a button or a folder, and Space or Enter presses it.
 
 ## Modes
 
@@ -66,7 +83,7 @@ Registered with both the Ctrl and the Cmd form on every OS (`docs::key_bindings`
 | Ctrl+S / Cmd+S | Save the open doc (recreates a deleted one) |
 | Ctrl+Alt+N / Cmd+Alt+N | New doc |
 | Ctrl+Shift+K / Cmd+Shift+K | Choose the conversation on the right |
-| Ctrl+Shift+N / Cmd+Shift+N | Note on the selection: quote it with its path and lines in the message box |
+| Ctrl+Shift+N / Cmd+Shift+N | Note on the selection, in the Viewer or the Editor: quote it with its path and lines in the message box |
 
 In the tree search field, Down moves into the tree. With the tree focused, no modifier:
 
@@ -99,7 +116,7 @@ In the Editor (the toolbar's tools):
 | Ctrl+F / Cmd+F | Find in the doc (from GPUI Kit) |
 | Ctrl+H / Cmd+H | Find and replace (from GPUI Kit) |
 
-A doc card under a reply opens with Tab to its Open button and Enter.
+Doc cards come and go with the replies, so they get no shortcut of their own. Tab moves to a card's Open button or to its "+N more docs" button, and Enter presses it.
 
 ## Chat list
 
@@ -111,6 +128,8 @@ With the chat list focused, no modifier:
 | Home / End | Select the first / last chat |
 | Enter or Space | Open the chat (on a chat icon in the folded rail) |
 
+In the chat search (Ctrl+F), Enter opens the first chat it lists.
+
 ## Projects menu
 
 While the projects menu is open, no modifier:
@@ -121,6 +140,10 @@ While the projects menu is open, no modifier:
 | Enter | Open the highlighted project, or the first match of the search |
 | Delete | Close the highlighted open project, or remove a closed one (with undo). With search text, Delete edits the text |
 | Escape | Close the menu |
+
+## Settings
+
+Settings > Search settings finds every page, and Tab moves on to the matching controls. The navigation's group headers have no shortcut, since the search reaches what they fold.
 
 ## Focused controls (from GPUI Kit)
 
@@ -174,9 +197,7 @@ Menu bar items with no key:
 Projects:
 
 - Open the projects menu (only via Ctrl+F outside Chats mode)
-- Switch to a project tab, or to the next / previous one
-- Close a project tab
-- Add a project, open a folder, pick the project's machine
+- Add a project, pick the project's machine
 - Rename a project
 - Delete a project
 - Toggle the projects menu sort order
@@ -191,7 +212,7 @@ Chats:
 - Archive a chat
 - Reply to (quote) a message
 - Copy a message
-- Fork a chat at a reply
+- Fork a chat at an earlier reply
 - Expand or collapse a tool call; hide all tool calls
 - Force stop
 - Answer a permission request or a decision the agent asks for
@@ -200,8 +221,6 @@ Chats:
 - Expand a thought
 - Remove an attachment, preview an attached image
 - Copy the ACP traffic
-- Dismiss an error under a chat
-- Focus the message box
 - Select text in a message
 
 Composer pickers:
@@ -218,7 +237,6 @@ Panels:
 
 Machines and engine:
 
-- Open the machines menu, check or uncheck a machine
 - Retry a failed machine connection
 - Manage machines (Settings on the machines page)
 - Upgrade a remote machine's engine
