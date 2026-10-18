@@ -238,7 +238,7 @@ fn ssh(destination: &str, remote_command: &str, askpass: &Askpass) -> tokio::pro
         remote_command,
     ]);
     // Prompts go to Adeline's dialog: `ssh` runs this executable as its askpass.
-    if let Ok(exe) = std::env::current_exe() {
+    if let Ok(exe) = crate::platform::own_exe() {
         command
             .env("SSH_ASKPASS", exe)
             .env("SSH_ASKPASS_REQUIRE", "force");
@@ -522,11 +522,16 @@ async fn install(destination: &str, platform: &str, askpass: &Askpass) -> Result
 }
 
 async fn binary(platform: &str) -> Result<Vec<u8>, Failure> {
+    // A named binary is installed as it is, in place of the release.
+    if let Some(exe) = std::env::var_os("ADELINE_EXE") {
+        return std::fs::read(&exe)
+            .map_err(|e| Failure::Fatal(crate::files::error(exe.as_ref(), e)));
+    }
     let release = download(platform).await;
     match release {
         Ok(bytes) => Ok(bytes),
         Err(_) if platform == local_platform() => {
-            let exe = std::env::current_exe().map_err(|e| Failure::Fatal(e.to_string()))?;
+            let exe = crate::platform::own_exe().map_err(|e| Failure::Fatal(e.to_string()))?;
             std::fs::read(&exe).map_err(|e| Failure::Fatal(crate::files::error(&exe, e)))
         }
         Err(error) => Err(Failure::Fatal(format!(

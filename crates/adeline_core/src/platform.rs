@@ -14,12 +14,18 @@
 )]
 use std::{
     io,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, ChildStdin, Command, Stdio},
 };
 use tokio::io::AsyncRead;
 
 pub type Reader = Box<dyn AsyncRead + Send + Unpin>;
+
+// The Adeline binary to run as the engine, askpass helper or remote install.
+// `ADELINE_EXE` names it when this process isn't it, such as in a test.
+pub fn own_exe() -> io::Result<PathBuf> {
+    std::env::var_os("ADELINE_EXE").map_or_else(std::env::current_exe, |exe| Ok(exe.into()))
+}
 
 #[cfg(windows)]
 #[expect(

@@ -29,6 +29,8 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 [features]
 # Frame timings for profiling builds, see `frame_log.rs`.
 profiler = ["gpui-kit/profiler"]
+# GPUI's test platform, for the UI tests in `crates/adeline/tests`.
+test-support = ["gpui-kit/test-support"]
 
 [lints]
 workspace = true

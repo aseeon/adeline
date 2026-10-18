@@ -144,6 +144,7 @@ impl Adeline {
     ) -> AnyElement {
         col()
             .id("engine-state")
+            .test_support()
             .role(Role::Status)
             .aria_label(title.clone())
             .size_full()
@@ -225,6 +226,7 @@ impl Adeline {
         Some(
             row()
                 .id("engine-banner")
+                .test_support()
                 .role(Role::Status)
                 .aria_label(message.clone())
                 .w_full()

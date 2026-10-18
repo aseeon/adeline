@@ -99,6 +99,7 @@ dependencies = [
  "adeline_engine",
  "adeline_ui",
  "embed-resource",
+ "gpui-kit",
  "resvg 0.45.1",
  "serde_json",
 ]

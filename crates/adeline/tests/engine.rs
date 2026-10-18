@@ -8,19 +8,21 @@
     reason = "tests block on processes and sleep off any UI thread"
 )]
 
+mod common;
+
 use adeline_core::protocol::{ClientMessage, Command, EngineSettings, Live, PROTOCOL, Resume};
+use common::PROJECT;
 use serde_json::{Value, json};
 use std::{
     collections::HashMap,
     fs,
     io::{BufRead as _, BufReader, Write as _},
-    path::{Path, PathBuf},
+    path::PathBuf,
     process::{Child, ChildStdin, Command as Process, Stdio},
     sync::mpsc,
     time::{Duration, Instant},
 };
 
-const PROJECT: &str = "demo";
 const WAIT: Duration = Duration::from_secs(20);
 
 /// A temporary home with one project and the fake agent, and the engine running in it.
@@ -31,40 +33,10 @@ struct Home {
 
 impl Home {
     fn new(name: &str) -> Self {
-        // macOS limits a socket path to 104 bytes, and its temporary folder is long.
-        #[cfg(unix)]
-        let temp = PathBuf::from("/tmp");
-        #[cfg(not(unix))]
-        let temp = std::env::temp_dir();
-        let root = temp.join(format!("adeline-{name}-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let config = root.join(".config").join("adeline");
-        let work = root.join("work");
-        fs::create_dir_all(&work).unwrap();
-        let agent = config.join("agents").join("fake");
-        fs::create_dir_all(&agent).unwrap();
-        let script = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../scripts/engine-check/fake_agent.py")
-            .canonicalize()
-            .unwrap();
-        // JSON strings are valid YAML, quoting and all.
-        fs::write(
-            agent.join("agent.yml"),
-            format!(
-                "version: 1\nname: Fake\nharness: custom\ncommand: {}\narguments: [{}]\n",
-                json!(python()),
-                json!(script)
-            ),
-        )
-        .unwrap();
-        let project = config.join("projects").join(PROJECT);
-        fs::create_dir_all(project.join("conversations")).unwrap();
-        fs::write(
-            project.join("project.yml"),
-            format!("name: {PROJECT}\ndirectory: {}\n", json!(work)),
-        )
-        .unwrap();
-        Self { root, engine: None }
+        Self {
+            root: common::home(name),
+            engine: None,
+        }
     }
 
     /// A new client; the first one starts the engine.
@@ -196,19 +168,6 @@ fn alive(pid: u32) -> bool {
         .output()
         .unwrap();
     String::from_utf8_lossy(&output.stdout).contains(&format!(" {pid} "))
-}
-
-fn python() -> String {
-    for name in ["python3", "python"] {
-        if let Ok(output) = Process::new(name)
-            .args(["-c", "import sys; print(sys.executable)"])
-            .output()
-            && output.status.success()
-        {
-            return String::from_utf8_lossy(&output.stdout).trim().to_owned();
-        }
-    }
-    panic!("The engine tests need Python 3 on PATH.");
 }
 
 /// One connection to the engine, seeing what a UI sees.

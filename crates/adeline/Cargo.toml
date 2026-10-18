@@ -9,6 +9,7 @@ description = "A native GPUI desktop workspace"
 adeline_core.workspace = true
 adeline_engine.workspace = true
 adeline_ui = { workspace = true, optional = true }
+gpui-kit = { workspace = true, optional = true }
 
 # The default build is the desktop app. `--no-default-features` builds the
 # headless one: engine, bridge and `--version`, with no window and no desktop
@@ -17,6 +18,17 @@ adeline_ui = { workspace = true, optional = true }
 default = ["gui"]
 gui = ["dep:adeline_ui", "adeline_engine/gui"]
 profiler = ["gui", "adeline_ui/profiler"]
+# The UI tests against a live engine (`tests/ui.rs`). A dev-dependency on the UI
+# would build GPUI into the headless tests too.
+test-support = ["gui", "adeline_ui/test-support", "dep:gpui-kit", "gpui-kit/test-support"]
+
+[[test]]
+name = "ui"
+required-features = ["test-support"]
+
+# `gpui-kit` is optional on purpose: only `tests/ui.rs` uses it (see `test-support`).
+[package.metadata.cargo-shear]
+ignored = ["gpui-kit"]
 
 [dev-dependencies]
 serde_json.workspace = true

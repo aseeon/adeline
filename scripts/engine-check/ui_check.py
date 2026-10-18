@@ -39,16 +39,6 @@ def wait(predicate, timeout=20, interval=0.2, what="condition"):
     raise AssertionError(f"timed out waiting for {what}")
 
 
-def engine_pid():
-    result = rc.adeline("engine", "status", timeout=20)
-    if result.returncode != 0:
-        return None
-    for line in result.stdout.splitlines():
-        if line.startswith("PID:"):
-            return int(line.split(":")[1])
-    return None
-
-
 def launch(*args):
     process = subprocess.Popen([str(rc.EXE), *args])
     window = wait(lambda: next((w for w in Desktop(backend="uia").windows(process=process.pid) if w.is_visible()), None),
@@ -66,10 +56,6 @@ def find(window, name, control_type=None):
 
 def named(window, name, control_type=None, timeout=15):
     return wait(lambda: find(window, name, control_type), timeout, what=f"'{name}'")
-
-
-def gone(window, name):
-    return find(window, name) is None
 
 
 def click(window, name, control_type="Button"):
@@ -101,172 +87,6 @@ def send(window, prompt):
     named(window, "Message").click_input()
     send_keys(prompt, with_spaces=True)
     send_keys("{ENTER}")
-
-
-def processing_conversation():
-    with Client() as client:
-        found = next((id for id, live in client.snapshot["live"].items() if live.get("processing")), None)
-    if found:
-        # This check's own connection counted as a client; let the UI see it leave.
-        def clients():
-            with rc.Client(cli=True) as control:
-                return control.call({"op": "status"})["clients"]
-        wait(lambda: clients() == 1, 10, what="one connected client")
-        time.sleep(0.5)
-    return found
-
-
-@check("AC1/AC25: UI starts the engine as a separate process and shows the project")
-def check_launch():
-    rc.stop_engine()
-    process, window = launch()
-    try:
-        named(window, "demo", timeout=10)
-        pid = wait(engine_pid, 10, what="a running engine")
-        assert pid != process.pid, "the engine runs in the UI process"
-        return f"UI {process.pid}, engine {pid}"
-    finally:
-        process.kill()
-
-
-@check("AC5/AC7/AC9: quit dialog, Cancel, Finish in background, reopen")
-def check_quit_background():
-    rc.stop_engine()
-    process, window = launch()
-    try:
-        named(window, "demo", timeout=10)
-        send(window, "SLOW 6")
-        conversation = wait(processing_conversation, 15, what="a processing turn")
-        window.close()
-        named(window, "Finish in background", timeout=10)
-        named(window, "Stop all")
-        click(window, "Cancel")
-        time.sleep(1)
-        assert process.poll() is None, "Cancel closed Adeline"
-        window.close()
-        click(window, "Finish in background")
-        wait(lambda: process.poll() is not None, 15, what="Adeline to quit")
-        pid = engine_pid()
-        assert pid, "the engine stopped with the UI"
-        # The turn finishes with no window open.
-        wait(lambda: "turn_finished" in str(rc.transcript(conversation)), 30, what="the background turn to finish")
-        process, window = launch()
-        named(window, "demo", timeout=10)
-        assert engine_pid() == pid, "reopening started another engine"
-        return f"engine {pid} kept the turn running"
-    finally:
-        if process.poll() is None:
-            process.kill()
-
-
-@check("AC5: quitting with nothing active shows no dialog")
-def check_quit_idle():
-    process, window = launch()
-    named(window, "demo", timeout=10)
-    window.close()
-    wait(lambda: process.poll() is not None, 10, what="Adeline to quit without asking")
-
-
-@check("AC6: Stop all from the quit dialog stops agents, then quits")
-def check_quit_stop_all():
-    process, window = launch()
-    try:
-        named(window, "demo", timeout=10)
-        send(window, "SLOW 30")
-        wait(processing_conversation, 15, what="a processing turn")
-        window.close()
-        click(window, "Stop all")
-        wait(lambda: process.poll() is not None, 15, what="Adeline to quit after Stop all")
-        with Client() as client:
-            busy = [id for id, live in client.snapshot["live"].items() if live.get("running") or live.get("processing")]
-        assert not busy, f"agents still running: {busy}"
-    finally:
-        if process.poll() is None:
-            process.kill()
-
-
-@check("AC14/AC23: Settings > Engine, Stop engine, Start engine")
-def check_settings_engine():
-    process, window = launch()
-    try:
-        named(window, "demo", timeout=10)
-        window.set_focus()
-        send_keys("^,")
-        settings = wait(lambda: next(w for w in Desktop(backend="uia").windows(process=process.pid)
-                                     if find(w, "Search settings")),
-                        10, what="the Settings window")
-        click(settings, "Show Engine")
-        click(settings, "Engine")
-        named(settings, "Keep conversation engine running")
-        named(settings, "Automatic retry limit")
-        click(settings, "Stop engine")
-        wait(lambda: engine_pid() is None, 15, what="the engine to stop")
-        named(window, "Conversation engine stopped", timeout=10)
-        time.sleep(2)
-        assert engine_pid() is None, "the UI restarted the engine on its own"
-        click(window, "Start engine")
-        wait(engine_pid, 15, what="the engine to start again")
-        settings.close()
-    finally:
-        process.kill()
-
-
-@check("AC24: an engine that can't start shows the unavailable state with Retry")
-def check_unavailable():
-    rc.stop_engine()
-    engine_dir = rc.config / "engine"
-    moved = rc.config / "engine-moved"
-    engine_dir.rename(moved)
-    # A file where the engine's folder belongs stops it from starting.
-    engine_dir.write_text("not a folder", encoding="utf-8")
-    process, window = launch()
-    try:
-        named(window, "Conversation engine unavailable", timeout=25)
-        named(window, "Retry", "Button")
-        assert engine_dir.read_text(encoding="utf-8") == "not a folder", "engine files were written"
-        assert engine_pid() is None
-    finally:
-        process.kill()
-        engine_dir.unlink()
-        moved.rename(engine_dir)
-
-
-def count(window, name):
-    return sum(element.element_info.name == name for element in window.descendants())
-
-
-@check("Fork AC1/AC2/AC5/AC7/AC12: Fork opens a copy that links back to its source, also in demo mode")
-def check_fork():
-    process, window = launch()
-    try:
-        # The tab reads "demo (1)" once an earlier check leaves a chat needing input.
-        named(window, "Message", timeout=30)
-        send(window, "hello")
-        named(window, "Fork", "Button", timeout=20)
-        click(window, "Fork")
-        named(window, "Forked from hello", timeout=10)
-        with Client() as client:
-            titles = [t["title"] for p in client.snapshot["projects"] for t in p["threads"]]
-        assert "hello (fork)" in titles, titles
-        send(window, "after")
-        wait(lambda: count(window, "Fork") == 2, 20, what="the fork's own reply")
-        assert find(window, "Forked from hello"), "a native fork showed the text-copy note"
-        click(window, "hello", "Hyperlink")
-        wait(lambda: gone(window, "Forked from hello"), 10, what="the source to open")
-    finally:
-        process.kill()
-    # AC12: demo mode forks locally and starts no engine.
-    rc.stop_engine()
-    process, window = launch("--demo")
-    try:
-        chat = wait(lambda: next(e for e in window.descendants() if e.element_info.control_type == "ListItem"),
-                    15, what="a demo chat")
-        chat.click_input()
-        click(window, "Fork")
-        named(window, "Forked from " + chat.element_info.name.split(",")[0], timeout=10)
-        assert engine_pid() is None, "a demo fork started the engine"
-    finally:
-        process.kill()
 
 
 # ---------------------------------------------------------------------------
@@ -718,9 +538,7 @@ def main():
         path.parent.rmdir()
     try:
         only = sys.argv[1] if len(sys.argv) > 1 else ""
-        for run in (check_launch, check_quit_background, check_quit_idle, check_quit_stop_all,
-                    check_settings_engine, check_unavailable, check_fork,
-                    check_add_machine, check_drop, check_ssh_failures,
+        for run in (check_add_machine, check_drop, check_ssh_failures,
                     check_upgrade_and_browse, check_headless_cli, check_headless_remote):
             if only.lower() in run.label.lower():
                 run()

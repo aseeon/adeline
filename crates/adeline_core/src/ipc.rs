@@ -163,7 +163,7 @@ impl Listener {
 }
 
 fn spawn_engine(daemon: bool) -> io::Result<()> {
-    let mut command = std::process::Command::new(std::env::current_exe()?);
+    let mut command = std::process::Command::new(crate::platform::own_exe()?);
     command.arg("engine");
     if daemon {
         command.arg("--daemon");

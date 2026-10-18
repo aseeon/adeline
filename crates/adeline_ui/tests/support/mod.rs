@@ -34,11 +34,23 @@ pub const START_OF_TEXT: &str = if cfg!(target_os = "macos") {
     "ctrl-home"
 };
 
-/// A fresh temporary home, with HOME and USERPROFILE pointing at it.
+/// Sets a variable for this process and the processes it starts.
 #[expect(
     unsafe_code,
-    reason = "the config folder follows HOME, read from the environment"
+    reason = "Adeline reads its home and binary from the environment"
 )]
+pub fn set_env(name: &str, value: impl AsRef<std::ffi::OsStr>) {
+    // SAFETY: nextest runs each test in its own process, and nothing reads the environment yet.
+    unsafe { std::env::set_var(name, value) };
+}
+
+/// Points HOME and USERPROFILE at `home`.
+pub fn set_home(home: &std::path::Path) {
+    set_env("HOME", home);
+    set_env("USERPROFILE", home);
+}
+
+/// A fresh temporary home, with HOME and USERPROFILE pointing at it.
 pub fn temp_home(name: &str) -> PathBuf {
     // macOS limits a socket path to 104 bytes, and its temporary folder is long.
     let temp = if cfg!(unix) {
@@ -49,10 +61,7 @@ pub fn temp_home(name: &str) -> PathBuf {
     let home = temp.join(format!("adeline-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).unwrap();
-    for variable in ["HOME", "USERPROFILE"] {
-        // SAFETY: nextest runs each test in its own process, and nothing reads the environment yet.
-        unsafe { std::env::set_var(variable, &home) };
-    }
+    set_home(&home);
     home
 }
 
@@ -87,6 +96,10 @@ impl<'a> Ui<'a> {
         width: f32,
         height: f32,
     ) -> Self {
+        if !demo {
+            // The engine connection wakes the UI from its own threads.
+            cx.executor().allow_parking();
+        }
         let before = cx.windows();
         let adeline = cx.update(|cx| adeline_ui::start(demo, verbose, options(width, height), cx));
         let window = *cx
@@ -236,8 +249,19 @@ impl<'a> Ui<'a> {
         names
     }
 
+    /// Clicks the element named `label` once it stops moving: dialogs slide in on
+    /// wall-clock time, so an early click would land where the control isn't yet.
     pub fn click(&mut self, label: &str) {
-        let element = self.named(label);
+        let mut element = self.named(label);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            self.tick();
+            let now = self.named(label);
+            if now.bounds() == element.bounds() || Instant::now() > deadline {
+                break;
+            }
+            element = now;
+        }
         self.click_element(&element);
     }
 
@@ -283,10 +307,11 @@ impl<'a> Ui<'a> {
         self.settle();
     }
 
-    /// The window's close button: Adeline may ask first.
-    pub fn close_window(&mut self) {
-        VisualTestContext::from_window(self.window, self.cx).simulate_close();
-        self.settle();
+    /// Quits with Cmd+Q, which asks first like the window's close button. Both call
+    /// `interaction::request_close`. (`VisualTestContext::simulate_close` panics once
+    /// the window is gone.)
+    pub fn quit(&mut self) {
+        self.press("cmd-q");
     }
 
     pub fn is_open(&mut self) -> bool {

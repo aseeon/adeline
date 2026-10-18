@@ -167,11 +167,12 @@ fn docs_demo(cx: &mut TestAppContext, second: &mut TestAppContext) {
     open_doc(&mut ui, "notes/plan", 2);
     ui.named("notes/plan.md, Editor");
     ui.input("xyz");
-    ui.close_window();
+    ui.quit();
     ui.named("Save changes to 1 doc?");
     ui.click("Cancel");
+    ui.gone("Save changes to 1 doc?");
     assert!(ui.is_open(), "Cancel quit Adeline");
-    ui.close_window();
+    ui.quit();
     ui.named("Save changes to 1 doc?");
     ui.click("Discard");
     assert!(!ui.is_open(), "Discard didn't quit Adeline");
@@ -398,4 +399,14 @@ fn tabs_fold(cx: &mut TestAppContext, narrow: &mut TestAppContext) {
         ui.containing("more projects").map(|e| e.bounds()),
         Some(more)
     );
+}
+
+#[gpui_kit::test]
+fn demo_fork(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.open_chat(SELECTION_CHAT);
+    // Fork has no shortcut.
+    ui.click("Fork");
+    ui.named(&format!("Forked from {SELECTION_CHAT}"));
+    no_engine();
 }

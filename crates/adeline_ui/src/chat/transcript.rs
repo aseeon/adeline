@@ -242,7 +242,7 @@ impl Adeline {
             .into_any_element()
     }
 
-    fn fork_marker(&self, fork: &Fork, cx: &Context<Self>) -> Stateful<Div> {
+    fn fork_marker(&self, fork: &Fork, cx: &Context<Self>) -> impl IntoElement {
         let source = self
             .workspace()
             .threads
@@ -271,6 +271,7 @@ impl Adeline {
         };
         col()
             .id("fork-marker")
+            .test_support()
             .role(Role::Group)
             .aria_label(spoken)
             .w_full()
