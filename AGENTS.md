@@ -52,4 +52,4 @@ Navigate the app with keyboard shortcuts (listed in `docs/shortcuts.md`) whereve
 
 # Releases
 
-To make or publish a release, follow `.claude/skills/release/SKILL.md` (the `/release` skill).
+To make or publish a release, follow `.agents/skills/release/SKILL.md` (the `/release` skill).
