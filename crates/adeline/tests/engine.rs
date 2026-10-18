@@ -132,6 +132,15 @@ impl Home {
             .args(["-KILL", &pid.to_string()])
             .output();
         killed.unwrap();
+        // Windows ends a killed process after taskkill returns, and until then
+        // its pipe still accepts the next client.
+        #[cfg(windows)]
+        {
+            let deadline = Instant::now() + WAIT;
+            while alive(pid) && Instant::now() < deadline {
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
         // The engine's pipe or socket closes with it.
         std::thread::sleep(Duration::from_millis(500));
     }
@@ -178,6 +187,15 @@ impl Drop for Home {
         self.kill_engine();
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+#[cfg(windows)]
+fn alive(pid: u32) -> bool {
+    let output = Process::new("tasklist")
+        .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&output.stdout).contains(&format!(" {pid} "))
 }
 
 fn python() -> String {
