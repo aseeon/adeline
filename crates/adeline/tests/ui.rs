@@ -112,6 +112,14 @@ fn send(ui: &mut Ui, prompt: &str) {
     ui.press("enter");
 }
 
+// The engine counts the turn before its update reaches the UI, and the UI's
+// Stop button shows once it has.
+fn wait_processing(ui: &mut Ui, home: &Path) {
+    ui.wait("a processing turn", WAIT, |ui| {
+        active(home) > 0 && ui.try_named("Stop").is_some()
+    });
+}
+
 fn active(home: &Path) -> usize {
     common::engine_status(home, "Active conversations")
         .and_then(|count| count.parse().ok())
@@ -143,7 +151,7 @@ fn quit_background(cx: &mut TestAppContext, second: &mut TestAppContext) {
     let live = Live::new("quit-background");
     let mut ui = open(cx);
     send(&mut ui, "SLOW 6");
-    ui.wait("a processing turn", WAIT, |_| active(live.path()) > 0);
+    wait_processing(&mut ui, live.path());
     ui.quit();
     ui.named("Finish in background");
     ui.named("Stop all");
@@ -183,7 +191,7 @@ fn quit_stop_all(cx: &mut TestAppContext) {
     let live = Live::new("quit-stop-all");
     let mut ui = open(cx);
     send(&mut ui, "SLOW 30");
-    ui.wait("a processing turn", WAIT, |_| active(live.path()) > 0);
+    wait_processing(&mut ui, live.path());
     ui.quit();
     ui.click("Stop all");
     ui.wait("Adeline to quit after Stop all", WAIT, |ui| !ui.is_open());
