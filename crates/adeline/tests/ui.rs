@@ -282,8 +282,8 @@ fn tab_bounds(ui: &mut Ui) -> Vec<gpui_kit::Bounds<gpui_kit::Pixels>> {
 #[gpui_kit::test]
 fn tabs_fold(cx: &mut TestAppContext, narrow: &mut TestAppContext) {
     let live = Live::new("tabs-fold");
-    // Seven tabs: too many for the narrowest window on any OS, few enough to fit shortened at 1600.
-    for n in 0..6 {
+    // Thirteen tabs: too many for the narrowest window on any OS, few enough to fit shortened at 1600.
+    for n in 0..12 {
         common::populate(live.path(), &format!("a-project-with-a-long-name-{n}"));
     }
     let mut ui = open(cx);

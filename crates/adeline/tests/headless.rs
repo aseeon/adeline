@@ -31,9 +31,8 @@ fn headless_cli() {
         String::from_utf8_lossy(&version.stdout).trim(),
         format!("{} (headless)", env!("CARGO_PKG_VERSION"))
     );
-    let home = std::env::temp_dir().join(format!("adeline-headless-cli-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&home);
-    std::fs::create_dir_all(&home).unwrap();
+    // A short home: macOS limits the engine's socket path to 104 bytes.
+    let home = common::home("headless-cli");
     let status = || {
         String::from_utf8_lossy(&common::adeline(&home, &["engine", "status"]).stdout).into_owned()
     };
