@@ -137,15 +137,7 @@ fn task(node: &mdast::Node, parse: &MarkdownParseContext<'_>) -> Option<Markdown
     let source = parse.node_source(node)?;
     let open = source.find('[')?;
     let close = source[open..].find(']')? + open;
-    let first = source[close + 1..].trim_start_matches([' ', '\t']);
-    let indent = close + 2;
-    let body: Vec<&str> = std::iter::once(first.lines().next().unwrap_or_default())
-        .chain(source.lines().skip(1).map(|line| {
-            let trimmed = line.len() - line.trim_start().len();
-            &line[trimmed.min(indent)..]
-        }))
-        .collect();
-    let body = body.join("\n");
+    let body = task_body(source, close);
     Some(
         MarkdownNode::new(
             "task",
@@ -157,6 +149,19 @@ fn task(node: &mdast::Node, parse: &MarkdownParseContext<'_>) -> Option<Markdown
         )
         .text(body),
     )
+}
+
+// The text after the `]` at `close`, with later lines dedented to where it starts.
+fn task_body(source: &str, close: usize) -> String {
+    let first = source[close + 1..].trim_start_matches([' ', '\t']);
+    let indent = close + 2;
+    let body: Vec<&str> = std::iter::once(first.lines().next().unwrap_or_default())
+        .chain(source.lines().skip(1).map(|line| {
+            let trimmed = line.len() - line.trim_start_matches([' ', '\t']).len();
+            &line[trimmed.min(indent)..]
+        }))
+        .collect();
+    body.join("\n")
 }
 
 fn diagram(node: &mdast::Node, parse: &MarkdownParseContext<'_>) -> Option<MarkdownNode> {
@@ -438,4 +443,22 @@ pub(crate) fn markdown(
                 .and_then(|path| images.get(&path));
             ImageSource::Image(found.unwrap_or_else(|| Arc::clone(&PLACEHOLDER)))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::task_body;
+
+    #[test]
+    fn task_bodies_dedent_continuation_lines() {
+        assert_eq!(
+            task_body("- [ ] Ship it\n      and test it", 4),
+            "Ship it\nand test it"
+        );
+        // Wide whitespace stays in the text instead of being cut through.
+        assert_eq!(
+            task_body("- [x] a\n \u{3000}\u{3000}b", 4),
+            "a\n\u{3000}\u{3000}b"
+        );
+    }
 }
