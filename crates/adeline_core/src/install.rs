@@ -153,18 +153,22 @@ pub fn open_terminal(
 ) -> Result<()> {
     let line = std::iter::once(quote(&command.to_string_lossy()))
         .chain(arguments.iter().map(|arg| quote(arg)))
-        .collect::<Vec<_>>()
+        .collect::<Result<Vec<_>>>()?
         .join(" ");
     let mut terminal = if cfg!(windows) {
         let mut terminal = std::process::Command::new("cmd");
-        terminal.args(["/C", "start", "Adeline login", "cmd", "/K", &line]);
+        terminal.args(["/C", "start", "Adeline login", "cmd", "/S", "/K"]);
+        // Raw, as Rust would escape quotes as \", which cmd doesn't read. `/S`
+        // strips exactly the outer quotes, so quoted arguments inside survive.
+        #[cfg(windows)]
+        std::os::windows::process::CommandExt::raw_arg(&mut terminal, format!("\"{line}\""));
         terminal
     } else if cfg!(target_os = "macos") {
         let exports = environment
             .iter()
             .fold(String::new(), |mut exports, (name, value)| {
                 use std::fmt::Write as _;
-                let _ = write!(exports, "export {name}={}; ", quote(value));
+                let _ = write!(exports, "export {name}={}; ", shell_quote(value));
                 exports
             });
         let script = format!("{exports}{line}")
@@ -190,16 +194,24 @@ pub fn open_terminal(
         .map_err(|error| anyhow!("Could not open a terminal: {error}. Run this yourself: {line}"))
 }
 
-fn quote(text: &str) -> String {
+fn quote(text: &str) -> Result<String> {
     if !text.is_empty()
         && text
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || "-_./:=@\\".contains(c))
     {
-        text.to_owned()
+        Ok(text.to_owned())
     } else if cfg!(windows) {
-        format!("\"{text}\"")
+        // cmd can't escape a quote inside quotes, and the rest would run as commands.
+        if text.contains(['"', '&', '|', '<', '>', '^', '%']) {
+            bail!("Cannot pass {text} to cmd. Run the login yourself.");
+        }
+        Ok(format!("\"{text}\""))
     } else {
-        format!("'{}'", text.replace('\'', "'\\''"))
+        Ok(shell_quote(text))
     }
+}
+
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
 }
