@@ -14,7 +14,7 @@ mod support;
 use gpui_kit::TestAppContext;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use support::{MENU, Ui};
 
 const WAIT: Duration = Duration::from_secs(30);
@@ -316,7 +316,8 @@ fn drop_bridges(remotes: &Path) {
             let ssh = record.file_name().unwrap().to_string_lossy().into_owned();
             let group = std::fs::read_to_string(&record).unwrap_or_default();
             std::process::Command::new("kill")
-                .args(["-KILL", &format!("-{}", group.trim()), &ssh])
+                // Without `--`, Linux's kill reads the negative group as an option.
+                .args(["-KILL", "--", &format!("-{}", group.trim()), &ssh])
                 .output()
                 .unwrap();
         }
@@ -353,6 +354,26 @@ fn machine_state(ui: &mut Ui, name: &str) -> Option<String> {
     machine_rows(ui)
         .into_iter()
         .find_map(|row| row.strip_prefix(&format!("{name}, ")).map(str::to_owned))
+}
+
+/// Waits up to `LONG`, and on a timeout names what the machines menu shows and
+/// the saved machines, which the window's names leave out.
+fn wait_remote(ui: &mut Ui, live: &Live, what: &str, mut done: impl FnMut(&mut Ui) -> bool) {
+    let deadline = Instant::now() + LONG;
+    ui.wait(what, LONG + LONG, |ui| {
+        if done(ui) {
+            return true;
+        }
+        if Instant::now() > deadline {
+            ui.press(&format!("{MENU}-h"));
+            let menu = ui.names();
+            panic!(
+                "timed out waiting for {what}. Machines menu: {menu:?}\nmachines.yml:\n{}",
+                live.machines()
+            );
+        }
+        false
+    });
 }
 
 fn has_tab(ui: &mut Ui, name: &str) -> bool {
@@ -548,16 +569,22 @@ fn ssh_host_keys(cx: &mut TestAppContext) {
     ui.wait_named("Trust Fresh?", LONG);
     ui.click("Accept");
     ui.wait("Fresh to connect", LONG, |ui| has_tab(ui, "app · Fresh"));
-    ui.wait("Desktop through its second destination", LONG, |ui| {
-        has_tab(ui, "app · Desktop")
-    });
+    wait_remote(
+        &mut ui,
+        &live,
+        "Desktop through its second destination",
+        |ui| has_tab(ui, "app · Desktop"),
+    );
     assert!(
         common::engine_pid(&remotes.join("other")).is_none(),
         "a refused destination's engine was started"
     );
-    ui.wait("Twin to be refused as a second Desktop", WAIT, |_| {
-        !live.machines().contains("Twin")
-    });
+    wait_remote(
+        &mut ui,
+        &live,
+        "Twin to be refused as a second Desktop",
+        |_| !live.machines().contains("Twin"),
+    );
 }
 
 #[gpui_kit::test]
@@ -576,6 +603,11 @@ fn headless_remote(cx: &mut TestAppContext) {
     let bin = server.join(".adeline/bin");
     std::fs::create_dir_all(&bin).unwrap();
     std::fs::write(bin.join(EXE), &headless).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(bin.join(EXE), std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
     std::fs::write(bin.join("version"), env!("CARGO_PKG_VERSION")).unwrap();
     live.save_machines(&[("m-server", "Server", &["server"], None)]);
     let mut ui = open(cx);

@@ -150,7 +150,7 @@ fn docs_demo(cx: &mut TestAppContext, second: &mut TestAppContext) {
         viewer.origin + point(viewer.size.width * (2. / 3.), px(160.)),
     );
     ui.set_clipboard("sentinel");
-    ui.press("ctrl-c");
+    ui.press("secondary-c");
     let copied = ui.clipboard();
     assert_ne!(copied, "sentinel", "the Viewer selection didn't copy");
     assert!(
@@ -268,7 +268,7 @@ fn selection_stays_in_panel(cx: &mut TestAppContext) {
         viewer.origin - point(px(120.), px(-40.)),
     );
     ui.set_clipboard("sentinel");
-    ui.press("ctrl-c");
+    ui.press("secondary-c");
     let copied = ui.clipboard();
     assert!(
         copied.len() > 20 && copied != "sentinel",
@@ -321,7 +321,7 @@ fn transcript_selection(cx: &mut TestAppContext) {
         point(second.left() + px(402.), second.top() - px(20.)),
     );
     ui.set_clipboard("sentinel");
-    ui.press("ctrl-c");
+    ui.press("secondary-c");
     let copied = ui.clipboard();
     assert!(copied.contains("paragraph insertion"), "copied {copied:?}");
     // Hovering the chat list redraws it and not the transcript.
@@ -329,7 +329,7 @@ fn transcript_selection(cx: &mut TestAppContext) {
         ui.move_to(*row);
     }
     ui.set_clipboard("sentinel");
-    ui.press("ctrl-c");
+    ui.press("secondary-c");
     assert_eq!(
         ui.clipboard(),
         copied,
@@ -351,10 +351,15 @@ fn tab_bounds(ui: &mut Ui) -> Vec<gpui_kit::Bounds<gpui_kit::Pixels>> {
 fn tabs_fold(cx: &mut TestAppContext, narrow: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
     ui.resize(NARROW.0, NARROW.1);
-    let more = ui
-        .containing("more projects")
-        .expect("the +N more projects menu")
-        .bounds();
+    let Some(more) = ui.containing("more projects") else {
+        panic!(
+            "no +N more projects menu at {} wide. Tabs: {:?}\nNamed: {:?}",
+            NARROW.0,
+            tab_bounds(&mut ui),
+            ui.names()
+        );
+    };
+    let more = more.bounds();
     let tabs = tab_bounds(&mut ui);
     let widest = tabs
         .iter()
