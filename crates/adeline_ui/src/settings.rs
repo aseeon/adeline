@@ -316,6 +316,7 @@ fn open_at(
             return;
         }
         let bounds = Bounds::centered(None, size(px(960.), px(760.)), cx);
+        let owner_window = owner.window;
         let result = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -346,7 +347,11 @@ fn open_at(
             },
         );
         if let Err(error) = result {
-            eprintln!("Could not open settings: {error}");
+            notify_failure(
+                owner_window,
+                format!("Could not open settings: {error:#}"),
+                cx,
+            );
         }
     });
 }
@@ -359,6 +364,7 @@ pub(super) fn open_agent(
     let owner = Owner::new(owner, entity);
     cx.defer(move |cx| {
         let bounds = Bounds::centered(None, size(px(760.), px(760.)), cx);
+        let owner_window = owner.window;
         let result = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -376,9 +382,17 @@ pub(super) fn open_agent(
             },
         );
         if let Err(error) = result {
-            eprintln!("Could not open agent editor: {error}");
+            notify_failure(
+                owner_window,
+                format!("Could not open agent editor: {error:#}"),
+                cx,
+            );
         }
     });
+}
+
+fn notify_failure(owner: WindowHandle<Root>, message: String, cx: &mut App) {
+    let _ = owner.update(cx, |_, window, cx| window.push_notification(message, cx));
 }
 
 pub(super) fn can_close(owner: WindowHandle<Root>, cx: &mut App) -> bool {
