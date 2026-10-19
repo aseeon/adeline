@@ -389,27 +389,32 @@ fn windows_probe() -> String {
     ))
 }
 
+// Two machines saved for one host install into one home at once, so each
+// writes its own part file.
 fn unix_install() -> String {
     format!(
-        "sh -c 'mkdir -p .adeline/bin && cat > .adeline/bin/adeline.part && chmod 755 .adeline/bin/adeline.part && mv -f .adeline/bin/adeline.part .adeline/bin/adeline && printf %s {VERSION} > .adeline/bin/version && echo {INSTALLED}'"
+        "sh -c 'mkdir -p .adeline/bin && p=.adeline/bin/adeline.$$.part && cat > $p && chmod 755 $p && mv -f $p .adeline/bin/adeline && printf %s {VERSION} > .adeline/bin/version && echo {INSTALLED}'"
     )
 }
 
 fn windows_install() -> String {
-    // A running exe can be renamed but not replaced.
+    // A running exe can be renamed but not replaced. A concurrent install can
+    // move the exe between our rename and move, so they retry.
     powershell(&format!(
         r#"$ErrorActionPreference = 'Stop'
 $d = "$env:USERPROFILE\.adeline\bin"
 New-Item -ItemType Directory -Force -Path $d | Out-Null
-$part = "$d\adeline.part"
+$part = "$d\adeline." + [guid]::NewGuid() + ".part"
 $out = [IO.File]::Create($part)
 [Console]::OpenStandardInput().CopyTo($out)
 $out.Close()
 $exe = "$d\adeline.exe"
 Remove-Item "$d\adeline.old.*" -ErrorAction SilentlyContinue
-if (Test-Path -LiteralPath $exe) {{ Move-Item -LiteralPath $exe -Destination ("$d\adeline.old." + [guid]::NewGuid() + ".exe") }}
-Move-Item -LiteralPath $part -Destination $exe
-[IO.File]::WriteAllText("$d\version", '{VERSION}')
+foreach ($n in 1..5) {{
+  if (Test-Path -LiteralPath $exe) {{ try {{ Move-Item -LiteralPath $exe -Destination ("$d\adeline.old." + [guid]::NewGuid() + ".exe") }} catch {{}} }}
+  try {{ Move-Item -LiteralPath $part -Destination $exe; break }} catch {{ if ($n -eq 5) {{ throw }} }}
+}}
+try {{ [IO.File]::WriteAllText("$d\version", '{VERSION}') }} catch {{ if (-not (Test-Path -LiteralPath "$d\version")) {{ throw }} }}
 '{INSTALLED}'"#
     ))
 }

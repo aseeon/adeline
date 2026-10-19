@@ -683,6 +683,35 @@ fn ssh_host_keys(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn install_twice_at_once(cx: &mut TestAppContext) {
+    // Desktop and Twin reach one home with no Adeline, so both install into it at once.
+    let live = Live::new("install-twice");
+    let remotes = live.remotes();
+    std::fs::write(remotes.join("twin.alias"), "desktop").unwrap();
+    let desktop = make_remote(&remotes, "desktop");
+    live.save_machines(&[
+        ("m-desktop", "Desktop", &["desktop"], None),
+        ("m-twin", "Twin", &["twin"], None),
+    ]);
+    let mut ui = Ui::open(cx, false, false);
+    wait_remote(&mut ui, &live, "both installs to finish", |ui| {
+        ui.press(&format!("{MENU}-h"));
+        let failed = ui
+            .containing("Installing Adeline")
+            .map(|e| e.label().unwrap().to_owned());
+        ui.press("escape");
+        assert_eq!(failed, None);
+        let rows = machine_rows(ui);
+        let settled = |name: &str| {
+            rows.iter().any(|row| row == &format!("{name}, Connected"))
+                || !live.machines().contains(name)
+        };
+        settled("Desktop") && settled("Twin")
+    });
+    assert!(desktop.join(".adeline/bin").join(EXE).is_file());
+}
+
+#[gpui_kit::test]
 fn headless_remote(cx: &mut TestAppContext) {
     let Some(headless) = std::env::var_os("ADELINE_HEADLESS_EXE") else {
         eprintln!(
