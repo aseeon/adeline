@@ -143,7 +143,7 @@ While the projects menu is open, no modifier:
 
 ## Settings
 
-Settings > Search settings finds every page, and Tab moves on to the matching controls. The navigation's group headers have no shortcut, since the search reaches what they fold.
+Settings > Search settings finds every page, and Tab moves on to the matching controls. Tab also reaches the navigation's group headers, and Enter or Space folds or unfolds a group.
 
 ## Focused controls (from GPUI Kit)
 

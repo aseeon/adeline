@@ -1127,16 +1127,21 @@ fn group_header(
     group: Group,
     count: usize,
     folded: bool,
+    window: &mut Window,
     cx: &mut Context<SettingsWindow>,
 ) -> impl IntoElement {
+    let id = SharedString::from(format!("settings-group-{}", group as usize));
+    let focus = window
+        .use_keyed_state(id.clone(), cx, |_, cx| cx.focus_handle().tab_stop(true))
+        .read(cx)
+        .clone();
     let theme = cx.theme();
     let name = group.label();
     row()
-        .id(SharedString::from(format!(
-            "settings-group-{}",
-            group as usize
-        )))
+        .id(id)
         .test_support()
+        .track_focus(&focus)
+        .tab_index(0)
         .role(Role::Button)
         .aria_label(format!("{} {name}", if folded { "Show" } else { "Hide" }))
         .mt_3()
@@ -1149,6 +1154,9 @@ fn group_header(
         .text_xs()
         .text_color(theme.muted_foreground)
         .hover(|style| style.text_color(theme.foreground))
+        .border_1()
+        .border_color(theme.transparent)
+        .focus_visible(|style| style.border_color(theme::sidebar_focus()))
         .child(
             Icon::default()
                 .path("chevron.svg")
@@ -1240,6 +1248,7 @@ impl Render for SettingsWindow {
                 group,
                 matching.len() + matching_agents.len(),
                 folded,
+                window,
                 cx,
             ));
             if folded {
