@@ -168,6 +168,7 @@ impl Adeline {
         let owner = cx.weak_entity();
         h_resizable("docs-panels")
             .with_state(&self.docs.panels)
+            .with_handle_appearance(std::rc::Rc::new(panes::fading_divider))
             .on_resize(move |state, _, cx| {
                 let sizes = state.read(cx).sizes().clone();
                 let _ = owner.update(cx, |app, cx| {
@@ -216,11 +217,7 @@ impl Adeline {
                     .flex_shrink_1()
                     .child(panes::panel_area(
                         panes::DOCS_CHAT,
-                        div()
-                            .size_full()
-                            .border_l_1()
-                            .border_color(cx.theme().border)
-                            .child(self.chats(window, cx)),
+                        self.chats(window, cx),
                         cx,
                     )),
             )

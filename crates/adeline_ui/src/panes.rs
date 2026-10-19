@@ -250,7 +250,8 @@ fn set_drag_panel(panel: Option<&'static str>, owner: &WeakEntity<Adeline>, cx: 
     });
 }
 
-fn fading_divider(
+/// The separator between the resizable panels of every mode.
+pub(super) fn fading_divider(
     handle: &ResizeHandleContext,
     _: &mut Window,
     cx: &mut App,
