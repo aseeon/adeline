@@ -4,7 +4,7 @@
 
 // Rust guideline compliant 2026-10-09
 
-use super::{Act, Doc, Then, viewer};
+use super::{Act, After, Doc, viewer};
 use crate::*;
 use adeline_core::card::Card;
 use adeline_docs::Format;
@@ -202,11 +202,7 @@ impl Adeline {
             .child(
                 resizable_panel()
                     .size_range(MAIN_PANEL_MIN..Pixels::MAX)
-                    .child(panes::panel_area(
-                        panes::DOCS_MAIN,
-                        self.docs_main(window, cx),
-                        cx,
-                    )),
+                    .child(panes::panel_area(panes::DOCS_MAIN, self.docs_main(cx), cx)),
             )
             .child(
                 resizable_panel()
@@ -474,7 +470,7 @@ impl Adeline {
         cx.notify();
     }
 
-    fn docs_main(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn docs_main(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let project = self.docs_current();
         let failed = project.and_then(|p| p.failed.clone());
@@ -493,10 +489,11 @@ impl Adeline {
                 .into_any_element()
         };
         if let Some((path, error)) = failed {
+            // The engine's error names the path already.
             let message = if error.contains("no longer exists") {
                 format!("{path} no longer exists")
             } else {
-                format!("Could not open {path}: {error}")
+                error
             };
             return centered(
                 col()
@@ -546,7 +543,7 @@ impl Adeline {
         }
         let path = path.to_owned();
         let markdown = adeline_docs::is_markdown(&path);
-        let offline = !self.demo_mode && !client::usable(&self.workspace().machine, cx);
+        let offline = self.docs_offline(cx);
         let locked = doc.read_only.is_some() || offline;
         let content = if !doc.editor && markdown {
             let owner = cx.weak_entity();
@@ -578,6 +575,7 @@ impl Adeline {
                 .child(
                     viewer::markdown(
                         &self.docs.viewer,
+                        &self.docs_key(),
                         &path,
                         &self.docs.images,
                         config::with(|s| s.modes.docs.load_remote_images),
@@ -638,7 +636,6 @@ impl Adeline {
             )
             .with_priority(1)
             });
-        let _ = window;
         col()
             .id("doc-panel")
             .role(Role::Main)
@@ -891,7 +888,7 @@ impl Adeline {
             _ => {
                 let unsaved = self.docs.unsaved();
                 let names: Vec<String> = unsaved.iter().map(|(_, path)| path.clone()).collect();
-                let leaving = if self.docs.then == Some(Then::Quit) {
+                let leaving = if self.docs.then == Some(After::Quit) {
                     "before Adeline quits"
                 } else {
                     "before the project closes"

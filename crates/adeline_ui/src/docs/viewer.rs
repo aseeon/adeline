@@ -25,34 +25,44 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-/// Project images by project path: loaded, or `None` when they can't be read.
+// A project's key (`Workspace::key()`) and a path in it.
+type ImageKey = (String, String);
+
+/// Project images by project and path: loaded, or `None` when they can't be read.
 #[derive(Clone, Default)]
 pub(crate) struct Images {
-    loaded: Arc<Mutex<HashMap<String, Option<Arc<Image>>>>>,
-    wanted: Arc<Mutex<HashSet<String>>>,
+    loaded: Arc<Mutex<HashMap<ImageKey, Option<Arc<Image>>>>>,
+    wanted: Arc<Mutex<HashSet<ImageKey>>>,
 }
 
 impl Images {
-    pub(crate) fn wanted(&self) -> Vec<String> {
+    pub(crate) fn wanted(&self) -> Vec<ImageKey> {
         self.wanted
             .lock()
             .map(|mut wanted| wanted.drain().collect())
             .unwrap_or_default()
     }
 
-    pub(crate) fn put(&self, path: String, image: Option<Arc<Image>>) {
+    pub(crate) fn put(&self, key: ImageKey, image: Option<Arc<Image>>) {
         if let Ok(mut loaded) = self.loaded.lock() {
-            loaded.insert(path, image);
+            loaded.insert(key, image);
         }
     }
 
+    /// Drops an image so the Viewer reads it again; whether it was there.
+    pub(crate) fn forget(&self, key: &ImageKey) -> bool {
+        self.loaded
+            .lock()
+            .is_ok_and(|mut loaded| loaded.remove(key).is_some())
+    }
+
     // An image not asked for yet is wanted for the next frame.
-    fn get(&self, path: &str) -> Option<Arc<Image>> {
-        let found = self.loaded.lock().ok()?.get(path).cloned();
+    fn get(&self, key: ImageKey) -> Option<Arc<Image>> {
+        let found = self.loaded.lock().ok()?.get(&key).cloned();
         if found.is_none()
             && let Ok(mut wanted) = self.wanted.lock()
         {
-            wanted.insert(path.to_owned());
+            wanted.insert(key);
         }
         found.flatten()
     }
@@ -137,15 +147,7 @@ fn task(node: &mdast::Node, parse: &MarkdownParseContext<'_>) -> Option<Markdown
     let source = parse.node_source(node)?;
     let open = source.find('[')?;
     let close = source[open..].find(']')? + open;
-    let first = source[close + 1..].trim_start_matches([' ', '\t']);
-    let indent = close + 2;
-    let body: Vec<&str> = std::iter::once(first.lines().next().unwrap_or_default())
-        .chain(source.lines().skip(1).map(|line| {
-            let trimmed = line.len() - line.trim_start().len();
-            &line[trimmed.min(indent)..]
-        }))
-        .collect();
-    let body = body.join("\n");
+    let body = task_body(source, close);
     Some(
         MarkdownNode::new(
             "task",
@@ -157,6 +159,19 @@ fn task(node: &mdast::Node, parse: &MarkdownParseContext<'_>) -> Option<Markdown
         )
         .text(body),
     )
+}
+
+// The text after the `]` at `close`, with later lines dedented to where it starts.
+fn task_body(source: &str, close: usize) -> String {
+    let first = source[close + 1..].trim_start_matches([' ', '\t']);
+    let indent = close + 2;
+    let body: Vec<&str> = std::iter::once(first.lines().next().unwrap_or_default())
+        .chain(source.lines().skip(1).map(|line| {
+            let trimmed = line.len() - line.trim_start_matches([' ', '\t']).len();
+            &line[trimmed.min(indent)..]
+        }))
+        .collect();
+    body.join("\n")
 }
 
 fn diagram(node: &mdast::Node, parse: &MarkdownParseContext<'_>) -> Option<MarkdownNode> {
@@ -272,14 +287,43 @@ fn render_task(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyElement 
         .into_any_element()
 }
 
+type Rendered = Result<Arc<Image>, String>;
+
+// Diagrams by source and dark theme; `None` while one renders.
+static DIAGRAMS: LazyLock<Mutex<HashMap<(SharedString, bool), Option<Rendered>>>> =
+    LazyLock::new(Mutex::default);
+
+// The diagram, or `None` while it renders in the background, after which every window redraws.
+fn rendered(source: &SharedString, dark: bool, cx: &mut App) -> Option<Rendered> {
+    let key = (source.clone(), dark);
+    let mut diagrams = DIAGRAMS.lock().ok()?;
+    if let Some(found) = diagrams.get(&key) {
+        return found.clone();
+    }
+    if diagrams.len() >= 64 {
+        diagrams.clear();
+    }
+    diagrams.insert(key.clone(), None);
+    drop(diagrams);
+    let (source, dark) = key.clone();
+    let task = cx.background_spawn(async move { super::mermaid::render(&source, dark) });
+    cx.spawn(async move |cx| {
+        let result = task.await;
+        if let Ok(mut diagrams) = DIAGRAMS.lock() {
+            diagrams.insert(key, Some(result));
+        }
+        cx.update(|cx| cx.refresh_windows());
+    })
+    .detach();
+    None
+}
+
 fn render_diagram(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyElement {
     let Some(diagram) = node.data::<Diagram>().cloned() else {
         return div().into_any_element();
     };
+    let rendered = rendered(&diagram.source, cx.theme().is_dark(), cx);
     let theme = cx.theme();
-    let dark = theme.is_dark();
-    // ponytail: renders on every frame the diagram is laid out; cache by source if it shows in profiles.
-    let rendered = super::mermaid::render(&diagram.source, dark);
     let range = diagram.range.clone();
     let note = Button::new(("note-diagram", range.start))
         .ghost()
@@ -294,12 +338,22 @@ fn render_diagram(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyEleme
                 cx,
             );
         });
+    let label = match &rendered {
+        None => "Mermaid diagram, rendering",
+        Some(Ok(_)) => "Mermaid diagram",
+        Some(Err(_)) => "Mermaid diagram, can't render",
+    };
     let body = match rendered {
-        Ok(image) => img(image)
+        None => div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child("Rendering diagram…")
+            .into_any_element(),
+        Some(Ok(image)) => img(image)
             .max_w_full()
             .object_fit(ObjectFit::ScaleDown)
             .into_any_element(),
-        Err(reason) => div()
+        Some(Err(reason)) => div()
             .flex()
             .flex_col()
             .gap_1()
@@ -322,13 +376,14 @@ fn render_diagram(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyEleme
     };
     div()
         .id(("mermaid", diagram.range.start))
+        .test_support()
         .w_full()
         .my_2()
         .flex()
         .flex_col()
         .gap_1()
         .role(Role::Figure)
-        .aria_label("Mermaid diagram")
+        .aria_label(label)
         .child(body)
         .child(div().flex().justify_end().child(note))
         .into_any_element()
@@ -401,9 +456,10 @@ impl MarkdownPlugin for RemoteImage {
     }
 }
 
-/// The Viewer for the Markdown doc at `path`, whose text `state` holds.
+/// The Viewer for the Markdown doc at `path` of project `project`, whose text `state` holds.
 pub(crate) fn markdown(
     state: &Entity<TextViewState>,
+    project: &str,
     path: &str,
     images: &Images,
     remote_images: bool,
@@ -424,6 +480,7 @@ pub(crate) fn markdown(
         .block_renderer("mermaid", render_diagram);
     let images = images.clone();
     let from = path.to_owned();
+    let project = project.to_owned();
     TextView::new(state)
         .markdown_extensions(extensions)
         .scrollable(true)
@@ -435,7 +492,25 @@ pub(crate) fn markdown(
                 return ImageSource::Resource(Resource::Uri(uri.clone()));
             }
             let found = adeline_docs::join(&from, url.split('#').next().unwrap_or(url))
-                .and_then(|path| images.get(&path));
+                .and_then(|path| images.get((project.clone(), path)));
             ImageSource::Image(found.unwrap_or_else(|| Arc::clone(&PLACEHOLDER)))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::task_body;
+
+    #[test]
+    fn task_bodies_dedent_continuation_lines() {
+        assert_eq!(
+            task_body("- [ ] Ship it\n      and test it", 4),
+            "Ship it\nand test it"
+        );
+        // Wide whitespace stays in the text instead of being cut through.
+        assert_eq!(
+            task_body("- [x] a\n \u{3000}\u{3000}b", 4),
+            "a\n\u{3000}\u{3000}b"
+        );
+    }
 }
