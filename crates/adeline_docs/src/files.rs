@@ -87,31 +87,34 @@ fn matcher(folder: &Path, file: &Path) -> Option<Gitignore> {
 }
 
 fn ignored(root: &Path, path: &str) -> bool {
-    let full = root.join(path);
-    let mut levels = vec![
-        (
-            root.to_path_buf(),
-            root.join(".git").join("info").join("exclude"),
-        ),
-        (root.to_path_buf(), root.join(".gitignore")),
-    ];
+    // The deepest `.gitignore` with a matching rule decides, as in git.
+    let decide = |levels: &[Gitignore], path: &Path, is_dir: bool| {
+        for matcher in levels.iter().rev() {
+            match matcher.matched(path, is_dir) {
+                Match::Ignore(_) => return true,
+                Match::Whitelist(_) => return false,
+                Match::None => {}
+            }
+        }
+        false
+    };
+    let mut levels: Vec<Gitignore> = [
+        root.join(".git").join("info").join("exclude"),
+        root.join(".gitignore"),
+    ]
+    .iter()
+    .filter_map(|file| matcher(root, file))
+    .collect();
+    // An ignored folder hides everything in it, as git never looks inside.
     let mut folder = root.to_path_buf();
     for part in parent(path).split('/').filter(|part| !part.is_empty()) {
         folder.push(part);
-        levels.push((folder.clone(), folder.join(".gitignore")));
-    }
-    // The deepest `.gitignore` with a matching rule decides, as in git.
-    for (folder, file) in levels.iter().rev() {
-        let Some(matcher) = matcher(folder, file) else {
-            continue;
-        };
-        match matcher.matched_path_or_any_parents(&full, false) {
-            Match::Ignore(_) => return true,
-            Match::Whitelist(_) => return false,
-            Match::None => {}
+        if decide(&levels, &folder, true) {
+            return true;
         }
+        levels.extend(matcher(&folder, &folder.join(".gitignore")));
     }
-    false
+    decide(&levels, &root.join(path), false)
 }
 
 /// Whether `path` names a doc. It agrees with [`list`], but doesn't check that the file exists.
@@ -150,14 +153,22 @@ pub fn resolve(root: &Path, path: &str) -> Result<PathBuf, String> {
     let root = root
         .canonicalize()
         .map_err(|error| format!("{}: {error}", root.display()))?;
-    // The deepest part that exists shows where a link leads.
-    let existing = full
-        .ancestors()
-        .find_map(|ancestor| ancestor.canonicalize().ok());
-    if existing.is_none_or(|existing| !existing.starts_with(&root)) {
-        return Err(format!("{path} is not a path inside the project."));
+    // The deepest part that exists shows where a link leads. A dangling link
+    // can't show it, and writing through one could leave the project.
+    let refused = || Err(format!("{path} is not a path inside the project."));
+    for ancestor in full.ancestors() {
+        if let Ok(existing) = ancestor.canonicalize() {
+            return if existing.starts_with(&root) {
+                Ok(full)
+            } else {
+                refused()
+            };
+        }
+        if ancestor.symlink_metadata().is_ok() {
+            return refused();
+        }
     }
-    Ok(full)
+    refused()
 }
 
 /// The project path of an existing file an agent reported, absolute or relative to `root`.
@@ -173,21 +184,48 @@ pub fn project_path(root: &Path, reported: &str) -> Option<String> {
 
 /// `target` from a link in the doc at `from`, as a project path. `None` when it leaves the project.
 pub fn join(from: &str, target: &str) -> Option<String> {
-    let mut parts: Vec<&str> = if target.starts_with('/') {
+    let mut parts: Vec<String> = if target.starts_with('/') {
         Vec::new()
     } else {
-        parent(from).split('/').filter(|p| !p.is_empty()).collect()
+        parent(from)
+            .split('/')
+            .filter(|p| !p.is_empty())
+            .map(str::to_owned)
+            .collect()
     };
     for part in target.split('/') {
-        match part {
+        match percent_decoded(part)?.as_str() {
             "" | "." => {}
             ".." => {
                 parts.pop()?;
             }
-            part => parts.push(part),
+            part if part.contains('/') => return None,
+            part => parts.push(part.to_owned()),
         }
     }
     (!parts.is_empty()).then(|| parts.join("/"))
+}
+
+fn percent_decoded(part: &str) -> Option<String> {
+    let bytes = part.as_bytes();
+    let mut decoded = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .filter(|hex| bytes[i] == b'%' && hex.iter().all(u8::is_ascii_hexdigit));
+        match hex {
+            Some(hex) => {
+                decoded.push(u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?);
+                i += 3;
+            }
+            None => {
+                decoded.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(decoded).ok()
 }
 
 /// Checks a file name the user chose for a doc.
@@ -247,6 +285,7 @@ mod tests {
             ("d.txt", ""),
             ("e.rs", ""),
             ("target/f.md", ""),
+            ("target/.gitignore", "!f.md\n"),
             (".hidden/g.md", ""),
             (".git/h.md", ""),
             ("notes/run.log.md", ""),
@@ -341,6 +380,24 @@ mod tests {
         );
         assert_eq!(join("docs/a.md", "/top.md").as_deref(), Some("top.md"));
         assert_eq!(join("a.md", "../escape.md"), None);
+        assert_eq!(
+            join("docs/a.md", "Notes%202.yaml").as_deref(),
+            Some("docs/Notes 2.yaml")
+        );
+        assert_eq!(join("a.md", "%2E%2E/escape.md"), None);
+        assert_eq!(join("a.md", "100%.md").as_deref(), Some("100%.md"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_link_does_not_resolve() {
+        let root = project(&[("docs/a.md", "")]);
+        std::os::unix::fs::symlink("/tmp/adeline-missing-target.md", root.join("docs/link.md"))
+            .unwrap();
+        std::os::unix::fs::symlink("/tmp/adeline-missing-folder", root.join("gone")).unwrap();
+        assert!(resolve(&root, "docs/link.md").is_err());
+        assert!(resolve(&root, "gone/new.md").is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
