@@ -337,66 +337,6 @@ fn transcript_selection(cx: &mut TestAppContext) {
     );
 }
 
-const NARROW: (f32, f32) = (800., 600.);
-
-fn tab_bounds(ui: &mut Ui) -> Vec<gpui_kit::Bounds<gpui_kit::Pixels>> {
-    ui.elements()
-        .into_iter()
-        .filter(|e| e.visible() && e.role() == Some(gpui_kit::Role::Tab))
-        .map(|e| e.bounds())
-        .collect()
-}
-
-#[gpui_kit::test]
-fn tabs_fold(cx: &mut TestAppContext, narrow: &mut TestAppContext) {
-    let mut ui = Ui::demo(cx, false);
-    ui.resize(NARROW.0, NARROW.1);
-    let Some(more) = ui.containing("more projects") else {
-        panic!(
-            "no +N more projects menu at {} wide. Tabs: {:?}\nNamed: {:?}",
-            NARROW.0,
-            tab_bounds(&mut ui),
-            ui.names()
-        );
-    };
-    let more = more.bounds();
-    let tabs = tab_bounds(&mut ui);
-    let widest = tabs
-        .iter()
-        .map(|t| t.size.width)
-        .fold(px(0.), |a, b| a.max(b));
-    assert!(
-        tabs.iter().filter(|t| t.size.width == widest).count() == 1,
-        "the inactive tabs didn't shorten: {tabs:?}"
-    );
-    let projects = ui.named("Projects").bounds();
-    // Kit's window controls sit right of the Projects menu.
-    assert!(
-        projects.right() < px(NARROW.0 - 100.),
-        "the Projects menu runs into the window controls: {projects:?}"
-    );
-    // The bar is a cached view: it has to refit on every resize, and match a
-    // window that opened narrow.
-    ui.resize(1600., NARROW.1);
-    assert!(
-        ui.containing("more projects").is_none(),
-        "the tabs stayed folded"
-    );
-    ui.resize(NARROW.0, NARROW.1);
-    assert_eq!(tab_bounds(&mut ui), tabs, "the tabs refit differently");
-    drop(ui);
-    let mut ui = Ui::open_sized(narrow, true, false, NARROW.0, NARROW.1);
-    assert_eq!(
-        tab_bounds(&mut ui),
-        tabs,
-        "a narrow window lays the tabs out differently"
-    );
-    assert_eq!(
-        ui.containing("more projects").map(|e| e.bounds()),
-        Some(more)
-    );
-}
-
 #[gpui_kit::test]
 fn demo_fork(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);

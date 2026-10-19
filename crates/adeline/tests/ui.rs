@@ -264,6 +264,77 @@ fn fork(cx: &mut TestAppContext) {
     ui.wait_gone("Forked from hello", WAIT);
 }
 
+/// The window's minimum size.
+const NARROW: (f32, f32) = (800., 600.);
+
+/// Left to right: the accessibility tree's order can differ between windows.
+fn tab_bounds(ui: &mut Ui) -> Vec<gpui_kit::Bounds<gpui_kit::Pixels>> {
+    let mut tabs: Vec<_> = ui
+        .elements()
+        .into_iter()
+        .filter(|e| e.visible() && e.role() == Some(gpui_kit::Role::Tab))
+        .map(|e| e.bounds())
+        .collect();
+    tabs.sort_by_key(|tab| tab.origin.x);
+    tabs
+}
+
+#[gpui_kit::test]
+fn tabs_fold(cx: &mut TestAppContext, narrow: &mut TestAppContext) {
+    let live = Live::new("tabs-fold");
+    // Seven tabs: too many for the narrowest window on any OS, few enough to fit shortened at 1600.
+    for n in 0..6 {
+        common::populate(live.path(), &format!("a-project-with-a-long-name-{n}"));
+    }
+    let mut ui = open(cx);
+    ui.resize(NARROW.0, NARROW.1);
+    ui.wait("the +N more projects menu", WAIT, |ui| {
+        ui.containing("more projects").is_some()
+    });
+    let more = ui.containing("more projects").unwrap().bounds();
+    let tabs = tab_bounds(&mut ui);
+    let widest = tabs
+        .iter()
+        .map(|t| t.size.width)
+        .fold(gpui_kit::px(0.), |a, b| a.max(b));
+    assert!(
+        tabs.iter().filter(|t| t.size.width == widest).count() == 1,
+        "the inactive tabs didn't shorten: {tabs:?}"
+    );
+    // Kit's window controls sit right of the Projects menu, except on macOS.
+    if !cfg!(target_os = "macos") {
+        let projects = ui.named("Projects").bounds();
+        assert!(
+            projects.right() < gpui_kit::px(NARROW.0 - 100.),
+            "the Projects menu runs into the window controls: {projects:?}"
+        );
+    }
+    // The bar is a cached view: it has to refit on every resize, and match a
+    // window that opened narrow.
+    ui.resize(1600., NARROW.1);
+    assert!(
+        ui.containing("more projects").is_none(),
+        "the tabs stayed folded: {:?}",
+        tab_bounds(&mut ui)
+    );
+    ui.resize(NARROW.0, NARROW.1);
+    assert_eq!(tab_bounds(&mut ui), tabs, "the tabs refit differently");
+    drop(ui);
+    let mut ui = Ui::open_sized(narrow, false, false, NARROW.0, NARROW.1);
+    ui.wait("the narrow window's +N menu", WAIT, |ui| {
+        ui.containing("more projects").is_some()
+    });
+    assert_eq!(
+        tab_bounds(&mut ui),
+        tabs,
+        "a narrow window lays the tabs out differently"
+    );
+    assert_eq!(
+        ui.containing("more projects").map(|e| e.bounds()),
+        Some(more)
+    );
+}
+
 const LONG: Duration = Duration::from_secs(90);
 const EXE: &str = if cfg!(windows) {
     "adeline.exe"
@@ -282,6 +353,22 @@ fn make_remote(remotes: &Path, host: &str) -> PathBuf {
     )
     .unwrap();
     home
+}
+
+/// Installs `exe` as this version of Adeline in a remote home, as an earlier
+/// connection would have; returns its bin folder.
+fn install(home: &Path, exe: &[u8]) -> PathBuf {
+    let bin = home.join(".adeline/bin");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::write(bin.join(EXE), exe).unwrap();
+    #[cfg(unix)]
+    std::fs::set_permissions(
+        bin.join(EXE),
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
+    std::fs::write(bin.join("version"), env!("CARGO_PKG_VERSION")).unwrap();
+    bin
 }
 
 /// Kills the running `adeline bridge` sessions, as a dropped network would.
@@ -544,7 +631,13 @@ fn ssh_host_keys(cx: &mut TestAppContext) {
     ] {
         std::fs::write(remotes.join(format!("{alias}.alias")), host).unwrap();
     }
-    make_remote(&remotes, "desktop");
+    let desktop = make_remote(&remotes, "desktop");
+    // Desktop and Twin reach this one home. Both connect at once, so without an
+    // earlier install there both would install into it at the same time.
+    install(
+        &desktop,
+        &std::fs::read(env!("CARGO_BIN_EXE_adeline")).unwrap(),
+    );
     live.save_machines(&[
         ("m-fresh", "Fresh", &["newkey-fresh"], None),
         (
@@ -600,15 +693,7 @@ fn headless_remote(cx: &mut TestAppContext) {
     let live = Live::new("headless-remote");
     let remotes = live.remotes();
     let server = make_remote(&remotes, "server");
-    let bin = server.join(".adeline/bin");
-    std::fs::create_dir_all(&bin).unwrap();
-    std::fs::write(bin.join(EXE), &headless).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(bin.join(EXE), std::fs::Permissions::from_mode(0o755)).unwrap();
-    }
-    std::fs::write(bin.join("version"), env!("CARGO_PKG_VERSION")).unwrap();
+    let bin = install(&server, &headless);
     live.save_machines(&[("m-server", "Server", &["server"], None)]);
     let mut ui = open(cx);
     ui.wait("the headless remote's tab", LONG, |ui| {
