@@ -316,6 +316,7 @@ fn open_at(
             return;
         }
         let bounds = Bounds::centered(None, size(px(960.), px(760.)), cx);
+        let owner_window = owner.window;
         let result = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -346,7 +347,11 @@ fn open_at(
             },
         );
         if let Err(error) = result {
-            eprintln!("Could not open settings: {error}");
+            notify_failure(
+                owner_window,
+                format!("Could not open settings: {error:#}"),
+                cx,
+            );
         }
     });
 }
@@ -359,6 +364,7 @@ pub(super) fn open_agent(
     let owner = Owner::new(owner, entity);
     cx.defer(move |cx| {
         let bounds = Bounds::centered(None, size(px(760.), px(760.)), cx);
+        let owner_window = owner.window;
         let result = cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -376,8 +382,18 @@ pub(super) fn open_agent(
             },
         );
         if let Err(error) = result {
-            eprintln!("Could not open agent editor: {error}");
+            notify_failure(
+                owner_window,
+                format!("Could not open agent editor: {error:#}"),
+                cx,
+            );
         }
+    });
+}
+
+fn notify_failure(owner: WindowHandle<Root>, message: String, cx: &mut App) {
+    let _ = cx.update_window(owner.into(), |_, window, cx| {
+        window.push_notification(message, cx);
     });
 }
 
@@ -424,9 +440,12 @@ fn persist_form(
     form: &Entity<agent_form::AgentForm>,
     overwrite: bool,
     cx: &mut App,
-) -> Result<String> {
+    done: impl FnOnce(Result<String>, &mut App) + 'static,
+) {
     let form = form.read(cx);
-    form.check(cx)?;
+    if let Err(error) = form.check(cx) {
+        return cx.defer(move |cx| done(Err(error), cx));
+    }
     let definition = form.values(cx);
     let original = form.id.clone();
     let machine = form.machine.clone();
@@ -434,12 +453,13 @@ fn persist_form(
     Adeline::save_agent(
         &owner.entity,
         &machine,
-        original.as_deref(),
+        original,
         definition,
         expected,
         overwrite,
         cx,
-    )
+        done,
+    );
 }
 
 fn choose(
@@ -538,6 +558,7 @@ struct SettingsWindow {
     silence_minutes: Entity<InputState>,
     silence_error: Option<String>,
     mcp_error: Option<String>,
+    engine_error: Option<String>,
     engine_stopping: bool,
     thinking_picker: Entity<SelectState<SearchableVec<String>>>,
     thinking_error: Option<String>,
@@ -764,7 +785,7 @@ impl SettingsWindow {
                             retry_limit: limit,
                             ..current
                         };
-                        this.save_engine_settings(settings, cx);
+                        this.save_engine_settings(settings, |this| &mut this.retry_limit_error, cx);
                     }
                     Ok(_) => this.retry_limit_error = None,
                     Err(_) => {
@@ -952,6 +973,7 @@ impl SettingsWindow {
             silence_minutes,
             silence_error: None,
             mcp_error: None,
+            engine_error: None,
             engine_stopping: false,
             thinking_picker,
             thinking_error: None,
@@ -981,6 +1003,8 @@ impl SettingsWindow {
         self.retry_limit
             .update(cx, |input, cx| input.set_value(limit, window, cx));
         self.retry_limit_error = None;
+        self.engine_error = None;
+        self.mcp_error = None;
         self.close_agent();
         self.agent_status = None;
         self.machines_page = false;

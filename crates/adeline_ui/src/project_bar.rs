@@ -369,7 +369,7 @@ impl Adeline {
                         cx,
                     )),
             )
-            .context_menu(move |menu, _, _| project_actions(menu, &owner, ix, true, &id))
+            .context_menu(move |menu, _, _| project_actions(menu, &owner, true, &id))
     }
 
     fn overflow_menu(&self, hidden: &[usize], bar: &theme::BarColors, cx: &Context<Self>) -> Div {
@@ -577,17 +577,29 @@ fn owner_action(
     }
 }
 
+// The menu outlives the render that built it, so items find the project by key
+// when clicked: the projects may have shifted since.
 fn project_actions(
     menu: PopupMenu,
     owner: &WeakEntity<Adeline>,
-    ix: usize,
     open: bool,
     id: &str,
 ) -> PopupMenu {
-    let rename = PopupMenuItem::new("Rename project…")
-        .on_click(owner_action(owner, Action::RenameProject(ix)));
+    let by_key = |make: fn(usize) -> Action| {
+        let owner = owner.clone();
+        let id = id.to_owned();
+        move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+            cx.stop_propagation();
+            let _ = owner.update(cx, |app, cx| {
+                if let Some(ix) = app.project_index(Some(&id)) {
+                    app.act(make(ix), window, cx);
+                }
+            });
+        }
+    };
+    let rename = PopupMenuItem::new("Rename project…").on_click(by_key(Action::RenameProject));
     let last = if open {
-        PopupMenuItem::new("Close project").on_click(owner_action(owner, Action::CloseProject(ix)))
+        PopupMenuItem::new("Close project").on_click(by_key(Action::CloseProject))
     } else {
         PopupMenuItem::new("Delete project").on_click(owner_action(
             owner,

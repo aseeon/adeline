@@ -102,7 +102,7 @@ impl McpEditor {
         Self {
             name: text_input(
                 server.map_or("", |s| s.name.as_str()),
-                "docs-search",
+                "e.g. github",
                 window,
                 cx,
             ),

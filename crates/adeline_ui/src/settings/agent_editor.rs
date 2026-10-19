@@ -126,7 +126,33 @@ impl SettingsWindow {
             );
             return;
         }
-        match persist_form(&self.owner, &form, overwrite, cx) {
+        if self.pending {
+            return;
+        }
+        self.pending = true;
+        cx.notify();
+        let view = cx.entity().downgrade();
+        let saved = form.clone();
+        let handle = window.window_handle();
+        persist_form(&self.owner, &form, overwrite, cx, move |result, cx| {
+            let _ = handle.update(cx, |_, window, cx| {
+                let _ = view.update(cx, |view, cx| {
+                    view.pending = false;
+                    view.saved_agent(&saved, result, after, window, cx);
+                });
+            });
+        });
+    }
+
+    fn saved_agent(
+        &mut self,
+        form: &Entity<agent_form::AgentForm>,
+        result: Result<String>,
+        after: Option<AfterAgent>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match result {
             Ok(saved) => {
                 form.update(cx, |form, cx| {
                     let definition = form.values(cx);
@@ -141,7 +167,6 @@ impl SettingsWindow {
                 if let Some(after) = after {
                     self.after_agent(after, window, cx);
                 }
-                cx.notify();
             }
             Err(message) => {
                 let message = format!("{message:#}");
@@ -151,9 +176,9 @@ impl SettingsWindow {
                     form.status = Some(message);
                     cx.notify();
                 });
-                cx.notify();
             }
         }
+        cx.notify();
     }
 
     fn confirm_delete(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
@@ -189,20 +214,34 @@ impl SettingsWindow {
             &["Delete", "Cancel"],
             move |choice, _, cx| {
                 let _ = view.update(cx, |view, cx| {
-                    view.pending = false;
                     if choice != 0 {
+                        view.pending = false;
                         return;
                     }
                     let owner = view.owner.clone();
                     let machine = view.machine.clone();
-                    let result = Adeline::delete_agent(&owner.entity, &machine, &id, cx);
-                    match result {
-                        Ok(()) => {
-                            view.close_agent();
-                            view.agent_status = None;
-                        }
-                        Err(message) => view.agent_status = Some(format!("{message:#}")),
-                    }
+                    let weak = cx.entity().downgrade();
+                    Adeline::delete_agent(
+                        &owner.entity,
+                        &machine,
+                        id.clone(),
+                        cx,
+                        move |result, cx| {
+                            let _ = weak.update(cx, |view, cx| {
+                                view.pending = false;
+                                match result {
+                                    Ok(()) => {
+                                        view.close_agent();
+                                        view.agent_status = None;
+                                    }
+                                    Err(message) => {
+                                        view.agent_status = Some(format!("{message:#}"));
+                                    }
+                                }
+                                cx.notify();
+                            });
+                        },
+                    );
                     cx.notify();
                 });
             },

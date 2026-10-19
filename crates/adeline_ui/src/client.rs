@@ -16,7 +16,7 @@ use gpui_kit::{App, Global, WeakEntity};
 use serde_json::Value;
 use std::{
     collections::{HashMap, VecDeque},
-    sync::{Arc, Mutex, OnceLock},
+    sync::OnceLock,
     time::{Duration, Instant},
 };
 use tokio::{io::AsyncWriteExt as _, sync::mpsc};
@@ -86,8 +86,6 @@ impl State {
 
 pub type Callback = Box<dyn FnOnce(Result<Value, String>, &mut App)>;
 
-type Slot = Arc<Mutex<Option<(u64, std::sync::mpsc::Sender<Result<Value, String>>)>>>;
-
 pub struct Connection {
     pub machine: String,
     pub state: State,
@@ -105,7 +103,6 @@ pub struct Connection {
     pending: HashMap<u64, Callback>,
     outputs: HashMap<u64, Box<dyn FnMut(String, &mut App)>>,
     queued: Vec<(u64, Command)>,
-    blocking: Slot,
     epoch: u64,
     bye: bool,
     // As far as this client has it.
@@ -133,7 +130,6 @@ impl Connection {
             pending: HashMap::new(),
             outputs: HashMap::new(),
             queued: Vec::new(),
-            blocking: Arc::default(),
             epoch: 0,
             bye: false,
             stream: None,
@@ -331,8 +327,7 @@ pub fn init(demo: bool, initial: Option<Initial>, snapshot: Option<&Snapshot>, c
     match initial {
         Some(Initial { reader, writer, .. }) => {
             let (incoming, epoch, cancel) = open_inbox(LOCAL, cx);
-            let blocking = Arc::clone(&get(LOCAL, cx).expect("local connection").blocking);
-            runtime().spawn(run_io(reader, writer, incoming, blocking, cancel, None));
+            runtime().spawn(run_io(reader, writer, incoming, cancel, None));
             listen(LOCAL, epoch, cx);
         }
         None => connect(LOCAL, cx),
@@ -457,7 +452,6 @@ pub fn connect(machine: &str, cx: &mut App) {
     }
     let (incoming, epoch, cancel) = open_inbox(machine, cx);
     let connection = get_mut(machine, cx).expect("connection");
-    let blocking = Arc::clone(&connection.blocking);
     connection.state = State::Connecting;
     if machine == LOCAL {
         runtime().spawn(async move {
@@ -469,7 +463,7 @@ pub fn connect(machine: &str, cx: &mut App) {
             };
             match connection {
                 Ok((reader, mut writer)) => match ipc::send(&mut writer, &hello(None)).await {
-                    Ok(()) => run_io(reader, writer, incoming, blocking, cancel, None).await,
+                    Ok(()) => run_io(reader, writer, incoming, cancel, None).await,
                     Err(error) => {
                         let _ = incoming.send(Incoming::Failed(error.to_string())).await;
                     }
@@ -497,15 +491,7 @@ pub fn connect(machine: &str, cx: &mut App) {
                         status: link.status,
                     };
                     if incoming.send(linked).await.is_ok() {
-                        run_io(
-                            link.reader,
-                            link.writer,
-                            incoming,
-                            blocking,
-                            cancel,
-                            Some(link.child),
-                        )
-                        .await;
+                        run_io(link.reader, link.writer, incoming, cancel, Some(link.child)).await;
                     }
                 }
                 Err(failure) => {
@@ -537,7 +523,6 @@ async fn run_io(
     mut reader: ipc::Reader,
     mut writer: ipc::Writer,
     incoming: async_channel::Sender<Incoming>,
-    blocking: Slot,
     cancel: tokio::sync::oneshot::Receiver<()>,
     // The `ssh` process lives as long as the connection.
     _child: Option<tokio::process::Child>,
@@ -556,15 +541,6 @@ async fn run_io(
             let Ok(message) = serde_json::from_str::<EngineMessage>(&line) else {
                 continue;
             };
-            // A blocking request's reply skips the queue; everything before it is queued.
-            if let EngineMessage::Reply { id, result } = &message
-                && let Ok(mut slot) = blocking.lock()
-                && slot.as_ref().is_some_and(|(waiting, _)| waiting == id)
-                && let Some((_, reply)) = slot.take()
-            {
-                let _ = reply.send(result.clone());
-                continue;
-            }
             if incoming.send(Incoming::Message(message)).await.is_err() {
                 return false;
             }
@@ -926,45 +902,6 @@ pub fn request_with_output(
     {
         connection.outputs.insert(id, output);
     }
-}
-
-pub fn request_blocking(machine: &str, command: Command, cx: &mut App) -> Result<Value, String> {
-    // Applies every change sent before the reply. Never call it while updating
-    // the `Adeline` entity.
-    let name = machines::name(machine);
-    let Some(connection) = get_mut(machine, cx) else {
-        return Err(format!("{name} is not checked."));
-    };
-    let (State::Connected, Some(sender)) = (&connection.state, &connection.sender) else {
-        return Err(if connection.local() {
-            "The conversation engine isn't running. Start it in Settings › Engine.".into()
-        } else {
-            format!("{name} is not connected.")
-        });
-    };
-    connection.next += 1;
-    let id = connection.next;
-    let (reply, replies) = std::sync::mpsc::channel();
-    if let Ok(mut slot) = connection.blocking.lock() {
-        *slot = Some((id, reply));
-    }
-    send_line(sender, id, command);
-    // The window blocks while it waits; a remote engine answers over SSH, so it gets longer.
-    let wait = if machine == LOCAL { 10 } else { 30 };
-    let result = replies
-        .recv_timeout(Duration::from_secs(wait))
-        .unwrap_or_else(|_| Err("The conversation engine didn't answer in time.".into()));
-    let connection = get(machine, cx).expect("connection");
-    if let Ok(mut slot) = connection.blocking.lock() {
-        *slot = None;
-    }
-    let epoch = connection.epoch;
-    if let Some(inbox) = connection.inbox.clone() {
-        while let Ok(incoming) = inbox.try_recv() {
-            handle(machine, epoch, incoming, cx);
-        }
-    }
-    result
 }
 
 pub fn replace_old(stop: bool, cx: &mut App) {

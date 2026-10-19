@@ -48,20 +48,38 @@ impl AgentWindow {
         }
     }
 
-    fn save(&mut self, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        match persist_form(&self.owner, &self.form, false, cx) {
-            Ok(_) => {
-                window.remove_window();
-                true
-            }
-            Err(error) => {
-                self.form.update(cx, |form, cx| {
-                    form.status = Some(format!("{error:#}"));
+    fn save(&mut self, close_owner: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.pending {
+            return;
+        }
+        self.pending = true;
+        cx.notify();
+        let view = cx.entity().downgrade();
+        let handle = window.window_handle();
+        persist_form(&self.owner, &self.form, false, cx, move |result, cx| {
+            let _ = handle.update(cx, |_, window, cx| {
+                let _ = view.update(cx, |view, cx| {
+                    view.pending = false;
+                    match result {
+                        Ok(_) => {
+                            window.remove_window();
+                            if close_owner {
+                                interaction::request_close(
+                                    view.owner.window,
+                                    view.owner.entity.clone(),
+                                    cx,
+                                );
+                            }
+                        }
+                        Err(error) => view.form.update(cx, |form, cx| {
+                            form.status = Some(format!("{error:#}"));
+                            cx.notify();
+                        }),
+                    }
                     cx.notify();
                 });
-                false
-            }
-        }
+            });
+        });
     }
     pub(super) fn confirm_close(
         &mut self,
@@ -90,15 +108,7 @@ impl AgentWindow {
                 let _ = weak.update(cx, |view, cx| {
                     view.pending = false;
                     match choice {
-                        0 => {
-                            if view.save(window, cx) && close_owner {
-                                interaction::request_close(
-                                    view.owner.window,
-                                    view.owner.entity.clone(),
-                                    cx,
-                                );
-                            }
-                        }
+                        0 => view.save(close_owner, window, cx),
                         1 => {
                             let owner = view.owner.clone();
                             window.remove_window();
@@ -184,7 +194,7 @@ impl Render for AgentWindow {
                             .label("Save")
                             .disabled(self.pending || self.form.read(cx).blocked(cx))
                             .on_click(cx.listener(|view, _, window, cx| {
-                                view.save(window, cx);
+                                view.save(false, window, cx);
                             })),
                     ),
             )

@@ -187,6 +187,9 @@ struct Detail {
     copy: Option<(&'static str, String)>,
 }
 
+// Built only for an expanded row, since rows redraw on every streamed chunk.
+type LazyDetail<'a> = Box<dyn FnOnce() -> Detail + 'a>;
+
 pub(super) fn jump_to_latest(id: &'static str, cx: &Context<Adeline>) -> impl IntoElement {
     let theme = cx.theme();
     // Clicks stop here rather than reaching the row beneath.
@@ -444,7 +447,7 @@ impl Adeline {
                             .map_or_else(|| "You".into(), |at| format!("You, {at}")),
                         preview: None,
                     },
-                    Detail {
+                    Box::new(move || Detail {
                         facts: [
                             sent.map(|at| ("Sent", at)),
                             Some(("Length", format!("≈{} tokens", token_estimate(text)))),
@@ -456,7 +459,7 @@ impl Adeline {
                         output: None,
                         message: Some((message, false)),
                         copy: Some(("Copy", text.clone())),
-                    },
+                    }) as LazyDetail<'_>,
                 )
             }
             Entry::Reply { message, text } => {
@@ -479,13 +482,13 @@ impl Adeline {
                         ),
                         preview: None,
                     },
-                    Detail {
+                    Box::new(move || Detail {
                         facts: vec![("Length", format!("≈{} tokens", token_estimate(text)))],
                         text: Some(excerpt(text, 40, 2000)),
                         output: None,
                         message: Some((message, false)),
                         copy: Some(("Copy", text.to_owned())),
-                    },
+                    }) as LazyDetail<'_>,
                 )
             }
             Entry::Call(ix) => {
@@ -508,15 +511,7 @@ impl Adeline {
                         .into_any_element()
                 };
                 let outcome = outcome(call);
-                let mut facts = vec![("Status", outcome.clone())];
-                if call.started > 0 {
-                    facts.push(("Started", clock(call.started)));
-                }
-                if !call.paths.is_empty() {
-                    facts.push(("Files", call.paths.join("\n")));
-                }
-                let output =
-                    (!call.detail.trim().is_empty()).then(|| excerpt(&call.detail, 14, 1600));
+                let status = outcome.clone();
                 (
                     format!("{}:{ix}", thread.id),
                     glyph,
@@ -537,16 +532,26 @@ impl Adeline {
                         preview: (!call.detail.trim().is_empty())
                             .then(|| excerpt(&call.detail, 3, 240)),
                     },
-                    Detail {
-                        facts,
-                        text: error.then(|| call.title.clone()),
-                        output,
-                        message: closing
-                            .map(|closing| (closing, true))
-                            .or(call.turn.map(|prompt| (prompt, false))),
-                        copy: (!call.detail.trim().is_empty())
-                            .then(|| ("Copy output", call.detail.clone())),
-                    },
+                    Box::new(move || {
+                        let mut facts = vec![("Status", status)];
+                        if call.started > 0 {
+                            facts.push(("Started", clock(call.started)));
+                        }
+                        if !call.paths.is_empty() {
+                            facts.push(("Files", call.paths.join("\n")));
+                        }
+                        Detail {
+                            facts,
+                            text: error.then(|| call.title.clone()),
+                            output: (!call.detail.trim().is_empty())
+                                .then(|| excerpt(&call.detail, 14, 1600)),
+                            message: closing
+                                .map(|closing| (closing, true))
+                                .or(call.turn.map(|prompt| (prompt, false))),
+                            copy: (!call.detail.trim().is_empty())
+                                .then(|| ("Copy output", call.detail.clone())),
+                        }
+                    }) as LazyDetail<'_>,
                 )
             }
         };
@@ -622,7 +627,7 @@ impl Adeline {
             .w_full()
             .child(button)
             .when(expanded, |column| {
-                column.child(self.activity_detail(&key, detail, cx))
+                column.child(self.activity_detail(&key, detail(), cx))
             })
             .into_any_element()
     }

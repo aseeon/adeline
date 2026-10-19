@@ -50,8 +50,9 @@ impl Adeline {
         client::request(
             machine,
             command,
+            // `update_window` leaves the Root unleased, so `done` may push notifications.
             Box::new(move |result, cx| {
-                let _ = handle.update(cx, |_, window, cx| {
+                let _ = cx.update_window(handle.into(), |_, window, cx| {
                     let _ = owner.update(cx, |app, cx| done(app, result, window, cx));
                 });
             }),
@@ -543,59 +544,103 @@ impl Adeline {
         false
     }
 
+    // Saving and deleting answer through `done`, always after returning, so a
+    // caller may still be mid-update.
+    #[expect(clippy::too_many_arguments, reason = "a save carries the whole form")]
     pub(super) fn save_agent(
         entity: &WeakEntity<Self>,
         machine: &str,
-        original: Option<&str>,
+        original: Option<String>,
         definition: agents::AgentDefinition,
         expected: Option<agents::AgentDefinition>,
         overwrite: bool,
         cx: &mut App,
-    ) -> Result<String> {
-        let (demo, select_first) = entity.read_with(cx, |app, _| {
+        done: impl FnOnce(Result<String>, &mut App) + 'static,
+    ) {
+        let found = entity.read_with(cx, |app, _| {
             (
                 app.demo_mode,
                 original.is_none() && app.catalog(machine).entries.is_empty(),
             )
-        })?;
-        let saved = if demo {
-            entity.update(cx, move |app, _| {
-                app.catalog_mut(machine)
-                    .save(original, definition, expected.as_ref(), overwrite)
-            })??
-        } else {
-            let command = Command::SaveAgent {
-                original: original.map(str::to_owned),
-                definition,
-                expected,
-                overwrite,
-            };
-            client::request_blocking(machine, command, cx)
-                .map_err(anyhow::Error::msg)?
-                .as_str()
-                .map(str::to_owned)
-                .context("The conversation engine returned no agent ID.")?
+        });
+        let (demo, select_first) = match found {
+            Ok(found) => found,
+            Err(error) => return cx.defer(move |cx| done(Err(error), cx)),
         };
-        entity.update(cx, |app, cx| {
-            app.agents_changed(original, Some(&saved), select_first, cx);
-        })?;
-        Ok(saved)
+        let demo_saved = demo.then(|| {
+            entity
+                .update(cx, |app, _| {
+                    app.catalog_mut(machine).save(
+                        original.as_deref(),
+                        definition.clone(),
+                        expected.as_ref(),
+                        overwrite,
+                    )
+                })
+                .and_then(|saved| saved)
+        });
+        let command = Command::SaveAgent {
+            original: original.clone(),
+            definition,
+            expected,
+            overwrite,
+        };
+        let entity = entity.clone();
+        let finish = move |saved: Result<String>, cx: &mut App| {
+            let saved = saved.and_then(|saved| {
+                entity.update(cx, |app, cx| {
+                    app.agents_changed(original.as_deref(), Some(&saved), select_first, cx);
+                })?;
+                Ok(saved)
+            });
+            done(saved, cx);
+        };
+        if let Some(saved) = demo_saved {
+            return cx.defer(move |cx| finish(saved, cx));
+        }
+        let reply = move |result: Result<Value, String>, cx: &mut App| {
+            let saved = result.map_err(anyhow::Error::msg).and_then(|saved| {
+                saved
+                    .as_str()
+                    .map(str::to_owned)
+                    .context("The conversation engine returned no agent ID.")
+            });
+            finish(saved, cx);
+        };
+        client::request(machine, command, Box::new(reply), cx);
     }
 
     pub(super) fn delete_agent(
         entity: &WeakEntity<Self>,
         machine: &str,
-        id: &str,
+        id: String,
         cx: &mut App,
-    ) -> Result<()> {
-        let demo = entity.read_with(cx, |app, _| app.demo_mode)?;
-        if demo {
-            entity.update(cx, |app, _| app.catalog_mut(machine).delete(id))??;
-        } else {
-            client::request_blocking(machine, Command::DeleteAgent { id: id.to_owned() }, cx)
-                .map_err(anyhow::Error::msg)?;
+        done: impl FnOnce(Result<()>, &mut App) + 'static,
+    ) {
+        let demo = match entity.read_with(cx, |app, _| app.demo_mode) {
+            Ok(demo) => demo,
+            Err(error) => return cx.defer(move |cx| done(Err(error), cx)),
+        };
+        let demo_deleted = demo.then(|| {
+            entity
+                .update(cx, |app, _| app.catalog_mut(machine).delete(&id))
+                .and_then(|deleted| deleted)
+        });
+        let command = Command::DeleteAgent { id: id.clone() };
+        let entity = entity.clone();
+        let finish = move |deleted: Result<()>, cx: &mut App| {
+            let deleted = deleted.and_then(|()| {
+                entity.update(cx, |app, cx| app.agents_changed(Some(&id), None, false, cx))
+            });
+            done(deleted, cx);
+        };
+        if let Some(deleted) = demo_deleted {
+            return cx.defer(move |cx| finish(deleted, cx));
         }
-        entity.update(cx, |app, cx| app.agents_changed(Some(id), None, false, cx))
+        let reply = move |result: Result<Value, String>, cx: &mut App| {
+            finish(result.map(drop).map_err(anyhow::Error::msg), cx);
+        };
+        client::request(machine, command, Box::new(reply), cx);
     }
 
     fn close_main_window(&self, cx: &mut Context<Self>) {
@@ -608,8 +653,16 @@ impl Adeline {
         if self.runtime.stopping_all {
             return;
         }
+        // Like `request_quit`, leave alone machines other clients still use.
+        let machines: Vec<String> = client::connections(cx)
+            .iter()
+            .filter(|c| c.state == client::State::Connected && c.status.clients <= 1)
+            .map(|c| c.machine.clone())
+            .collect();
+        if machines.is_empty() {
+            return self.quit_in_background(cx);
+        }
         self.runtime.stopping_all = true;
-        let machines = Self::connected_machines(cx);
         let waiting = std::rc::Rc::new(std::cell::Cell::new(machines.len()));
         for machine in machines {
             let waiting = std::rc::Rc::clone(&waiting);
@@ -827,11 +880,19 @@ impl Adeline {
                 if matches!(delta, Delta::Card { .. }) {
                     self.transcript.update(cx, chat::Transcript::refresh_all);
                 }
+                let open = self.current_id();
                 protocol::apply(
                     &mut self.projects[range],
                     &mut self.runtime.conversations,
                     &delta,
                 );
+                if let Some(open) = open {
+                    self.selected = self
+                        .workspace()
+                        .threads
+                        .iter()
+                        .position(|thread| thread.id == open);
+                }
                 if id.is_some() && id == self.current_id() {
                     if let Some((p, t)) = id.as_deref().and_then(|id| self.locate_conversation(id))
                     {

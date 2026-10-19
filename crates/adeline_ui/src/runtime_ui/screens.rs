@@ -204,7 +204,7 @@ impl Adeline {
             }
             state if machine != machines::LOCAL && !state.usable() && connection.loaded => (
                 format!(
-                    "{}. Showing what was last received; changes wait until it reconnects.",
+                    "{}. Showing what was last received; changes can't be sent until it reconnects.",
                     match state.label() {
                         "Disconnected" => format!("{name} is disconnected"),
                         label => format!("{name} isn't connected: {}", label.to_lowercase()),

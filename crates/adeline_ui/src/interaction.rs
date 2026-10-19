@@ -154,7 +154,7 @@ impl Adeline {
                 self.name_input.update(cx, |state, cx| {
                     state.set_value(self.projects[ix].config.name.clone(), window, cx);
                 });
-                self.rename_project = Some(ix);
+                self.rename_project = Some(self.projects[ix].key());
                 self.project_error = None;
                 self.modal = Some("rename-project");
             }

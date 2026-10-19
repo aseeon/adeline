@@ -19,6 +19,7 @@ impl SettingsWindow {
     pub(super) fn save_engine_settings(
         &mut self,
         settings: protocol::EngineSettings,
+        error: fn(&mut Self) -> &mut Option<String>,
         cx: &mut Context<Self>,
     ) {
         let view = cx.entity().downgrade();
@@ -27,7 +28,7 @@ impl SettingsWindow {
             protocol::Command::SetSettings { settings },
             Box::new(move |result, cx| {
                 let _ = view.update(cx, |this, cx| {
-                    this.retry_limit_error = result.err();
+                    *error(this) = result.err();
                     cx.notify();
                 });
             }),
@@ -41,9 +42,10 @@ impl SettingsWindow {
         client::request(
             &self.machine,
             protocol::Command::Shutdown,
-            Box::new(move |_, cx| {
+            Box::new(move |result, cx| {
                 let _ = view.update(cx, |this, cx| {
                     this.engine_stopping = false;
+                    this.engine_error = result.err();
                     cx.notify();
                 });
             }),
@@ -104,7 +106,9 @@ impl SettingsWindow {
                                 .read_with(cx, |this, cx| engine_settings_of(&this.machine, cx))
                                 .unwrap_or_default()
                         };
-                        let _ = view.update(cx, |this, cx| this.save_engine_settings(settings, cx));
+                        let _ = view.update(cx, |this, cx| {
+                            this.save_engine_settings(settings, |this| &mut this.engine_error, cx);
+                        });
                     }),
                 cx,
             ));
@@ -114,6 +118,9 @@ impl SettingsWindow {
         }
         if let Some(card) = card(rows, cx) {
             page = page.child(card);
+        }
+        if let Some(message) = &self.engine_error {
+            page = page.child(error(message.clone(), cx));
         }
         if matches_query(query, &[&["Engine"][..], &ENGINE_STATUS[..]].concat()) {
             let status = &connection.status;
@@ -215,18 +222,12 @@ impl SettingsWindow {
         page
     }
 
-    fn save_mcp_servers(&mut self, servers: Vec<conversation::McpServer>, cx: &mut App) {
+    fn save_mcp_servers(&mut self, servers: Vec<conversation::McpServer>, cx: &mut Context<Self>) {
         let settings = protocol::EngineSettings {
             mcp_servers: servers,
             ..engine_settings_of(&self.machine, cx)
         };
-        self.mcp_error = None;
-        client::request(
-            &self.machine,
-            protocol::Command::SetSettings { settings },
-            Box::new(|_, _| {}),
-            cx,
-        );
+        self.save_engine_settings(settings, |this| &mut this.mcp_error, cx);
     }
 
     pub(super) fn mcp_settings(&self, cx: &Context<Self>) -> Div {
