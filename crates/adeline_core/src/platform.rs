@@ -92,7 +92,7 @@ pub fn stop_children() {
 }
 
 #[cfg(not(windows))]
-static GROUPS: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+static GROUPS: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
 #[cfg(not(windows))]
 fn record_group(pid: u32, program: &std::ffi::OsStr) {
@@ -491,7 +491,7 @@ mod tests {
     }
 
     #[cfg(not(windows))]
-    fn groups_dir() -> std::path::PathBuf {
+    fn groups_dir() -> PathBuf {
         let dir = std::env::temp_dir().join(format!("adeline-groups-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
