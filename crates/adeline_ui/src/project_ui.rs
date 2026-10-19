@@ -299,12 +299,16 @@ impl Adeline {
             && !self.demo_mode
         {
             let id = project.config.id.clone();
-            client::request(
-                &project.machine.clone(),
-                protocol::Command::CancelDeleteProject { id },
-                Box::new(|_, _| {}),
-                cx,
-            );
+            let machine = project.machine.clone();
+            let command = protocol::Command::CancelDeleteProject { id };
+            self.machine_request(&machine, command, cx, |app, result, _, cx| {
+                if let Err(error) = result {
+                    app.notify_toast(
+                        &format!("Couldn't cancel deleting the project: {error}"),
+                        cx,
+                    );
+                }
+            });
         }
         self.delete_project = None;
     }

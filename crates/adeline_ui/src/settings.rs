@@ -542,6 +542,7 @@ struct SettingsWindow {
     silence_minutes: Entity<InputState>,
     silence_error: Option<String>,
     mcp_error: Option<String>,
+    engine_error: Option<String>,
     engine_stopping: bool,
     thinking_picker: Entity<SelectState<SearchableVec<String>>>,
     thinking_error: Option<String>,
@@ -768,7 +769,7 @@ impl SettingsWindow {
                             retry_limit: limit,
                             ..current
                         };
-                        this.save_engine_settings(settings, cx);
+                        this.save_engine_settings(settings, |this| &mut this.retry_limit_error, cx);
                     }
                     Ok(_) => this.retry_limit_error = None,
                     Err(_) => {
@@ -956,6 +957,7 @@ impl SettingsWindow {
             silence_minutes,
             silence_error: None,
             mcp_error: None,
+            engine_error: None,
             engine_stopping: false,
             thinking_picker,
             thinking_error: None,
@@ -985,6 +987,8 @@ impl SettingsWindow {
         self.retry_limit
             .update(cx, |input, cx| input.set_value(limit, window, cx));
         self.retry_limit_error = None;
+        self.engine_error = None;
+        self.mcp_error = None;
         self.close_agent();
         self.agent_status = None;
         self.machines_page = false;
