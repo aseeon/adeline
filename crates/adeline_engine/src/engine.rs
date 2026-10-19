@@ -44,6 +44,9 @@ pub use cli::main;
 const IDLE_EXIT: Duration = Duration::from_secs(60);
 // Enough for a reconnecting client to catch up on a long streamed turn.
 const RECENT_DELTAS: usize = 20_000;
+// Lines queued for a client that stops reading; past this it's dropped and
+// catches up through `Hello.resume` when it reconnects. Room for a full resume.
+const CLIENT_BACKLOG: usize = 2 * RECENT_DELTAS;
 // How long agents get to stop on their own before they're killed.
 const STOP_GRACE: Duration = Duration::from_secs(5);
 // A processing agent silent this long gets a "no output" notice; in ms, like the traffic times.
@@ -118,7 +121,7 @@ fn load_settings() -> EngineSettings {
 enum Input {
     Connected {
         client: u64,
-        sender: mpsc::UnboundedSender<String>,
+        sender: mpsc::Sender<String>,
         writer: tokio::task::JoinHandle<()>,
     },
     Message {
@@ -156,9 +159,18 @@ enum Input {
 }
 
 struct Client {
-    sender: mpsc::UnboundedSender<String>,
+    sender: mpsc::Sender<String>,
     writer: tokio::task::JoinHandle<()>,
     subscribed: bool,
+}
+
+impl Client {
+    fn send(&self, line: String) {
+        // Stopping the writer ends the connection.
+        if let Err(mpsc::error::TrySendError::Full(_)) = self.sender.try_send(line) {
+            self.writer.abort();
+        }
+    }
 }
 
 struct Slot {
@@ -504,7 +516,7 @@ impl Engine {
             && let Ok(mut line) = serde_json::to_string(message)
         {
             line.push('\n');
-            let _ = client.sender.send(line);
+            client.send(line);
         }
     }
 
@@ -514,7 +526,7 @@ impl Engine {
         };
         line.push('\n');
         for client in self.clients.values().filter(|c| c.subscribed) {
-            let _ = client.sender.send(line.clone());
+            client.send(line.clone());
         }
         if matches!(message, EngineMessage::Delta(_)) {
             self.seq += 1;
@@ -533,7 +545,7 @@ impl Engine {
         self.send_to(client, &EngineMessage::Resumed);
         if let Some(entry) = self.clients.get(&client) {
             for (_, line) in self.recent.iter().filter(|(seq, _)| *seq > resume.seq) {
-                let _ = entry.sender.send(line.clone());
+                entry.send(line.clone());
             }
         }
         true
