@@ -959,10 +959,24 @@ impl Adeline {
             },
             cx,
             move |app, result, window, cx| {
-                let Ok(file) = result
+                let file = match result
                     .and_then(|v| serde_json::from_value::<DocFile>(v).map_err(|e| e.to_string()))
-                else {
-                    return;
+                {
+                    Ok(file) => file,
+                    Err(error) => {
+                        // The text shown is stale, so saving it would drop the change on disk.
+                        app.notify_toast(&format!("Reloading failed: {error}"), cx);
+                        if let Some(doc) = app
+                            .docs
+                            .projects
+                            .get_mut(&key)
+                            .and_then(|project| project.files.get_mut(&path))
+                        {
+                            doc.conflict.get_or_insert_with(|| doc.saved.clone());
+                        }
+                        cx.notify();
+                        return;
+                    }
                 };
                 let shown = app
                     .docs
@@ -1018,6 +1032,8 @@ impl Adeline {
             doc.text = None;
             self.docs.shown = None;
             self.docs_show(window, cx);
+            // After a failed reload `disk` is the last text read, so read it again.
+            self.docs_reload(&key, path, cx);
         }
     }
 
