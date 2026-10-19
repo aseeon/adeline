@@ -1495,7 +1495,7 @@ impl Adeline {
 
     /// Re-watches and relists a machine's docs after its engine connection is back.
     pub(super) fn docs_connected(&mut self, machine: &str, cx: &mut Context<Self>) {
-        self.docs_sync_engine(machine, cx);
+        let relisting = self.docs_sync_engine(machine, cx);
         if self.section != Section::Docs
             || !self.has_open_project()
             || self.workspace().machine != machine
@@ -1512,34 +1512,46 @@ impl Adeline {
             cx,
             |_, _, _, _| {},
         );
-        self.docs_list(cx);
+        if !relisting {
+            self.docs_list(cx);
+        }
     }
 
-    /// Tells the machine's engine the Docs settings that decide which files get cards.
-    pub(super) fn docs_sync_engine(&self, machine: &str, cx: &mut Context<Self>) {
+    /// Tells the machine's engine the Docs settings that decide which files get cards,
+    /// and relists its docs once it has them. Whether it sent them.
+    pub(super) fn docs_sync_engine(&self, machine: &str, cx: &mut Context<Self>) -> bool {
         if self.demo_mode {
-            return;
+            return false;
         }
         let Some(connection) = client::get(machine, cx) else {
-            return;
+            return false;
         };
         let wanted = protocol::DocsSettings {
             enabled: config::with(|s| s.general.features.docs),
             respect_gitignore: config::with(|s| s.modes.docs.respect_gitignore),
         };
         if connection.state != client::State::Connected || connection.settings.docs == wanted {
-            return;
+            return false;
         }
         let settings = protocol::EngineSettings {
             docs: wanted,
             ..connection.settings.clone()
         };
+        let sent_to = machine.to_owned();
         self.machine_request(
             machine,
             Command::SetSettings { settings },
             cx,
-            |_, _, _, _| {},
+            move |app, _, _, cx| {
+                if app.section == Section::Docs
+                    && app.has_open_project()
+                    && app.workspace().machine == sent_to
+                {
+                    app.docs_list(cx);
+                }
+            },
         );
+        true
     }
 
     fn docs_setting(&mut self, act: &Act, window: &mut Window, cx: &mut Context<Self>) {
@@ -1567,22 +1579,16 @@ impl Adeline {
                 .iter()
                 .map(|c| c.machine.clone())
                 .collect();
-            for machine in machines {
-                self.docs_sync_engine(&machine, cx);
-            }
             for project in self.docs.projects.values_mut() {
                 project.listed = false;
             }
-            if self.section == Section::Docs {
-                // The engine relists with the new rules once it has them.
-                let owner = cx.weak_entity();
-                cx.spawn(async move |_, cx| {
-                    cx.background_executor()
-                        .timer(std::time::Duration::from_millis(300))
-                        .await;
-                    let _ = owner.update(cx, |app, cx| app.docs_list(cx));
-                })
-                .detach();
+            let mut relisting = false;
+            for machine in machines {
+                let sent = self.docs_sync_engine(&machine, cx);
+                relisting |= sent && self.has_open_project() && self.workspace().machine == machine;
+            }
+            if self.section == Section::Docs && !relisting {
+                self.docs_list(cx);
             }
         }
         cx.refresh_windows();
