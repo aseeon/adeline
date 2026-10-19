@@ -493,7 +493,7 @@ impl Adeline {
             panel_state: cx.new(|_| component::ResizableState::default()),
             empty_workspace: Workspace::default(),
             open_projects: vec![true; projects.len()],
-            project_tints: (0..projects.len()).map(|i| [0, 2, 3][i.min(2)]).collect(),
+            project_tints: (0..projects.len()).map(default_tint).collect(),
             demo_mode,
             verbose,
             catalogs,
@@ -1031,6 +1031,11 @@ pub fn start(
     })
     .expect("open Adeline window");
     adeline.expect("Adeline view")
+}
+
+// A new project's tab color, by its place in the bar.
+fn default_tint(ix: usize) -> usize {
+    [0, 2, 3][ix.min(2)]
 }
 
 fn bind_keys(cx: &mut App) {

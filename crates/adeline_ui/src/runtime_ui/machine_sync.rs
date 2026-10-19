@@ -103,7 +103,7 @@ impl Adeline {
                 tints
                     .get(&project.key())
                     .copied()
-                    .unwrap_or([0, 2, 3][(start + i).min(2)])
+                    .unwrap_or_else(|| default_tint(start + i))
             })
             .collect();
         self.projects.splice(range.clone(), projects);
