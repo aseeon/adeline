@@ -19,6 +19,9 @@ use std::{
 };
 use tokio::{sync::mpsc, task::block_in_place};
 
+// File events from a conversation the engine wrote this recently are its own.
+const OWN_WRITE: Duration = Duration::from_secs(1);
+
 impl Engine {
     pub(super) fn save_project(
         &mut self,
@@ -296,7 +299,7 @@ impl Engine {
                 self.agents_changed();
             }
         }
-        // The engine's own transcript writes for running agents don't need a reload.
+        // The engine's own transcript writes don't need a reload.
         let outside = paths.iter().any(|path| {
             let Ok(relative) = path.strip_prefix(&projects_root) else {
                 return false;
@@ -306,7 +309,13 @@ impl Engine {
                 (Some(_), Some(folder), Some(id)) if folder == "conversations" => Some(id),
                 _ => None,
             };
-            conversation.is_none_or(|id| !self.drivers.contains_key(id.as_ref()))
+            conversation.is_none_or(|id| {
+                !self.drivers.contains_key(id.as_ref())
+                    && self
+                        .touched
+                        .get(id.as_ref())
+                        .is_none_or(|at| at.elapsed() > OWN_WRITE)
+            })
         });
         if outside {
             let input = self.input.clone();
@@ -326,7 +335,7 @@ impl Engine {
             .chain(
                 self.touched
                     .iter()
-                    .filter(|(_, at)| **at + Duration::from_secs(1) >= started)
+                    .filter(|(_, at)| **at + OWN_WRITE >= started)
                     .map(|(id, _)| id.clone()),
             )
             .chain(
