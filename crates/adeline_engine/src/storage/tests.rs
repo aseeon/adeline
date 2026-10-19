@@ -767,6 +767,68 @@ fn bad_transcript_keeps_prior_history_and_exposes_error() {
 }
 
 #[test]
+fn a_torn_last_line_is_cut_off_and_the_conversation_stays_writable() {
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let mut store = open_store(&test);
+    let id = store.save_project(None, "Project", &work).unwrap();
+    let conversation = store
+        .create_conversation(&id, &agent(), launch(), Vec::new(), "Hello")
+        .unwrap();
+    store
+        .record_event(
+            &conversation,
+            &TranscriptEvent::new("message", serde_json::json!({"role":"user","text":"kept"})),
+        )
+        .unwrap();
+    let path = test
+        .join("projects/project/conversations")
+        .join(&conversation)
+        .join("transcript.jsonl");
+    OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap()
+        .write_all(br#"{"kind":"message","data":{"role":"assis"#)
+        .unwrap();
+    drop(store);
+
+    let mut reloaded = open_store(&test);
+    assert!(reloaded.errors.is_empty(), "{:?}", reloaded.errors);
+    assert!(
+        reloaded
+            .conversation(&conversation)
+            .unwrap()
+            .storage_error
+            .is_none()
+    );
+    reloaded
+        .record_event(
+            &conversation,
+            &TranscriptEvent::new(
+                "message",
+                serde_json::json!({"role":"assistant","text":"after"}),
+            ),
+        )
+        .unwrap();
+    let text = fs::read_to_string(&path).unwrap();
+    assert!(!text.contains("assis\""), "{text}");
+    drop(reloaded);
+    let texts: Vec<_> = open_store(&test)
+        .conversation(&conversation)
+        .unwrap()
+        .to_thread()
+        .messages
+        .into_iter()
+        .map(|message| message.text)
+        .collect();
+    assert!(
+        texts.ends_with(&["kept".into(), "after".into()]),
+        "{texts:?}"
+    );
+}
+
+#[test]
 fn unsafe_config_contents_block_delete_without_touching_workdir() {
     let test = TempDir::new("adeline-storage");
     let work = working(&test, "work");
