@@ -652,8 +652,16 @@ impl Adeline {
         if self.runtime.stopping_all {
             return;
         }
+        // Like `request_quit`, leave alone machines other clients still use.
+        let machines: Vec<String> = client::connections(cx)
+            .iter()
+            .filter(|c| c.state == client::State::Connected && c.status.clients <= 1)
+            .map(|c| c.machine.clone())
+            .collect();
+        if machines.is_empty() {
+            return self.quit_in_background(cx);
+        }
         self.runtime.stopping_all = true;
-        let machines = Self::connected_machines(cx);
         let waiting = std::rc::Rc::new(std::cell::Cell::new(machines.len()));
         for machine in machines {
             let waiting = std::rc::Rc::clone(&waiting);
