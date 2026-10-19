@@ -277,14 +277,43 @@ fn render_task(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyElement 
         .into_any_element()
 }
 
+type Rendered = Result<Arc<Image>, String>;
+
+// Diagrams by source and dark theme; `None` while one renders.
+static DIAGRAMS: LazyLock<Mutex<HashMap<(SharedString, bool), Option<Rendered>>>> =
+    LazyLock::new(Mutex::default);
+
+// The diagram, or `None` while it renders in the background, after which every window redraws.
+fn rendered(source: &SharedString, dark: bool, cx: &mut App) -> Option<Rendered> {
+    let key = (source.clone(), dark);
+    let mut diagrams = DIAGRAMS.lock().ok()?;
+    if let Some(found) = diagrams.get(&key) {
+        return found.clone();
+    }
+    if diagrams.len() >= 64 {
+        diagrams.clear();
+    }
+    diagrams.insert(key.clone(), None);
+    drop(diagrams);
+    let (source, dark) = key.clone();
+    let task = cx.background_spawn(async move { super::mermaid::render(&source, dark) });
+    cx.spawn(async move |cx| {
+        let result = task.await;
+        if let Ok(mut diagrams) = DIAGRAMS.lock() {
+            diagrams.insert(key, Some(result));
+        }
+        cx.update(|cx| cx.refresh_windows());
+    })
+    .detach();
+    None
+}
+
 fn render_diagram(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyElement {
     let Some(diagram) = node.data::<Diagram>().cloned() else {
         return div().into_any_element();
     };
+    let rendered = rendered(&diagram.source, cx.theme().is_dark(), cx);
     let theme = cx.theme();
-    let dark = theme.is_dark();
-    // ponytail: renders on every frame the diagram is laid out; cache by source if it shows in profiles.
-    let rendered = super::mermaid::render(&diagram.source, dark);
     let range = diagram.range.clone();
     let note = Button::new(("note-diagram", range.start))
         .ghost()
@@ -299,12 +328,22 @@ fn render_diagram(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyEleme
                 cx,
             );
         });
+    let label = match &rendered {
+        None => "Mermaid diagram, rendering",
+        Some(Ok(_)) => "Mermaid diagram",
+        Some(Err(_)) => "Mermaid diagram, can't render",
+    };
     let body = match rendered {
-        Ok(image) => img(image)
+        None => div()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child("Rendering diagram…")
+            .into_any_element(),
+        Some(Ok(image)) => img(image)
             .max_w_full()
             .object_fit(ObjectFit::ScaleDown)
             .into_any_element(),
-        Err(reason) => div()
+        Some(Err(reason)) => div()
             .flex()
             .flex_col()
             .gap_1()
@@ -327,13 +366,14 @@ fn render_diagram(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyEleme
     };
     div()
         .id(("mermaid", diagram.range.start))
+        .test_support()
         .w_full()
         .my_2()
         .flex()
         .flex_col()
         .gap_1()
         .role(Role::Figure)
-        .aria_label("Mermaid diagram")
+        .aria_label(label)
         .child(body)
         .child(div().flex().justify_end().child(note))
         .into_any_element()

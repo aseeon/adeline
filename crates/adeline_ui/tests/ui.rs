@@ -374,3 +374,16 @@ fn docs_failed_rename_keeps_editing(cx: &mut TestAppContext) {
     ui.press("ctrl-s");
     ui.named("plan.md");
 }
+
+#[gpui_kit::test]
+fn docs_diagrams_render_in_the_background(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.press("ctrl-2");
+    open_doc(&mut ui, "diagrams", 2);
+    ui.named("docs/diagrams.md, Viewer");
+    ui.wait_named("Mermaid diagram", std::time::Duration::from_secs(20));
+    ui.wait_gone(
+        "Mermaid diagram, rendering",
+        std::time::Duration::from_secs(20),
+    );
+}
