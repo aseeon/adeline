@@ -256,6 +256,13 @@ impl Driver {
     }
 }
 
+// The worker keeps a sender of its own, so it can't see the driver go: tell it.
+impl Drop for Driver {
+    fn drop(&mut self) {
+        let _ = self.sender.send(Input::Command(Command::Shutdown));
+    }
+}
+
 enum Input {
     Command(Command),
     Connected {
@@ -601,14 +608,9 @@ impl Worker {
         let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            let input = tokio::select! {
-                input = self.receiver.recv() => Some(input),
-                _ = tick.tick() => None,
-            };
-            match input {
-                Some(Some(input)) => self.input(input),
-                Some(None) => self.shutdown(),
-                None => {}
+            tokio::select! {
+                Some(input) = self.receiver.recv() => self.input(input),
+                _ = tick.tick() => {}
             }
             if self.tick() {
                 break;
@@ -677,7 +679,7 @@ impl Worker {
                     self.child = None;
                     self.link = None;
                     self.connecting = false;
-                    self.pending.clear();
+                    self.clear_pending();
                     self.handshake = None;
                     self.cancel_permissions();
                     self.setup = None;
@@ -691,10 +693,10 @@ impl Worker {
                     }
                     if !self.timeout_reported {
                         if !stderr.is_empty() {
-                            self.emit(EventKind::Crashed(stderr.clone()));
+                            self.emit(EventKind::Crashed(stderr));
                         }
                         let error = format!("{error} Agent exited: {status}.");
-                        let kind = classify_error(&format!("{error}\n{stderr}"), None);
+                        let kind = classify_error(&error, None);
                         if missing_initialize
                             && kind == FailureKind::Temporary
                             && self.config.harness == harness::OMP
@@ -831,9 +833,10 @@ impl Worker {
                 self.closing = true;
                 self.shutdown_deadline = Some(Instant::now() + SHUTDOWN_GRACE);
                 self.active = None;
+                self.clear_pending();
                 self.cancel_permissions();
                 if let Some(child) = &mut self.child {
-                    match adeline_core::platform::kill_tree(child) {
+                    match block_in_place(|| adeline_core::platform::kill_tree(child)) {
                         Ok(()) => self.forced = true,
                         Err(error) => self.emit(EventKind::Error {
                             message: format!("Force stopping agent failed: {error}"),

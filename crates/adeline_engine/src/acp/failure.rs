@@ -150,6 +150,18 @@ impl Worker {
         }
     }
 
+    // Replies to these will never come; a steered message goes back to the queue.
+    pub(super) fn clear_pending(&mut self) {
+        if self
+            .pending
+            .values()
+            .any(|request| *request == Request::Steer)
+        {
+            self.emit(EventKind::Steered { delivered: false });
+        }
+        self.pending.clear();
+    }
+
     pub(super) fn lost(&mut self, message: String) {
         let initializing = self.lost_during_initialize
             || self
@@ -161,7 +173,7 @@ impl Worker {
             !self.closing && initializing && message.starts_with("ACP connection failed");
         self.link = None;
         self.connecting = false;
-        self.pending.clear();
+        self.clear_pending();
         self.cancel_permissions();
         self.setup = None;
         self.configured = false;
@@ -225,6 +237,19 @@ fn contains_ascii(text: &str, needle: &str) -> bool {
         .any(|bytes| bytes.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
+// A match starts a word and ends one, or runs into a capital as in `AuthenticationError`.
+fn contains_word(text: &str, needle: &str) -> bool {
+    let bytes = text.as_bytes();
+    (0..bytes.len().saturating_sub(needle.len() - 1)).any(|start| {
+        let end = start + needle.len();
+        bytes[start..end].eq_ignore_ascii_case(needle.as_bytes())
+            && (start == 0 || !bytes[start - 1].is_ascii_alphanumeric())
+            && bytes
+                .get(end)
+                .is_none_or(|next| !next.is_ascii_lowercase() && !next.is_ascii_digit())
+    })
+}
+
 pub(super) fn classify_error(message: &str, code: Option<i64>) -> FailureKind {
     use sdk::ErrorCode;
     let code = code
@@ -232,9 +257,18 @@ pub(super) fn classify_error(message: &str, code: Option<i64>) -> FailureKind {
         .map(ErrorCode::from);
     // Some agents pass on their provider's HTTP 401.
     if matches!(code, Some(ErrorCode::AuthRequired | ErrorCode::Other(401)))
-        || ["auth", "api key", "login", "unauthorized", "logged in"]
-            .iter()
-            .any(|needle| contains_ascii(message, needle))
+        || [
+            "authentication",
+            "unauthenticated",
+            "unauthorized",
+            "not logged in",
+            "log in",
+            "login",
+            "api key",
+            "401",
+        ]
+        .iter()
+        .any(|needle| contains_word(message, needle))
     {
         FailureKind::Authentication
     } else if contains_ascii(message, "permission denied")

@@ -179,24 +179,26 @@ pub(super) fn load_conversation(folder: &Path) -> Result<Option<StoredConversati
     }
     let transcript_path = folder.join("transcript.jsonl");
     ensure_regular_file(&transcript_path)?;
-    let file =
-        File::open(&transcript_path).with_context(|| transcript_path.display().to_string())?;
-    let persisted_len = file
-        .metadata()
-        .with_context(|| transcript_path.display().to_string())?
-        .len();
+    let bytes =
+        fs::read(&transcript_path).with_context(|| transcript_path.display().to_string())?;
     let mut events = Vec::new();
     let mut load_error = None;
-    for (index, line) in BufReader::new(file).lines().enumerate() {
-        match line
-            .map_err(|e| file_error(&transcript_path, e))
-            .and_then(|line| {
-                serde_json::from_str(&line)
-                    .map_err(|e| format!("{}:{}: {e}", transcript_path.display(), index + 1))
-            }) {
-            Ok(event) => events.push(event),
-            Err(error) => {
-                load_error = Some(error);
+    let mut needs_rollback = false;
+    let mut persisted_len = 0;
+    for (index, line) in bytes.split_inclusive(|byte| *byte == b'\n').enumerate() {
+        // A crash mid-write leaves a last line without its newline; the next write cuts it off.
+        if !line.ends_with(b"\n") {
+            needs_rollback = true;
+            break;
+        }
+        match serde_json::from_slice(line) {
+            Ok(event) => {
+                events.push(event);
+                persisted_len += line.len() as u64;
+            }
+            Err(e) => {
+                load_error = Some(format!("{}:{}: {e}", transcript_path.display(), index + 1));
+                persisted_len = bytes.len() as u64;
                 break;
             }
         }
@@ -210,7 +212,7 @@ pub(super) fn load_conversation(folder: &Path) -> Result<Option<StoredConversati
         storage_error: load_error,
         unsaved_since: None,
         persisted_len,
-        needs_rollback: false,
+        needs_rollback,
         pending_settings: None,
         interrupted,
     }))

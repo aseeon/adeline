@@ -145,9 +145,12 @@ fn connection(
     mut writer: ipc::Writer,
     input: &mpsc::UnboundedSender<Input>,
 ) {
-    let (sender, mut outgoing) = mpsc::unbounded_channel::<String>();
+    let (sender, mut outgoing) = mpsc::channel::<String>(CLIENT_BACKLOG);
+    // Dropped with the writer task, which also ends the reader.
+    let (writing, mut written) = tokio::sync::oneshot::channel::<()>();
     let writer = tokio::spawn(async move {
         use tokio::io::AsyncWriteExt as _;
+        let _writing = writing;
         while let Some(line) = outgoing.recv().await {
             if writer.write_all(line.as_bytes()).await.is_err() {
                 break;
@@ -170,7 +173,14 @@ fn connection(
     });
     let input = input.clone();
     tokio::spawn(async move {
-        while let Ok(Some(line)) = reader.next_line().await {
+        loop {
+            let line = tokio::select! {
+                line = reader.next_line() => line,
+                _ = &mut written => break,
+            };
+            let Ok(Some(line)) = line else {
+                break;
+            };
             match serde_json::from_str(&line) {
                 Ok(message) => {
                     let _ = input.send(Input::Message { client, message });

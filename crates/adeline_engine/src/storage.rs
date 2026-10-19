@@ -20,8 +20,8 @@ use anyhow::{Context as _, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
-    fs::{self, File, OpenOptions},
-    io::{self, BufRead, BufReader, Seek, SeekFrom, Write},
+    fs::{self, OpenOptions},
+    io::{self, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
@@ -841,14 +841,17 @@ impl ProjectStore {
         let Some(conversation) = self.conversation(conversation_id) else {
             return Vec::new();
         };
-        let all: Vec<_> = conversation
+        let mut last: Vec<_> = conversation
             .events
             .iter()
             .chain(&conversation.unsaved_events)
+            .rev()
             .filter(|event| event.kind == "traffic")
+            .take(limit)
             .map(|event| event.data.clone())
             .collect();
-        all[all.len().saturating_sub(limit)..].to_vec()
+        last.reverse();
+        last
     }
 
     pub fn retry_unsaved(&mut self, conversation_id: &str) -> Result<()> {
