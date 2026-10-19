@@ -208,7 +208,7 @@ impl Adeline {
     }
 
     pub(super) fn save_project_name(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(ix) = self.rename_project.filter(|&ix| ix < self.projects.len()) else {
+        let Some(ix) = self.project_index(self.rename_project.as_deref()) else {
             return;
         };
         let name = self.name_input.read(cx).value().trim().to_owned();
@@ -234,11 +234,18 @@ impl Adeline {
         self.save_project_as(ix, name, directory, cx);
     }
 
+    pub(super) fn project_index(&self, key: Option<&str>) -> Option<usize> {
+        let key = key?;
+        self.projects
+            .iter()
+            .position(|project| project.key() == key)
+    }
+
     pub(super) fn begin_project_delete(&mut self, cx: &mut Context<Self>) {
         if self.demo_mode || !self.has_open_project() {
             return;
         }
-        self.delete_project = Some(self.project);
+        self.delete_project = Some(self.workspace().key());
         self.project_error = None;
         self.modal = Some("delete-project");
         cx.notify();
@@ -248,10 +255,7 @@ impl Adeline {
         if self.modal != Some("delete-project") && self.modal != Some("delete-project-shutdown") {
             return;
         }
-        let Some(index) = self
-            .delete_project
-            .filter(|index| *index < self.projects.len())
-        else {
+        let Some(index) = self.project_index(self.delete_project.as_deref()) else {
             return;
         };
         let id = self.projects[index].config.id.clone();
@@ -265,10 +269,7 @@ impl Adeline {
             cx,
             move |app, result, window, cx| {
                 if let Err(error) = result {
-                    let pending = app
-                        .delete_project
-                        .and_then(|ix| app.projects.get(ix))
-                        .is_some_and(|project| project.key() == key);
+                    let pending = app.delete_project.as_deref() == Some(key.as_str());
                     if pending && app.modal == Some("delete-project-shutdown") {
                         app.project_error = Some(error);
                         app.open_modal(window, cx);
@@ -284,10 +285,7 @@ impl Adeline {
         if self.modal != Some("delete-project-shutdown") {
             return;
         }
-        let Some(index) = self
-            .delete_project
-            .filter(|index| *index < self.projects.len())
-        else {
+        let Some(index) = self.project_index(self.delete_project.as_deref()) else {
             return;
         };
         self.force_project(index, cx);
@@ -295,7 +293,9 @@ impl Adeline {
 
     pub(super) fn cancel_project_delete(&mut self, cx: &mut Context<Self>) {
         if self.modal == Some("delete-project-shutdown")
-            && let Some(project) = self.delete_project.and_then(|ix| self.projects.get(ix))
+            && let Some(project) = self
+                .project_index(self.delete_project.as_deref())
+                .map(|ix| &self.projects[ix])
             && !self.demo_mode
         {
             let id = project.config.id.clone();
@@ -839,14 +839,9 @@ impl Adeline {
             }
             Some("delete-project" | "delete-project-shutdown") => {
                 let stopping = self.modal == Some("delete-project-shutdown");
-                let stopped = self
-                    .delete_project
-                    .filter(|&ix| ix < self.projects.len())
-                    .is_some_and(|ix| self.project_agents_stopped(ix));
-                let name = self
-                    .delete_project
-                    .and_then(|ix| self.projects.get(ix))
-                    .map_or("project", |project| project.config.name.as_str());
+                let deleting = self.project_index(self.delete_project.as_deref());
+                let stopped = deleting.is_some_and(|ix| self.project_agents_stopped(ix));
+                let name = deleting.map_or("project", |ix| self.projects[ix].config.name.as_str());
                 content = content.child(views::dialog_title(if stopping && !stopped { format!("Stopping agents for {name}") } else { format!("Delete \"{name}\"?") }))
                     .child(note(if stopping && !stopped { "Waiting for agents to stop. Saved conversations remain until they stop. Force stop is available if shutdown stalls." } else { "This deletes the project's saved conversations. The working directory and its files will be kept." }))
                     .children(error)

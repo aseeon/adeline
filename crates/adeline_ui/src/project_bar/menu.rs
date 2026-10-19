@@ -321,7 +321,7 @@ impl Adeline {
                             .child(action),
                     ),
             )
-            .context_menu(move |menu, _, _| project_actions(menu, &menu_owner, ix, open, &menu_id))
+            .context_menu(move |menu, _, _| project_actions(menu, &menu_owner, open, &menu_id))
             .into_any_element()
     }
 
@@ -509,7 +509,7 @@ impl Adeline {
             self.remove_project_at(ix, cx);
             return;
         }
-        self.delete_project = Some(ix);
+        self.delete_project = Some(pending.id);
         self.modal = Some("delete-project");
         self.confirm_project_delete(cx);
     }
