@@ -392,7 +392,9 @@ pub(super) fn open_agent(
 }
 
 fn notify_failure(owner: WindowHandle<Root>, message: String, cx: &mut App) {
-    let _ = owner.update(cx, |_, window, cx| window.push_notification(message, cx));
+    let _ = cx.update_window(owner.into(), |_, window, cx| {
+        window.push_notification(message, cx);
+    });
 }
 
 pub(super) fn can_close(owner: WindowHandle<Root>, cx: &mut App) -> bool {

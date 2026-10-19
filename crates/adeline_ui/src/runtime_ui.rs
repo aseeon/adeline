@@ -50,8 +50,9 @@ impl Adeline {
         client::request(
             machine,
             command,
+            // `update_window` leaves the Root unleased, so `done` may push notifications.
             Box::new(move |result, cx| {
-                let _ = handle.update(cx, |_, window, cx| {
+                let _ = cx.update_window(handle.into(), |_, window, cx| {
                     let _ = owner.update(cx, |app, cx| done(app, result, window, cx));
                 });
             }),
