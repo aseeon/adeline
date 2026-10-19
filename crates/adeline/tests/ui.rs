@@ -301,8 +301,10 @@ fn tabs_fold(cx: &mut TestAppContext, narrow: &mut TestAppContext) {
         tabs.iter().filter(|t| t.size.width == widest).count() == 1,
         "the inactive tabs didn't shorten: {tabs:?}"
     );
-    // Kit's window controls sit right of the Projects menu, except on macOS.
-    if !cfg!(target_os = "macos") {
+    // Kit's window controls sit right of the Projects menu. The test window has
+    // them only on Windows: macOS puts its own on the left, and on Linux Kit draws
+    // them for client-side decorations, which the test window doesn't use.
+    if cfg!(windows) {
         let projects = ui.named("Projects").bounds();
         assert!(
             projects.right() < gpui_kit::px(NARROW.0 - 100.),
