@@ -73,7 +73,8 @@ fn read(root: &Path, path: &str) -> Result<DocFile, String> {
 }
 
 fn write(root: &Path, path: &str, text: &str, create: bool) -> Result<u64, String> {
-    if create {
+    // A doc deleted on disk while open is saved back as a new file.
+    if create || !adeline_docs::resolve(root, path)?.exists() {
         let full = check_new(root, path)?;
         if let Some(folder) = full.parent() {
             std::fs::create_dir_all(folder).map_err(|e| io_error(path, &e))?;
@@ -414,9 +415,9 @@ mod tests {
         assert_eq!(std::fs::read(root.join("a.md")).unwrap(), b"one\r\nTWO");
         assert_eq!(std::fs::read_dir(&*root).unwrap().count(), 1);
 
-        let error = write(&root, "gone.md", "text", false).unwrap_err();
-        assert!(error.contains("no longer exists"), "{error}");
-        assert!(!root.join("gone.md").exists());
+        write(&root, "gone.md", "text", false).unwrap();
+        assert_eq!(std::fs::read(root.join("gone.md")).unwrap(), b"text");
+        std::fs::remove_file(root.join("gone.md")).unwrap();
 
         let mut permissions = std::fs::metadata(root.join("a.md")).unwrap().permissions();
         permissions.set_readonly(true);
