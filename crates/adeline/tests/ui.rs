@@ -264,6 +264,39 @@ fn fork(cx: &mut TestAppContext) {
     ui.wait_gone("Forked from hello", WAIT);
 }
 
+// A project deleted and made again from a moved folder of the same name gets
+// the same ID, and lists the new folder's docs.
+#[gpui_kit::test]
+fn docs_after_project_recreated(cx: &mut TestAppContext) {
+    let live = Live::new("recreate");
+    std::fs::write(live.path().join("work/old.md"), "# Old\n").unwrap();
+    let moved = live.path().join("moved").join(common::PROJECT);
+    std::fs::create_dir_all(&moved).unwrap();
+    std::fs::write(moved.join("new.md"), "# New\n").unwrap();
+    let mut ui = open(cx);
+    ui.press("ctrl-2");
+    ui.wait_named("old.md", WAIT);
+
+    ui.press("ctrl-w ctrl-f down delete");
+    let definition = live
+        .path()
+        .join(".config/adeline/projects")
+        .join(common::PROJECT);
+    ui.wait("the project deleted", WAIT, |_| !definition.exists());
+    ui.press("ctrl-o");
+    ui.wait("the folder picker", WAIT, |ui| ui.cx.did_prompt_for_paths());
+    ui.cx
+        .simulate_path_prompt_response(|_| Some(vec![moved.clone()]));
+    ui.wait("the new project's tab", WAIT, |ui| {
+        ui.tabs().iter().any(|t| t.starts_with(common::PROJECT))
+    });
+    ui.wait_named("Message", WAIT);
+    // Shortcuts don't reach the window after the folder picker returns, so this clicks.
+    ui.click("Docs");
+    ui.wait_named("new.md", WAIT);
+    ui.gone("old.md");
+}
+
 /// The window's minimum size.
 const NARROW: (f32, f32) = (800., 600.);
 

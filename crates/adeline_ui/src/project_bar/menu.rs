@@ -1,6 +1,7 @@
 //! The projects menu: listing, sorting and searching projects, removing closed
 //! ones with undo, and opening a folder.
 use super::*;
+use gpui_kit::base::input;
 
 impl Adeline {
     pub(super) fn projects_menu(&self, trigger: Button, cx: &Context<Self>) -> Popover {
@@ -85,8 +86,18 @@ impl Adeline {
                 )
             });
         let key_owner = owner.clone();
+        let delete_owner = owner.clone();
         col()
             .w(rems(22.))
+            // The search field binds Delete, and bindings run before key listeners.
+            .capture_action(move |_: &input::Delete, window, cx| {
+                let handled = delete_owner
+                    .update(cx, |app, cx| app.menu_key("delete", window, cx))
+                    .unwrap_or(false);
+                if handled {
+                    cx.stop_propagation();
+                }
+            })
             .capture_key_down(move |event, window, cx| {
                 if event.keystroke.modifiers.modified() {
                     return;
@@ -219,6 +230,7 @@ impl Adeline {
         let menu_id = id.clone();
         row()
             .id(SharedString::from(format!("project-menu-{id}")))
+            .test_support()
             .group(group.clone())
             .role(Role::ListBoxOption)
             .aria_label(match &machine {

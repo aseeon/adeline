@@ -359,6 +359,14 @@ impl Project {
 }
 
 impl Adeline {
+    // A project made later with the same ID lists its docs afresh.
+    pub(super) fn docs_forget(&mut self, key: &str) {
+        self.docs.projects.remove(key);
+        if self.docs.shown.as_ref().is_some_and(|(k, _)| k == key) {
+            self.docs.shown = None;
+        }
+    }
+
     fn docs_key(&self) -> String {
         self.workspace().key()
     }

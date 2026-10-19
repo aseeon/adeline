@@ -316,6 +316,7 @@ impl Adeline {
             .map(|thread| thread.id.clone())
             .collect();
         self.forget_project_runtime(&ids);
+        self.docs_forget(&self.projects[index].key());
         let previous_project = self.project;
         self.projects.remove(index);
         self.open_projects.remove(index);
