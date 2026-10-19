@@ -26,6 +26,7 @@ gethostname = "1.1"
 gpui-kit = "=0.7.0"
 ignore = "0.4"
 mermaid-rs-renderer = { version = "0.3.1", default-features = false }
+mimalloc = "0.1.52"
 notify = "8"
 nucleo-matcher = "0.3"
 resvg = { version = "0.45.1", default-features = false }
