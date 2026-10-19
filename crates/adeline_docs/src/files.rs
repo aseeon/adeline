@@ -392,8 +392,8 @@ mod tests {
         std::os::unix::fs::symlink("/tmp/adeline-missing-target.md", root.join("docs/link.md"))
             .unwrap();
         std::os::unix::fs::symlink("/tmp/adeline-missing-folder", root.join("gone")).unwrap();
-        assert!(resolve(&root, "docs/link.md").is_err());
-        assert!(resolve(&root, "gone/new.md").is_err());
+        resolve(&root, "docs/link.md").unwrap_err();
+        resolve(&root, "gone/new.md").unwrap_err();
         std::fs::remove_dir_all(root).unwrap();
     }
 
