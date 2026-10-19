@@ -827,11 +827,19 @@ impl Adeline {
                 if matches!(delta, Delta::Card { .. }) {
                     self.transcript.update(cx, chat::Transcript::refresh_all);
                 }
+                let open = self.current_id();
                 protocol::apply(
                     &mut self.projects[range],
                     &mut self.runtime.conversations,
                     &delta,
                 );
+                if let Some(open) = open {
+                    self.selected = self
+                        .workspace()
+                        .threads
+                        .iter()
+                        .position(|thread| thread.id == open);
+                }
                 if id.is_some() && id == self.current_id() {
                     if let Some((p, t)) = id.as_deref().and_then(|id| self.locate_conversation(id))
                     {
