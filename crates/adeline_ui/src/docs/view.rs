@@ -4,7 +4,7 @@
 
 // Rust guideline compliant 2026-10-09
 
-use super::{Act, Doc, Then, viewer};
+use super::{Act, After, Doc, viewer};
 use crate::*;
 use adeline_core::card::Card;
 use adeline_docs::Format;
@@ -549,7 +549,7 @@ impl Adeline {
         }
         let path = path.to_owned();
         let markdown = adeline_docs::is_markdown(&path);
-        let offline = !self.demo_mode && !client::usable(&self.workspace().machine, cx);
+        let offline = self.docs_offline(cx);
         let locked = doc.read_only.is_some() || offline;
         let content = if !doc.editor && markdown {
             let owner = cx.weak_entity();
@@ -894,7 +894,7 @@ impl Adeline {
             _ => {
                 let unsaved = self.docs.unsaved();
                 let names: Vec<String> = unsaved.iter().map(|(_, path)| path.clone()).collect();
-                let leaving = if self.docs.then == Some(Then::Quit) {
+                let leaving = if self.docs.then == Some(After::Quit) {
                     "before Adeline quits"
                 } else {
                     "before the project closes"

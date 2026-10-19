@@ -153,6 +153,13 @@ pub(crate) enum Then {
     Close(usize),
 }
 
+// What follows the unsaved-docs prompt. Projects can shift while it is open, so it names a key.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum After {
+    Quit,
+    Close(String),
+}
+
 #[derive(Debug, Default)]
 pub(crate) struct Doc {
     saved: String,
@@ -199,7 +206,7 @@ pub(crate) struct Docs {
     note_at: Option<(Point<Pixels>, std::ops::Range<usize>)>,
     // The doc a dialog acts on, and what follows the unsaved-docs prompt.
     target: Option<String>,
-    then: Option<Then>,
+    then: Option<After>,
     unsaved_ok: bool,
     // While Docs shows, the Chats mode selection to restore.
     chats_selection: Option<String>,
@@ -406,15 +413,27 @@ impl Adeline {
         done: impl FnOnce(&mut Self, Result<Value, String>, &mut Window, &mut Context<Self>) + 'static,
     ) {
         if !self.demo_mode {
-            self.machine_request(machine, command, cx, done);
+            self.machine_request(machine, command, cx, |app, result, _, cx| {
+                app.docs_defer(cx, move |app, window, cx| done(app, result, window, cx));
+            });
             return;
         }
         let result = self.demo_docs(project_id, command);
+        self.docs_defer(cx, move |app, window, cx| done(app, result, window, cx));
+    }
+
+    // Runs `then` after the current update, with the main window but not its root
+    // leased, so `then` can reach dialogs and notifications.
+    fn docs_defer(
+        &self,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) {
         let owner = cx.weak_entity();
         let handle = self.main_window;
         cx.defer(move |cx| {
-            let _ = handle.update(cx, |_, window, cx| {
-                let _ = owner.update(cx, |app, cx| done(app, result, window, cx));
+            let _ = cx.update_window(handle.into(), |_, window, cx| {
+                let _ = owner.update(cx, |app, cx| then(app, window, cx));
             });
         });
     }
@@ -792,21 +811,25 @@ impl Adeline {
             .shown
             .as_ref()
             .is_some_and(|(k, p)| k == key && p == path);
+        let Some((project, doc)) = self
+            .docs
+            .projects
+            .get(key)
+            .and_then(|p| Some((p, p.files.get(path)?)))
+        else {
+            self.docs_defer(cx, move |app, window, cx| after(app, false, window, cx));
+            return;
+        };
+        if let Some(reason) = doc.read_only.clone() {
+            self.notify_toast(&reason, cx);
+            self.docs_defer(cx, move |app, window, cx| after(app, false, window, cx));
+            return;
+        }
         let text = if shown {
             self.docs_text(cx)
         } else {
-            let Some(doc) = self.docs.projects.get(key).and_then(|p| p.files.get(path)) else {
-                return;
-            };
             doc.text.clone().unwrap_or_else(|| doc.saved.clone())
         };
-        let Some(project) = self.docs.projects.get(key) else {
-            return;
-        };
-        if let Some(reason) = project.files.get(path).and_then(|d| d.read_only.clone()) {
-            self.notify_toast(&reason, cx);
-            return;
-        }
         let (machine, id) = (project.machine.clone(), project.id.clone());
         let (key, path) = (key.to_owned(), path.to_owned());
         self.docs_request(
@@ -822,15 +845,27 @@ impl Adeline {
             move |app, result, window, cx| {
                 let saved = match result {
                     Ok(modified) => {
+                        // Edits made during the write stay unsaved.
+                        let current = app
+                            .docs
+                            .shown
+                            .as_ref()
+                            .is_some_and(|(k, p)| *k == key && *p == path)
+                            .then(|| app.docs_text(cx));
                         if let Some(doc) = app
                             .docs
                             .projects
                             .get_mut(&key)
                             .and_then(|project| project.files.get_mut(&path))
                         {
+                            doc.dirty = match &current {
+                                Some(current) => *current != text,
+                                None => doc.text.as_ref().is_some_and(|t| *t != text),
+                            };
+                            if !doc.dirty {
+                                doc.text = None;
+                            }
                             doc.saved = text;
-                            doc.text = None;
-                            doc.dirty = false;
                             doc.gone = false;
                             doc.conflict = None;
                             doc.modified = modified.as_u64().unwrap_or(doc.modified).max(1);
@@ -1008,7 +1043,18 @@ impl Adeline {
         self.composer_region.update(cx, |_, cx| cx.notify());
     }
 
+    fn docs_offline(&self, cx: &App) -> bool {
+        !self.demo_mode && !client::usable(&self.workspace().machine, cx)
+    }
+
     fn docs_toggle_task(&mut self, offset: usize, window: &mut Window, cx: &mut Context<Self>) {
+        if self.docs_offline(cx)
+            || self
+                .docs_open_doc()
+                .is_none_or(|(_, doc)| doc.read_only.is_some())
+        {
+            return;
+        }
         let text = self.docs_text(cx);
         let Some(mark) = text.get(offset..offset + 3) else {
             return;
@@ -1223,7 +1269,6 @@ impl Adeline {
             self.workspace().machine.clone(),
             self.workspace().config.id.clone(),
         );
-        self.docs_stash(cx);
         self.docs_request(
             &machine,
             &id.clone(),
@@ -1237,6 +1282,10 @@ impl Adeline {
                 Ok(_) => {
                     app.modal = None;
                     window.close_dialog(cx);
+                    let showing = app.docs.shown == Some((key.clone(), from.clone()));
+                    if showing {
+                        app.docs_stash(cx);
+                    }
                     if let Some(project) = app.docs.projects.get_mut(&key) {
                         project.put_path(&from, false);
                         project.put_path(&to, true);
@@ -1248,8 +1297,7 @@ impl Adeline {
                         }
                         project.cursor = Some(to.clone());
                     }
-                    app.docs.shown = None;
-                    if app.docs_key() == key {
+                    if showing {
                         app.docs_show(window, cx);
                     }
                     app.docs_refresh_rows(cx);
@@ -1320,13 +1368,7 @@ impl Adeline {
         let remaining = std::rc::Rc::new(std::cell::Cell::new(unsaved.len()));
         let failed = std::rc::Rc::new(std::cell::Cell::new(false));
         if unsaved.is_empty() {
-            let owner = cx.weak_entity();
-            let handle = self.main_window;
-            cx.defer(move |cx| {
-                let _ = handle.update(cx, |_, window, cx| {
-                    let _ = owner.update(cx, |app, cx| app.docs_continue(window, cx));
-                });
-            });
+            self.docs_defer(cx, Self::docs_continue);
             return;
         }
         for (key, path) in unsaved {
@@ -1343,8 +1385,8 @@ impl Adeline {
     }
 
     fn docs_discard(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let closing = match self.docs.then {
-            Some(Then::Close(ix)) => Some(self.projects[ix].key()),
+        let closing = match &self.docs.then {
+            Some(After::Close(key)) => Some(key.clone()),
             _ => None,
         };
         for (key, project) in &mut self.docs.projects {
@@ -1356,7 +1398,9 @@ impl Adeline {
                 doc.text = None;
             }
         }
-        self.docs.shown = None;
+        if closing.is_none() || self.docs.shown.as_ref().map(|(k, _)| k) == closing.as_ref() {
+            self.docs.shown = None;
+        }
         self.docs_continue(window, cx);
     }
 
@@ -1365,16 +1409,18 @@ impl Adeline {
         self.modal = None;
         window.close_dialog(cx);
         match then {
-            Some(Then::Quit) => {
+            Some(After::Quit) => {
                 self.docs.unsaved_ok = true;
                 let root = self.main_window;
                 let owner = cx.weak_entity();
                 cx.defer(move |cx| interaction::request_close(root, owner, cx));
             }
-            Some(Then::Close(ix)) => {
-                self.docs.unsaved_ok = true;
-                self.act(Action::CloseProject(ix), window, cx);
-                self.docs.unsaved_ok = false;
+            Some(After::Close(key)) => {
+                if let Some(ix) = self.projects.iter().position(|p| p.key() == key) {
+                    self.docs.unsaved_ok = true;
+                    self.act(Action::CloseProject(ix), window, cx);
+                    self.docs.unsaved_ok = false;
+                }
             }
             None => {}
         }
@@ -1391,40 +1437,24 @@ impl Adeline {
     }
 
     /// Whether closing the window or project `close` can go ahead without losing edits.
-    pub(super) fn docs_may_close(&mut self, then: Then, cx: &mut Context<Self>) -> bool {
+    pub(super) fn docs_may_close(&mut self, then: Then, _: &mut Context<Self>) -> bool {
         if self.docs.unsaved_ok {
             return true;
         }
-        self.docs_stash(cx);
         let unsaved = self.docs.unsaved();
-        let affected = match then {
-            Then::Quit => !unsaved.is_empty(),
-            Then::Close(ix) => {
-                let key = self.projects[ix].key();
-                unsaved.iter().any(|(k, _)| *k == key)
-            }
+        let after = match then {
+            Then::Quit => After::Quit,
+            Then::Close(ix) => After::Close(self.projects[ix].key()),
+        };
+        let affected = match &after {
+            After::Quit => !unsaved.is_empty(),
+            After::Close(key) => unsaved.iter().any(|(k, _)| k == key),
         };
         if affected {
-            self.docs.then = Some(then);
+            self.docs.then = Some(after);
             self.modal = Some("doc-unsaved");
-            self.docs_show_again(cx);
         }
         !affected
-    }
-
-    fn docs_show_again(&mut self, cx: &mut Context<Self>) {
-        // `docs_stash` emptied the Editor's slot; the next `docs_show` reloads it.
-        let owner = cx.weak_entity();
-        let handle = self.main_window;
-        cx.defer(move |cx| {
-            let _ = handle.update(cx, |_, window, cx| {
-                let _ = owner.update(cx, |app, cx| {
-                    if app.section == Section::Docs {
-                        app.docs_show(window, cx);
-                    }
-                });
-            });
-        });
     }
 
     /// Re-watches and relists a machine's docs after its engine connection is back.

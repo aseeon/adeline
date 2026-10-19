@@ -345,3 +345,32 @@ fn demo_fork(cx: &mut TestAppContext) {
     ui.named(&format!("Forked from {SELECTION_CHAT}"));
     no_engine();
 }
+
+#[gpui_kit::test]
+fn docs_failed_rename_keeps_editing(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.press("ctrl-2");
+    open_doc(&mut ui, "notes/plan", 2);
+    ui.press("ctrl-shift-v");
+    ui.named("notes/plan.md, Editor");
+    // F2 on the tree row renames; a taken name fails.
+    ui.press("ctrl-p secondary-a backspace");
+    ui.input("notes/plan");
+    ui.press("down down f2");
+    ui.named("Rename plan.md");
+    ui.press("secondary-a");
+    ui.input("review-checklist.md");
+    ui.activate("Rename");
+    ui.press("escape");
+    ui.gone("Rename plan.md");
+    // The doc still shows, so the view switches, edits count and Ctrl+S saves.
+    ui.press("ctrl-shift-v");
+    ui.named("notes/plan.md, Viewer");
+    ui.press("ctrl-shift-v");
+    ui.named("notes/plan.md, Editor");
+    ui.press(END_OF_TEXT);
+    ui.input("x");
+    ui.named("plan.md, unsaved");
+    ui.press("ctrl-s");
+    ui.named("plan.md");
+}
