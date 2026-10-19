@@ -496,10 +496,11 @@ impl Adeline {
                 .into_any_element()
         };
         if let Some((path, error)) = failed {
+            // The engine's error names the path already.
             let message = if error.contains("no longer exists") {
                 format!("{path} no longer exists")
             } else {
-                format!("Could not open {path}: {error}")
+                error
             };
             return centered(
                 col()
