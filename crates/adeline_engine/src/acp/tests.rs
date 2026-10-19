@@ -471,8 +471,52 @@ fn failure_classification_avoids_retrying_auth_and_configuration() {
         classify_error("Provider timeout", None),
         FailureKind::Temporary
     );
+    for text in [
+        "AuthenticationError: invalid x-api-key",
+        "HTTP 401 from provider",
+        "Not logged in. Run /login",
+        "Unauthorized",
+    ] {
+        assert_eq!(
+            classify_error(text, None),
+            FailureKind::Authentication,
+            "{text}"
+        );
+    }
+    for text in [
+        "Cannot find module /app/lib/auth.js",
+        "OAuth2 client crashed",
+        "The author field is missing",
+        "Agent closed protocol output. Agent exited: exit code: 4010.",
+    ] {
+        assert_eq!(classify_error(text, None), FailureKind::Temporary, "{text}");
+    }
     assert!(looks_like_agent_error("Error: Provider timeout"));
     assert!(!looks_like_agent_error("I can explain a provider timeout."));
+}
+
+#[test]
+fn a_steer_still_waiting_when_the_agent_goes_is_reported_undelivered() {
+    for force in [false, true] {
+        let (mut worker, received, sent) = worker();
+        worker.features.as_mut().unwrap().steering = true;
+        worker.active = Some(turn(0));
+        worker.command(Command::Steer {
+            prompt: vec![Part::Text("also this".into())],
+        });
+        assert_eq!(methods(&sent), ["_session/steering"]);
+        if force {
+            worker.command(Command::ForceStop);
+        } else {
+            worker.lost("Agent closed protocol output.".into());
+        }
+        assert!(
+            events(&received)
+                .iter()
+                .any(|kind| matches!(kind, EventKind::Steered { delivered: false })),
+            "force: {force}"
+        );
+    }
 }
 
 #[test]

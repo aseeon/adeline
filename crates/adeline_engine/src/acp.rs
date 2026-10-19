@@ -679,7 +679,7 @@ impl Worker {
                     self.child = None;
                     self.link = None;
                     self.connecting = false;
-                    self.pending.clear();
+                    self.clear_pending();
                     self.handshake = None;
                     self.cancel_permissions();
                     self.setup = None;
@@ -693,10 +693,10 @@ impl Worker {
                     }
                     if !self.timeout_reported {
                         if !stderr.is_empty() {
-                            self.emit(EventKind::Crashed(stderr.clone()));
+                            self.emit(EventKind::Crashed(stderr));
                         }
                         let error = format!("{error} Agent exited: {status}.");
-                        let kind = classify_error(&format!("{error}\n{stderr}"), None);
+                        let kind = classify_error(&error, None);
                         if missing_initialize
                             && kind == FailureKind::Temporary
                             && self.config.harness == harness::OMP
@@ -833,9 +833,10 @@ impl Worker {
                 self.closing = true;
                 self.shutdown_deadline = Some(Instant::now() + SHUTDOWN_GRACE);
                 self.active = None;
+                self.clear_pending();
                 self.cancel_permissions();
                 if let Some(child) = &mut self.child {
-                    match adeline_core::platform::kill_tree(child) {
+                    match block_in_place(|| adeline_core::platform::kill_tree(child)) {
                         Ok(()) => self.forced = true,
                         Err(error) => self.emit(EventKind::Error {
                             message: format!("Force stopping agent failed: {error}"),

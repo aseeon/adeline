@@ -318,7 +318,9 @@ impl Engine {
                 let saved =
                     self.record_visible(&id, "lifecycle", json!({"event":"process_stopped"}));
                 self.drivers.remove(&id);
-                self.steering.remove(&id);
+                if let Some((text, files)) = self.steering.remove(&id) {
+                    self.queue(&id, text, files, true);
+                }
                 self.last_traffic.remove(&id);
                 let finished = self.status_of(&id).is_some_and(ThreadStatus::closed);
                 let live = self.live.entry(id.clone()).or_default();

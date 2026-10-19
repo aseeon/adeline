@@ -73,7 +73,7 @@ impl Worker {
                     }
                     Err(error) => {
                         let mut child = child;
-                        let _ = adeline_core::platform::kill_tree(&mut child);
+                        let _ = block_in_place(|| adeline_core::platform::kill_tree(&mut child));
                         self.fail(
                             format!("Starting {} failed: {error}", self.config.command.display()),
                             FailureKind::Configuration,
