@@ -214,15 +214,12 @@ fn percent_decoded(part: &str) -> Option<String> {
         let hex = bytes
             .get(i + 1..i + 3)
             .filter(|hex| bytes[i] == b'%' && hex.iter().all(u8::is_ascii_hexdigit));
-        match hex {
-            Some(hex) => {
-                decoded.push(u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?);
-                i += 3;
-            }
-            None => {
-                decoded.push(bytes[i]);
-                i += 1;
-            }
+        if let Some(hex) = hex {
+            decoded.push(u8::from_str_radix(std::str::from_utf8(hex).ok()?, 16).ok()?);
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
         }
     }
     String::from_utf8(decoded).ok()

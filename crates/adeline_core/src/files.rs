@@ -1,4 +1,5 @@
 //! Filesystem helpers shared by the settings, agent and project stores.
+//!
 //! Writes are synced before they replace anything, and `replace` swaps the
 //! new file in with one rename, so the original stays until it is replaced.
 use anyhow::{Context as _, Result, bail};
