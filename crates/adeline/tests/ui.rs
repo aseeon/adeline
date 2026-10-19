@@ -12,6 +12,7 @@ mod common;
 mod support;
 
 use gpui_kit::TestAppContext;
+use gpui_kit::component::WindowExt;
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -198,6 +199,26 @@ fn quit_stop_all(cx: &mut TestAppContext) {
     ui.wait("the agents to stop", WAIT, |_| active(live.path()) == 0);
 }
 
+// With another client on the engine there is nothing for Stop all to stop, so
+// Adeline quits at once and the other client's agent keeps working.
+#[gpui_kit::test]
+fn quit_stop_all_shared(cx: &mut TestAppContext, second: &mut TestAppContext) {
+    let live = Live::new("quit-stop-all-shared");
+    let mut ui = open(cx);
+    send(&mut ui, "SLOW 30");
+    wait_processing(&mut ui, live.path());
+    ui.quit();
+    ui.named("Stop all");
+    let _other = open(second);
+    ui.wait("the second client", WAIT, |_| {
+        common::engine_status(live.path(), "Connected clients").as_deref() == Some("2")
+    });
+    ui.pause(Duration::from_secs(1));
+    ui.click("Stop all");
+    ui.wait("Adeline to quit after Stop all", WAIT, |ui| !ui.is_open());
+    assert!(active(live.path()) > 0, "Stop all stopped a shared agent");
+}
+
 #[gpui_kit::test]
 fn settings_engine(cx: &mut TestAppContext) {
     let live = Live::new("settings-engine");
@@ -262,6 +283,40 @@ fn fork(cx: &mut TestAppContext) {
     // Ctrl+Shift+G goes back to the chat the fork came from.
     ui.press("ctrl-shift-g");
     ui.wait_gone("Forked from hello", WAIT);
+}
+
+// A chat another client starts lands in the list without moving this window
+// off its open chat.
+#[gpui_kit::test]
+fn chat_from_another_client(cx: &mut TestAppContext, second: &mut TestAppContext) {
+    let _live = Live::new("chat-elsewhere");
+    let mut ui = open(cx);
+    send(&mut ui, "hello");
+    ui.wait_named("Fork", WAIT);
+    let mut other = open(second);
+    send(&mut other, "elsewhere");
+    ui.wait("the other chat in the list", WAIT, |ui| {
+        ui.find(|label| label.starts_with("elsewhere,")).is_some()
+    });
+    let open = ui.read(|app, _| app.open_chat().map(str::to_owned));
+    assert_eq!(open.as_deref(), Some("hello"));
+}
+
+// The engine refuses a second project of the same name, and its reply shows as
+// a notification.
+#[gpui_kit::test]
+fn open_folder_name_taken(cx: &mut TestAppContext) {
+    let live = Live::new("name-taken");
+    let other = live.path().join("other").join(common::PROJECT);
+    std::fs::create_dir_all(&other).unwrap();
+    let mut ui = open(cx);
+    ui.press("ctrl-o");
+    ui.wait("the folder picker", WAIT, |ui| ui.cx.did_prompt_for_paths());
+    ui.cx
+        .simulate_path_prompt_response(|_| Some(vec![other.clone()]));
+    ui.wait("the refusal", WAIT, |ui| {
+        ui.with(|window, cx| window.notifications(cx).len()) == 1
+    });
 }
 
 // A project deleted and made again from a moved folder of the same name gets
