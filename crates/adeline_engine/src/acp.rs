@@ -256,6 +256,13 @@ impl Driver {
     }
 }
 
+// The worker keeps a sender of its own, so it can't see the driver go: tell it.
+impl Drop for Driver {
+    fn drop(&mut self) {
+        let _ = self.sender.send(Input::Command(Command::Shutdown));
+    }
+}
+
 enum Input {
     Command(Command),
     Connected {
@@ -601,14 +608,9 @@ impl Worker {
         let mut tick = tokio::time::interval(TICK);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
-            let input = tokio::select! {
-                input = self.receiver.recv() => Some(input),
-                _ = tick.tick() => None,
-            };
-            match input {
-                Some(Some(input)) => self.input(input),
-                Some(None) => self.shutdown(),
-                None => {}
+            tokio::select! {
+                Some(input) = self.receiver.recv() => self.input(input),
+                _ = tick.tick() => {}
             }
             if self.tick() {
                 break;

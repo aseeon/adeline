@@ -796,6 +796,32 @@ async fn driver_reports_an_agent_that_exits_at_once() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn dropping_the_driver_stops_its_agent() {
+    let mut config = config();
+    config.harness = "Other".into();
+    // Reads until its input closes, like an agent.
+    #[cfg(windows)]
+    let (command, arguments) = ("cmd.exe", ["/C", "more > nul"]);
+    #[cfg(not(windows))]
+    let (command, arguments) = ("sh", ["-c", "cat > /dev/null"]);
+    config.command = command.into();
+    config.arguments = arguments.map(Into::into).to_vec();
+    let (events, received) = async_channel::unbounded();
+    let driver = Driver::spawn("probe".into(), config, None, events);
+    driver.send(Command::Probe).unwrap();
+    let mut seen = Vec::new();
+    wait_for(&received, &mut seen, |kind| {
+        matches!(kind, EventKind::Traffic(entry) if matches!(entry.direction, Direction::ToAgent))
+    })
+    .await;
+    drop(driver);
+    wait_for(&received, &mut seen, |kind| {
+        matches!(kind, EventKind::ShutdownComplete)
+    })
+    .await;
+}
+
 #[test]
 fn a_broken_pipe_counts_as_the_agent_closing() {
     #[cfg(unix)]

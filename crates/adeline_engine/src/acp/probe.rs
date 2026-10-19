@@ -55,6 +55,8 @@ pub fn probe(
             }
         };
         let _ = sender.try_send(result);
+        // The agent runs in the folder until the dropped `Session` stops it.
+        while received.recv().await.is_ok() {}
         let _ = block_in_place(|| std::fs::remove_dir_all(&folder));
     });
     (Session { _driver: driver }, results)
