@@ -581,6 +581,7 @@ impl Adeline {
                 .child(
                     viewer::markdown(
                         &self.docs.viewer,
+                        &self.docs_key(),
                         &path,
                         &self.docs.images,
                         config::with(|s| s.modes.docs.load_remote_images),

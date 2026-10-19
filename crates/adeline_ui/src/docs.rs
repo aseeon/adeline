@@ -351,17 +351,27 @@ impl Project {
     }
 
     fn put_path(&mut self, path: &str, present: bool) {
+        self.put_paths([(path, present)]);
+    }
+
+    // Adds or removes each path, rebuilding the tree once.
+    fn put_paths<'a>(&mut self, changes: impl IntoIterator<Item = (&'a str, bool)>) {
         let mut paths = self.tree.paths().to_vec();
-        let had = paths.iter().position(|p| p == path);
-        match (had, present) {
-            (None, true) => paths.push(path.to_owned()),
-            (Some(at), false) => {
-                paths.remove(at);
+        let mut changed = false;
+        for (path, present) in changes {
+            match (paths.iter().position(|p| p == path), present) {
+                (None, true) => paths.push(path.to_owned()),
+                (Some(at), false) => {
+                    paths.remove(at);
+                }
+                _ => continue,
             }
-            _ => return,
+            changed = true;
         }
-        paths.sort();
-        self.tree = Tree::new(paths);
+        if changed {
+            paths.sort();
+            self.tree = Tree::new(paths);
+        }
     }
 }
 
@@ -900,9 +910,15 @@ impl Adeline {
         let Some(project) = self.docs.projects.get_mut(&key) else {
             return;
         };
+        project.put_paths(
+            changes
+                .iter()
+                .map(|change| (change.path.as_str(), change.modified.is_some())),
+        );
         let mut reload = Vec::new();
+        let mut images = false;
         for change in changes {
-            project.put_path(&change.path, change.modified.is_some());
+            images |= self.docs.images.forget(&(key.clone(), change.path.clone()));
             let Some(doc) = project.files.get_mut(&change.path) else {
                 continue;
             };
@@ -914,6 +930,11 @@ impl Adeline {
                 }
                 Some(_) => doc.gone = false,
             }
+        }
+        if images {
+            self.docs
+                .viewer
+                .update(cx, |state, cx| state.invalidate_inline_layout(cx));
         }
         if relist && self.docs_key() == key {
             self.docs_list(cx);
@@ -1287,8 +1308,7 @@ impl Adeline {
                         app.docs_stash(cx);
                     }
                     if let Some(project) = app.docs.projects.get_mut(&key) {
-                        project.put_path(&from, false);
-                        project.put_path(&to, true);
+                        project.put_paths([(from.as_str(), false), (to.as_str(), true)]);
                         if let Some(doc) = project.files.remove(&from) {
                             project.files.insert(to.clone(), doc);
                         }
@@ -1732,15 +1752,11 @@ impl Adeline {
 
     // Reads the images the Viewer asked for since the last frame.
     pub(super) fn docs_load_images(&mut self, cx: &mut Context<Self>) {
-        let wanted = self.docs.images.wanted();
-        if wanted.is_empty() || !self.has_open_project() {
-            return;
-        }
-        let (machine, id) = (
-            self.workspace().machine.clone(),
-            self.workspace().config.id.clone(),
-        );
-        for path in wanted {
+        for (key, path) in self.docs.images.wanted() {
+            let Some(project) = self.docs.projects.get(&key) else {
+                continue;
+            };
+            let (machine, id) = (project.machine.clone(), project.id.clone());
             let images = self.docs.images.clone();
             self.docs_request(
                 &machine,
@@ -1764,7 +1780,7 @@ impl Adeline {
                         };
                         Some(std::sync::Arc::new(Image::from_bytes(format, bytes)))
                     });
-                    images.put(path, image);
+                    images.put((key, path), image);
                     app.docs
                         .viewer
                         .update(cx, |state, cx| state.invalidate_inline_layout(cx));

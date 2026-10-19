@@ -25,34 +25,44 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-/// Project images by project path: loaded, or `None` when they can't be read.
+// A project's key (`Workspace::key()`) and a path in it.
+type ImageKey = (String, String);
+
+/// Project images by project and path: loaded, or `None` when they can't be read.
 #[derive(Clone, Default)]
 pub(crate) struct Images {
-    loaded: Arc<Mutex<HashMap<String, Option<Arc<Image>>>>>,
-    wanted: Arc<Mutex<HashSet<String>>>,
+    loaded: Arc<Mutex<HashMap<ImageKey, Option<Arc<Image>>>>>,
+    wanted: Arc<Mutex<HashSet<ImageKey>>>,
 }
 
 impl Images {
-    pub(crate) fn wanted(&self) -> Vec<String> {
+    pub(crate) fn wanted(&self) -> Vec<ImageKey> {
         self.wanted
             .lock()
             .map(|mut wanted| wanted.drain().collect())
             .unwrap_or_default()
     }
 
-    pub(crate) fn put(&self, path: String, image: Option<Arc<Image>>) {
+    pub(crate) fn put(&self, key: ImageKey, image: Option<Arc<Image>>) {
         if let Ok(mut loaded) = self.loaded.lock() {
-            loaded.insert(path, image);
+            loaded.insert(key, image);
         }
     }
 
+    /// Drops an image so the Viewer reads it again; whether it was there.
+    pub(crate) fn forget(&self, key: &ImageKey) -> bool {
+        self.loaded
+            .lock()
+            .is_ok_and(|mut loaded| loaded.remove(key).is_some())
+    }
+
     // An image not asked for yet is wanted for the next frame.
-    fn get(&self, path: &str) -> Option<Arc<Image>> {
-        let found = self.loaded.lock().ok()?.get(path).cloned();
+    fn get(&self, key: ImageKey) -> Option<Arc<Image>> {
+        let found = self.loaded.lock().ok()?.get(&key).cloned();
         if found.is_none()
             && let Ok(mut wanted) = self.wanted.lock()
         {
-            wanted.insert(path.to_owned());
+            wanted.insert(key);
         }
         found.flatten()
     }
@@ -446,9 +456,10 @@ impl MarkdownPlugin for RemoteImage {
     }
 }
 
-/// The Viewer for the Markdown doc at `path`, whose text `state` holds.
+/// The Viewer for the Markdown doc at `path` of project `project`, whose text `state` holds.
 pub(crate) fn markdown(
     state: &Entity<TextViewState>,
+    project: &str,
     path: &str,
     images: &Images,
     remote_images: bool,
@@ -469,6 +480,7 @@ pub(crate) fn markdown(
         .block_renderer("mermaid", render_diagram);
     let images = images.clone();
     let from = path.to_owned();
+    let project = project.to_owned();
     TextView::new(state)
         .markdown_extensions(extensions)
         .scrollable(true)
@@ -480,7 +492,7 @@ pub(crate) fn markdown(
                 return ImageSource::Resource(Resource::Uri(uri.clone()));
             }
             let found = adeline_docs::join(&from, url.split('#').next().unwrap_or(url))
-                .and_then(|path| images.get(&path));
+                .and_then(|path| images.get((project.clone(), path)));
             ImageSource::Image(found.unwrap_or_else(|| Arc::clone(&PLACEHOLDER)))
         })
 }
