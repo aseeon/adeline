@@ -1,0 +1,5 @@
+# CI runs `cargo deny check advisories` with this file. A crate with a known
+# vulnerability fails the check.
+[advisories]
+# Unmaintained crates fail only when Adeline depends on them directly.
+unmaintained = "workspace"

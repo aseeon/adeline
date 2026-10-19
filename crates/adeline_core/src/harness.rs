@@ -165,11 +165,18 @@ pub fn newer(a: &str, b: &str) -> bool {
 }
 
 pub fn detect(fetch: bool, known: Vec<Harness>) -> Catalog {
-    let harnesses = if fetch && download().is_ok() {
-        load()
-    } else {
-        known
-    };
+    let downloaded = fetch
+        && download()
+            .inspect_err(|error| {
+                tracing::event!(
+                    name: "harness.registry.download_failed",
+                    tracing::Level::WARN,
+                    error.message = %format!("{error:#}"),
+                    "Cannot update the agent registry: {{error.message}}"
+                );
+            })
+            .is_ok();
+    let harnesses = if downloaded { load() } else { known };
     let dirs = search_path();
     let installed: HashMap<String, PathBuf> = harnesses
         .iter()
@@ -275,19 +282,29 @@ fn download() -> anyhow::Result<()> {
     let cache = cache().context("No configuration directory.")?;
     fs::create_dir_all(cache.join("registry-icons"))?;
     let partial = cache.join(crate::files::unique("registry.json"));
-    let status = hidden(Command::new("curl"))
+    let curl = hidden(Command::new("curl"))
         .args(["-fsSL", "--max-time", "20", "-o"])
         .arg(&partial)
         .arg(REGISTRY_URL)
-        .status()?;
+        .stderr(Stdio::piped())
+        .output()
+        .context("Cannot run curl")?;
     let text = fs::read_to_string(&partial).unwrap_or_default();
-    let parsed = status
+    let parsed = curl
+        .status
         .success()
         .then(|| serde_json::from_str::<Value>(&text).ok())
         .flatten();
     let Some(registry) = parsed.filter(|_| parse_registry(&text).is_ok()) else {
         let _ = fs::remove_file(&partial);
-        anyhow::bail!("Registry download failed.");
+        let stderr = String::from_utf8_lossy(&curl.stderr);
+        anyhow::bail!(
+            "Registry download failed: {}",
+            match stderr.trim() {
+                "" => "the registry is not valid",
+                stderr => stderr,
+            }
+        );
     };
     fs::rename(&partial, cache.join("registry.json"))?;
     let mut icons = hidden(Command::new("curl"));

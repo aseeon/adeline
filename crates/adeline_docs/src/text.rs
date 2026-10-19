@@ -1,5 +1,5 @@
 //! Doc text as read from disk and as saved: a file that is too large, binary
-//! or not UTF-8 opens read-only, and a save keeps the file's line endings and
+//! UTF-16 or not UTF-8 opens read-only, and a save keeps the file's line endings and
 //! its trailing newline, or lack of one.
 
 // Rust guideline compliant 2026-10-09
@@ -12,6 +12,23 @@ const BINARY_PROBE: usize = 8000;
 
 /// The text of a file, and why it's read-only, if it is.
 pub fn decode(bytes: Vec<u8>) -> (String, Option<&'static str>) {
+    let unit: Option<fn([u8; 2]) -> u16> = match bytes.get(..2) {
+        Some([0xFF, 0xFE]) => Some(u16::from_le_bytes),
+        Some([0xFE, 0xFF]) => Some(u16::from_be_bytes),
+        _ => None,
+    };
+    if let Some(unit) = unit {
+        let units = bytes[2..]
+            .chunks(2)
+            .map(|pair| unit([pair[0], *pair.get(1).unwrap_or(&0)]));
+        let text = char::decode_utf16(units)
+            .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+            .collect();
+        return (
+            text,
+            Some("This file is UTF-16 text, so it opens read-only."),
+        );
+    }
     let probe = &bytes[..bytes.len().min(BINARY_PROBE)];
     if probe.contains(&0) {
         return (
@@ -85,6 +102,14 @@ mod tests {
                 .1
                 .is_some_and(|r| r.contains("binary"))
         );
+        for bom in [
+            [0xFF, 0xFE, b'h', 0, b'i', 0],
+            [0xFE, 0xFF, 0, b'h', 0, b'i'],
+        ] {
+            let (text, reason) = decode(bom.to_vec());
+            assert_eq!(text, "hi");
+            assert!(reason.is_some_and(|r| r.contains("UTF-16")));
+        }
         let mut large = vec![b'a'; MAX_EDITABLE];
         assert_eq!(decode(large.clone()).1, None);
         large.push(b'a');

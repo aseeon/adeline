@@ -10,6 +10,7 @@ adeline_core.workspace = true
 adeline_engine.workspace = true
 adeline_ui = { workspace = true, optional = true }
 gpui-kit = { workspace = true, optional = true }
+mimalloc.workspace = true
 
 # The default build is the desktop app. `--no-default-features` builds the
 # headless one: engine, bridge and `--version`, with no window and no desktop

@@ -106,6 +106,17 @@ fn with<T>(change: impl FnOnce(&mut Store) -> T) -> T {
     change(store)
 }
 
+// Changes a copy, so a failed save leaves the machines as they were.
+fn update<T>(change: impl FnOnce(&mut Store) -> anyhow::Result<T>) -> anyhow::Result<T> {
+    with(|store| {
+        let mut changed = store.clone();
+        let value = change(&mut changed)?;
+        save(&changed)?;
+        *store = changed;
+        Ok(value)
+    })
+}
+
 fn save(store: &Store) -> anyhow::Result<()> {
     if demo() {
         return Ok(());
@@ -159,7 +170,7 @@ pub fn is_checked(id: &str) -> bool {
 }
 
 pub fn set_checked(id: &str, checked: bool) -> anyhow::Result<()> {
-    with(|store| {
+    update(|store| {
         if checked {
             if !store.checked.iter().any(|c| c == id) {
                 store.checked.push(id.to_owned());
@@ -170,7 +181,7 @@ pub fn set_checked(id: &str, checked: bool) -> anyhow::Result<()> {
             }
             store.checked.retain(|c| c != id);
         }
-        save(store)
+        Ok(())
     })
 }
 
@@ -181,7 +192,7 @@ pub fn add(name: &str, destination: &str) -> anyhow::Result<String> {
         bail!("Enter a name for the machine.");
     }
     check_destination(destination)?;
-    with(|store| {
+    update(|store| {
         if store
             .machines
             .iter()
@@ -198,12 +209,12 @@ pub fn add(name: &str, destination: &str) -> anyhow::Result<String> {
             engine: None,
         });
         store.checked.push(id.clone());
-        save(store).map(|()| id)
+        Ok(id)
     })
 }
 
 pub fn edit(id: &str, edit: impl FnOnce(&mut Machine) -> anyhow::Result<()>) -> anyhow::Result<()> {
-    with(|store| {
+    update(|store| {
         let others: Vec<String> = store
             .machines
             .iter()
@@ -228,12 +239,12 @@ pub fn edit(id: &str, edit: impl FnOnce(&mut Machine) -> anyhow::Result<()>) -> 
             bail!("A machine needs at least one destination.");
         }
         *machine = changed;
-        save(store)
+        Ok(())
     })
 }
 
 pub fn remove(id: &str) -> anyhow::Result<()> {
-    with(|store| {
+    update(|store| {
         store.machines.retain(|m| m.id != id);
         store.checked.retain(|c| c != id);
         if store.checked.is_empty() {
@@ -242,7 +253,7 @@ pub fn remove(id: &str) -> anyhow::Result<()> {
         if store.last_folder.as_deref() == Some(id) {
             store.last_folder = None;
         }
-        save(store)
+        Ok(())
     })
 }
 
@@ -330,5 +341,17 @@ mod tests {
             std::fs::read_to_string(&path).unwrap(),
             "machines: [unclosed"
         );
+    }
+
+    #[test]
+    fn a_failed_save_leaves_the_machines_unchanged() {
+        *STORE.lock().unwrap() = Some(Store {
+            unreadable: Some("machines.yml: unreadable".into()),
+            ..Store::default()
+        });
+        add("Box", "me@box").unwrap_err();
+        assert!(remotes().is_empty());
+        set_checked("other", true).unwrap_err();
+        assert_eq!(checked(), [LOCAL]);
     }
 }

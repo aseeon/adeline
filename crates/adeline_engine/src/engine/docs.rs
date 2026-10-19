@@ -14,7 +14,6 @@ use adeline_core::{
 use serde_json::Value;
 use std::{
     collections::HashSet,
-    io::Write as _,
     path::{Path, PathBuf},
     time::Instant,
 };
@@ -23,6 +22,9 @@ use tokio::task::block_in_place;
 // Images the Viewer shows; larger ones stay links.
 const IMAGE_LIMIT: u64 = 20 * 1024 * 1024;
 const IMAGE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
+// Larger docs don't open at all: reading one would hold up every client, as
+// all commands share one task. Docs above `MAX_EDITABLE` open read-only.
+const READ_LIMIT: u64 = 50 * 1024 * 1024;
 
 fn modified(path: &Path) -> Option<u64> {
     let time = std::fs::metadata(path).ok()?.modified().ok()?;
@@ -53,6 +55,14 @@ fn check_new(root: &Path, path: &str) -> Result<PathBuf, String> {
 
 fn read(root: &Path, path: &str) -> Result<DocFile, String> {
     let full = adeline_docs::resolve(root, path)?;
+    let size = std::fs::metadata(&full)
+        .map_err(|e| io_error(path, &e))?
+        .len();
+    if size > READ_LIMIT {
+        return Err(format!(
+            "{path} is larger than 50 MB, so it can't be opened."
+        ));
+    }
     let bytes = std::fs::read(&full).map_err(|e| io_error(path, &e))?;
     let (text, read_only) = adeline_docs::decode(bytes);
     Ok(DocFile {
@@ -71,22 +81,28 @@ fn write(root: &Path, path: &str, text: &str, create: bool) -> Result<u64, Strin
         adeline_core::files::write_new(&full, text.as_bytes()).map_err(|e| format!("{e:#}"))?;
         return Ok(modified(&full).unwrap_or_default());
     }
-    let full = adeline_docs::resolve(root, path)?;
-    let original = std::fs::read(&full).unwrap_or_default();
-    let text = adeline_docs::conform(text, &String::from_utf8_lossy(&original));
-    if let Some(folder) = full.parent() {
-        std::fs::create_dir_all(folder).map_err(|e| io_error(path, &e))?;
+    // The link's target, so a doc that is a link inside the project stays one.
+    let full = adeline_docs::resolve(root, path)?
+        .canonicalize()
+        .map_err(|e| io_error(path, &e))?;
+    let original = std::fs::read(&full).map_err(|e| io_error(path, &e))?;
+    let permissions = std::fs::metadata(&full)
+        .map_err(|e| io_error(path, &e))?
+        .permissions();
+    if permissions.readonly() {
+        return Err(format!("{path} is read-only, so it can't be saved."));
     }
-    // In place, so the file keeps its permissions and a read-only file refuses.
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(&full)
-        .map_err(|e| io_error(path, &e))?;
-    file.write_all(text.as_bytes())
-        .and_then(|()| file.sync_all())
-        .map_err(|e| io_error(path, &e))?;
+    let text = adeline_docs::conform(text, &String::from_utf8_lossy(&original));
+    // A new file renamed over the old one, so a full disk or a crash leaves
+    // the old text whole.
+    let temp = full.with_extension(adeline_core::files::unique("tmp"));
+    adeline_core::files::write_new(&temp, text.as_bytes()).map_err(|e| format!("{e:#}"))?;
+    let saved =
+        std::fs::set_permissions(&temp, permissions).and_then(|()| std::fs::rename(&temp, &full));
+    if let Err(e) = saved {
+        let _ = std::fs::remove_file(&temp);
+        return Err(io_error(path, &e));
+    }
     Ok(modified(&full).unwrap_or_default())
 }
 
@@ -382,5 +398,47 @@ impl Engine {
                 self.put_card(id, card);
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use adeline_core::files::TempDir;
+
+    #[test]
+    fn a_save_replaces_the_whole_file_and_refuses_what_it_cannot_save() {
+        let root = TempDir::new("adeline-docs-write");
+        std::fs::write(root.join("a.md"), "one\r\ntwo").unwrap();
+        write(&root, "a.md", "one\nTWO", false).unwrap();
+        assert_eq!(std::fs::read(root.join("a.md")).unwrap(), b"one\r\nTWO");
+        assert_eq!(std::fs::read_dir(&*root).unwrap().count(), 1);
+
+        let error = write(&root, "gone.md", "text", false).unwrap_err();
+        assert!(error.contains("no longer exists"), "{error}");
+        assert!(!root.join("gone.md").exists());
+
+        let mut permissions = std::fs::metadata(root.join("a.md")).unwrap().permissions();
+        permissions.set_readonly(true);
+        std::fs::set_permissions(root.join("a.md"), permissions.clone()).unwrap();
+        let error = write(&root, "a.md", "changed", false).unwrap_err();
+        assert!(error.contains("read-only"), "{error}");
+        assert_eq!(std::fs::read(root.join("a.md")).unwrap(), b"one\r\nTWO");
+        #[expect(
+            clippy::permissions_set_readonly_false,
+            reason = "lets TempDir clean up"
+        )]
+        permissions.set_readonly(false);
+        std::fs::set_permissions(root.join("a.md"), permissions).unwrap();
+    }
+
+    #[test]
+    fn a_doc_too_large_to_read_is_refused_without_reading_it() {
+        let root = TempDir::new("adeline-docs-read");
+        let file = std::fs::File::create(root.join("huge.txt")).unwrap();
+        file.set_len(READ_LIMIT + 1).unwrap();
+        drop(file);
+        let error = read(&root, "huge.txt").unwrap_err();
+        assert!(error.contains("50 MB"), "{error}");
     }
 }

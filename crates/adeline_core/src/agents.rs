@@ -353,6 +353,7 @@ impl AgentCatalog {
                 path.join("agent.yml").display()
             );
         }
+        ensure_only_definition(&path)?;
         fs::remove_dir_all(&path).with_context(|| path.display().to_string())?;
         self.refresh();
         Ok(())
@@ -435,7 +436,7 @@ fn ensure_only_definition(folder: &Path) -> Result<()> {
         let entry = entry.with_context(context)?;
         if entry.file_name() != "agent.yml" && entry.file_name() != AVATAR {
             bail!(
-                "{}: cannot rename a folder containing other files.",
+                "{}: cannot rename or delete a folder containing other files.",
                 entry.path().display()
             );
         }
@@ -843,6 +844,14 @@ permission_mode: AllowEverything
         assert!(catalog.delete("josh-smith").is_err());
         assert!(file(&root, "josh-smith").exists());
         catalog.refresh();
+        let extra = file(&root, "josh-smith")
+            .parent()
+            .unwrap()
+            .join("notes.txt");
+        fs::write(&extra, "keep this").unwrap();
+        assert!(catalog.delete("josh-smith").is_err());
+        assert_eq!(fs::read_to_string(&extra).unwrap(), "keep this");
+        fs::remove_file(extra).unwrap();
         catalog.delete("josh-smith").unwrap();
         assert!(!file(&root, "josh-smith").parent().unwrap().exists());
         assert_eq!(catalog.entries.len(), 1);

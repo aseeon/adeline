@@ -1,6 +1,7 @@
 //! Filesystem helpers shared by the settings, agent and project stores.
-//! Writes are synced before they replace anything, and a failed `replace`
-//! restores the original.
+//!
+//! Writes are synced before they replace anything, and `replace` swaps the
+//! new file in with one rename, so the original stays until it is replaced.
 use anyhow::{Context as _, Result, bail};
 use std::{
     fs::{self, OpenOptions},
@@ -81,29 +82,24 @@ pub fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
 }
 
 pub fn seed(path: &Path, bytes: &[u8]) -> Result<()> {
-    match OpenOptions::new().write(true).create_new(true).open(path) {
-        Ok(mut file) => file
-            .write_all(bytes)
-            .with_context(|| path.display().to_string()),
-        Err(e) if e.kind() == io::ErrorKind::AlreadyExists => Ok(()),
-        Err(e) => Err(e).with_context(|| path.display().to_string()),
+    match write_new(path, bytes) {
+        Err(e)
+            if e.downcast_ref::<io::Error>()
+                .is_some_and(|e| e.kind() == io::ErrorKind::AlreadyExists) =>
+        {
+            Ok(())
+        }
+        result => result,
     }
 }
 
 pub fn replace(path: &Path, bytes: &[u8]) -> Result<()> {
     let temp = path.with_extension(unique("tmp"));
     write_new(&temp, bytes)?;
-    let backup = path.with_extension(unique("bak"));
-    if let Err(e) = fs::rename(path, &backup) {
-        let _ = fs::remove_file(&temp);
-        return Err(e).with_context(|| path.display().to_string());
-    }
     if let Err(e) = fs::rename(&temp, path) {
-        let _ = fs::rename(&backup, path);
         let _ = fs::remove_file(&temp);
         return Err(e).with_context(|| path.display().to_string());
     }
-    let _ = fs::remove_file(&backup);
     Ok(())
 }
 
@@ -129,5 +125,20 @@ impl std::ops::Deref for TempDir {
 impl Drop for TempDir {
     fn drop(&mut self) {
         fs::remove_dir_all(&self.0).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replace_creates_then_replaces_and_leaves_no_temp_files() {
+        let dir = TempDir::new("adeline-files-test");
+        let path = dir.join("project.yml");
+        replace(&path, b"one").unwrap();
+        replace(&path, b"two").unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"two");
+        assert_eq!(fs::read_dir(&*dir).unwrap().count(), 1);
     }
 }
