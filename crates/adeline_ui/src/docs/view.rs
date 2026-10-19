@@ -201,11 +201,7 @@ impl Adeline {
             .child(
                 resizable_panel()
                     .size_range(MAIN_PANEL_MIN..Pixels::MAX)
-                    .child(panes::panel_area(
-                        panes::DOCS_MAIN,
-                        self.docs_main(window, cx),
-                        cx,
-                    )),
+                    .child(panes::panel_area(panes::DOCS_MAIN, self.docs_main(cx), cx)),
             )
             .child(
                 resizable_panel()
@@ -477,7 +473,7 @@ impl Adeline {
         cx.notify();
     }
 
-    fn docs_main(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn docs_main(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let project = self.docs_current();
         let failed = project.and_then(|p| p.failed.clone());
@@ -643,7 +639,6 @@ impl Adeline {
             )
             .with_priority(1)
             });
-        let _ = window;
         col()
             .id("doc-panel")
             .role(Role::Main)

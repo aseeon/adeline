@@ -1231,7 +1231,7 @@ impl Adeline {
         }
     }
 
-    fn docs_create(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn docs_create(&mut self, cx: &mut Context<Self>) {
         let mut path = self.docs.path_input.read(cx).value().trim().to_owned();
         if !adeline_docs::has_doc_extension(&path) && !path.ends_with('/') && !path.is_empty() {
             path.push_str(".md");
@@ -1283,7 +1283,6 @@ impl Adeline {
                 Err(error) => window.push_notification(error, cx),
             },
         );
-        let _ = window;
     }
 
     fn docs_rename(&mut self, cx: &mut Context<Self>) {
@@ -1650,7 +1649,7 @@ impl Adeline {
                 });
                 self.modal = Some("doc-new");
             }
-            Act::Create => self.docs_create(window, cx),
+            Act::Create => self.docs_create(cx),
             Act::Rename(path) => {
                 let Some(path) =
                     path.or_else(|| self.docs_current().and_then(|p| p.cursor.clone()))
