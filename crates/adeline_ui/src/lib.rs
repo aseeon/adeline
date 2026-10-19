@@ -460,6 +460,15 @@ impl Adeline {
         let chat_header = cx.new(|_| views::ChatHeader(owner.clone()));
         let project_bar = cx.new(|_| project_bar::ProjectBar(owner.clone()));
         subscriptions.push(cx.observe_self(Self::notify_cached_views));
+        // A focused element that disappears, such as a closed menu's search box,
+        // leaves keys dispatching above the "Adeline" context, so shortcuts stop.
+        subscriptions.push(cx.on_focus_lost(window, |app, window, cx| {
+            if app.has_open_project() && app.section == Section::Chats {
+                window.focus(&app.composer.focus_handle(cx), cx);
+            } else {
+                window.focus(&app.focus, cx);
+            }
+        }));
         let docs = docs::Docs::new(window, cx);
         subscriptions.push(
             cx.subscribe(&docs.editor, |app, _, event: &InputEvent, cx| {

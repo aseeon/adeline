@@ -291,8 +291,7 @@ fn docs_after_project_recreated(cx: &mut TestAppContext) {
         ui.tabs().iter().any(|t| t.starts_with(common::PROJECT))
     });
     ui.wait_named("Message", WAIT);
-    // Shortcuts don't reach the window after the folder picker returns, so this clicks.
-    ui.click("Docs");
+    ui.press("ctrl-2");
     ui.wait_named("new.md", WAIT);
     ui.gone("old.md");
 }
