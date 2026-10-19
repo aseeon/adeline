@@ -345,3 +345,17 @@ fn demo_fork(cx: &mut TestAppContext) {
     ui.named(&format!("Forked from {SELECTION_CHAT}"));
     no_engine();
 }
+
+#[gpui_kit::test]
+fn delete_agent(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    let before = ui.cx.windows();
+    ui.press("ctrl-,");
+    ui.new_window(&before);
+    // The group headers take no focus, so the search finds the agent.
+    ui.input("Grok");
+    ui.activate("Grok Build");
+    ui.activate("Delete agent…");
+    ui.activate("Delete");
+    ui.gone("Grok Build");
+}

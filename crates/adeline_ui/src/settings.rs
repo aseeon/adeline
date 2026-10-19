@@ -424,9 +424,12 @@ fn persist_form(
     form: &Entity<agent_form::AgentForm>,
     overwrite: bool,
     cx: &mut App,
-) -> Result<String> {
+    done: impl FnOnce(Result<String>, &mut App) + 'static,
+) {
     let form = form.read(cx);
-    form.check(cx)?;
+    if let Err(error) = form.check(cx) {
+        return cx.defer(move |cx| done(Err(error), cx));
+    }
     let definition = form.values(cx);
     let original = form.id.clone();
     let machine = form.machine.clone();
@@ -434,12 +437,13 @@ fn persist_form(
     Adeline::save_agent(
         &owner.entity,
         &machine,
-        original.as_deref(),
+        original,
         definition,
         expected,
         overwrite,
         cx,
-    )
+        done,
+    );
 }
 
 fn choose(
