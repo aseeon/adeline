@@ -151,19 +151,16 @@ impl Adeline {
                         .children(time),
                 )
                 .child(
-                    div()
+                    sheen(theme.secondary, 0.07, cx)
                         .max_w(relative(0.78))
-                        .min_w_0()
-                        .bg(theme.secondary)
-                        .rounded(rems(0.875))
-                        .px(rems(0.875))
-                        .py(rems(0.5625))
+                        .rounded_tr(px(0.))
                         .child(body),
                 )
                 .child(
                     Button::new(SharedString::from(format!("copy-prompt:{}:{i}", thread.id)))
                         .ghost()
                         .small()
+                        .text_color(theme.muted_foreground)
                         .mt_1()
                         .icon(Icon::default().path("copy.svg"))
                         .accessibility_label("Copy")
@@ -198,7 +195,14 @@ impl Adeline {
                         .map(|thought| div().mt_1().child(thought)),
                 )
                 .when(!message.text.is_empty(), |content| {
-                    content.child(div().mt_1().child(body))
+                    content.child(
+                        sheen(theme.group_box, 0.05, cx)
+                            .mt_1()
+                            .max_w(relative(0.88))
+                            .self_start()
+                            .rounded_tl(px(0.))
+                            .child(body),
+                    )
                 })
                 .when(thread.ends_turn(i) && !writing, |content| {
                     content
@@ -309,6 +313,7 @@ impl Adeline {
             Button::new(SharedString::from(format!("{name}:{}:{i}", thread.id)))
                 .ghost()
                 .small()
+                .text_color(theme.muted_foreground)
                 .icon(Icon::default().path(format!("{asset}.svg")))
                 .accessibility_label(label)
                 .tooltip(label)
@@ -606,6 +611,31 @@ impl Transcript {
         self.messages = messages;
         cx.notify();
     }
+}
+
+/// A message bubble lit from above: a faint top-to-bottom gradient and a 1px
+/// highlight along the top edge. Light themes light it with the background,
+/// since their foreground is dark.
+fn sheen(fill: Hsla, strength: f32, cx: &App) -> Div {
+    let theme = cx.theme();
+    let light = if theme.is_dark() {
+        theme.foreground
+    } else {
+        theme.background
+    };
+    div()
+        .min_w_0()
+        .px(rems(0.875))
+        .py(rems(0.5625))
+        .rounded(rems(0.875))
+        .bg(linear_gradient(
+            180.,
+            linear_color_stop(fill.blend(light.alpha(strength * 0.6)), 0.),
+            linear_color_stop(fill, 1.),
+        ))
+        .shadow(vec![
+            BoxShadow::new(px(0.), px(1.), light.alpha(strength)).inset(),
+        ])
 }
 
 /// The text of a paragraph quoted with `>` on every line, without the markers.
