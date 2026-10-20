@@ -178,6 +178,7 @@ impl Adeline {
             Action::Project(ix) => {
                 let docs = self.section == Section::Docs;
                 let same = self.project == ix && self.open_projects[ix];
+                let switched = self.project != ix;
                 if !same {
                     self.docs_leave(window, cx);
                 }
@@ -201,6 +202,20 @@ impl Adeline {
                 self.record_project_opened(ix, window, cx);
                 if docs && !same {
                     self.docs_enter(None, window, cx);
+                }
+                let last_active = self
+                    .workspace()
+                    .threads
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, thread)| thread.status != ThreadStatus::Archived)
+                    .max_by_key(|(_, thread)| thread.last_activity())
+                    .map(|(i, _)| i);
+                if switched
+                    && self.section == Section::Chats
+                    && let Some(chat) = last_active
+                {
+                    self.act(Action::Chat(chat), window, cx);
                 }
             }
             Action::RemoveClosedProject(id) => self.remove_closed_project(&id, window, cx),
