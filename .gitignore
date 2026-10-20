@@ -53,3 +53,7 @@ Desktop.ini
 
 # Claude Code worktrees
 /.claude/worktrees/
+
+# Agent settings and cargo-agents hooks, local to each machine
+/.claude/settings.local.json
+/.codex/hooks.json
