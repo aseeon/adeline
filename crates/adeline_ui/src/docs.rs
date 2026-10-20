@@ -424,17 +424,17 @@ impl Adeline {
     ) {
         if !self.demo_mode {
             self.machine_request(machine, command, cx, |app, result, _, cx| {
-                app.docs_defer(cx, move |app, window, cx| done(app, result, window, cx));
+                app.defer_with_window(cx, move |app, window, cx| done(app, result, window, cx));
             });
             return;
         }
         let result = self.demo_docs(project_id, command);
-        self.docs_defer(cx, move |app, window, cx| done(app, result, window, cx));
+        self.defer_with_window(cx, move |app, window, cx| done(app, result, window, cx));
     }
 
     // Runs `then` after the current update, with the main window but not its root
     // leased, so `then` can reach dialogs and notifications.
-    fn docs_defer(
+    pub(crate) fn defer_with_window(
         &self,
         cx: &mut Context<Self>,
         then: impl FnOnce(&mut Self, &mut Window, &mut Context<Self>) + 'static,
@@ -827,12 +827,12 @@ impl Adeline {
             .get(key)
             .and_then(|p| Some((p, p.files.get(path)?)))
         else {
-            self.docs_defer(cx, move |app, window, cx| after(app, false, window, cx));
+            self.defer_with_window(cx, move |app, window, cx| after(app, false, window, cx));
             return;
         };
         if let Some(reason) = doc.read_only.clone() {
             self.notify_toast(&reason, cx);
-            self.docs_defer(cx, move |app, window, cx| after(app, false, window, cx));
+            self.defer_with_window(cx, move |app, window, cx| after(app, false, window, cx));
             return;
         }
         let text = if shown {
@@ -1403,7 +1403,7 @@ impl Adeline {
         let remaining = std::rc::Rc::new(std::cell::Cell::new(unsaved.len()));
         let failed = std::rc::Rc::new(std::cell::Cell::new(false));
         if unsaved.is_empty() {
-            self.docs_defer(cx, Self::docs_continue);
+            self.defer_with_window(cx, Self::docs_continue);
             return;
         }
         for (key, path) in unsaved {

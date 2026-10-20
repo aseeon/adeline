@@ -137,6 +137,13 @@ impl Adeline {
         }
         self.agents_changed(None, None, false, cx);
         self.refresh_runtime_views(cx);
+        if first && self.selected.is_none() {
+            self.defer_with_window(cx, |app, window, cx| {
+                if app.selected.is_none() {
+                    app.open_last_active_chat(window, cx);
+                }
+            });
+        }
     }
 
     pub(super) fn about_machine(&self, machine: &str, message: &str) -> String {

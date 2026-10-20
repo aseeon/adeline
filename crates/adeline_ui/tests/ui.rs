@@ -240,15 +240,19 @@ fn demo_machines(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn switching_tabs_opens_last_active_chat(cx: &mut TestAppContext) {
+fn starting_and_switching_tabs_open_last_active_chat(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
+    let open_chat = |ui: &mut Ui| ui.read(|app, _| app.open_chat().map(str::to_owned));
+    assert!(open_chat(&mut ui).is_some(), "started on Start a chat");
     let tabs = ui.tabs();
     let home = tabs.iter().find(|t| t.starts_with("ade-project")).unwrap();
     let other = tabs.iter().find(|t| t.contains("· Matrix")).unwrap();
     for name in [other, home] {
         ui.open_tab(name);
-        let open = ui.read(|app, _| app.open_chat().map(str::to_owned));
-        assert!(open.is_some(), "{name} opened on Start a chat");
+        assert!(
+            open_chat(&mut ui).is_some(),
+            "{name} opened on Start a chat"
+        );
     }
 }
 

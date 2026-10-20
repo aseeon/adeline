@@ -294,6 +294,11 @@ fn chat_from_another_client(cx: &mut TestAppContext, second: &mut TestAppContext
     send(&mut ui, "hello");
     ui.wait_named("Fork", WAIT);
     let mut other = open(second);
+    // The second window starts on "hello", the last active chat.
+    other.wait("hello opened", WAIT, |ui| {
+        ui.read(|app, _| app.open_chat() == Some("hello"))
+    });
+    other.press("secondary-n");
     send(&mut other, "elsewhere");
     ui.wait("the other chat in the list", WAIT, |ui| {
         ui.find(|label| label.starts_with("elsewhere,")).is_some()

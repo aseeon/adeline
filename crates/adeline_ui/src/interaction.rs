@@ -203,19 +203,8 @@ impl Adeline {
                 if docs && !same {
                     self.docs_enter(None, window, cx);
                 }
-                let last_active = self
-                    .workspace()
-                    .threads
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, thread)| thread.status != ThreadStatus::Archived)
-                    .max_by_key(|(_, thread)| thread.last_activity())
-                    .map(|(i, _)| i);
-                if switched
-                    && self.section == Section::Chats
-                    && let Some(chat) = last_active
-                {
-                    self.act(Action::Chat(chat), window, cx);
+                if switched {
+                    self.open_last_active_chat(window, cx);
                 }
             }
             Action::RemoveClosedProject(id) => self.remove_closed_project(&id, window, cx),
@@ -620,6 +609,23 @@ impl Adeline {
             }
         }
         cx.notify();
+    }
+
+    pub(super) fn open_last_active_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.section != Section::Chats || !self.has_open_project() {
+            return;
+        }
+        let last_active = self
+            .workspace()
+            .threads
+            .iter()
+            .enumerate()
+            .filter(|(_, thread)| thread.status != ThreadStatus::Archived)
+            .max_by_key(|(_, thread)| thread.last_activity())
+            .map(|(i, _)| i);
+        if let Some(chat) = last_active {
+            self.act(Action::Chat(chat), window, cx);
+        }
     }
 
     pub(super) fn load_settings(&mut self) {

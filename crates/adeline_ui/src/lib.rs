@@ -586,6 +586,7 @@ impl Adeline {
         app.sync_sidebar(cx);
         app.transcript
             .update(cx, |view, cx| view.sync(&app, false, cx));
+        app.defer_with_window(cx, |app, window, cx| app.open_last_active_chat(window, cx));
         // A quiet turn's silence notice appears on time without new deltas.
         cx.spawn(async move |this, cx| {
             loop {
