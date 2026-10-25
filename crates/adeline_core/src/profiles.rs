@@ -173,10 +173,10 @@ pub const OPENCODE: Profile = Profile {
     command: "opencode",
     arguments: &["acp"],
     install: Install {
-        windows: &[npm(&["install", "-g", "opencode-ai"])],
-        unix: &[npm(&["install", "-g", "opencode-ai"])],
+        windows: &[npm(&["install", "-g", "@opencode/cli"])],
+        unix: &[npm(&["install", "-g", "@opencode/cli"])],
         needs_node: true,
-        package: Some("opencode-ai"),
+        package: Some("@opencode/cli"),
     },
     instructions: Instructions::None,
     plan_modes: &["plan"],
