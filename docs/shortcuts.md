@@ -50,6 +50,7 @@ Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `crates
 | Ctrl+Shift+D / Cmd+Shift+D | Dismiss the errors under the chat |
 | Ctrl+Shift+F / Cmd+Shift+F | Fork the chat at its latest reply |
 | Ctrl+Shift+G / Cmd+Shift+G | In a fork, open the chat it was forked from |
+| Ctrl+Shift+C / Cmd+Shift+C | Copy the last code block of the latest reply |
 
 ## Projects and machines
 

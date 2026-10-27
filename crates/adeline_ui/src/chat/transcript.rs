@@ -113,6 +113,25 @@ impl Adeline {
                                 ..Default::default()
                             }),
                     )
+                    .code_block_actions(|block, _, _| {
+                        let code = block.code();
+                        div()
+                            .invisible()
+                            .group_hover("reply", |style| style.visible())
+                            .child(
+                                Button::new("copy-code")
+                                    .ghost()
+                                    .xsmall()
+                                    .icon(Icon::default().path("copy.svg"))
+                                    .accessibility_label("Copy code")
+                                    .tooltip("Copy")
+                                    .on_click(move |_, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            code.to_string(),
+                                        ));
+                                    }),
+                            )
+                    })
                     .text_sm()
                     .w_full()
                     .min_w_0(),
@@ -197,6 +216,7 @@ impl Adeline {
                 .when(!message.text.is_empty(), |content| {
                     content.child(
                         sheen(theme.group_box, 0.05, cx)
+                            .group("reply")
                             .mt_1()
                             .max_w(relative(0.88))
                             .self_start()

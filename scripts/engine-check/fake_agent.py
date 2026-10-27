@@ -11,6 +11,7 @@ Keywords in the prompt script each turn, applied in this order:
   STRAY          also stream text for a session that isn't this one
   EXIT           stream one chunk, then exit with code 3
   SILENT         stream one chunk, then send nothing and ignore session/cancel
+  CODE           stream a fenced bash code block
   WRITE <path>   write the file (relative to the agent's folder) and report a
                  finished edit tool call at its absolute path; may repeat
 Without keywords the turn streams a short greeting. Every other wait honors
@@ -162,6 +163,8 @@ def prompt(message):
             if cancel.wait(0.01):
                 return finish("cancelled")
             chunk(session, words[index % len(words)] + ("\n\n" if index % 40 == 39 else ""))
+    if "CODE" in text:
+        chunk(session, "Run this:\n\n```bash\ncargo build --release --locked\n```\n\n")
     for path in re.findall(r"WRITE (\S+)", text):
         write_file(session, path)
     if "PERMISSION" in text:

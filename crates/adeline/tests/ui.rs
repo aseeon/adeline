@@ -285,6 +285,28 @@ fn fork(cx: &mut TestAppContext) {
     ui.wait_gone("Forked from hello", WAIT);
 }
 
+// Ctrl+Shift+C copies the latest reply's last code block. Each code block also
+// shows a copy button while the pointer is over the reply.
+#[gpui_kit::test]
+fn copy_code_block(cx: &mut TestAppContext) {
+    let _live = Live::new("copy-code");
+    let mut ui = open(cx);
+    send(&mut ui, "CODE");
+    ui.wait_named("Fork", WAIT);
+    ui.press("ctrl-shift-c");
+    assert_eq!(ui.clipboard(), "cargo build --release --locked");
+    ui.set_clipboard("");
+    ui.gone("Copy code");
+    let button = ui
+        .elements()
+        .into_iter()
+        .find(|element| element.label() == Some("Copy code"))
+        .expect("a hidden copy button");
+    ui.hover(&button);
+    ui.click("Copy code");
+    assert_eq!(ui.clipboard(), "cargo build --release --locked");
+}
+
 // A chat another client starts lands in the list without moving this window
 // off its open chat.
 #[gpui_kit::test]

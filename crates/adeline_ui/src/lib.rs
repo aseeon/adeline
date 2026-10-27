@@ -258,7 +258,8 @@ actions!(
         FocusMessage,
         DismissErrors,
         ForkChat,
-        ForkSource
+        ForkSource,
+        CopyCode
     ]
 );
 pub struct Adeline {
@@ -886,6 +887,19 @@ impl Render for Adeline {
                     app.act(Action::Fork(reply), window, cx);
                 }
             }))
+            .on_action(cx.listener(|app, _: &CopyCode, _, cx| {
+                let thread = app.selected.map(|ix| &app.workspace().threads[ix]);
+                let code = thread.and_then(|t| {
+                    t.messages
+                        .iter()
+                        .rev()
+                        .find(|m| m.role != conversation::MessageRole::User)
+                        .and_then(|m| last_code_block(&m.text))
+                });
+                if let Some(code) = code {
+                    cx.write_to_clipboard(ClipboardItem::new_string(code));
+                }
+            }))
             .on_action(cx.listener(|app, _: &ForkSource, window, cx| {
                 let threads = &app.workspace().threads;
                 let source = app
@@ -1035,6 +1049,23 @@ pub fn start(
 }
 
 // A new project's tab color, by its place in the bar.
+// ponytail: only ``` fences, add ~~~ if agents start using them.
+fn last_code_block(text: &str) -> Option<String> {
+    let mut block = None;
+    let mut open: Option<Vec<&str>> = None;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            match open.take() {
+                Some(lines) => block = Some(lines.join("\n")),
+                None => open = Some(Vec::new()),
+            }
+        } else if let Some(lines) = &mut open {
+            lines.push(line);
+        }
+    }
+    block
+}
+
 fn default_tint(ix: usize) -> usize {
     [0, 2, 3][ix.min(2)]
 }
@@ -1083,6 +1114,7 @@ fn bind_keys(cx: &mut App) {
             KeyBinding::new(&key("shift-d"), DismissErrors, None),
             KeyBinding::new(&key("shift-f"), ForkChat, None),
             KeyBinding::new(&key("shift-g"), ForkSource, None),
+            KeyBinding::new(&key("shift-c"), CopyCode, None),
         ]);
     }
     // Cmd+Tab is the macOS app switcher, so tabs switch with Ctrl alone.
