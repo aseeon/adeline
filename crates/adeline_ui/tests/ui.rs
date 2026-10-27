@@ -81,6 +81,22 @@ fn demo_conversation(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn expanded_activity_row_shows_the_whole_command(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.open_chat("Keep search text when changing filters");
+    ui.activate("Agent activity");
+    let row = "cargo test --workspace \\";
+    let collapsed = ui.named(row).bounds().size.height;
+    ui.activate(row);
+    ui.named("Show in chat");
+    assert!(ui.named(row).bounds().size.height > collapsed);
+    ui.activate(row);
+    ui.gone("Show in chat");
+    assert_eq!(ui.named(row).bounds().size.height, collapsed);
+    no_engine();
+}
+
+#[gpui_kit::test]
 fn traffic_needs_verbose(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
     ui.open_chat("Search long conversations without pausing the interface");

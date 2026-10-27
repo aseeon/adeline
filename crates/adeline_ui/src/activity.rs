@@ -515,7 +515,7 @@ impl Adeline {
                 (
                     format!("{}:{ix}", thread.id),
                     glyph,
-                    first_line(call.name()).to_owned(),
+                    call.name().to_owned(),
                     if call.running {
                         theme.foreground
                     } else {
@@ -563,12 +563,15 @@ impl Adeline {
             .small()
             .w_full()
             .selected(expanded)
-            .accessibility_label(label.clone())
+            .accessibility_label(first_line(&label).to_owned())
+            // An expanded row grows to show its whole label.
+            .when(expanded, |button| button.h_auto().py_1())
             .child(
                 row()
                     .w_full()
                     .min_w_0()
                     .gap_2()
+                    .when(expanded, |row| row.items_start())
                     .text_color(color)
                     .child(
                         div()
@@ -576,9 +579,28 @@ impl Adeline {
                             .flex_shrink_0()
                             .flex()
                             .justify_center()
+                            .when(expanded, |glyph| glyph.mt_0p5())
                             .child(glyph),
                     )
-                    .child(div().flex_1().min_w_0().truncate().child(label)),
+                    .child(if expanded {
+                        div().flex_1().min_w_0().whitespace_normal().child(label)
+                    } else {
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .child(first_line(&label).to_owned())
+                    })
+                    .child(
+                        Icon::default()
+                            .path("chevron.svg")
+                            .size(rems(0.625))
+                            .flex_shrink_0()
+                            .when(expanded, |chevron| {
+                                chevron.mt_1().rotate(Radians(std::f32::consts::PI))
+                            })
+                            .text_color(theme.muted_foreground),
+                    ),
             )
             .on_click(cx.listener(move |app, _, _, cx| {
                 if !app.activity.expanded.remove(&toggle) {
