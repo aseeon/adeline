@@ -105,6 +105,13 @@ jobs:
         env:
           ADELINE_HEADLESS_EXE: ${{ github.workspace }}/target/headless/debug/adeline${{ runner.os == 'Windows' && '.exe' || '' }}
         run: cargo nextest run --locked --workspace --all-features --profile ci --no-tests=warn
+      - name: upload pixel failures
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pixel-failures-${{ runner.os }}
+          path: target/pixel-failures
+          if-no-files-found: ignore
       # Tests that download an old release, kept off the main step's network path.
       - name: cargo nextest (ignored)
         run: cargo nextest run --locked --workspace --all-features --profile ci --run-ignored only --no-tests=warn

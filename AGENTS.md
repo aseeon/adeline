@@ -30,6 +30,8 @@ Local clippy only sees code for the current OS. Code behind `cfg(target_os = ...
 
 When a feature or bug fix is implemented and passes those checks, start the slower shipping build in the background so a fresh dist package gets built: `scripts/package.ps1` on Windows, `cargo build --profile dist --locked && scripts/macos-app` on macOS (builds `target/dist/Adeline.app`), `cargo build --profile dist --locked` on Linux. Don't wait for it before reporting completion. Report whether it succeeded once it finishes.
 
+When a change shows in the window, start `adeline --demo --control`, reach the change with `adeline ui press`, and read `adeline ui shot --element "<label>"` before reporting completion. Quit it with `adeline ui press cmd-q`, since a running UI locks the exe and makes `adeline ui` ask which one.
+
 Changes limited to documentation or agent instructions do not require application tests or a rebuild.
 
 # Versioning
@@ -46,11 +48,11 @@ Prefer high-impact integration tests: one test that drives a real flow across mo
 
 # UI testing
 
-Test UI with headless `cargo nextest` tests on GPUI's test platform, which run on every OS in CI: demo mode in `crates/adeline_ui/tests/ui.rs`, a live engine or remote machines in `crates/adeline/tests/ui.rs`. Both use the `Ui` helper in `crates/adeline_ui/tests/support/mod.rs`, which finds elements by accessibility label. A plain element a test finds needs `.test_support()` after its `.id(...)`. `scripts/engine-check/ui_check.py` is one smoke test of the real release window on Windows.
+Test UI with headless `cargo nextest` tests on GPUI's test platform, which run on every OS in CI: demo mode in `crates/adeline_ui/tests/ui.rs`, a live engine or remote machines in `crates/adeline/tests/ui.rs`. Both use the `Ui` helper in `crates/adeline_ui/tests/support/mod.rs`, which finds elements by accessibility label. A plain element a test finds needs `.test_support()` after its `.id(...)`.
 
-Check drawing with pixel tests: `crates/adeline_ui/tests/pixels.rs` renders the demo on the GPU on macOS and Linux, and `pixels_windows.rs` is one DirectX smoke test. They measure colors inside an element's bounds. A failure saves its frame under `target/pixel-failures/`.
+To look at or drive the running app, start the release build with `--control` (`adeline --demo --control`), then run `adeline ui list | tree | press | type | click | wait | shot`. Each prints JSON, and `shot` saves a PNG you can read. `press`, `type`, `click` and `wait` call the same functions as the `Ui` helper, so reproduce a UI bug with `adeline ui` first, then copy its steps into a `Ui` test. Find an element's label with `adeline ui tree`. Use computer use only for what these cannot reach, such as native dialogs and OS menus.
 
-To look at or drive the running app, start the release build with `--control` (`adeline --demo --control`), then run `adeline ui list | tree | press | type | click | wait | shot`. Each prints JSON, and `shot` saves a PNG you can read. Use computer use only for what these cannot reach, such as native dialogs and OS menus.
+Write a pixel test only for a bug that shows in drawing and not in labels or state, such as a wrong color or an element that draws nothing. `crates/adeline_ui/tests/pixels.rs` renders the demo on the GPU on macOS and Linux, and measures colors inside an element's bounds. On Windows it passes without checking, so CI's macOS and Linux jobs are its only real run. `pixels_windows.rs` is one DirectX smoke test. A failure saves its frame under `target/pixel-failures/`, and CI uploads that folder as the `pixel-failures-<os>` artifact.
 
 Navigate the app with keyboard shortcuts (listed in `docs/shortcuts.md`) wherever one exists, in tests, `adeline ui` and computer use alike, rather than moving the pointer and clicking. Each time you have to click because no shortcut reaches a control, tell the user which shortcut is missing, then add it.
 
