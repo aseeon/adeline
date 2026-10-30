@@ -360,6 +360,8 @@ fn docs_after_project_recreated(cx: &mut TestAppContext) {
     ui.wait_named("old.md", WAIT);
 
     ui.press("ctrl-w ctrl-f down delete");
+    // Past the undo window (6 s), which ticking reaches only slowly on a busy runner.
+    ui.cx.executor().advance_clock(Duration::from_secs(7));
     let definition = live
         .path()
         .join(".config/adeline/projects")
