@@ -180,11 +180,11 @@ fn docs_demo(cx: &mut TestAppContext, second: &mut TestAppContext) {
         "Viewer note draft {draft:?}"
     );
 
-    // Quitting with unsaved edits asks first; Cancel keeps Adeline open.
+    // Closing or quitting with unsaved edits asks first; Cancel keeps Adeline open.
     open_doc(&mut ui, "notes/plan", 2);
     ui.named("notes/plan.md, Editor");
     ui.input("xyz");
-    ui.quit();
+    ui.close();
     ui.named("Save changes to 1 doc?");
     ui.click("Cancel");
     ui.gone("Save changes to 1 doc?");

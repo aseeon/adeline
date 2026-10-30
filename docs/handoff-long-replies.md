@@ -2,7 +2,7 @@ Status: Draft
 
 # Handoff: draw a long reply as several transcript rows
 
-The goal is a streamed reply whose frame time stays flat as it grows. In v0.1.20 a frame costs about 2 ms when a reply starts streaming and about 4.6 ms once it reaches 10 KB, past the 4.17 ms budget of a 240 Hz display. Measure with the `stream` scenario of `scripts/engine-check/perf_check.py` (see `scripts/engine-check/README.md`).
+The goal is a streamed reply whose frame time stays flat as it grows. In v0.1.20 a frame costs about 2 ms when a reply starts streaming and about 4.6 ms once it reaches 10 KB, past the 4.17 ms budget of a 240 Hz display. Measure frame times with the profiling build's `ADELINE_FRAME_LOG` while a long reply streams (see `scripts/engine-check/README.md`).
 
 This picks up "A related cost: one long reply is one row" from the view caching work (`docs/archive/handoff-view-caching.md`). Read the "GPUI facts" section below before changing the transcript.
 
@@ -31,7 +31,7 @@ Measured on v0.1.20 (240 Hz display, `STREAM 1500`, about 6.5 bytes per chunk at
    - A streamed chunk appends to the last block, and can close it and start new ones. Only rows from the first changed block on need measuring (the `start` index in `Transcript::sync` does this for messages today).
    - Each block needs its own text view with its own key, or one text view must be shared across rows. `reply_text` keys a reply's view by thread, message index and `created_at`.
    - The Reply, Copy and Fork buttons, the hover-lit highlight from the activity panel and `Transcript::reveal` are per message. They need a message-to-rows map.
-   - Selection across rows: the Kit orders selectable text by document order across participants. Check that a drag across two block rows selects and copies both, with `ui_check.py`'s view caching check as a model.
+   - Selection across rows: the Kit orders selectable text by document order across participants. Check that a drag across two block rows selects and copies both, with the selection checks in `docs_demo` (`crates/adeline_ui/tests/ui.rs`) as a model.
 2. **Ask GPUI Kit to virtualize a non-scrollable `TextView`,** so it lays out only the blocks inside the visible bounds. This keeps one row per message, and helps every `TextView` user.
 
 Option 2 is less code in Adeline if the Kit takes it. Option 1 works without waiting on the Kit.
@@ -56,4 +56,4 @@ Learned while caching views in v0.1.17-v0.1.20, against gpui-pre 0.3.7 and Kit 0
 
 ## Done when
 
-`perf_check.py`'s `stream` scenario shows draw p50 within 0.5 ms of its first two seconds for the whole reply, and draw p95 under 4 ms.
+The frame log of a long streamed reply shows draw p50 within 0.5 ms of its first two seconds for the whole reply, and draw p95 under 4 ms.

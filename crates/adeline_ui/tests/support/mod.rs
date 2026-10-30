@@ -311,10 +311,16 @@ impl<'a> Ui<'a> {
     }
 
     /// Quits with Cmd+Q, which asks first like the window's close button. Both call
-    /// `interaction::request_close`. (`VisualTestContext::simulate_close` panics once
-    /// the window is gone.)
+    /// `interaction::request_close`.
     pub fn quit(&mut self) {
         self.press("cmd-q");
+    }
+
+    /// Clicks the window's close button. Use it only where Adeline asks first:
+    /// `VisualTestContext::simulate_close` panics once the window is gone.
+    pub fn close(&mut self) {
+        VisualTestContext::from_window(self.main, self.cx).simulate_close();
+        self.settle();
     }
 
     pub fn is_open(&mut self) -> bool {

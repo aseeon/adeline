@@ -36,11 +36,11 @@ A text selection dragged in one panel can spread into another panel's text. Adel
 - the transcript (`chat/transcript.rs`): replies' `TextView` and the `SelectableText` paragraphs of user and demo messages
 - the doc Viewer (`docs/viewer.rs`): `markdown()` and the nested `TextView`s of alert and task blocks
 
-With no participants outside the start panel, gpui-kit's fallback has nowhere else to go. Starting and ending a drag redraws the transcript's cached rows (`Transcript::refresh_all`). `scripts/engine-check/ui_check.py` checks the leak with a real conversation beside a doc.
+With no participants outside the start panel, gpui-kit's fallback has nowhere else to go. Starting and ending a drag redraws the transcript's cached rows (`Transcript::refresh_all`). `docs_demo` in `crates/adeline_ui/tests/ui.rs` checks the leak with a conversation beside a doc.
 
 ## Once gpui-kit fixes it
 
-1. Bump gpui-kit and confirm the leak check in `ui_check.py` passes with the workaround still in place.
+1. Bump gpui-kit and confirm `docs_demo` passes with the workaround still in place.
 2. Remove `DragPanel`, `selectable_in`, `set_drag_panel` and the panel ID constants from `panes.rs`. Pass `content` through `panel_area`'s callers directly, or drop `panel_area`.
 3. Return the transcript and the Viewer to always-selectable text: `TextView` with `.selectable(true)` and `SelectableText` paragraphs.
 4. Run the leak check again; it should still pass.
