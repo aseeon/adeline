@@ -4,6 +4,9 @@
 //! inside an element's bounds, and a failure saves its frame under
 //! `target/pixel-failures`. Windows has no headless renderer, so these tests pass
 //! there without checking, and `pixels_windows.rs` covers DirectX instead.
+//!
+//! macOS builds its text system on the main thread, so this binary has no test
+//! harness: `main` answers nextest's `--list` and runs the test it names.
 #[path = "support/pixels.rs"]
 mod pixels;
 mod support;
@@ -125,7 +128,34 @@ impl Headless {
     }
 }
 
-#[test]
+const TESTS: [(&str, fn()); 3] = [
+    (
+        "demo_chat_draws_in_theme_colors",
+        demo_chat_draws_in_theme_colors,
+    ),
+    ("selected_chat_row_shows", selected_chat_row_shows),
+    ("mermaid_diagram_renders", mermaid_diagram_renders),
+];
+
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|arg| arg == "--list") {
+        if !args.iter().any(|arg| arg == "--ignored") {
+            for (name, _) in TESTS {
+                println!("{name}: test");
+            }
+        }
+        return;
+    }
+    let only = args.iter().find(|arg| !arg.starts_with("--"));
+    for (name, test) in TESTS {
+        if only.is_none_or(|only| only == name) {
+            test();
+            println!("{name}: ok");
+        }
+    }
+}
+
 fn demo_chat_draws_in_theme_colors() {
     let Some(mut ui) = Headless::open("demo_chat_draws_in_theme_colors") else {
         return;
@@ -135,7 +165,6 @@ fn demo_chat_draws_in_theme_colors() {
     check_demo(&frame, &mut |label| ui.find(label), background);
 }
 
-#[test]
 fn selected_chat_row_shows() {
     let Some(mut ui) = Headless::open("selected_chat_row_shows") else {
         return;
@@ -159,7 +188,6 @@ fn selected_chat_row_shows() {
     });
 }
 
-#[test]
 fn mermaid_diagram_renders() {
     let Some(mut ui) = Headless::open("mermaid_diagram_renders") else {
         return;

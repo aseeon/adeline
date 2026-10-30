@@ -38,11 +38,12 @@ control = ["gpui-kit/test-support", "dep:image"]
 name = "ui"
 required-features = ["control"]
 
+# The pixel tests run on the main thread, which the test harness doesn't use.
 [[test]]
 name = "pixels"
+harness = false
 required-features = ["control"]
 
-# Owns the real Windows run loop, so it has no test harness.
 [[test]]
 name = "pixels_windows"
 harness = false
