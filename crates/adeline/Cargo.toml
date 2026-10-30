@@ -19,9 +19,12 @@ mimalloc.workspace = true
 default = ["gui"]
 gui = ["dep:adeline_ui", "adeline_engine/gui"]
 profiler = ["gui", "adeline_ui/profiler"]
+# `adeline --control` and `adeline ui` for agents (`docs/archive/scope-ui-control.md`).
+# Local release builds only, never the dist package.
+control = ["gui", "adeline_ui/control"]
 # The UI tests against a live engine (`tests/ui.rs`). A dev-dependency on the UI
 # would build GPUI into the headless tests too.
-test-support = ["gui", "adeline_ui/test-support", "dep:gpui-kit", "gpui-kit/test-support"]
+test-support = ["control", "dep:gpui-kit", "gpui-kit/test-support"]
 
 [[test]]
 name = "ui"

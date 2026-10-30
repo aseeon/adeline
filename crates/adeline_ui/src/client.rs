@@ -188,7 +188,7 @@ enum Incoming {
     OldGone,
 }
 
-fn runtime() -> &'static tokio::runtime::Runtime {
+pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
     // Its own small runtime; GPUI keeps its executors.
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {

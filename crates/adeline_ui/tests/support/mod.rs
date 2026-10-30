@@ -1,12 +1,15 @@
 //! Shared by the UI tests here and in `crates/adeline/tests`: the real `Adeline`
 //! window on GPUI's test platform, found by accessibility labels (the names a user
-//! and UI Automation see) and driven by shortcuts from `docs/shortcuts.md`.
+//! and UI Automation see) and driven by shortcuts from `docs/shortcuts.md`. Finding,
+//! clicking, pressing and typing go through `adeline_ui::control`, which `adeline ui`
+//! uses too.
 #![allow(dead_code, reason = "each test file uses part of it")]
 #![expect(
     clippy::disallowed_methods,
     reason = "tests wait for other processes off any real UI thread"
 )]
 
+use adeline_ui::control;
 use gpui_kit::base::test_support::{ElementSnapshot, snapshots};
 use gpui_kit::{
     AnyWindowHandle, App, AppContext, Bounds, ClipboardItem, Entity, KeyDownEvent, KeyUpEvent,
@@ -189,18 +192,14 @@ impl<'a> Ui<'a> {
 
     pub fn press(&mut self, keys: &str) {
         for key in keys.split_whitespace() {
-            self.cx.simulate_keystrokes(self.window, key);
+            self.with(|window, cx| control::press(window, cx, key))
+                .unwrap_or_else(|error| panic!("{error:#}"));
             self.settle();
         }
     }
 
     pub fn input(&mut self, text: &str) {
-        for character in text.chars() {
-            let text = character.to_string();
-            let mut key = Keystroke::parse(&text).expect("a character is a keystroke");
-            key.key_char = Some(text);
-            self.cx.dispatch_keystroke(self.window, key);
-        }
+        self.with(|window, cx| control::type_text(window, cx, text));
         self.settle();
     }
 
@@ -222,7 +221,7 @@ impl<'a> Ui<'a> {
     }
 
     pub fn try_named(&mut self, label: &str) -> Option<ElementSnapshot> {
-        self.find(|name| name == label)
+        self.with(|window, _| control::visible(window, label).into_iter().next())
     }
 
     pub fn named(&mut self, label: &str) -> ElementSnapshot {
@@ -249,14 +248,20 @@ impl<'a> Ui<'a> {
         names
     }
 
-    /// Clicks the element named `label` once it stops moving: dialogs slide in on
-    /// wall-clock time, so an early click would land where the control isn't yet.
+    /// The one visible element named `label`, as `adeline ui click` finds it.
+    pub fn unique(&mut self, label: &str) -> ElementSnapshot {
+        self.with(|window, _| control::find(window, label))
+            .unwrap_or_else(|error| panic!("{error:#}"))
+    }
+
+    /// Clicks the one element named `label` once it stops moving: dialogs slide in
+    /// on wall-clock time, so an early click would land where the control isn't yet.
     pub fn click(&mut self, label: &str) {
-        let mut element = self.named(label);
+        let mut element = self.unique(label);
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             self.tick();
-            let now = self.named(label);
+            let now = self.unique(label);
             if now.bounds() == element.bounds() || Instant::now() > deadline {
                 break;
             }
@@ -274,9 +279,7 @@ impl<'a> Ui<'a> {
     }
 
     pub fn click_at(&mut self, position: Point<Pixels>) {
-        let mut cx = VisualTestContext::from_window(self.window, self.cx);
-        cx.simulate_mouse_move(position, None, Modifiers::default());
-        cx.simulate_click(position, Modifiers::default());
+        self.with(|window, cx| control::click(window, cx, position));
         self.settle();
     }
 

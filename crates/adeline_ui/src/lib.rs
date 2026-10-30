@@ -11,6 +11,8 @@ mod activity;
 mod agent_form;
 mod chat;
 mod client;
+#[cfg(feature = "control")]
+pub mod control;
 mod conversation_ui;
 mod docs;
 mod fonts;
@@ -45,7 +47,8 @@ use gpui_kit::component::{
 use gpui_kit::{prelude::*, *};
 use std::borrow::Cow;
 
-struct Assets;
+#[derive(Debug)]
+pub struct Assets;
 // The harnesses of the machine whose project is open.
 #[derive(Clone, Default)]
 struct Harnesses(harness::Catalog);
@@ -953,7 +956,7 @@ impl Render for Adeline {
     }
 }
 
-pub fn open(demo_mode: bool, verbose: bool) {
+pub fn open(demo_mode: bool, verbose: bool, control: bool) {
     #[cfg(feature = "profiler")]
     frame_log::start();
     application().with_assets(Assets).run(move |cx: &mut App| {
@@ -969,6 +972,17 @@ pub fn open(demo_mode: bool, verbose: bool) {
             },
             cx,
         );
+        #[cfg(feature = "control")]
+        if control && let Err(error) = control::serve(demo_mode, cx) {
+            tracing::event!(
+                name: "control.serve.failed",
+                tracing::Level::WARN,
+                error.message = format!("{error:#}"),
+                "{{error.message}}"
+            );
+        }
+        #[cfg(not(feature = "control"))]
+        let _ = control;
         cx.activate(true);
     });
 }

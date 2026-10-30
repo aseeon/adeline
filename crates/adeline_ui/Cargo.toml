@@ -15,6 +15,7 @@ anyhow.workspace = true
 async-channel.workspace = true
 chrono.workspace = true
 gpui-kit = { workspace = true, features = ["tree-sitter-markdown", "tree-sitter-yaml", "tree-sitter-toml"] }
+image = { workspace = true, optional = true }
 mermaid-rs-renderer.workspace = true
 resvg = { workspace = true, features = ["text", "system-fonts"] }
 serde = { workspace = true, features = ["derive"] }
@@ -29,8 +30,23 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 [features]
 # Frame timings for profiling builds, see `frame_log.rs`.
 profiler = ["gpui-kit/profiler"]
-# GPUI's test platform, for the UI tests in `crates/adeline/tests`.
-test-support = ["gpui-kit/test-support"]
+# The control endpoint (`control.rs`) and GPUI's test support, which the UI
+# tests here and in `crates/adeline/tests` use. Never in the dist package.
+control = ["gpui-kit/test-support", "dep:image"]
+
+[[test]]
+name = "ui"
+required-features = ["control"]
+
+[[test]]
+name = "pixels"
+required-features = ["control"]
+
+# Owns the real Windows run loop, so it has no test harness.
+[[test]]
+name = "pixels_windows"
+harness = false
+required-features = ["control"]
 
 [lints]
 workspace = true

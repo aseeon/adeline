@@ -3,7 +3,8 @@
 //!
 //! Messages are JSON lines. `connect` fails with `NotFound` when no engine runs.
 //! `engine/id` is the engine's lasting identity: remote clients read it over SSH to
-//! tell engines apart.
+//! tell engines apart. A UI started with `--control` listens on its own pipe or
+//! socket, named after its process ID (`control_address`).
 use anyhow::{Context as _, Result, bail};
 use serde::Serialize;
 use std::{io, path::PathBuf, time::Duration};
@@ -46,23 +47,67 @@ const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 #[cfg(windows)]
 const FNV_PRIME: u64 = 0x0100_0000_01b3;
 
+// One pipe per configuration folder, which is one per OS user.
 #[cfg(windows)]
-fn pipe_name() -> Result<String> {
-    // One pipe per configuration folder, which is one per OS user.
+fn folder_hash() -> Result<u64> {
     let folder = crate::config::directory()?;
-    let hash = folder
+    Ok(folder
         .to_string_lossy()
         .to_lowercase()
         .bytes()
         .fold(FNV_OFFSET, |hash, byte| {
             (hash ^ u64::from(byte)).wrapping_mul(FNV_PRIME)
-        });
-    Ok(format!(r"\\.\pipe\adeline-engine-{hash:016x}"))
+        }))
 }
 
-#[cfg(unix)]
-fn socket_path() -> Result<PathBuf> {
-    Ok(engine_dir()?.join("engine.sock"))
+fn engine_address() -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        Ok(format!(r"\\.\pipe\adeline-engine-{:016x}", folder_hash()?).into())
+    }
+    #[cfg(unix)]
+    {
+        Ok(engine_dir()?.join("engine.sock"))
+    }
+}
+
+fn control_prefix() -> Result<PathBuf> {
+    #[cfg(windows)]
+    {
+        Ok(format!(r"\\.\pipe\adeline-ui-{:016x}-", folder_hash()?).into())
+    }
+    #[cfg(unix)]
+    {
+        Ok(engine_dir()?.join("ui-"))
+    }
+}
+
+/// Where the control UI with process ID `pid` listens.
+pub fn control_address(pid: u32) -> Result<PathBuf> {
+    let mut address = control_prefix()?.into_os_string();
+    address.push(pid.to_string());
+    Ok(address.into())
+}
+
+/// The process IDs of control UIs with an endpoint, including ones that died
+/// and left a socket behind.
+pub fn control_pids() -> Result<Vec<u32>> {
+    let prefix = control_prefix()?;
+    let (Some(dir), Some(start)) = (prefix.parent(), prefix.file_name()) else {
+        return Ok(Vec::new());
+    };
+    let start = start.to_string_lossy();
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Ok(Vec::new());
+    };
+    let mut pids: Vec<u32> = entries
+        .filter_map(|entry| {
+            let name = entry.ok()?.file_name();
+            name.to_string_lossy().strip_prefix(&*start)?.parse().ok()
+        })
+        .collect();
+    pids.sort_unstable();
+    Ok(pids)
 }
 
 fn split<S: AsyncRead + AsyncWrite + Send + 'static>(stream: S) -> (Reader, Writer) {
@@ -72,14 +117,17 @@ fn split<S: AsyncRead + AsyncWrite + Send + 'static>(stream: S) -> (Reader, Writ
 }
 
 pub async fn connect() -> io::Result<(Reader, Writer)> {
+    connect_to(&engine_address().map_err(io::Error::other)?).await
+}
+
+pub async fn connect_to(address: &std::path::Path) -> io::Result<(Reader, Writer)> {
     #[cfg(windows)]
     {
         use tokio::net::windows::named_pipe::ClientOptions;
         const PIPE_BUSY: i32 = 231;
-        let name = pipe_name().map_err(io::Error::other)?;
         let mut attempts = 0;
         loop {
-            match ClientOptions::new().open(&name) {
+            match ClientOptions::new().open(address) {
                 Ok(client) => return Ok(split(client)),
                 Err(error) if error.raw_os_error() == Some(PIPE_BUSY) && attempts < 100 => {
                     attempts += 1;
@@ -91,8 +139,7 @@ pub async fn connect() -> io::Result<(Reader, Writer)> {
     }
     #[cfg(unix)]
     {
-        let path = socket_path().map_err(io::Error::other)?;
-        match tokio::net::UnixStream::connect(&path).await {
+        match tokio::net::UnixStream::connect(address).await {
             Ok(stream) => Ok(split(stream)),
             // A socket left by a killed engine refuses connections.
             Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => {
@@ -123,26 +170,37 @@ pub struct Listener {
 impl Listener {
     pub fn bind() -> Result<Self> {
         // Callers hold the engine lock, so no other engine listens.
+        Self::bind_at(&engine_address()?).context("Cannot listen for clients")
+    }
+
+    /// Listens as this process's control UI. Must run inside a tokio runtime.
+    pub fn bind_control() -> Result<Self> {
+        std::fs::create_dir_all(engine_dir()?)?;
+        Self::bind_at(&control_address(std::process::id())?)
+            .context("Cannot open the control endpoint")
+    }
+
+    fn bind_at(address: &std::path::Path) -> Result<Self> {
         #[cfg(windows)]
         {
-            let name = pipe_name()?;
+            let name = address.to_string_lossy().into_owned();
             let next = crate::platform::owner_only_pipe(&name, true)
-                .context("Cannot create the engine pipe")?;
+                .with_context(|| format!("Cannot create the pipe {name}"))?;
             Ok(Self { name, next })
         }
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
-            let path = socket_path()?;
             let dir = engine_dir()?;
             std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
                 .with_context(|| dir.display().to_string())?;
-            // A socket left by a crashed engine; the lock proves it's stale.
-            let _ = std::fs::remove_file(&path);
-            let listener =
-                tokio::net::UnixListener::bind(&path).context("Cannot create the engine socket")?;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-                .with_context(|| path.display().to_string())?;
+            // A socket left by a crashed process. The engine lock, or the
+            // process ID in the name, proves it's stale.
+            let _ = std::fs::remove_file(address);
+            let listener = tokio::net::UnixListener::bind(address)
+                .with_context(|| format!("Cannot create the socket {}", address.display()))?;
+            std::fs::set_permissions(address, std::fs::Permissions::from_mode(0o600))
+                .with_context(|| address.display().to_string())?;
             Ok(Self { listener })
         }
     }

@@ -9,6 +9,7 @@ Every source file opens with a `//!` summary, and `grep -rm1 '^//!' crates` prin
 - UI: `adeline` (or `adeline --demo`) opens the window (`adeline_ui::open`).
 - Engine: `adeline engine` (`engine::main`) runs a background process that owns agent processes, conversation state and storage. One engine runs per OS user, and it outlives the UI.
 - Bridge: `adeline bridge` (`remote::bridge_main`). A remote client runs it over SSH to reach that machine's engine (see Machines).
+- Control client: `adeline ui <command>` (`control::cli`), in control builds only (see Control builds).
 
 `ssh` also runs the binary as its `SSH_ASKPASS` helper, and `main` checks for that first (see Machines).
 
@@ -166,10 +167,17 @@ Until a real extension needs them, there is no `trait Mode`, no extension view t
 
 `adeline_assets`'s `build.rs` embeds every file in `assets/` and every theme in `bundled-themes/`, and `adeline_assets::embedded` returns a file's bytes. Dropping a file in is enough. The binary's `build.rs` makes the app icon from `assets/adeline.close.up.svg`. `icon("name")` loads `assets/name.svg`. Icons are Phosphor regular SVGs, and each one gets a row in `assets/PHOSPHOR.md` (app name → Phosphor name).
 
+## Control builds
+
+The `control` feature (`cargo build --release --locked --features control`) turns on GPUI Kit's `test-support` and compiles in `adeline_ui/src/control.rs`. The dist package never has it. `adeline --control` opens a control endpoint: a same-user pipe or socket named after the UI's process ID (`ipc::control_address`), next to the engine's. Without the flag a control build opens nothing.
+
+`adeline ui <command>` finds the running control UIs (`ipc::control_pids`), sends one JSON `Request` to the chosen one and prints the JSON reply. The UI's accept loop runs on the engine client's tokio runtime and hands each request to a GPUI task, which waits for the next frame and then handles it on the UI thread, in arrival order. Elements are found by accessibility label through `gpui_kit::base::test_support::snapshots`, input goes through `Window::dispatch_keystroke` and `dispatch_event`, and `shot` reads the last frame with `Window::render_to_image` (Windows and macOS only). The UI tests' `Ui` helper and the pixel tests use the same `control::find`, `click`, `press` and `type_text`.
+
 ## Tests
 
 - Rust unit tests sit next to the code (`#[cfg(test)]`). The large suites are `storage/tests.rs` and `acp/tests.rs`.
 - `adeline_core/tests/protocol.rs` pins the wire format against `tests/wire/<PROTOCOL>.jsonl`.
 - `adeline/tests/engine.rs` runs the real binary's engine in a temporary home on every OS, with `scripts/engine-check/fake_agent.py` as the agent, so `cargo nextest` needs Python 3 on PATH.
-- `adeline_ui/tests/ui.rs` runs the real `Adeline` view headless on GPUI's test platform, on every OS, in demo mode. `adeline/tests/ui.rs` does the same against the binary's engine and fake remote machines (`fake_ssh.py`), behind the binary's `test-support` feature so the headless tests build no GPUI. `ADELINE_EXE` names the binary that Adeline runs as its engine and installs remotely, since a test process isn't it. `adeline_ui::start` does the setup for both `open` and the tests, apart from the platform application and the native window options.
+- `adeline_ui/tests/ui.rs` runs the real `Adeline` view headless on GPUI's test platform, on every OS, in demo mode. `adeline/tests/ui.rs` does the same against the binary's engine and fake remote machines (`fake_ssh.py`), behind the binary's `test-support` feature (which includes `control`) so the headless tests build no GPUI. `ADELINE_EXE` names the binary that Adeline runs as its engine and installs remotely, since a test process isn't it. `adeline_ui::start` does the setup for both `open` and the tests, apart from the platform application and the native window options.
+- `adeline_ui/tests/pixels.rs` renders the demo in a `HeadlessAppContext` with the platform's real text system and GPU renderer (Metal on macOS, wgpu on lavapipe in Linux CI) and checks pixels inside elements' bounds (`tests/support/pixels.rs`). Windows has no headless renderer, so `pixels_windows.rs`, a test without a harness, draws the demo in a hidden real window and captures it through DirectX. The UI tests and pixel tests need the `control` feature, which `--all-features` turns on.
 - `scripts/engine-check/` holds the Windows engine checks and the one UI smoke test of the release window. See its README.

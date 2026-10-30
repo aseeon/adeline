@@ -93,7 +93,7 @@ dependencies = [
 
 [[package]]
 name = "adeline"
-version = "0.2.20"
+version = "0.2.21"
 dependencies = [
  "adeline_core",
  "adeline_engine",
@@ -107,14 +107,14 @@ dependencies = [
 
 [[package]]
 name = "adeline_assets"
-version = "0.2.20"
+version = "0.2.21"
 dependencies = [
  "resvg 0.45.1",
 ]
 
 [[package]]
 name = "adeline_core"
-version = "0.2.20"
+version = "0.2.21"
 dependencies = [
  "adeline_assets",
  "anyhow",
@@ -132,7 +132,7 @@ dependencies = [
 
 [[package]]
 name = "adeline_docs"
-version = "0.2.20"
+version = "0.2.21"
 dependencies = [
  "ignore",
  "nucleo-matcher",
@@ -140,7 +140,7 @@ dependencies = [
 
 [[package]]
 name = "adeline_engine"
-version = "0.2.20"
+version = "0.2.21"
 dependencies = [
  "adeline_core",
  "adeline_docs",
@@ -159,7 +159,7 @@ dependencies = [
 
 [[package]]
 name = "adeline_ui"
-version = "0.2.20"
+version = "0.2.21"
 dependencies = [
  "adeline_assets",
  "adeline_core",
@@ -168,6 +168,7 @@ dependencies = [
  "async-channel",
  "chrono",
  "gpui-kit",
+ "image",
  "mermaid-rs-renderer",
  "resvg 0.45.1",
  "serde",

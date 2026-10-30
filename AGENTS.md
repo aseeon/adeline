@@ -18,7 +18,7 @@ Research reports go in `docs/reports/`, and the notes behind each report go in `
 
 Agents develop Adeline on Windows and macOS. Keep instructions OS agnostic, and name the per-OS command wherever one differs.
 
-When application code changes, run the checks CI runs, then rebuild the runnable app with `cargo build --release --locked` before reporting completion. Confirm that the build succeeds. The checks:
+When application code changes, run the checks CI runs, then rebuild the runnable app with `cargo build --release --locked --features control` before reporting completion. Confirm that the build succeeds. The checks:
 
 - `cargo fmt --all -- --check`
 - `scripts/check-todos` (a bash script, run it through Git Bash on Windows)
@@ -46,9 +46,13 @@ Prefer high-impact integration tests: one test that drives a real flow across mo
 
 # UI testing
 
-Test UI with headless `cargo nextest` tests on GPUI's test platform, which run on every OS in CI: demo mode in `crates/adeline_ui/tests/ui.rs`, a live engine or remote machines in `crates/adeline/tests/ui.rs`. Both use the `Ui` helper in `crates/adeline_ui/tests/support/mod.rs`, which finds elements by accessibility label. A plain element a test finds needs `.test_support()` after its `.id(...)`. `scripts/engine-check/ui_check.py` is one smoke test of the real release window on Windows. Use computer use only for what the test platform cannot show, such as real drawing.
+Test UI with headless `cargo nextest` tests on GPUI's test platform, which run on every OS in CI: demo mode in `crates/adeline_ui/tests/ui.rs`, a live engine or remote machines in `crates/adeline/tests/ui.rs`. Both use the `Ui` helper in `crates/adeline_ui/tests/support/mod.rs`, which finds elements by accessibility label. A plain element a test finds needs `.test_support()` after its `.id(...)`. `scripts/engine-check/ui_check.py` is one smoke test of the real release window on Windows.
 
-Navigate the app with keyboard shortcuts (listed in `docs/shortcuts.md`) wherever one exists, in tests and computer use alike, rather than moving the pointer and clicking. Each time a test has to click because no shortcut reaches a control, tell the user which shortcut is missing, then add it.
+Check drawing with pixel tests: `crates/adeline_ui/tests/pixels.rs` renders the demo on the GPU on macOS and Linux, and `pixels_windows.rs` is one DirectX smoke test. They measure colors inside an element's bounds. A failure saves its frame under `target/pixel-failures/`.
+
+To look at or drive the running app, start the release build with `--control` (`adeline --demo --control`), then run `adeline ui list | tree | press | type | click | wait | shot`. Each prints JSON, and `shot` saves a PNG you can read. Use computer use only for what these cannot reach, such as native dialogs and OS menus.
+
+Navigate the app with keyboard shortcuts (listed in `docs/shortcuts.md`) wherever one exists, in tests, `adeline ui` and computer use alike, rather than moving the pointer and clicking. Each time you have to click because no shortcut reaches a control, tell the user which shortcut is missing, then add it.
 
 # Releases
 

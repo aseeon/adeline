@@ -1,4 +1,4 @@
-Status: Draft
+Status: Implemented in v0.2.21. This scope is history. Where it and the code differ, the code is right.
 
 # UI control and pixel tests
 
