@@ -53,11 +53,18 @@ fn check_new(root: &Path, path: &str) -> Result<PathBuf, String> {
     Ok(full)
 }
 
+// A pipe or device could block the engine's one task forever, so only files are read.
+fn file_size(full: &Path, path: &str) -> Result<u64, String> {
+    let metadata = std::fs::metadata(full).map_err(|e| io_error(path, &e))?;
+    if !metadata.is_file() {
+        return Err(format!("{path} is not a file."));
+    }
+    Ok(metadata.len())
+}
+
 fn read(root: &Path, path: &str) -> Result<DocFile, String> {
     let full = adeline_docs::resolve(root, path)?;
-    let size = std::fs::metadata(&full)
-        .map_err(|e| io_error(path, &e))?
-        .len();
+    let size = file_size(&full, path)?;
     if size > READ_LIMIT {
         return Err(format!(
             "{path} is larger than 50 MB, so it can't be opened."
@@ -125,9 +132,7 @@ fn image(root: &Path, path: &str) -> Result<String, String> {
         return Err(format!("{path} is not an image."));
     }
     let full = adeline_docs::resolve(root, path)?;
-    let size = std::fs::metadata(&full)
-        .map_err(|e| io_error(path, &e))?
-        .len();
+    let size = file_size(&full, path)?;
     if size > IMAGE_LIMIT {
         return Err(format!("{path} is larger than 20 MB."));
     }
@@ -406,6 +411,24 @@ impl Engine {
 mod tests {
     use super::*;
     use adeline_core::files::TempDir;
+
+    #[test]
+    fn only_files_are_read() {
+        let root = TempDir::new("adeline-docs-special");
+        std::fs::create_dir(root.join("folder.png")).unwrap();
+        let error = image(&root, "folder.png").unwrap_err();
+        assert!(error.contains("not a file"), "{error}");
+        #[cfg(unix)]
+        {
+            let made = std::process::Command::new("mkfifo")
+                .arg(root.join("wait.md"))
+                .status()
+                .unwrap();
+            assert!(made.success());
+            let error = read(&root, "wait.md").unwrap_err();
+            assert!(error.contains("not a file"), "{error}");
+        }
+    }
 
     #[test]
     fn a_save_replaces_the_whole_file_and_refuses_what_it_cannot_save() {
