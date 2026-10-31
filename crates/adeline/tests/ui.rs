@@ -382,6 +382,41 @@ fn docs_after_project_recreated(cx: &mut TestAppContext) {
     ui.gone("old.md");
 }
 
+fn doc_text(ui: &mut Ui, label: &str) -> Option<String> {
+    ui.try_named(label)
+        .and_then(|doc| doc.value().map(str::to_owned))
+}
+
+// Docs reads what changed on disk while it was closed, when no watcher saw it.
+#[gpui_kit::test]
+fn docs_refresh_after_leaving(cx: &mut TestAppContext) {
+    let live = Live::new("docs-refresh");
+    let doc = live.path().join("work/a.md");
+    std::fs::write(&doc, "one\n").unwrap();
+    let mut ui = open(cx);
+    ui.press("ctrl-2");
+    ui.wait_named("a.md", WAIT);
+    ui.press("ctrl-p");
+    ui.input("a.md");
+    ui.press("down enter");
+    ui.wait_named("a.md, Viewer", WAIT);
+    ui.press("ctrl-shift-v");
+    ui.wait("the doc's text", WAIT, |ui| {
+        doc_text(ui, "a.md, Editor").as_deref() == Some("one\n")
+    });
+
+    ui.press("ctrl-1");
+    ui.wait_gone("Docs tree", WAIT);
+    // Time for the engine to drop the watcher once no client watches.
+    ui.pause(Duration::from_secs(1));
+    std::fs::write(&doc, "two\n").unwrap();
+    std::fs::write(live.path().join("work/b.md"), "# B\n").unwrap();
+    ui.press("ctrl-2");
+    ui.wait("the changed text", WAIT, |ui| {
+        doc_text(ui, "a.md, Editor").as_deref() == Some("two\n")
+    });
+}
+
 const LONG: Duration = Duration::from_secs(90);
 const EXE: &str = if cfg!(windows) {
     "adeline.exe"

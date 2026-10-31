@@ -505,11 +505,7 @@ impl Adeline {
         let current = self.current_id();
         let project = self.docs_project();
         let chat = chat.or_else(|| project.chat.clone()).or(current);
-        let listed = project.listed;
         self.docs_select_chat(chat, window, cx);
-        if !listed {
-            self.docs_list(cx);
-        }
         let (machine, id) = (
             self.workspace().machine.clone(),
             self.workspace().config.id.clone(),
@@ -523,6 +519,8 @@ impl Adeline {
             cx,
             |_, _, _, _| {},
         );
+        self.docs_list(cx);
+        self.docs_reload_cached(cx);
         if let Some(path) = self.docs_project().open.clone() {
             self.docs_open(path, window, cx);
         }
@@ -926,6 +924,21 @@ impl Adeline {
             self.docs_reload(&key, path, cx);
         }
         self.docs_refresh_rows(cx);
+    }
+
+    // Nothing watched the project while Docs was closed or the engine was away.
+    fn docs_reload_cached(&mut self, cx: &mut Context<Self>) {
+        let key = self.docs_key();
+        let cached: Vec<String> = self
+            .docs_project()
+            .files
+            .iter()
+            .filter(|(_, doc)| doc.modified > 0)
+            .map(|(path, _)| path.clone())
+            .collect();
+        for path in cached {
+            self.docs_reload(&key, path, cx);
+        }
     }
 
     fn docs_reload(&mut self, key: &str, path: String, cx: &mut Context<Self>) {
@@ -1495,6 +1508,7 @@ impl Adeline {
         if !relisting {
             self.docs_list(cx);
         }
+        self.docs_reload_cached(cx);
     }
 
     /// Tells the machine's engine the Docs settings that decide which files get cards,
