@@ -816,7 +816,7 @@ impl Adeline {
                     Act::Save,
                     cx,
                 )
-                .disabled(!doc.dirty && !doc.gone || locked),
+                .disabled(!doc.dirty && !doc.gone || locked || doc.conflict.is_some()),
             )
             .into_any_element()
     }

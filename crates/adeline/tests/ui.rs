@@ -417,6 +417,38 @@ fn docs_refresh_after_leaving(cx: &mut TestAppContext) {
     });
 }
 
+// Saving waits for a choice when the doc changed on disk under unsaved edits.
+#[gpui_kit::test]
+fn docs_conflict_blocks_save(cx: &mut TestAppContext) {
+    let live = Live::new("docs-conflict");
+    let doc = live.path().join("work/a.md");
+    std::fs::write(&doc, "one\n").unwrap();
+    let mut ui = open(cx);
+    ui.press("ctrl-2");
+    ui.wait_named("a.md", WAIT);
+    ui.press("ctrl-p");
+    ui.input("a.md");
+    ui.press("down enter");
+    ui.wait_named("a.md, Viewer", WAIT);
+    ui.press("ctrl-shift-v");
+    ui.wait_named("a.md, Editor", WAIT);
+    ui.input("mine ");
+    ui.wait_named("a.md, unsaved", WAIT);
+
+    std::fs::write(&doc, "theirs\n").unwrap();
+    ui.wait_named("Keep my version", WAIT);
+    ui.press("ctrl-s");
+    ui.pause(Duration::from_secs(1));
+    assert_eq!(std::fs::read_to_string(&doc).unwrap(), "theirs\n");
+
+    ui.click("Keep my version");
+    ui.wait_gone("Keep my version", WAIT);
+    ui.press("ctrl-s");
+    ui.wait("my version saved", WAIT, |_| {
+        std::fs::read_to_string(&doc).unwrap() == "mine one\n"
+    });
+}
+
 const LONG: Duration = Duration::from_secs(90);
 const EXE: &str = if cfg!(windows) {
     "adeline.exe"

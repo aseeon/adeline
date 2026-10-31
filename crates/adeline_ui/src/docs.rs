@@ -811,7 +811,12 @@ impl Adeline {
             self.defer_with_window(cx, move |app, window, cx| after(app, false, window, cx));
             return;
         };
-        if let Some(reason) = doc.read_only.clone() {
+        let refused = doc.read_only.clone().or_else(|| {
+            doc.conflict.as_ref().map(|_| {
+                format!("{path} changed on disk. Keep your version or take the one on disk first.")
+            })
+        });
+        if let Some(reason) = refused {
             self.notify_toast(&reason, cx);
             self.defer_with_window(cx, move |app, window, cx| after(app, false, window, cx));
             return;
