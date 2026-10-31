@@ -151,6 +151,8 @@ fn docs_demo(cx: &mut TestAppContext, second: &mut TestAppContext) {
     ui.input("Make document edits");
     ui.press("enter");
     // Cards come and go with the replies, so Tab reaches them instead of a shortcut.
+    // The last card fits only in a taller window.
+    ui.resize(1440., 1200.);
     ui.activate("2 more docs, hidden");
     ui.named("2 more docs, shown");
     ui.activate("Open notes/deleted-draft.md");

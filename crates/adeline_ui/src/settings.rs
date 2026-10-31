@@ -690,7 +690,12 @@ impl SettingsWindow {
         let focus = cx.focus_handle().tab_stop(true);
         fonts::refresh(cx);
         let font_sizes = std::array::from_fn(|which| {
-            text_input(&selected_font_size(which).to_string(), "14", window, cx)
+            text_input(
+                &selected_font_size(which).to_string(),
+                if which == 0 { "15" } else { "14" },
+                window,
+                cx,
+            )
         });
         let retry_limit = text_input(
             &engine_settings_of(&machine, cx).retry_limit.to_string(),

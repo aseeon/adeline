@@ -487,7 +487,7 @@ fn lift(color: Hsla, delta: f32) -> Hsla {
     }
 }
 
-// The Islands type scale, in pixels at the default 14 px interface size.
+// The Islands type scale, in pixels at a 14 px interface size.
 pub const T_MICRO: f32 = 11.;
 pub const T_CAPTION: f32 = 12.;
 pub const T_UI: f32 = 13.;

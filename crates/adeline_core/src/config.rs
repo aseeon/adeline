@@ -93,7 +93,7 @@ impl Default for Appearance {
         Self {
             theme: "islands.yml".into(),
             interface_font: DEFAULT_FONT.into(),
-            font_size: 14,
+            font_size: 15,
             code_font: DEFAULT_CODE_FONT.into(),
             code_font_size: 14,
         }

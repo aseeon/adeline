@@ -230,6 +230,8 @@ fn settings_engine(cx: &mut TestAppContext) {
     ui.input("engine");
     ui.named("Keep conversation engine running");
     ui.named("Automatic retry limit");
+    // The live status pushes Stop engine below the default window height.
+    ui.resize(960., 900.);
     ui.click("Stop engine");
     ui.wait("the engine to stop", WAIT, |_| {
         common::engine_pid(live.path()).is_none()
