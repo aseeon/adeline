@@ -37,7 +37,7 @@ impl Adeline {
                     .child(div().text_xl().child("Start a chat"))
                     .child(
                         div()
-                            .text_sm()
+                            .text_size(dp(theme::T_UI))
                             .child("Choose an agent, then write a message."),
                     ),
             )
@@ -264,7 +264,7 @@ impl Adeline {
                             |note| {
                                 div()
                                     .pb_3()
-                                    .text_sm()
+                                    .text_size(dp(theme::T_UI))
                                     .text_color(theme.muted_foreground)
                                     .child(note.title.clone())
                             },
@@ -310,7 +310,7 @@ impl Adeline {
             .w_full()
             .pb_4()
             .gap_1()
-            .text_sm()
+            .text_size(dp(theme::T_UI))
             .text_color(cx.theme().muted_foreground)
             .child(
                 row()
@@ -451,7 +451,11 @@ impl Adeline {
                         .font_weight(FontWeight::SEMIBOLD)
                         .child(decision.title.clone()),
                 )
-                .child(div().text_sm().child(decision.body.clone()));
+                .child(
+                    div()
+                        .text_size(dp(theme::T_UI))
+                        .child(decision.body.clone()),
+                );
             for (i, option) in decision.options.iter().enumerate() {
                 content = content.child(
                     Button::new(format!(
@@ -470,7 +474,10 @@ impl Adeline {
             }
             content.into_any_element()
         } else if thread.status == ThreadStatus::Blocked {
-            div().text_sm().child("Needs your input").into_any_element()
+            div()
+                .text_size(dp(theme::T_UI))
+                .child("Needs your input")
+                .into_any_element()
         } else {
             div().into_any_element()
         }

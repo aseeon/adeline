@@ -67,7 +67,7 @@ pub(super) fn render(title: String, window: &Window) -> TitleBar {
     TitleBar::new().border_b_0().child(
         row().min_w_0().gap_2().child(app_icon(window)).child(
             div()
-                .text_sm()
+                .text_size(panes::dp(theme::T_UI))
                 .text_color(rgb(theme::muted_foreground()))
                 .truncate()
                 .child(title),

@@ -108,10 +108,19 @@ impl Adeline {
                     div()
                         .relative()
                         .child(
-                            panes::rail_button(*name, label, tooltip, icon_path, active, cx)
-                                .on_click(cx.listener(move |app, _, window, cx| {
+                            panes::rail_button(
+                                *name,
+                                label,
+                                tooltip,
+                                Icon::default().path(*icon_path),
+                                active,
+                                cx,
+                            )
+                            .on_click(cx.listener(
+                                move |app, _, window, cx| {
                                     app.act(Action::Section(section), window, cx);
-                                })),
+                                },
+                            )),
                         )
                         .when(dot, |mode| {
                             mode.child(
@@ -140,7 +149,7 @@ impl Adeline {
                         "Settings and more ({})",
                         conversation_ui::shortcut("Ctrl+,")
                     ),
-                    "settings.svg",
+                    Icon::default().path("settings.svg"),
                     false,
                     cx,
                 ),

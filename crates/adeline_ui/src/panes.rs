@@ -83,7 +83,7 @@ pub(super) fn rail_button(
     id: impl Into<ElementId>,
     label: impl Into<SharedString>,
     tooltip: impl Into<SharedString>,
-    icon_path: &str,
+    icon: Icon,
     active: bool,
     cx: &App,
 ) -> Button {
@@ -93,12 +93,24 @@ pub(super) fn rail_button(
         .size(dp(38.))
         .p_0()
         .rounded(dp(10.))
-        .icon(Icon::default().path(icon_path.to_owned()).size(dp(18.)))
+        // A child keeps its size, where `.icon` would take the button's.
+        .child(icon.size(dp(18.)))
         .toggled(active)
         .accessibility_label(label.into())
         .tooltip(tooltip.into())
         .text_color(if active { isl.fg } else { isl.fg3 })
         .when(active, |button| button.bg(isl.active))
+}
+
+// A 30 square button with a 16 icon, as in island headers.
+pub(super) fn icon_button(id: impl Into<ElementId>, icon: Icon, cx: &App) -> Button {
+    Button::new(id)
+        .ghost()
+        .size(dp(30.))
+        .p_0()
+        .rounded(dp(7.))
+        .text_color(theme::islands(cx).fg2)
+        .child(icon.size(dp(16.)))
 }
 
 fn pinned_toggle(
@@ -109,7 +121,7 @@ fn pinned_toggle(
     action: Action,
     cx: &Context<Adeline>,
 ) -> AnyElement {
-    let icon = Icon::default().path("panel-left.svg").size(dp(18.));
+    let icon = Icon::default().path("panel-left.svg");
     let tooltip = match action {
         Action::ToggleLeftPanel => format!("{label} ({})", conversation_ui::shortcut("Ctrl+B")),
         Action::ToggleSidePanel => {
@@ -117,12 +129,12 @@ fn pinned_toggle(
         }
         _ => label.to_owned(),
     };
-    rail_button(id, label, tooltip, "panel-left.svg", false, cx)
-        .icon(if right {
-            icon.rotate(Radians(std::f32::consts::PI))
-        } else {
-            icon
-        })
+    let icon = if right {
+        icon.rotate(Radians(std::f32::consts::PI))
+    } else {
+        icon
+    };
+    rail_button(id, label, tooltip, icon, false, cx)
         .toggled(open)
         .on_click(cx.listener(move |app, _, window, cx| app.act(action.clone(), window, cx)))
         .into_any_element()
@@ -312,7 +324,7 @@ impl Adeline {
                     id,
                     label,
                     tooltip,
-                    icon_path,
+                    Icon::default().path(icon_path),
                     open && self.side_tab == tab,
                     cx,
                 )
@@ -345,7 +357,7 @@ impl Adeline {
                 "docs-settings",
                 "Docs settings",
                 "Docs settings",
-                "settings.svg",
+                Icon::default().path("settings.svg"),
                 false,
                 cx,
             ),

@@ -11,16 +11,13 @@ impl Adeline {
             several => format!("{} machines", several.len()),
         };
         let attention = client::connections(cx).iter().any(|c| failing(&c.state));
-        Button::new("machines")
-            .ghost()
-            .small()
-            .icon(Icon::default().path("devices.svg"))
+        panes::icon_button("machines", Icon::default().path("devices.svg"), cx)
             .accessibility_label("Machines")
             .tooltip(format!("{label} ({})", conversation_ui::shortcut("Alt+H")))
             .text_color(if attention {
                 cx.theme().danger
             } else {
-                theme::islands(cx).fg3
+                theme::islands(cx).fg2
             })
             .on_click(cx.listener(|app, _, window, cx| app.act(Action::Machines, window, cx)))
     }
@@ -125,7 +122,7 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
                         .child(div().flex_1())
                         .child(
                             div()
-                                .text_xs()
+                                .text_size(dp(theme::T_CAPTION))
                                 .text_color(if failed {
                                     theme.danger
                                 } else {
@@ -151,7 +148,7 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
                         .role(Role::Status)
                         .aria_label(detail.clone())
                         .pl(rems(1.75))
-                        .text_xs()
+                        .text_size(dp(theme::T_CAPTION))
                         .text_color(theme.muted_foreground)
                         .child(detail)
                 })),

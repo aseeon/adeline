@@ -148,7 +148,7 @@ impl Adeline {
             content = content.child(
                 row()
                     .gap_2()
-                    .text_sm()
+                    .text_size(panes::dp(theme::T_UI))
                     .text_color(cx.theme().muted_foreground)
                     .child(chat::spinner())
                     .child("Background tasks running"),
@@ -310,8 +310,10 @@ impl Adeline {
             let action = |name: &str, label: &'static str, action: Action| {
                 Button::new(SharedString::from(format!("queued-{name}:{id}")))
                     .ghost()
-                    .xsmall()
-                    .label(label)
+                    .small()
+                    .h(panes::dp(28.))
+                    .accessibility_label(label)
+                    .child(div().text_size(panes::dp(theme::T_UI)).child(label))
                     .on_click(
                         cx.listener(move |app, _, window, cx| app.act(action.clone(), window, cx)),
                     )
@@ -480,7 +482,7 @@ impl Adeline {
             .when(methods.is_empty() && !logged_in, |card| {
                 card.child(
                     div()
-                        .text_sm()
+                        .text_size(panes::dp(theme::T_UI))
                         .text_color(cx.theme().muted_foreground)
                         .child("Log in with the agent's own tools, then retry."),
                 )
@@ -521,7 +523,7 @@ impl Adeline {
                         .rounded(cx.theme().radius)
                         .bg(cx.theme().muted)
                         .font_family(cx.theme().mono_font_family.clone())
-                        .text_xs()
+                        .text_size(panes::dp(theme::T_CAPTION))
                         .child(stderr.to_owned())
                         .child(
                             Button::new("agent-output-copy")
@@ -590,7 +592,7 @@ impl Adeline {
                 .border_1()
                 .border_color(theme.border)
                 .bg(theme.background)
-                .text_xs()
+                .text_size(panes::dp(theme::T_CAPTION))
                 .child(thumb)
                 .child(div().max_w(rems(12.)).truncate().child(file.name.clone()))
                 .child(
@@ -762,7 +764,7 @@ impl Adeline {
                         row()
                             .gap_2()
                             .font_family(theme.mono_font_family.clone())
-                            .text_sm()
+                            .text_size(panes::dp(theme::T_UI))
                             .child(format!("/{}", command.name))
                             .when(!command.hint.is_empty(), |row| {
                                 row.child(
@@ -775,7 +777,7 @@ impl Adeline {
                     .when(!command.description.is_empty(), |item| {
                         item.child(
                             div()
-                                .text_xs()
+                                .text_size(panes::dp(theme::T_CAPTION))
                                 .text_color(theme.muted_foreground)
                                 .child(command.description.clone()),
                         )
@@ -905,7 +907,7 @@ impl Adeline {
                             div()
                                 .px_2()
                                 .py_1()
-                                .text_xs()
+                                .text_size(panes::dp(theme::T_CAPTION))
                                 .text_color(theme.muted_foreground)
                                 .child("TODO"),
                         )
@@ -915,7 +917,7 @@ impl Adeline {
                                 .gap_2()
                                 .px_2()
                                 .py_1()
-                                .text_sm()
+                                .text_size(panes::dp(theme::T_UI))
                                 .when(step.status == StepStatus::Completed, |row| {
                                     row.text_color(theme.muted_foreground)
                                 })
@@ -947,7 +949,7 @@ impl Adeline {
             .div_ceil(1000)
             .max(1);
         let thought = div()
-            .text_sm()
+            .text_size(panes::dp(theme::T_UI))
             .text_color(theme.muted_foreground)
             .child(message.thought.clone());
         if streaming {
@@ -1052,7 +1054,7 @@ impl Adeline {
         if self.selected.is_none() {
             return col()
                 .p_3()
-                .text_sm()
+                .text_size(panes::dp(theme::T_UI))
                 .text_color(theme.muted_foreground)
                 .child("Start a chat to see its ACP traffic.")
                 .into_any_element();
@@ -1064,7 +1066,7 @@ impl Adeline {
             .child(
                 div()
                     .flex_1()
-                    .text_xs()
+                    .text_size(panes::dp(theme::T_CAPTION))
                     .text_color(theme.muted_foreground)
                     .child(format!("{} messages", self.traffic.len())),
             )
@@ -1091,7 +1093,7 @@ impl Adeline {
                 .gap_2()
                 .px_3()
                 .py_0p5()
-                .text_xs()
+                .text_size(panes::dp(theme::T_CAPTION))
                 .font_family(mono.clone())
                 .child(
                     div()

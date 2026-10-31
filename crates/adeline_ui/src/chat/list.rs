@@ -229,7 +229,7 @@ impl Adeline {
                             .child(div().flex_1().child(label.clone()))
                             .child(
                                 div()
-                                    .text_xs()
+                                    .text_size(dp(theme::T_CAPTION))
                                     .text_color(cx.theme().muted_foreground)
                                     .child(count.to_string()),
                             )
@@ -306,16 +306,14 @@ impl Adeline {
                 ),
             )
             .child(self.agent_filter_button(outcome, cx));
-        let tool = |button: Button| button.text_color(isl.fg3);
         let header = row()
-            .h(dp(40.))
+            .h(dp(44.))
             .flex_shrink_0()
             .pl(dp(18.))
             .pr(dp(10.))
-            .gap(dp(2.))
+            .gap(dp(6.))
             .child(
                 div()
-                    .flex_1()
                     .min_w_0()
                     .truncate()
                     .text_size(dp(theme::T_BODY))
@@ -323,29 +321,28 @@ impl Adeline {
                     .text_color(isl.fg)
                     .child("Chats"),
             )
-            .when(!machines::remotes().is_empty(), |header| {
-                header.child(self.machines_button(cx))
-            })
             .child(
                 self.command_popover(
                     "mode-settings",
-                    tool(
-                        Button::new("chat-settings")
-                            .ghost()
-                            .small()
-                            .icon(Icon::default().path("more.svg"))
-                            .accessibility_label("Chat settings")
-                            .tooltip("Chat settings"),
-                    ),
+                    panes::icon_button(
+                        "chat-settings",
+                        Icon::default()
+                            .path("more.svg")
+                            .rotate(Radians(std::f32::consts::FRAC_PI_2)),
+                        cx,
+                    )
+                    .accessibility_label("Chat settings")
+                    .tooltip("Chat settings"),
                     Anchor::TopLeft,
                     cx,
                 ),
             )
-            .child(tool(
-                Button::new("chat-search-toggle")
-                    .ghost()
-                    .small()
-                    .icon(Icon::default().path("search.svg"))
+            .child(div().flex_1())
+            .when(!machines::remotes().is_empty(), |header| {
+                header.child(self.machines_button(cx))
+            })
+            .child(
+                panes::icon_button("chat-search-toggle", Icon::default().path("search.svg"), cx)
                     .selected(searching)
                     .accessibility_label("Search chats")
                     .tooltip(format!(
@@ -355,12 +352,9 @@ impl Adeline {
                     .on_click(cx.listener(|app, _, window, cx| {
                         app.toggle_chat_search(window, cx);
                     })),
-            ))
-            .child(tool(
-                Button::new("new-chat")
-                    .ghost()
-                    .small()
-                    .icon(Icon::default().path("new-chat.svg"))
+            )
+            .child(
+                panes::icon_button("new-chat", Icon::default().path("new-chat.svg"), cx)
                     .accessibility_label("New chat")
                     .tooltip(format!(
                         "New chat ({})",
@@ -370,7 +364,7 @@ impl Adeline {
                         cx.stop_propagation();
                         app.act(Action::NewChat, window, cx);
                     })),
-            ));
+            );
         col()
             .w_full()
             .min_w_0()
@@ -1061,7 +1055,7 @@ impl Render for ChatList {
                 .when(!compact, |empty| empty.p_5())
                 .gap_3()
                 .items_start()
-                .text_sm()
+                .text_size(dp(theme::T_UI))
                 .text_color(cx.theme().muted_foreground)
                 .child(if self.searching {
                     "Searching…".to_owned()

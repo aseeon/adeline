@@ -76,7 +76,7 @@ impl Adeline {
                     div()
                         .px_2()
                         .py_3()
-                        .text_sm()
+                        .text_size(dp(theme::T_UI))
                         .text_color(theme.muted_foreground)
                         .child(if query.is_empty() {
                             "No projects yet".to_owned()
@@ -260,12 +260,12 @@ impl Adeline {
                         row()
                             .gap_2()
                             .min_w_0()
-                            .text_sm()
+                            .text_size(dp(theme::T_UI))
                             .child(div().truncate().child(project.config.name.clone()))
                             .children(machine.map(|machine| {
                                 div()
                                     .flex_shrink_0()
-                                    .text_xs()
+                                    .text_size(dp(theme::T_CAPTION))
                                     .text_color(theme.muted_foreground)
                                     .child(if offline {
                                         format!("{machine} · disconnected")
@@ -277,7 +277,7 @@ impl Adeline {
                     .when(!project.config.directory.as_os_str().is_empty(), |text| {
                         text.child(
                             div()
-                                .text_xs()
+                                .text_size(dp(theme::T_CAPTION))
                                 .font_family(theme.mono_font_family.clone())
                                 .text_color(theme.muted_foreground)
                                 .truncate()
@@ -294,7 +294,7 @@ impl Adeline {
                     .flex()
                     .items_center()
                     .justify_end()
-                    .text_xs()
+                    .text_size(dp(theme::T_CAPTION))
                     .text_color(theme.muted_foreground)
                     .child(
                         div()

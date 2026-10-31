@@ -374,7 +374,7 @@ pub(super) fn context_meter(usage: Option<(u64, u64)>, cx: &App) -> Stateful<Div
         .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
         .flex_shrink_0()
         .gap_2()
-        .text_xs()
+        .text_size(dp(theme::T_CAPTION))
         .text_color(theme.muted_foreground)
         .child(percent)
         .child(
@@ -449,7 +449,7 @@ pub(super) fn tool_steps(calls: Vec<&Activity>, cx: &App) -> Div {
                 .h_6()
                 .min_w_0()
                 .gap_2()
-                .text_sm()
+                .text_size(dp(theme::T_UI))
                 .text_color(if call.running {
                     theme.foreground
                 } else {

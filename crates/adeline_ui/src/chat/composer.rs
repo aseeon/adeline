@@ -178,6 +178,7 @@ impl Adeline {
             .appearance(false)
             .flex_1()
             .min_w_0()
+            .text_size(dp(theme::T_PROSE))
             .on_paste(move |item, _, cx| {
                 owner
                     .update(cx, |app, cx| app.paste(item, cx))
@@ -192,7 +193,12 @@ impl Adeline {
                     column.child(self.attachment_chips(&self.attachments, None, cx))
                 })
                 .when_some(self.attachment_error.clone(), |column, error| {
-                    column.child(div().text_sm().text_color(theme.danger).child(error))
+                    column.child(
+                        div()
+                            .text_size(dp(theme::T_UI))
+                            .text_color(theme.danger)
+                            .child(error),
+                    )
                 })
         });
         let context = self
@@ -445,7 +451,7 @@ impl Adeline {
                                     div()
                                         .px_3()
                                         .py_2()
-                                        .text_xs()
+                                        .text_size(dp(theme::T_CAPTION))
                                         .text_color(cx.theme().muted_foreground)
                                         .child(
                                             "Switching may invalidate the prompt cache and cost more on the next turn.",
@@ -472,7 +478,7 @@ impl Adeline {
                                             .child(name.clone())
                                             .child(
                                                 div()
-                                                    .text_xs()
+                                                    .text_size(dp(theme::T_CAPTION))
                                                     .text_color(cx.theme().muted_foreground)
                                                     .child(description.clone()),
                                             )

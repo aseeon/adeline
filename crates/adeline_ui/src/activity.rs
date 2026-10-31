@@ -297,8 +297,6 @@ impl Adeline {
                     .flex_none()
                     .px(dp(16.))
                     .py(dp(14.))
-                    .border_t_1()
-                    .border_color(theme::islands(cx).line)
                     .child(self.activity_stats(thread, cx)),
             )
     }
@@ -358,7 +356,6 @@ impl Adeline {
             let alert = label == "Failed" && failed > 0;
             col()
                 .id(label)
-                .flex_1()
                 .min_w_0()
                 .tooltip(move |window, cx| Tooltip::new(help).build(window, cx))
                 .child(
@@ -377,24 +374,27 @@ impl Adeline {
                         .child(label),
                 )
         };
+        // Columns take their widest value, so the side margins match.
         let mut cells = cells.into_iter().map(cell);
-        col()
-            .gap(dp(12.))
-            .child(row().gap(dp(8.)).children(cells.by_ref().take(3)))
-            .child(row().gap(dp(8.)).children(cells))
+        let top: Vec<_> = cells.by_ref().take(3).collect();
+        row().justify_between().gap(dp(8.)).children(
+            top.into_iter()
+                .zip(cells)
+                .map(|(above, below)| col().min_w_0().gap(dp(12.)).child(above).child(below)),
+        )
     }
 
     fn activity_row(&self, thread: &Thread, entry: &Entry<'_>, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let message_icon = |path: &str| icon(path).size(rems(0.75)).into_any_element();
+        let message_icon = |path: &str| icon(path).size(dp(14.)).into_any_element();
         let (key, glyph, label, color, lit, card, detail) = match *entry {
             Entry::Turn { number, message } => {
                 return row()
-                    .h_7()
-                    .pt_2()
+                    .pt(dp(if number == 1 { 4. } else { 18. }))
+                    .pb(dp(4.))
                     .px_2()
                     .gap_2()
-                    .text_xs()
+                    .text_size(dp(theme::T_CAPTION))
                     .text_color(theme.muted_foreground)
                     .child(
                         div()
@@ -443,7 +443,7 @@ impl Adeline {
                 (
                     format!("{}:reply:{message}:{start}", thread.id),
                     agent_mark(self.agent_icon(&thread.provider, cx))
-                        .size(rems(0.75))
+                        .size(dp(14.))
                         .into_any_element(),
                     first_line(text).to_owned(),
                     theme.sidebar_foreground,
@@ -481,7 +481,7 @@ impl Adeline {
                     chat::spinner()
                 } else {
                     icon(if error { "flag" } else { tool_icon(call.tool) })
-                        .size(rems(0.75))
+                        .size(dp(14.))
                         .when(failed, |glyph| glyph.text_color(theme.danger))
                         .into_any_element()
                 };
@@ -536,6 +536,7 @@ impl Adeline {
         let mut button = Button::new(SharedString::from(format!("activity:{key}")))
             .ghost()
             .small()
+            .h(dp(28.))
             .w_full()
             .selected(expanded)
             .accessibility_label(first_line(&label).to_owned())
@@ -547,6 +548,7 @@ impl Adeline {
                     .min_w_0()
                     .gap_2()
                     .when(expanded, |row| row.items_start())
+                    .text_size(dp(theme::T_UI))
                     .text_color(color)
                     .child(
                         div()
@@ -604,7 +606,7 @@ impl Adeline {
                     )
                     .child(
                         div()
-                            .text_xs()
+                            .text_size(dp(theme::T_CAPTION))
                             .text_color(theme.muted_foreground)
                             .child(card.meta.clone()),
                     )
@@ -612,7 +614,7 @@ impl Adeline {
                         card.child(
                             div()
                                 .font_family(mono.clone())
-                                .text_xs()
+                                .text_size(dp(theme::T_CAPTION))
                                 .text_color(theme.muted_foreground)
                                 .child(preview),
                         )
@@ -671,12 +673,12 @@ impl Adeline {
             .bg(theme.background)
             .border_1()
             .border_color(theme.border)
-            .text_xs()
+            .text_size(dp(theme::T_CAPTION))
             .when_some(detail.text, |column, text| {
                 column.child(
                     div()
                         .pb_1()
-                        .text_sm()
+                        .text_size(dp(theme::T_UI))
                         .text_color(theme.foreground)
                         .child(text),
                 )
