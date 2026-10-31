@@ -89,8 +89,8 @@ pub fn drawn_on(image: &RgbaImage, background: Rgba<u8>) -> usize {
         .count()
 }
 
-/// Facts every renderer must show in the demo's chat view: the theme background,
-/// the chat's title in the window header and the icon of the main menu.
+/// Facts every renderer must show in the demo's chat view: the chat's title in
+/// the window header, on the theme background, and the icon of the main menu.
 pub fn check_demo(frame: &Frame, find: &mut dyn FnMut(&str) -> ElementSnapshot, background: Hsla) {
     let background = rgb(background);
     let title = frame.region(&find(DEMO_TITLE));
@@ -98,15 +98,13 @@ pub fn check_demo(frame: &Frame, find: &mut dyn FnMut(&str) -> ElementSnapshot, 
     frame.check(drawn_on(&title, around) > 200, || {
         "The window header shows no title".to_owned()
     });
+    frame.check(same(around, background), || {
+        format!("The window header is {around:?}, the theme background is {background:?}")
+    });
 
     let menu = frame.region(&find("Main menu"));
     let behind = dominant(&menu);
     frame.check(drawn_on(&menu, behind) > 20, || {
         "The main menu button shows no icon".to_owned()
-    });
-
-    let whole = dominant(&frame.image);
-    frame.check(same(whole, background), || {
-        format!("Most of the window is {whole:?}, the theme background is {background:?}")
     });
 }
