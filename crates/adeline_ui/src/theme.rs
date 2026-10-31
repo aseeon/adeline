@@ -28,11 +28,10 @@ fn seed_bundled_themes(directory: &Path) -> Result<()> {
 macro_rules! palette {
     ($($name:ident, $label:literal, $color:literal;)*) => {
         pub const ROLES: &[(&str, &str, u32)] = &[$((stringify!($name), $label, $color)),*];
-        $(
-            #[expect(clippy::allow_attributes, reason = "`#[expect(dead_code)]` would fail on the used accessors")]
-            #[allow(dead_code, reason = "every palette role gets an accessor; not all are drawn yet")]
-            pub fn $name() -> u32 { ACTIVE.with(|s| s.borrow().colors[stringify!($name)]) })*
     };
+}
+pub fn color(role: &str) -> u32 {
+    ACTIVE.with(|s| s.borrow().colors[role])
 }
 palette! {
     background, "Background", 0xfcfbf7;
@@ -184,7 +183,7 @@ pub fn parse_hex(value: &str) -> Option<u32> {
 pub fn sidebar_focus() -> Hsla {
     // Kit has one global focus ring, so sidebar navigation draws the YAML
     // sidebar ring on its focused border.
-    rgb(sidebar_ring()).into()
+    rgb(color("sidebar_ring")).into()
 }
 fn read(path: &Path) -> Result<State> {
     let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
@@ -528,17 +527,7 @@ fn style_scrollbars(cx: &mut App) {
 }
 
 pub fn project_colors() -> [u32; 5] {
-    [chart_1(), chart_2(), chart_3(), chart_4(), chart_5()]
-}
-
-// Derived from the active palette, so every theme gets them without new YAML keys.
-pub struct BarColors {
-    pub divider: Hsla,
-}
-pub fn bar_colors(theme: &KitTheme) -> BarColors {
-    BarColors {
-        divider: theme.border.mix_oklab(theme.title_bar, 0.5),
-    }
+    ["chart_1", "chart_2", "chart_3", "chart_4", "chart_5"].map(color)
 }
 
 pub fn project_mark(tint: Hsla, active: bool, theme: &KitTheme) -> (Hsla, Hsla) {

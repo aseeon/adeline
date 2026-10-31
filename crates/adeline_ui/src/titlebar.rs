@@ -68,7 +68,7 @@ pub(super) fn render(title: String, window: &Window) -> TitleBar {
         row().min_w_0().gap_2().child(app_icon(window)).child(
             div()
                 .text_size(panes::dp(theme::T_UI))
-                .text_color(rgb(theme::muted_foreground()))
+                .text_color(rgb(theme::color("muted_foreground")))
                 .truncate()
                 .child(title),
         ),

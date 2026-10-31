@@ -129,7 +129,7 @@ impl Adeline {
             content = content.child(text(
                 "Stopping the turn before storage can be retried…",
                 13.,
-                theme::muted_foreground(),
+                theme::color("muted_foreground"),
             ));
         } else if let Some(minutes) = self.silent_minutes(thread, live) {
             content = content.child(self.hang_notice(minutes, cx));
@@ -207,7 +207,7 @@ impl Adeline {
             content = content.child(text(
                 "Waiting for the agent to stop…",
                 13.,
-                theme::muted_foreground(),
+                theme::color("muted_foreground"),
             ));
         }
         if live.shutdown_stuck {
@@ -241,12 +241,11 @@ impl Adeline {
             .w_full()
             .items_start()
             .gap_2()
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .child(text(message.clone(), 13., theme::foreground())),
-            )
+            .child(div().flex_1().min_w_0().child(text(
+                message.clone(),
+                13.,
+                theme::color("foreground"),
+            )))
             .child(
                 Button::new(SharedString::from(format!("dismiss-error:{message}")))
                     .ghost()

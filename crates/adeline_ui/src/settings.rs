@@ -5,8 +5,8 @@
 use super::*;
 use gpui_kit::AppContext as _;
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, FocusableExt as _, IndexPath, Selectable as _,
-    Sizable as _, WindowExt as _,
+    ActiveTheme as _, Colorize as _, Disableable as _, FocusableExt as _, IndexPath,
+    Selectable as _, Sizable as _, WindowExt as _,
     button::Button,
     form::{Field, Form},
     input::Input,
@@ -1534,7 +1534,7 @@ impl Render for SettingsWindow {
                     .pt(titlebar::MAIN_HEIGHT)
                     .bg(theme.background)
                     .border_l_1()
-                    .border_color(theme::bar_colors(theme).divider)
+                    .border_color(theme.border.mix_oklab(theme.title_bar, 0.5))
                     .child(
                         div()
                             .size_full()

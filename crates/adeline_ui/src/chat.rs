@@ -222,7 +222,7 @@ const BRAILLE_FRAMES: [u8; 10] = [0x0B, 0x19, 0x39, 0x38, 0x3C, 0x34, 0x26, 0x27
 const THINKING_WORDS: [&str; 4] = ["Thinking…", "Reasoning…", "Pondering…", "Working it out…"];
 
 pub(super) fn thinking_label(progress: Option<String>, cx: &App) -> AnyElement {
-    let muted: Hsla = rgb(theme::muted_foreground()).into();
+    let muted: Hsla = rgb(theme::color("muted_foreground")).into();
     let accent = cx.theme().primary;
     let size = fonts::text_pixels(13.);
     let base = div().text_size(size).text_color(muted).whitespace_nowrap();
