@@ -1,6 +1,7 @@
 //! What this UI remembers for itself and doesn't share with other clients:
 //! when it last opened each project and how it last left Docs mode there, by
-//! machine and project ID. Local projects keep the bare IDs older versions
+//! machine and project ID, and the widths the user dragged the right island's
+//! panes to. Local projects keep the bare IDs older versions
 //! wrote. `migrated` records that the first local snapshot's times, kept by
 //! older project files, were adopted.
 use serde::{Deserialize, Serialize};
@@ -12,6 +13,16 @@ struct UiState {
     migrated: bool,
     opened_at: BTreeMap<String, i64>,
     docs: BTreeMap<String, Docs>,
+    panes: Panes,
+}
+
+/// Widths of the right island's pane, in design pixels: the side pane in
+/// Chats and the chat beside every other mode.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Panes {
+    pub side: Option<f32>,
+    pub chat: Option<f32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -21,8 +32,6 @@ pub struct Docs {
     pub editor: bool,
     // The Viewer's top block and offset into it, or the Editor's offset.
     pub scroll: (usize, f32),
-    pub tree_width: Option<f32>,
-    pub chat_width: Option<f32>,
     pub expanded: Vec<String>,
     pub chat: Option<String>,
 }
@@ -103,6 +112,20 @@ pub fn rename(machine: &str, old: &str, new: &str) {
         }
         let _ = save(state);
     });
+}
+
+pub fn panes() -> Panes {
+    with(|state| state.panes)
+}
+
+pub fn record_panes(panes: Panes) -> anyhow::Result<()> {
+    with(|state| {
+        if state.panes == panes {
+            return Ok(());
+        }
+        state.panes = panes;
+        save(state)
+    })
 }
 
 pub fn docs(machine: &str, id: &str) -> Docs {

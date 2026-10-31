@@ -87,6 +87,7 @@ impl Adeline {
         let isl = theme::islands(cx);
         let waiting = self.waiting_chat();
         let mut buttons = Vec::new();
+        let mut active_at = None;
         if self.has_open_project() {
             for (position, section) in rail_sections().into_iter().enumerate() {
                 let Some((_, name, icon_path)) = RAIL.iter().find(|(mode, _, _)| *mode == section)
@@ -94,6 +95,9 @@ impl Adeline {
                     continue;
                 };
                 let active = self.section == section;
+                if active {
+                    active_at = Some(buttons.len());
+                }
                 let dot = section == Section::Chats && waiting;
                 let label = if dot {
                     format!("{name}, a chat needs you")
@@ -158,7 +162,14 @@ impl Adeline {
             )
             .into_any_element(),
         );
-        panes::rail("modes", "Modes", buttons, self.mode_rail_toggle(cx))
+        panes::rail(
+            "modes",
+            "Modes",
+            buttons,
+            self.rail_slide("modes", active_at),
+            self.mode_rail_toggle(cx),
+            cx,
+        )
     }
 
     /// The projects and machines menus, hanging from the top center of the

@@ -84,9 +84,11 @@ fn invalidate_range(state: &ListState, range: std::ops::Range<usize>) {
 
 pub(super) struct Header(pub WeakEntity<Adeline>);
 impl Render for Header {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.0
-            .update(cx, |app, cx| app.header(cx).w_full().into_any_element())
+            .update(cx, |app, cx| {
+                app.header(window, cx).w_full().into_any_element()
+            })
             .unwrap_or_else(|_| div().into_any_element())
     }
 }
@@ -193,7 +195,8 @@ pub(super) fn option_menu_name(category: conversation::Category) -> &'static str
     }
 }
 
-pub(super) const CHAT_HEADER_HEIGHT: f32 = 3.;
+// The right island's header in other modes, as on the side pane.
+pub(super) const PANE_HEADER: f32 = 46.;
 pub(super) const HEADER_FADE: f32 = 1.75;
 
 // In rems, for the composer's fit: the 760 px column.
@@ -345,48 +348,20 @@ pub(super) fn thinking_label(progress: Option<String>, cx: &App) -> AnyElement {
     }
 }
 
-pub(super) fn chat_column() -> Div {
-    div().w_full().max_w(dp(760.)).mx_auto().px(dp(28.))
+// The chat's column: 28 side padding in Chats, 14 in the right island of other modes.
+pub(super) fn chat_column(section: Section) -> Div {
+    let pad = if section == Section::Chats { 28. } else { 14. };
+    div().w_full().max_w(dp(760.)).mx_auto().px(dp(pad))
 }
 
-pub(super) fn context_meter(usage: Option<(u64, u64)>, cx: &App) -> Stateful<Div> {
-    let theme = cx.theme();
-    let share = match usage {
-        Some((used, size)) if size > 0 => (used as f32 / size as f32).clamp(0., 1.),
-        _ => 0.,
-    };
-    let (percent, window, label) = match usage {
-        Some((used, size)) => (
-            format!("{}%", (share * 100.).round()),
-            tokens(size),
-            format!("Context: {} of {} tokens used", tokens(used), tokens(size)),
-        ),
-        None => (
-            "–".to_owned(),
-            "–".to_owned(),
-            "Context: the agent hasn’t reported its usage yet".to_owned(),
-        ),
-    };
-    row()
-        .id("chat-context")
-        .role(Role::ProgressIndicator)
-        .aria_label(label.clone())
-        .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
-        .flex_shrink_0()
-        .gap_2()
-        .text_size(dp(theme::T_CAPTION))
-        .text_color(theme.muted_foreground)
-        .child(percent)
-        .child(
-            div()
-                .w_12()
-                .h_1()
-                .rounded_full()
-                .bg(theme.secondary)
-                .overflow_hidden()
-                .child(div().h_full().w(relative(share)).bg(theme.muted_foreground)),
-        )
-        .child(window)
+/// What the chat sits on: the window in Chats, the right island elsewhere.
+pub(super) fn chat_surface(section: Section, cx: &App) -> Hsla {
+    let isl = theme::islands(cx);
+    if section == Section::Chats {
+        isl.bg
+    } else {
+        isl.island
+    }
 }
 
 pub(super) fn tokens(count: u64) -> String {

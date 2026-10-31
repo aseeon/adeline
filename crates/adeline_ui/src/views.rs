@@ -2,8 +2,6 @@
 //! modal dialogs (including quit, SSH prompt and upgrade), and UI helpers
 //! shared across windows.
 use super::*;
-use adeline_core::conversation::ThreadStatus;
-use gpui_kit::component::Disableable as _;
 use gpui_kit::component::command::{Command, CommandItem, CommandState};
 use gpui_kit::component::dialog::Dialog;
 use gpui_kit::component::switch::Switch;
@@ -23,74 +21,28 @@ impl Render for ChatHeader {
 }
 
 impl Adeline {
+    /// The right island's header in Docs: the chat's title, which opens the chooser.
     fn chat_header(&self, cx: &Context<Self>) -> Div {
-        let thread = self.selected.map(|ix| &self.workspace().threads[ix]);
-        let title = thread.map_or_else(|| "New chat".to_owned(), |thread| thread.title.clone());
-        // Status, message count and age live in the conversation list; the
-        // header adds only what the list can't show.
-        chat::chat_column()
-            .h(rems(chat::CHAT_HEADER_HEIGHT))
-            .flex()
-            .items_center()
-            .gap(rems(0.375))
-            .child(if self.section == Section::Docs {
+        let title = self.selected.map_or_else(
+            || "New chat".to_owned(),
+            |ix| self.workspace().threads[ix].title.clone(),
+        );
+        row()
+            .h(panes::dp(chat::PANE_HEADER))
+            .px(panes::dp(10.))
+            .gap(panes::dp(8.))
+            .child(
                 div()
                     .flex_1()
                     .min_w_0()
-                    .child(self.chat_chooser(&title, cx))
-            } else {
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .truncate()
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .child(title)
-            })
-            .children(thread.and_then(|_| self.todo_button(cx)))
-            .when_some(thread, |header, thread| {
-                header.child(chat::context_meter(thread.context, cx).mr_2())
-            })
-            .when_some(thread, |header, thread| {
-                let done = thread.status.closed();
-                let archived = thread.status == ThreadStatus::Archived;
-                let complete = if done {
-                    "Mark as incomplete"
-                } else {
-                    "Mark as complete"
-                };
-                header
-                    .child(
-                        Button::new("complete-chat")
-                            .small()
-                            .outline()
-                            .icon(Icon::default().path("check.svg"))
-                            .selected(done)
-                            .accessibility_label(complete)
-                            .tooltip(complete)
-                            .on_click(cx.listener(|app, _, window, cx| {
-                                app.act(Action::Complete, window, cx);
-                            })),
-                    )
-                    .child(
-                        Button::new("archive-chat")
-                            .small()
-                            .outline()
-                            .icon(Icon::default().path("archive.svg"))
-                            .disabled(archived)
-                            .accessibility_label(if archived { "Archived" } else { "Archive" })
-                            .tooltip(if archived { "Archived" } else { "Archive" })
-                            .on_click(cx.listener(|app, _, window, cx| {
-                                if let Some(ix) = app.selected {
-                                    app.act(Action::ArchiveChat(ix), window, cx);
-                                }
-                            })),
-                    )
-            })
+                    .child(self.chat_chooser(&title, cx)),
+            )
+            .children(self.selected.and_then(|_| self.todo_button(cx)))
     }
 
     pub(super) fn chats(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let thread = self.selected.map(|ix| &self.workspace().threads[ix]);
-        let theme = cx.theme();
+        let surface = chat::chat_surface(self.section, cx);
         // The transcript fills the pane so its scrollbar runs the full height. The
         // header and composer float over it and stop short of the scrollbar;
         // matching left padding keeps their columns centered on the messages.
@@ -115,19 +67,21 @@ impl Adeline {
                 .left_0()
                 .right(scrollbar)
                 .pl(scrollbar)
-                .bg(theme.background)
+                .bg(surface)
+                // Square corners would paint over the island's round one.
+                .rounded_tl(panes::dp(14.))
                 .child(chat::region(
                     &self.chat_header,
                     StyleRefinement::default()
                         .w_full()
-                        .h(rems(chat::CHAT_HEADER_HEIGHT)),
+                        .h(panes::dp(chat::PANE_HEADER)),
                     window,
                 ))
         });
         let header_height = if header.is_some() {
-            rems(chat::CHAT_HEADER_HEIGHT)
+            panes::dp(chat::PANE_HEADER)
         } else {
-            rems(0.)
+            px(0.)
         };
         // Messages fade out at the top edge instead of meeting a line.
         let fade = div()
@@ -138,8 +92,8 @@ impl Adeline {
             .h(rems(chat::HEADER_FADE))
             .bg(linear_gradient(
                 180.,
-                linear_color_stop(theme.background.alpha(0.9), 0.),
-                linear_color_stop(theme.background.alpha(0.), 1.),
+                linear_color_stop(surface.alpha(0.9), 0.),
+                linear_color_stop(surface.alpha(0.), 1.),
             ));
         div()
             .id("conversation-panel")
@@ -158,7 +112,11 @@ impl Adeline {
                     .left_0()
                     .right(scrollbar)
                     .pl(scrollbar)
-                    .bg(theme.background)
+                    .bg(surface)
+                    // In an island the composer floats 18 above its bottom edge.
+                    .when(self.section != Section::Chats, |region| {
+                        region.rounded_bl(panes::dp(14.)).pb(panes::dp(18.))
+                    })
                     // Messages fade out just above the composer, mirroring the header.
                     .child(
                         div()
@@ -169,8 +127,8 @@ impl Adeline {
                             .h(rems(chat::HEADER_FADE))
                             .bg(linear_gradient(
                                 0.,
-                                linear_color_stop(theme.background.alpha(0.9), 0.),
-                                linear_color_stop(theme.background.alpha(0.), 1.),
+                                linear_color_stop(surface.alpha(0.9), 0.),
+                                linear_color_stop(surface.alpha(0.), 1.),
                             )),
                     )
                     // Back to the latest message, 0.5rem above the composer.
@@ -190,7 +148,11 @@ impl Adeline {
                             )
                         },
                     )
-                    .child(self.composer_region.clone())
+                    .child(panes::glide(
+                        self.composer_region.clone(),
+                        self.section == Section::Chats,
+                        &self.composer_glide,
+                    ))
                     .child(measure),
             )
             .into_any_element()

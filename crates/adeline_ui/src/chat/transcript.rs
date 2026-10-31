@@ -253,7 +253,7 @@ impl Adeline {
                 row.bg(theme.primary.alpha(0.08))
             })
             .child(
-                chat_column()
+                chat_column(self.section)
                     .pb(dp(if user { 16. } else { 28. }))
                     .when_some(thread.fork.as_ref().filter(|_| i == 0), |column, fork| {
                         column.child(self.fork_marker(fork, cx))
@@ -710,11 +710,7 @@ impl Render for Transcript {
             .owner
             .upgrade()
             .is_some_and(|owner| owner.read(cx).section == Section::Docs);
-        let top = if docs {
-            window.rem_size() * CHAT_HEADER_HEIGHT + gap
-        } else {
-            gap
-        };
+        let top = if docs { dp(PANE_HEADER) + gap } else { gap };
         let bottom = self.composer_height.get() + gap;
         if self.selected.is_none() {
             return self
@@ -806,28 +802,31 @@ impl Render for Row {
             return div().into_any_element();
         };
         let row = self.index;
-        let content = owner
-            .update(cx, |app, cx| {
-                if row < messages {
-                    app.message_row(selected, row, window, cx)
-                } else {
-                    // Wrapped like message rows so the column centers in the row.
-                    div()
-                        .w_full()
-                        .min_w_0()
-                        .track_focus(&footer_focus)
-                        .child(chat_column().flex().flex_col().child(if app.demo_mode {
-                            col()
-                                .child(app.decision_row(selected, cx))
-                                .child(app.runtime_footer(selected, cx))
-                                .into_any_element()
-                        } else {
-                            app.runtime_footer(selected, cx)
-                        }))
-                        .into_any_element()
-                }
-            })
-            .unwrap_or_else(|_| div().into_any_element());
+        let content =
+            owner
+                .update(cx, |app, cx| {
+                    if row < messages {
+                        app.message_row(selected, row, window, cx)
+                    } else {
+                        // Wrapped like message rows so the column centers in the row.
+                        div()
+                            .w_full()
+                            .min_w_0()
+                            .track_focus(&footer_focus)
+                            .child(chat_column(app.section).flex().flex_col().child(
+                                if app.demo_mode {
+                                    col()
+                                        .child(app.decision_row(selected, cx))
+                                        .child(app.runtime_footer(selected, cx))
+                                        .into_any_element()
+                                } else {
+                                    app.runtime_footer(selected, cx)
+                                },
+                            ))
+                            .into_any_element()
+                    }
+                })
+                .unwrap_or_else(|_| div().into_any_element());
         let size = Rc::clone(&self.size);
         div()
             .relative()

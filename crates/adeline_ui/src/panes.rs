@@ -4,7 +4,9 @@
 //! look and behave the same.
 use super::*;
 use adeline_core::conversation::ThreadStatus;
-use gpui_kit::base::ResizeHandleContext;
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::time::{Duration, Instant};
 
 pub(super) const PAD: f32 = 8.;
 pub(super) const TOP: f32 = 42.;
@@ -12,6 +14,10 @@ pub(super) const BOTTOM: f32 = 21.;
 const RAIL: f32 = 56.;
 const LIST: f32 = 286.;
 const PANE: f32 = 330.;
+const CHAT_PANE: f32 = 440.;
+// How far the right island's pane can be dragged, and how much it leaves the main area.
+const PANE_MIN: f32 = 260.;
+const MAIN_MIN: f32 = 320.;
 const PANE_HEADER: f32 = 46.;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -54,12 +60,40 @@ pub(super) fn island(cx: &App) -> Div {
         ])
 }
 
+pub(super) type Slide = (Option<usize>, Option<usize>);
+
+const RAIL_BUTTON: f32 = 38.;
+const RAIL_GAP: f32 = 4.;
+
 pub(super) fn rail(
     id: &'static str,
     label: &'static str,
     buttons: Vec<AnyElement>,
+    (from, active): Slide,
     pinned: AnyElement,
+    cx: &App,
 ) -> Div {
+    let pill = active.map(|to| {
+        let at = |index: f32| dp((RAIL_BUTTON + RAIL_GAP) * index);
+        let pill = div()
+            .absolute()
+            .left_0()
+            .top(at(to as f32))
+            .size(dp(RAIL_BUTTON))
+            .rounded(dp(10.))
+            .bg(theme::islands(cx).active);
+        match from {
+            // The active background slides over from the tab active before.
+            Some(from) if from != to => pill
+                .with_animation(
+                    ElementId::Name(format!("{id}-slide-{from}-{to}").into()),
+                    Animation::new(Duration::from_millis(150)).with_easing(ease_out_quint()),
+                    move |pill, t| pill.top(at(from as f32 + (to as f32 - from as f32) * t)),
+                )
+                .into_any_element(),
+            _ => pill.into_any_element(),
+        }
+    });
     col()
         .h_full()
         .w(dp(RAIL))
@@ -71,8 +105,10 @@ pub(super) fn rail(
                 .id(id)
                 .role(Role::TabList)
                 .aria_label(label)
+                .relative()
                 .items_center()
-                .gap(dp(4.))
+                .gap(dp(RAIL_GAP))
+                .children(pill)
                 .children(buttons),
         )
         .child(div().flex_1())
@@ -90,7 +126,7 @@ pub(super) fn rail_button(
     let isl = theme::islands(cx);
     Button::new(id)
         .ghost()
-        .size(dp(38.))
+        .size(dp(RAIL_BUTTON))
         .p_0()
         .rounded(dp(10.))
         // A child keeps its size, where `.icon` would take the button's.
@@ -99,7 +135,6 @@ pub(super) fn rail_button(
         .accessibility_label(label.into())
         .tooltip(tooltip.into())
         .text_color(if active { isl.fg } else { isl.fg3 })
-        .when(active, |button| button.bg(isl.active))
 }
 
 // A 30 square button with a 16 icon, as in island headers.
@@ -123,8 +158,10 @@ fn pinned_toggle(
 ) -> AnyElement {
     let icon = Icon::default().path("panel-left.svg");
     let tooltip = match action {
-        Action::ToggleLeftPanel => format!("{label} ({})", conversation_ui::shortcut("Ctrl+B")),
-        Action::ToggleSidePanel => {
+        Action::ToggleLeftPanel | Action::Docs(docs::Act::LeftPanel) => {
+            format!("{label} ({})", conversation_ui::shortcut("Ctrl+B"))
+        }
+        Action::ToggleSidePanel | Action::Docs(docs::Act::ChatPanel) => {
             format!("{label} ({})", conversation_ui::shortcut("Ctrl+Shift+B"))
         }
         _ => label.to_owned(),
@@ -140,17 +177,55 @@ fn pinned_toggle(
         .into_any_element()
 }
 
+/// Dragged from the right island's left edge to resize its pane.
+pub(super) struct PaneDrag;
+
+struct DragGhost;
+
+impl Render for DragGhost {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        div()
+    }
+}
+
+fn resize_handle() -> impl IntoElement {
+    div()
+        .id("pane-resize")
+        .test_support()
+        .role(Role::Splitter)
+        .aria_label("Resize panel")
+        .absolute()
+        .top_0()
+        .left_0()
+        .h_full()
+        .w(px(6.))
+        .cursor_col_resize()
+        // The press belongs to the drag, so it must not also start a text selection.
+        .on_mouse_down(MouseButton::Left, |_, _, cx| {
+            component::GlobalState::suppress_text_selection(cx);
+        })
+        .on_drag(PaneDrag, |_, _, _, cx| cx.new(|_| DragGhost))
+}
+
 impl Adeline {
     pub(super) fn left_panel_is_open(&self) -> bool {
-        self.section == Section::Chats && self.left_panel_open
+        match self.section {
+            Section::Chats => self.left_panel_open,
+            Section::Docs => config::current().modes.docs.show_left_panel,
+            _ => false,
+        }
     }
     pub(super) fn side_panel_is_open(&self) -> bool {
-        self.section == Section::Chats && self.side_panel_open
+        match self.section {
+            Section::Chats => self.side_panel_open,
+            Section::Docs => config::current().modes.docs.show_conversation_panel,
+            _ => false,
+        }
     }
 
     /// The header: "Mode / project / item", centered over the main area,
     /// with the window controls in the corner above the right island.
-    pub(super) fn header(&self, cx: &Context<Self>) -> Stateful<Div> {
+    pub(super) fn header(&self, window: &Window, cx: &Context<Self>) -> Stateful<Div> {
         let isl = theme::islands(cx);
         let item = match self.section {
             Section::Docs => self
@@ -200,7 +275,7 @@ impl Adeline {
                         )
                     })
             });
-        let (left, right) = self.island_widths();
+        let (left, right) = self.island_widths(window);
         let title = row()
             .absolute()
             .top(dp(PAD))
@@ -222,23 +297,35 @@ impl Adeline {
             .child(titlebar::without_text_selection(bar))
     }
 
-    fn island_widths(&self) -> (f32, f32) {
+    fn left_width(&self) -> f32 {
+        RAIL + if self.left_panel_is_open() { LIST } else { 0. }
+    }
+
+    fn island_widths(&self, window: &Window) -> (f32, f32) {
         let chats = self.section == Section::Chats && self.has_open_project();
-        let left = RAIL + if self.left_panel_is_open() { LIST } else { 0. };
-        let right = if chats {
-            RAIL + if self.side_panel_is_open() { PANE } else { 0. }
-        } else if self.section == Section::Docs && self.has_open_project() {
-            RAIL
+        let left = self.left_width();
+        let docs = self.section == Section::Docs && self.has_open_project();
+        let right = if chats || docs {
+            RAIL + if self.side_panel_is_open() {
+                self.pane_width(window)
+            } else {
+                0.
+            }
         } else {
             0.
         };
         (left, right)
     }
 
-    pub(super) fn islands(&self, body: AnyElement, window: &Window, cx: &Context<Self>) -> Div {
+    pub(super) fn islands(
+        &self,
+        body: AnyElement,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let chats = self.section == Section::Chats && self.has_open_project();
         let docs = self.section == Section::Docs && self.has_open_project();
-        let isl = theme::islands(cx);
+        let isl = *theme::islands(cx);
         let list_open = self.left_panel_is_open() && self.has_open_project();
         let mut left = island(cx).child(
             self.mode_rail(cx)
@@ -252,25 +339,42 @@ impl Adeline {
                     .aria_label("Conversation list panel")
                     .w(dp(LIST))
                     .h_full()
-                    .child(panel_area("list", self.chat_list.clone(), cx)),
+                    .child(if docs {
+                        panel_area("docs-tree", self.docs_sidebar(window, cx), cx)
+                    } else {
+                        panel_area("list", self.chat_list.clone(), cx)
+                    }),
             );
         }
-        let right = chats.then(|| {
+        let right = (chats || docs).then(|| {
             let open = self.side_panel_is_open();
+            let rail = if chats {
+                self.side_rail(cx)
+            } else {
+                self.docs_rail(cx)
+            };
             island(cx)
                 .when(open, |island| {
-                    island.child(div().w(dp(PANE)).h_full().child(panel_area(
-                        "side",
-                        chat::region(&self.side_panel, chat::full(), window),
-                        cx,
-                    )))
+                    let content = if chats {
+                        panel_area(
+                            "side",
+                            chat::region(&self.side_panel, chat::full(), window),
+                            cx,
+                        )
+                    } else {
+                        panel_area(DOCS_CHAT, self.chats(window, cx), cx)
+                    };
+                    island.child(
+                        div()
+                            .relative()
+                            .w(dp(self.pane_width(window)))
+                            .h_full()
+                            .child(content)
+                            .child(resize_handle()),
+                    )
                 })
-                .child(
-                    self.side_rail(cx)
-                        .when(open, |rail| rail.border_l_1().border_color(isl.line)),
-                )
+                .child(rail.when(open, |rail| rail.border_l_1().border_color(isl.line)))
         });
-        let docs_rail = docs.then(|| island(cx).child(self.docs_rail(cx)));
         row()
             .flex_1()
             .min_h_0()
@@ -281,11 +385,72 @@ impl Adeline {
             .child(left)
             .child(div().flex_1().min_w_0().h_full().child(if chats {
                 panel_area(CHATS_MAIN, body, cx).into_any_element()
+            } else if docs {
+                panel_area(DOCS_MAIN, body, cx).into_any_element()
             } else {
                 body
             }))
             .children(right)
-            .children(docs_rail)
+            .on_drag_move(cx.listener(|app, event: &DragMoveEvent<PaneDrag>, _, cx| {
+                app.drag_pane(event, cx);
+            }))
+            .on_drop(cx.listener(|app, _: &PaneDrag, _, cx| {
+                if let Err(error) = ui_state::record_panes(app.panes) {
+                    app.notify_toast(&format!("Could not save the panel width: {error:#}"), cx);
+                }
+            }))
+    }
+
+    /// The right island's pane width: the side pane in Chats, the chat elsewhere.
+    /// A saved width gives way so the main area keeps `MAIN_MIN` in a narrow window.
+    fn pane_width(&self, window: &Window) -> f32 {
+        let saved = if self.section == Section::Chats {
+            self.panes.side.unwrap_or(PANE)
+        } else {
+            self.panes.chat.unwrap_or(CHAT_PANE)
+        };
+        let room = self.pane_room(f32::from(window.viewport_size().width) / f32::from(dp(1.)));
+        saved.min(room).max(PANE_MIN)
+    }
+
+    fn pane_room(&self, row: f32) -> f32 {
+        row - PAD * 4. - self.left_width() - RAIL - MAIN_MIN
+    }
+
+    // The pane's left edge follows the pointer; the rail and the island's right edge stay.
+    fn drag_pane(&mut self, event: &DragMoveEvent<PaneDrag>, cx: &mut Context<Self>) {
+        let scale = f32::from(dp(1.));
+        let row = event.bounds;
+        let edge = f32::from(row.right() - event.event.position.x) / scale;
+        let room = self.pane_room(f32::from(row.size.width) / scale);
+        // At most twice the mode's default width.
+        let most = room.min(
+            2. * if self.section == Section::Chats {
+                PANE
+            } else {
+                CHAT_PANE
+            },
+        );
+        let width = (edge - PAD - RAIL).clamp(PANE_MIN, most.max(PANE_MIN));
+        let pane = if self.section == Section::Chats {
+            &mut self.panes.side
+        } else {
+            &mut self.panes.chat
+        };
+        if *pane != Some(width) {
+            *pane = Some(width);
+            cx.notify();
+        }
+    }
+
+    /// Records `active` as the rail's active tab and returns it with the one before.
+    pub(super) fn rail_slide(&self, rail: &'static str, active: Option<usize>) -> Slide {
+        let mut slides = self.rail_slides.borrow_mut();
+        let slide = slides.entry(rail).or_insert((None, active));
+        if slide.1 != active {
+            *slide = (slide.1, active);
+        }
+        *slide
     }
 
     fn side_rail(&self, cx: &Context<Self>) -> Div {
@@ -294,6 +459,7 @@ impl Adeline {
         if self.verbose {
             tabs.push(SideTab::Traffic);
         }
+        let active = tabs.iter().position(|tab| open && self.side_tab == *tab);
         let buttons = tabs
             .into_iter()
             .map(|tab| {
@@ -338,6 +504,7 @@ impl Adeline {
             "side-tabs",
             "Side panel",
             buttons,
+            self.rail_slide("side-tabs", active),
             pinned_toggle(
                 "right-panel",
                 "Side panel",
@@ -346,36 +513,39 @@ impl Adeline {
                 Action::ToggleSidePanel,
                 cx,
             ),
+            cx,
         )
     }
 
     fn docs_rail(&self, cx: &Context<Self>) -> Div {
-        let docs = config::current().modes.docs;
-        let settings = self.command_popover(
-            "mode-settings",
-            rail_button(
-                "docs-settings",
-                "Docs settings",
-                "Docs settings",
-                Icon::default().path("settings.svg"),
-                false,
-                cx,
-            ),
-            Anchor::TopRight,
+        let open = self.side_panel_is_open();
+        let chat = rail_button(
+            "docs-chat-tab",
+            "Chat",
+            "Chat",
+            Icon::default().path("chat.svg"),
+            open,
             cx,
-        );
+        )
+        .on_click(cx.listener(move |app, _, window, cx| {
+            if !app.side_panel_is_open() {
+                app.act(Action::Docs(docs::Act::ChatPanel), window, cx);
+            }
+        }));
         rail(
             "docs-tabs",
             "Docs panels",
-            vec![settings.into_any_element()],
+            vec![chat.into_any_element()],
+            self.rail_slide("docs-tabs", open.then_some(0)),
             pinned_toggle(
                 "docs-right-panel",
                 "Conversation panel",
-                docs.show_conversation_panel,
+                open,
                 true,
                 Action::Docs(docs::Act::ChatPanel),
                 cx,
             ),
+            cx,
         )
     }
 
@@ -458,8 +628,17 @@ pub(super) fn panel_area(
                     set_drag_panel(Some(id), &down, cx);
                 }
             });
+            let up = owner.clone();
             window.on_mouse_event(move |_: &MouseUpEvent, phase, _, cx| {
                 if phase.capture() {
+                    set_drag_panel(None, &up, cx);
+                }
+            });
+            // Windows keeps the mouse up when a press starts a window resize, and a drop
+            // stops it, so a move with no button held also ends the drag.
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                if phase.capture() && event.pressed_button.is_none() {
+                    base::TextSelection::end(window, cx);
                     set_drag_panel(None, &owner, cx);
                 }
             });
@@ -482,36 +661,118 @@ fn set_drag_panel(panel: Option<&'static str>, owner: &WeakEntity<Adeline>, cx: 
     });
 }
 
-/// The separator between the resizable panels of every mode.
-pub(super) fn fading_divider(
-    handle: &ResizeHandleContext,
-    _: &mut Window,
-    cx: &mut App,
-) -> Option<AnyElement> {
-    if handle.is_active() || handle.axis() != Axis::Horizontal {
-        return None;
-    }
-    Some(fading_line(cx).into_any_element())
+// A glide moves its child from where it last drew to its new place when that
+// place changes, as the composer does between the main area and the right island.
+const GLIDE: Duration = Duration::from_millis(200);
+
+#[derive(Default)]
+pub(super) struct GlideState {
+    place: Option<bool>,
+    origin: Option<Point<Pixels>>,
+    from: Option<(Point<Pixels>, Instant)>,
 }
 
-fn fading_line(cx: &App) -> Div {
-    const CLEAR: f32 = 2.5;
-    const FADE: f32 = 7.5;
-    let line = cx.theme().border;
-    let ramp = |from: Hsla, to: Hsla| {
-        div().flex_none().h(rems(FADE - CLEAR)).bg(linear_gradient(
-            180.,
-            linear_color_stop(from, 0.),
-            linear_color_stop(to, 1.),
-        ))
-    };
-    col()
-        .flex_none()
-        .h_full()
-        .w(px(1.))
-        .child(div().flex_none().h(rems(CLEAR)))
-        .child(ramp(line.alpha(0.), line))
-        .child(div().flex_1().min_h_0().bg(line))
-        .child(ramp(line, line.alpha(0.)))
-        .child(div().flex_none().h(rems(CLEAR)))
+pub(super) struct Glide {
+    child: Option<AnyElement>,
+    place: bool,
+    state: Rc<RefCell<GlideState>>,
+}
+
+pub(super) fn glide(
+    child: impl IntoElement,
+    place: bool,
+    state: &Rc<RefCell<GlideState>>,
+) -> Glide {
+    Glide {
+        child: Some(child.into_any_element()),
+        place,
+        state: Rc::clone(state),
+    }
+}
+
+impl Element for Glide {
+    type RequestLayoutState = ();
+    type PrepaintState = ();
+
+    fn id(&self) -> Option<ElementId> {
+        None
+    }
+
+    fn source_location(&self) -> Option<&'static core::panic::Location<'static>> {
+        None
+    }
+
+    fn request_layout(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        window: &mut Window,
+        cx: &mut App,
+    ) -> (LayoutId, ()) {
+        let child = self.child.as_mut().expect("laid out once");
+        (child.request_layout(window, cx), ())
+    }
+
+    fn prepaint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        bounds: Bounds<Pixels>,
+        &mut (): &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        let mut state = self.state.borrow_mut();
+        if state.place != Some(self.place) {
+            if let (Some(_), Some(old)) = (state.place, state.origin)
+                && !cx.reduce_motion()
+            {
+                state.from = Some((old - bounds.origin, cx.background_executor().now()));
+            }
+            state.place = Some(self.place);
+        }
+        state.origin = Some(bounds.origin);
+        // The executor's clock, which tests move by hand.
+        let now = cx.background_executor().now();
+        let progress = state
+            .from
+            .map(|(_, start)| (now - start).as_secs_f32() / GLIDE.as_secs_f32());
+        let child = self.child.as_mut().expect("prepainted once");
+        match (state.from, progress) {
+            (Some((offset, _)), Some(t)) if t < 1. => {
+                // Deferred and unclipped, so it crosses the islands' edges on its way.
+                let shift = offset * (1. - ease_out_quint()(t));
+                let child = self.child.take().expect("prepainted once");
+                window.defer_draw(child, window.element_offset() + shift, 1, None);
+                window.request_animation_frame();
+            }
+            _ => {
+                state.from = None;
+                child.prepaint(window, cx);
+            }
+        }
+    }
+
+    fn paint(
+        &mut self,
+        _: Option<&GlobalElementId>,
+        _: Option<&InspectorElementId>,
+        _: Bounds<Pixels>,
+        &mut (): &mut (),
+        &mut (): &mut (),
+        window: &mut Window,
+        cx: &mut App,
+    ) {
+        if let Some(child) = self.child.as_mut() {
+            child.paint(window, cx);
+        }
+    }
+}
+
+impl IntoElement for Glide {
+    type Element = Self;
+
+    fn into_element(self) -> Self {
+        self
+    }
 }

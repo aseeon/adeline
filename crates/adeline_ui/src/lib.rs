@@ -305,6 +305,7 @@ pub struct Adeline {
     show_completed: bool,
     show_archived: bool,
     side_panel_open: bool,
+    panes: ui_state::Panes,
     activity: activity::ActivityPanel,
     query: Entity<InputState>,
     composer: Entity<TextareaState>,
@@ -328,6 +329,8 @@ pub struct Adeline {
     open_thoughts: std::collections::HashSet<String>,
     logged_in: std::collections::HashSet<String>,
     pictures: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<Image>>>,
+    // Per rail: the active tab before the current one, and the current one.
+    rail_slides: std::cell::RefCell<std::collections::HashMap<&'static str, panes::Slide>>,
     left_panel_open: bool,
     selected_tint: usize,
     focus: FocusHandle,
@@ -336,6 +339,7 @@ pub struct Adeline {
     chat_list: Entity<chat::ChatList>,
     transcript: Entity<chat::Transcript>,
     composer_region: Entity<chat::Composer>,
+    composer_glide: std::rc::Rc<std::cell::RefCell<panes::GlideState>>,
     header_region: Entity<chat::Header>,
     side_panel: Entity<conversation_ui::SidePanel>,
     chat_header: Entity<views::ChatHeader>,
@@ -530,6 +534,7 @@ impl Adeline {
             show_completed: true,
             show_archived: false,
             side_panel_open: false,
+            panes: ui_state::panes(),
             activity: activity::ActivityPanel::default(),
             query,
             composer,
@@ -549,6 +554,7 @@ impl Adeline {
             open_thoughts: std::collections::HashSet::new(),
             logged_in: std::collections::HashSet::new(),
             pictures: std::cell::RefCell::default(),
+            rail_slides: std::cell::RefCell::default(),
             left_panel_open: true,
             selected_tint: 3,
             focus: cx.focus_handle(),
@@ -556,6 +562,7 @@ impl Adeline {
             chat_list,
             transcript,
             composer_region,
+            composer_glide: std::rc::Rc::default(),
             header_region,
             side_panel,
             chat_header,
@@ -769,7 +776,7 @@ impl Render for Adeline {
             self.chats(window, cx)
         } else if self.section == Section::Docs {
             self.docs_load_images(cx);
-            self.docs_panels(window, cx)
+            self.docs_card(cx)
         } else {
             div().size_full().into_any_element()
         };
@@ -901,10 +908,20 @@ impl Render for Adeline {
                 }
             }))
             .on_action(cx.listener(|app, _: &ToggleChatList, window, cx| {
-                app.act(Action::ToggleLeftPanel, window, cx);
+                let action = if app.section == Section::Docs {
+                    Action::Docs(docs::Act::LeftPanel)
+                } else {
+                    Action::ToggleLeftPanel
+                };
+                app.act(action, window, cx);
             }))
             .on_action(cx.listener(|app, _: &ToggleSidePane, window, cx| {
-                app.act(Action::ToggleSidePanel, window, cx);
+                let action = if app.section == Section::Docs {
+                    Action::Docs(docs::Act::ChatPanel)
+                } else {
+                    Action::ToggleSidePanel
+                };
+                app.act(action, window, cx);
             }))
             .on_action(cx.listener(|app, _: &ProjectPalette, window, cx| {
                 if app.has_open_project() && app.section == Section::Docs {

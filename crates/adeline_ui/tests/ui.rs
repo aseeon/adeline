@@ -285,6 +285,133 @@ fn close_tab(cx: &mut TestAppContext) {
     assert!(!ui.tabs().contains(&name), "the tab came back");
 }
 
+/// Drags the right island's resize handle by `dx` and returns how far its left edge moved.
+fn drag_pane(ui: &mut Ui, dx: f32) -> f32 {
+    let before = ui.named("Resize panel").bounds();
+    let from = before.center();
+    ui.drag(from, point(from.x + px(dx), from.y));
+    f32::from(ui.named("Resize panel").bounds().left() - before.left())
+}
+
+#[gpui_kit::test]
+fn right_island_resizes_in_every_mode(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    if ui.try_named("Resize panel").is_none() {
+        ui.press("ctrl-shift-b");
+    }
+    // Chats: the side pane widens as its edge moves left; the rail stays.
+    let rail = ui.named("Side panel").bounds();
+    let width = |ui: &mut Ui, rail: &str| {
+        f32::from(ui.named(rail).bounds().left() - ui.named("Resize panel").bounds().left())
+    };
+    // Design pixels scale with the interface text size. Rail buttons are 38 of them.
+    let scale = f32::from(ui.named("Agent activity").bounds().size.width) / 38.;
+    let default = width(&mut ui, "Agent activity");
+    let moved = drag_pane(&mut ui, -120.);
+    assert!((moved + 120.).abs() < 4., "moved {moved}");
+    assert_eq!(ui.named("Side panel").bounds(), rail);
+    let chats = width(&mut ui, "Agent activity");
+    // Docs keeps its own width for the chat beside the doc.
+    ui.press("ctrl-2");
+    open_doc(&mut ui, "mdguide", 2);
+    assert!((drag_pane(&mut ui, 60.) - 60.).abs() < 4.);
+    // A drag far left in a wide window stops at twice the default 440.
+    ui.resize(2400., 900.);
+    drag_pane(&mut ui, -2000.);
+    let most = width(&mut ui, "Chat");
+    // Both widths are measured to a rail button, so its offset cancels out. The
+    // button's size is rounded to whole pixels, so the scale is only close.
+    let grown = (880. - 330.) * scale;
+    assert!(
+        (most - default - grown).abs() < grown * 0.02,
+        "{most} at most, {default} by default, scale {scale}"
+    );
+    // A narrow window shrinks the saved width so the doc keeps its room.
+    ui.resize(1200., 900.);
+    let doc = ui.named("Resize panel").bounds().left() - ui.named("Search docs").bounds().right();
+    assert!(f32::from(doc) >= 320. * scale, "{doc:?} left for the doc");
+    ui.press("ctrl-shift-b");
+    assert!(
+        ui.try_named("Resize panel").is_none(),
+        "Ctrl+Shift+B hides the chat in Docs"
+    );
+    ui.press("ctrl-shift-b");
+    ui.resize(2400., 900.);
+    ui.press("ctrl-1");
+    assert!((width(&mut ui, "Agent activity") - chats).abs() < 1.);
+}
+
+#[gpui_kit::test]
+fn resizing_a_pane_selects_no_text(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.press("ctrl-2");
+    open_doc(&mut ui, "mdguide", 2);
+    drag_pane(&mut ui, 60.);
+    // With the button up, the pointer crosses the chat and the doc.
+    let from = ui.named("Resize panel").bounds().center();
+    let to = ui.named("docs/markdown-guide.md, Viewer").bounds().origin + point(px(100.), px(300.));
+    for step in 1..=20 {
+        ui.move_to(from + (to - from) * (step as f32 / 20.));
+    }
+    assert!(!ui.with(gpui_kit::base::TextSelection::has_selection));
+}
+
+#[gpui_kit::test]
+fn a_lost_mouse_up_ends_the_selection(cx: &mut TestAppContext) {
+    use gpui::{Modifiers, MouseButton, VisualTestContext};
+    let mut ui = Ui::demo(cx, false);
+    ui.press("ctrl-2");
+    open_doc(&mut ui, "mdguide", 2);
+    let doc = ui.named("docs/markdown-guide.md, Viewer").bounds();
+    let selected = |ui: &mut Ui| ui.with(gpui_kit::base::TextSelection::selected_text);
+    // A press that Windows keeps the mouse up of, as when it starts a window resize.
+    let window = ui.window;
+    let mut vcx = VisualTestContext::from_window(window, ui.cx);
+    let from = doc.origin + point(px(40.), px(240.));
+    vcx.simulate_mouse_move(from, None, Modifiers::default());
+    vcx.simulate_mouse_down(from, MouseButton::Left, Modifiers::default());
+    vcx.simulate_mouse_move(
+        from + point(px(120.), px(0.)),
+        MouseButton::Left,
+        Modifiers::default(),
+    );
+    let dragged = selected(&mut ui);
+    assert!(!dragged.is_empty());
+    ui.move_to(from + point(px(200.), px(200.)));
+    assert_eq!(selected(&mut ui), dragged);
+}
+
+/// Moves GPUI's clock past the composer's 200 ms glide.
+fn finish_glide(ui: &mut Ui) {
+    for _ in 0..15 {
+        ui.cx
+            .executor()
+            .advance_clock(std::time::Duration::from_millis(20));
+        ui.settle();
+    }
+}
+
+#[gpui_kit::test]
+fn the_composer_glides_between_chats_and_the_right_island(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    let chats = ui.named("Message").bounds().left();
+    ui.press("ctrl-2");
+    let leaving = ui.named("Message").bounds().left();
+    finish_glide(&mut ui);
+    let island = ui.named("Message").bounds().left();
+    assert!(
+        island > chats,
+        "{island:?} is in the island, right of {chats:?}"
+    );
+    assert!(
+        leaving < island - px(100.),
+        "{leaving:?} starts near {chats:?}, then slides to {island:?}"
+    );
+    ui.press("ctrl-1");
+    finish_glide(&mut ui);
+    assert_eq!(ui.named("Message").bounds().left(), chats);
+}
+
 #[gpui_kit::test]
 fn selection_stays_in_panel(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);

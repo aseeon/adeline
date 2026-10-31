@@ -180,8 +180,6 @@ pub(crate) struct Project {
     failed: Option<(String, String)>,
     files: HashMap<String, Doc>,
     chat: Option<String>,
-    tree_width: f32,
-    chat_width: f32,
     scroll: Option<(usize, f32)>,
     cursor: Option<String>,
 }
@@ -190,7 +188,6 @@ pub(crate) struct Docs {
     pub(super) search: Entity<InputState>,
     pub(super) editor: Entity<EditorState>,
     viewer: Entity<TextViewState>,
-    panels: Entity<component::ResizableState>,
     path_input: Entity<InputState>,
     projects: HashMap<String, Project>,
     images: viewer::Images,
@@ -209,9 +206,6 @@ pub(crate) struct Docs {
     demo: HashMap<String, BTreeMap<String, String>>,
     pending_anchor: Option<String>,
 }
-
-const TREE_WIDTH: f32 = 260.;
-const CHAT_WIDTH: f32 = 380.;
 
 fn language(path: &str) -> &'static str {
     match path
@@ -269,7 +263,6 @@ impl Docs {
             search: cx.new(|cx| InputState::new(window, cx).placeholder("Search docs")),
             editor: cx.new(|cx| EditorState::new(window, cx).language("markdown")),
             viewer: cx.new(|cx| TextViewState::markdown("", cx)),
-            panels: cx.new(|_| component::ResizableState::default()),
             path_input: cx.new(|cx| InputState::new(window, cx)),
             projects: HashMap::new(),
             images: viewer::Images::default(),
@@ -317,8 +310,6 @@ impl Project {
             expanded: saved.expanded.into_iter().collect(),
             open: saved.open.clone(),
             chat: saved.chat,
-            tree_width: saved.tree_width.unwrap_or(TREE_WIDTH),
-            chat_width: saved.chat_width.unwrap_or(CHAT_WIDTH),
             scroll: saved.open.is_some().then_some(saved.scroll),
             files: saved
                 .open
@@ -1209,8 +1200,6 @@ impl Adeline {
             open,
             editor,
             scroll: project.scroll.unwrap_or_default(),
-            tree_width: Some(project.tree_width),
-            chat_width: Some(project.chat_width),
             expanded,
             chat: if in_docs {
                 current

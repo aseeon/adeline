@@ -493,6 +493,8 @@ pub const T_CAPTION: f32 = 12.;
 pub const T_UI: f32 = 13.;
 pub const T_BODY: f32 = 14.;
 pub const T_PROSE: f32 = 15.;
+pub const T_TITLE: f32 = 17.;
+pub const T_DOC: f32 = 24.;
 
 // Panels that float over a scrolling view stop this far from its right edge
 // so the bar stays visible.

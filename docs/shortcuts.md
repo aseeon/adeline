@@ -74,7 +74,7 @@ Registered with both the Ctrl and the Cmd form on every OS, not in the keymap se
 |---|---|
 | Ctrl+1 … Ctrl+9 / Cmd+1 … Cmd+9 | Switch to the mode at that position on the mode rail (enabled modes only) |
 | Ctrl+B / Cmd+B | Show or hide the chat list (in Docs mode, the tree). In the Editor it stays Bold |
-| Ctrl+Shift+B / Cmd+Shift+B | Show or hide the side panel |
+| Ctrl+Shift+B / Cmd+Shift+B | Show or hide the side panel (in Docs mode, the conversation panel) |
 
 ## Docs
 
@@ -233,7 +233,7 @@ Composer pickers:
 
 Panels:
 
-- Docs: toggle the conversation panel; resize the panels
+- Resize the right island
 
 Machines and engine:
 

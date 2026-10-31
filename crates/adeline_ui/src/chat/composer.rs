@@ -293,7 +293,14 @@ impl Adeline {
                                                     .path(agent_path)
                                                     .text_color(agent_color),
                                             )
-                                            .label(shorten(&agent_name, fit.agent))
+                                            // Beside another mode, only the glyph fits.
+                                            .map(|button| {
+                                                if self.section == Section::Chats {
+                                                    button.label(shorten(&agent_name, fit.agent))
+                                                } else {
+                                                    button.accessibility_label(agent_name.clone())
+                                                }
+                                            })
                                             .tooltip(agent_name),
                                         cx,
                                     ),
@@ -322,8 +329,8 @@ impl Adeline {
             .w_full()
             .flex_shrink_0()
             .min_w_0()
-            .bg(theme.background)
-            .child(chat_column().child(div().relative().child(island).children(slash)))
+            .bg(chat_surface(self.section, cx))
+            .child(chat_column(self.section).child(div().relative().child(island).children(slash)))
     }
 
     fn option_menu(

@@ -8,13 +8,13 @@ use super::{Act, After, Doc, viewer};
 use crate::*;
 use adeline_core::card::Card;
 use adeline_docs::Format;
+use gpui_kit::base::TextViewStyle;
 use gpui_kit::component::Disableable as _;
 use gpui_kit::component::command::{Command, CommandItem};
 use gpui_kit::component::input::Editor;
-use gpui_kit::component::resizable::{h_resizable, resizable_panel};
 
-// In px, so it holds at any interface text size.
-const MAIN_PANEL_MIN: Pixels = px(320.);
+// 68ch of 15 px prose, the design's measure for documents.
+const DOC_WIDTH: f32 = 790.;
 // Cards a reply shows before the rest fold into a list.
 const CARD_LIMIT: usize = 4;
 
@@ -134,6 +134,30 @@ fn plain_tools() -> Vec<Tool> {
     ]
 }
 
+// The design's document type: a 24 title, 17 sections, code on the chip fill.
+fn prose(cx: &App) -> TextViewStyle {
+    let (title, section, body) = (
+        panes::dp(theme::T_DOC),
+        panes::dp(theme::T_TITLE),
+        panes::dp(theme::T_PROSE),
+    );
+    TextViewStyle::from_theme(&base::Theme::global(cx))
+        .with_paragraph_gap(rems(0.625))
+        .with_heading(move |level| {
+            let style = StyleRefinement::default().font_weight(FontWeight::SEMIBOLD);
+            match level {
+                1 => style.text_size(title).line_height(relative(1.2)),
+                2 => style.text_size(section).line_height(relative(1.3)),
+                _ => style.text_size(body),
+            }
+        })
+        .with_inline_code(HighlightStyle {
+            color: Some(cx.theme().primary),
+            background_color: Some(theme::islands(cx).chip),
+            ..Default::default()
+        })
+}
+
 fn edited_at(ms: u64) -> String {
     i64::try_from(ms)
         .ok()
@@ -147,6 +171,7 @@ fn edited_at(ms: u64) -> String {
 }
 
 impl Adeline {
+    // A 30 square toolbar button with a 15 icon, as in the design's `.fmt`.
     fn docs_button(
         &self,
         id: impl Into<ElementId>,
@@ -155,135 +180,181 @@ impl Adeline {
         act: Act,
         cx: &Context<Self>,
     ) -> Button {
-        self.icon_button(id, label, Icon::default().path(icon), Action::Docs(act), cx)
+        let label = label.into();
+        Button::new(id)
+            .ghost()
+            .size(panes::dp(30.))
+            .p_0()
+            .rounded(panes::dp(7.))
+            .text_color(theme::islands(cx).fg2)
+            .child(Icon::default().path(icon).size(panes::dp(15.)))
+            .accessibility_label(label.clone())
+            .tooltip(label)
+            .on_click(cx.listener(move |app, _, window, cx| {
+                cx.stop_propagation();
+                app.act(Action::Docs(act.clone()), window, cx);
+            }))
     }
 
-    pub(crate) fn docs_panels(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let settings = config::with(|s| s.modes.docs.clone());
-        let (tree_width, chat_width) = self
-            .docs_current()
-            .map_or((super::TREE_WIDTH, super::CHAT_WIDTH), |p| {
-                (p.tree_width, p.chat_width)
-            });
-        let owner = cx.weak_entity();
-        h_resizable("docs-panels")
-            .with_state(&self.docs.panels)
-            .with_handle_appearance(std::rc::Rc::new(panes::fading_divider))
-            .on_resize(move |state, _, cx| {
-                let sizes = state.read(cx).sizes().clone();
-                let _ = owner.update(cx, |app, cx| {
-                    if !app.has_open_project() {
-                        return;
-                    }
-                    let scale = fonts::text_pixels(1.);
-                    let project = app.docs_project();
-                    if let Some(width) = sizes.first().filter(|w| **w > px(0.)) {
-                        project.tree_width = f32::from(*width) / f32::from(scale);
-                    }
-                    if let Some(width) = sizes.get(2).filter(|w| **w > px(0.)) {
-                        project.chat_width = f32::from(*width) / f32::from(scale);
-                    }
-                    app.docs_record(cx);
-                });
-            })
+    /// The doc in a card between the islands: radius 14, its bottom level with theirs.
+    pub(crate) fn docs_card(&self, cx: &mut Context<Self>) -> AnyElement {
+        let isl = theme::islands(cx);
+        div()
+            .size_full()
+            .px(panes::dp(12.))
             .child(
-                resizable_panel()
-                    .visible(settings.show_left_panel)
-                    .size(fonts::text_pixels(tree_width))
-                    .size_range(fonts::text_pixels(160.)..fonts::text_pixels(520.))
-                    .flex_grow_0()
-                    .flex_shrink_1()
-                    .child(panes::panel_area(
-                        "docs-tree",
-                        self.docs_tree(window, cx),
-                        cx,
-                    )),
-            )
-            .child(
-                resizable_panel()
-                    .size_range(MAIN_PANEL_MIN..Pixels::MAX)
-                    .child(panes::panel_area(panes::DOCS_MAIN, self.docs_main(cx), cx)),
-            )
-            .child(
-                resizable_panel()
-                    .visible(settings.show_conversation_panel)
-                    .size(fonts::text_pixels(chat_width))
-                    .size_range(fonts::text_pixels(260.)..fonts::text_pixels(720.))
-                    .flex_grow_0()
-                    .flex_shrink_1()
-                    .child(panes::panel_area(
-                        panes::DOCS_CHAT,
-                        self.chats(window, cx),
-                        cx,
-                    )),
+                div()
+                    .size_full()
+                    .rounded(panes::dp(14.))
+                    .bg(isl.card)
+                    .overflow_hidden()
+                    .shadow(vec![
+                        BoxShadow::new(px(0.), px(0.), isl.ring)
+                            .blur_radius(px(0.))
+                            .spread_radius(px(1.)),
+                    ])
+                    .child(self.docs_main(cx)),
             )
             .into_any_element()
     }
 
-    fn docs_tree(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+    /// The left island's list in Docs: the project switcher, a header, search and the tree.
+    pub(crate) fn docs_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
+        let isl = theme::islands(cx);
+        let search_focused = self
+            .docs
+            .search
+            .focus_handle(cx)
+            .contains_focused(window, cx);
+        let header = row()
+            .h(panes::dp(44.))
+            .flex_shrink_0()
+            .pl(panes::dp(18.))
+            .pr(panes::dp(10.))
+            .gap(panes::dp(6.))
+            .child(
+                div()
+                    .text_size(panes::dp(theme::T_BODY))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(isl.fg)
+                    .child("Docs"),
+            )
+            .child(
+                self.command_popover(
+                    "mode-settings",
+                    panes::icon_button(
+                        "docs-settings",
+                        Icon::default()
+                            .path("more.svg")
+                            .rotate(Radians(std::f32::consts::FRAC_PI_2)),
+                        cx,
+                    )
+                    .accessibility_label("Docs settings")
+                    .tooltip("Docs settings"),
+                    Anchor::TopLeft,
+                    cx,
+                ),
+            )
+            .child(div().flex_1())
+            .child(
+                panes::icon_button("doc-new", Icon::default().path("file-plus.svg"), cx)
+                    .accessibility_label("New doc (Ctrl+Alt+N)")
+                    .tooltip("New doc (Ctrl+Alt+N)")
+                    .on_click(cx.listener(|app, _, window, cx| {
+                        cx.stop_propagation();
+                        app.act(Action::Docs(Act::New), window, cx);
+                    })),
+            );
+        // Framed like the chat search: focus shows as the stronger ring.
+        let search = row()
+            .id("docs-search-field")
+            .w_full()
+            .h(panes::dp(32.))
+            .pl(panes::dp(10.))
+            .pr(px(1.))
+            .rounded(panes::dp(8.))
+            .border_1()
+            .border_color(if search_focused {
+                isl.ring_strong
+            } else {
+                isl.ring
+            })
+            .bg(isl.chip)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|app, _, window, cx| {
+                    window.focus(&app.docs.search.focus_handle(cx), cx);
+                }),
+            )
+            .child(icon("search").size(panes::dp(14.)).text_color(isl.fg3))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .capture_key_down(cx.listener(|app, event: &KeyDownEvent, window, cx| {
+                        let modifiers = event.keystroke.modifiers;
+                        if event.keystroke.key == "down" && !modifiers.modified() {
+                            cx.stop_propagation();
+                            app.docs_focus_tree(window, cx);
+                        }
+                    }))
+                    .child(
+                        Input::new(&self.docs.search)
+                            .cleanable(true)
+                            .appearance(false)
+                            .aria_label("Search docs"),
+                    ),
+            );
+        col()
+            .w_full()
+            .min_w_0()
+            .h_full()
+            .child(self.project_switcher(cx))
+            .child(header)
+            .child(
+                div()
+                    .w_full()
+                    .px(panes::dp(8.))
+                    .pb(panes::dp(8.))
+                    .child(search),
+            )
+            .child(self.docs_tree(cx))
+            .into_any_element()
+    }
+
+    fn docs_tree(&self, cx: &mut Context<Self>) -> AnyElement {
+        let isl = theme::islands(cx);
+        let danger = cx.theme().danger;
         let project = self.docs_current();
         let rows = project.map_or(0, |p| p.rows.len());
         let error = project.and_then(|p| p.list_error.clone());
         let empty = project.is_some_and(|p| p.listed && p.rows.is_empty());
         let searching = !self.docs.search.read(cx).value().trim().is_empty();
+        let note = |text: SharedString, color: Hsla| {
+            div()
+                .px(panes::dp(12.))
+                .py(panes::dp(8.))
+                .text_size(panes::dp(theme::T_UI))
+                .text_color(color)
+                .child(text)
+        };
         col()
             .id("docs-tree-panel")
             .role(Role::Group)
             .aria_label("Docs")
-            .size_full()
-            .bg(theme.background)
-            .child(
-                row()
-                    .gap_1()
-                    .p_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .capture_key_down(cx.listener(
-                                |app, event: &KeyDownEvent, window, cx| {
-                                    let modifiers = event.keystroke.modifiers;
-                                    if event.keystroke.key == "down" && !modifiers.modified() {
-                                        cx.stop_propagation();
-                                        app.docs_focus_tree(window, cx);
-                                    }
-                                },
-                            ))
-                            .child(search_field(
-                                Input::new(&self.docs.search)
-                                    .small()
-                                    .cleanable(true)
-                                    .aria_label("Search docs"),
-                                &self.docs.search,
-                                window,
-                                cx,
-                            )),
-                    )
-                    .child(self.docs_button(
-                        "doc-new",
-                        "New doc (Ctrl+Alt+N)",
-                        "file-plus.svg",
-                        Act::New,
-                        cx,
-                    )),
-            )
-            .children(
-                error.map(|error| div().px_3().text_sm().text_color(theme.danger).child(error)),
-            )
+            .w_full()
+            .flex_1()
+            .min_h_0()
+            .children(error.map(|error| note(error.into(), danger)))
             .when(empty, |panel| {
-                panel.child(
-                    div()
-                        .px_3()
-                        .py_2()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(if searching {
-                            "No docs match."
-                        } else {
-                            "This project has no docs yet."
-                        }),
-                )
+                panel.child(note(
+                    if searching {
+                        "No docs match.".into()
+                    } else {
+                        "This project has no docs yet.".into()
+                    },
+                    isl.fg3,
+                ))
             })
             .child(
                 div()
@@ -310,14 +381,14 @@ impl Adeline {
                         )
                         .track_scroll(&self.docs.tree_scroll)
                         .size_full()
-                        .pb_2(),
+                        .pb(panes::dp(8.)),
                     ),
             )
             .into_any_element()
     }
 
     fn docs_row(&self, ix: usize, window: &Window, cx: &Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let isl = theme::islands(cx);
         let Some(project) = self.docs_current() else {
             return div().into_any_element();
         };
@@ -330,7 +401,6 @@ impl Adeline {
         let cursor = project.cursor.as_deref() == Some(path.as_str())
             && self.docs.tree_focus.contains_focused(window, cx);
         let dirty = !row_data.folder && project.files.get(&path).is_some_and(|d| d.dirty);
-        let icon_path = if row_data.folder { "folder" } else { "file" };
         let act = if row_data.folder {
             Act::Folder(path.clone())
         } else {
@@ -340,9 +410,26 @@ impl Adeline {
         if dirty {
             label.push_str(", unsaved");
         }
+        // Folders lead with a chevron. Files keep its width, so names line up.
+        let chevron = if row_data.folder {
+            let chevron = Icon::default()
+                .path("chevron.svg")
+                .size(panes::dp(12.))
+                .text_color(isl.fg3);
+            if row_data.open {
+                chevron.into_any_element()
+            } else {
+                chevron
+                    .rotate(Radians(-std::f32::consts::FRAC_PI_2))
+                    .into_any_element()
+            }
+        } else {
+            div().w(panes::dp(12.)).flex_shrink_0().into_any_element()
+        };
         div()
             .w_full()
-            .px_1p5()
+            .px(panes::dp(8.))
+            .pb(px(1.))
             .child(
                 row()
                     .id(SharedString::from(format!("doc:{path}")))
@@ -352,38 +439,31 @@ impl Adeline {
                     .aria_selected(open)
                     .when(row_data.folder, |row| row.aria_expanded(row_data.open))
                     .h(panes::dp(30.))
-                    .pl(rems(0.5 + 0.875 * row_data.depth as f32))
-                    .pr_2()
-                    .gap_2()
-                    .rounded(theme.radius)
-                    .text_sm()
-                    .when(open, |row| row.bg(theme.sidebar_primary))
-                    .when(!open, |row| row.hover(|style| style.bg(theme.secondary)))
-                    .when(cursor, |row| row.border_1().border_color(theme.ring))
+                    .pl(panes::dp(8. + 14. * row_data.depth as f32))
+                    .pr(panes::dp(8.))
+                    .gap(panes::dp(6.))
+                    .rounded(panes::dp(7.))
+                    .text_size(panes::dp(theme::T_UI))
+                    .text_color(if open { isl.fg } else { isl.fg2 })
+                    .when(open, |row| row.bg(isl.sel))
+                    .when(!open, |row| {
+                        row.hover(|style| style.bg(isl.hover).text_color(isl.fg))
+                    })
+                    .when(cursor, |row| row.border_1().border_color(isl.ring_strong))
+                    .child(chevron)
                     .child(
-                        icon(icon_path)
-                            .size(rems(0.875))
-                            .text_color(theme.muted_foreground),
+                        icon(if row_data.folder { "folder" } else { "file" })
+                            .size(panes::dp(14.))
+                            .text_color(isl.fg3),
                     )
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(if open || row_data.folder {
-                                theme.foreground
-                            } else {
-                                theme.muted_foreground
-                            })
-                            .child(name),
-                    )
+                    .child(div().flex_1().min_w_0().truncate().child(name))
                     .when(dirty, |row| {
                         row.child(
                             div()
                                 .flex_shrink_0()
-                                .size(rems(0.5))
+                                .size(panes::dp(6.))
                                 .rounded_full()
-                                .bg(theme.primary),
+                                .bg(isl.fg2),
                         )
                     })
                     .on_click(cx.listener(move |app, _, window, cx| {
@@ -472,6 +552,7 @@ impl Adeline {
 
     fn docs_main(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
+        let isl = theme::islands(cx);
         let project = self.docs_current();
         let failed = project.and_then(|p| p.failed.clone());
         let centered = |child: AnyElement| {
@@ -484,7 +565,6 @@ impl Adeline {
                 .justify_center()
                 .gap_3()
                 .p_6()
-                .bg(theme.background)
                 .child(child)
                 .into_any_element()
         };
@@ -553,9 +633,12 @@ impl Adeline {
                 .role(Role::Document)
                 .aria_label(format!("{path}, Viewer"))
                 .relative()
+                .flex()
+                .justify_center()
                 .flex_1()
                 .min_h_0()
-                .px_6()
+                .pt(panes::dp(28.))
+                .px(panes::dp(32.))
                 .on_mouse_up(MouseButton::Left, move |event, _, cx| {
                     let at = event.position;
                     let _ = owner.update(cx, |app, cx| {
@@ -581,7 +664,13 @@ impl Adeline {
                         config::with(|s| s.modes.docs.load_remote_images),
                         panes::selectable_in(panes::DOCS_MAIN, cx),
                     )
-                    .size_full(),
+                    .style(prose(cx))
+                    .text_size(panes::dp(theme::T_PROSE))
+                    .line_height(relative(1.65))
+                    .text_color(isl.fg)
+                    .h_full()
+                    .w_full()
+                    .max_w(panes::dp(DOC_WIDTH)),
                 )
                 .into_any_element()
         } else {
@@ -641,7 +730,6 @@ impl Adeline {
             .role(Role::Main)
             .aria_label(path.clone())
             .size_full()
-            .bg(theme.background)
             .child(self.docs_toolbar(&path, doc, locked, cx))
             .children(self.docs_banners(doc, offline, cx))
             .child(content)
@@ -649,8 +737,9 @@ impl Adeline {
             .into_any_element()
     }
 
+    /// The card's toolbar: 44 tall, the tools, then whether the doc is saved.
     fn docs_toolbar(&self, path: &str, doc: &Doc, locked: bool, cx: &Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let isl = theme::islands(cx);
         let markdown = adeline_docs::is_markdown(path);
         let tools = if !doc.editor || locked {
             Vec::new()
@@ -664,55 +753,29 @@ impl Adeline {
         } else {
             "Edit in the Editor (Ctrl+Shift+V)"
         };
-        div()
-            .p_2()
+        let (state, state_label) = if doc.dirty {
+            ("Unsaved", "Unsaved changes")
+        } else {
+            ("Saved", "Saved")
+        };
+        row()
+            .id("doc-toolbar")
+            .role(Role::Toolbar)
+            .aria_label("Doc toolbar")
+            .w_full()
+            .h(panes::dp(44.))
+            .flex_shrink_0()
+            .px(panes::dp(8.))
+            .gap(px(2.))
+            .border_b_1()
+            .border_color(isl.line)
+            // In a narrow card the tools clip, and the doc's state and actions stay.
             .child(
                 row()
-                    .id("doc-toolbar")
-                    .role(Role::Toolbar)
-                    .aria_label("Doc toolbar")
-                    .w_full()
-                    .gap_1()
-                    .px_2()
-                    .py_1()
-                    .rounded_lg()
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.foreground.alpha(0.025))
+                    .flex_1()
+                    .min_w_0()
+                    .gap(px(2.))
                     .overflow_x_hidden()
-                    .child(
-                        row()
-                            .flex_1()
-                            .min_w(rems(6.))
-                            .gap_1p5()
-                            .text_sm()
-                            .child(
-                                div()
-                                    .id("doc-path")
-                                    .min_w_0()
-                                    .truncate()
-                                    .tooltip({
-                                        let path = path.to_owned();
-                                        move |window, cx| {
-                                            component::tooltip::Tooltip::new(path.clone())
-                                                .build(window, cx)
-                                        }
-                                    })
-                                    .child(path.to_owned()),
-                            )
-                            .when(doc.dirty, |row| {
-                                row.child(
-                                    div()
-                                        .id("doc-unsaved")
-                                        .role(Role::Status)
-                                        .aria_label("Unsaved changes")
-                                        .flex_shrink_0()
-                                        .text_xs()
-                                        .text_color(theme.primary)
-                                        .child("Unsaved"),
-                                )
-                            }),
-                    )
                     .children(tools.into_iter().map(|tool| {
                         self.docs_button(
                             SharedString::from(format!("doc-tool-{}", tool.id)),
@@ -721,28 +784,39 @@ impl Adeline {
                             tool.action,
                             cx,
                         )
-                    }))
-                    .child(div().w(px(1.)).h(rems(1.25)).mx_1().bg(theme.border))
-                    .child(
-                        self.docs_button(
-                            "doc-view",
-                            view_label,
-                            if doc.editor { "eye.svg" } else { "pen.svg" },
-                            Act::View,
-                            cx,
-                        )
-                        .selected(doc.editor),
-                    )
-                    .child(
-                        self.docs_button(
-                            "doc-save",
-                            "Save (Ctrl+S)",
-                            "floppy-disk.svg",
-                            Act::Save,
-                            cx,
-                        )
-                        .disabled(!doc.dirty && !doc.gone || locked),
-                    ),
+                        .flex_shrink_0()
+                    })),
+            )
+            .child(
+                div()
+                    .id("doc-unsaved")
+                    .role(Role::Status)
+                    .aria_label(state_label)
+                    .flex_shrink_0()
+                    .px(panes::dp(6.))
+                    .text_size(panes::dp(theme::T_CAPTION))
+                    .text_color(isl.fg3)
+                    .child(state),
+            )
+            .child(
+                self.docs_button(
+                    "doc-view",
+                    view_label,
+                    if doc.editor { "eye.svg" } else { "pen.svg" },
+                    Act::View,
+                    cx,
+                )
+                .selected(doc.editor),
+            )
+            .child(
+                self.docs_button(
+                    "doc-save",
+                    "Save (Ctrl+S)",
+                    "floppy-disk.svg",
+                    Act::Save,
+                    cx,
+                )
+                .disabled(!doc.dirty && !doc.gone || locked),
             )
             .into_any_element()
     }
@@ -970,11 +1044,27 @@ impl Adeline {
                 Some(thread.id.clone()),
             )
         }));
+        let isl = theme::islands(cx);
         let trigger = Button::new("chat-chooser")
             .ghost()
-            .small()
-            .label(title.to_owned())
-            .icon(Icon::default().path("chevron.svg"))
+            .h(panes::dp(30.))
+            .px(panes::dp(6.))
+            .max_w_full()
+            .child(
+                row()
+                    .min_w_0()
+                    .gap(panes::dp(6.))
+                    .text_size(panes::dp(theme::T_BODY))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(isl.fg)
+                    .child(div().min_w_0().truncate().child(title.to_owned()))
+                    .child(
+                        Icon::default()
+                            .path("chevron.svg")
+                            .size(panes::dp(12.))
+                            .text_color(isl.fg3),
+                    ),
+            )
             .accessibility_label(format!(
                 "Conversation: {title}. Choose another (Ctrl+Shift+K)"
             ))
