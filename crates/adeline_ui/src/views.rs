@@ -106,10 +106,33 @@ impl Adeline {
                 let _ = owner.update(cx, |_, cx| cx.notify());
             }
         });
-        // Messages fade out just below the header's edge instead of meeting a line.
+        // Docs shows its chat chooser above the conversation; in Chats the
+        // window header names the chat.
+        let header = (self.section == Section::Docs).then(|| {
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .right(scrollbar)
+                .pl(scrollbar)
+                .bg(theme.background)
+                .child(chat::region(
+                    &self.chat_header,
+                    StyleRefinement::default()
+                        .w_full()
+                        .h(rems(chat::CHAT_HEADER_HEIGHT)),
+                    window,
+                ))
+        });
+        let header_height = if header.is_some() {
+            rems(chat::CHAT_HEADER_HEIGHT)
+        } else {
+            rems(0.)
+        };
+        // Messages fade out at the top edge instead of meeting a line.
         let fade = div()
             .absolute()
-            .top(rems(chat::CHAT_HEADER_HEIGHT))
+            .top(header_height)
             .left_0()
             .right(scrollbar)
             .h(rems(chat::HEADER_FADE))
@@ -127,22 +150,7 @@ impl Adeline {
             .min_w_0()
             .child(self.transcript.clone())
             .child(fade)
-            .child(
-                div()
-                    .absolute()
-                    .top_0()
-                    .left_0()
-                    .right(scrollbar)
-                    .pl(scrollbar)
-                    .bg(theme.background)
-                    .child(chat::region(
-                        &self.chat_header,
-                        StyleRefinement::default()
-                            .w_full()
-                            .h(rems(chat::CHAT_HEADER_HEIGHT)),
-                        window,
-                    )),
-            )
+            .children(header)
             .child(
                 div()
                     .absolute()
@@ -301,7 +309,6 @@ impl Adeline {
                         app.menu = None;
                         app.refocus_after_menu(window, cx);
                         app.header_region.update(cx, |_, cx| cx.notify());
-                        app.control_pane.update(cx, |_, cx| cx.notify());
                         app.composer_region.update(cx, |_, cx| cx.notify());
                         cx.notify();
                     }
@@ -406,7 +413,6 @@ impl Adeline {
         self.command_popup = Some(state);
         self.menu = Some(menu);
         self.header_region.update(cx, |_, cx| cx.notify());
-        self.control_pane.update(cx, |_, cx| cx.notify());
         self.composer_region.update(cx, |_, cx| cx.notify());
         cx.notify();
     }

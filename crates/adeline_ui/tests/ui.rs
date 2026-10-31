@@ -29,11 +29,10 @@ fn demo_conversation(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, true);
 
     ui.open_chat("Search long conversations without pausing the interface");
-    ui.named("TODO: Check matches across two messages, 3 of 4");
     ui.press("ctrl-shift-t");
-    ui.named("TODO");
-    ui.press("escape");
-    ui.gone("TODO");
+    ui.named("Plan steps");
+    ui.press("ctrl-shift-t");
+    ui.gone("Plan steps");
     ui.named("Queued messages");
     ui.named("Queued: Also keep the match count visible while typing.");
     ui.press("ctrl-shift-l");

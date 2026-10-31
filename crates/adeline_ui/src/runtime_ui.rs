@@ -138,7 +138,6 @@ impl Adeline {
         self.resync_transcript(cx);
         self.composer_region.update(cx, |_, cx| cx.notify());
         self.header_region.update(cx, |_, cx| cx.notify());
-        self.control_pane.update(cx, |_, cx| cx.notify());
         cx.notify();
     }
 
@@ -343,7 +342,7 @@ impl Adeline {
     pub(super) fn watch_traffic(&mut self, cx: &mut Context<Self>) {
         let watched = self
             .current_id()
-            .filter(|_| self.traffic_tab && self.side_panel_is_open());
+            .filter(|_| self.side_tab == panes::SideTab::Traffic && self.side_panel_is_open());
         self.traffic.clear();
         if self.demo_mode {
             if let Some(id) = &watched {
@@ -365,7 +364,7 @@ impl Adeline {
                         .filter_map(|entry| serde_json::from_value(entry).ok())
                         .collect();
                     app.traffic_scroll.scroll_to_bottom();
-                    app.control_pane.update(cx, |_, cx| cx.notify());
+                    app.side_panel.update(cx, |_, cx| cx.notify());
                 }
             },
         );
@@ -390,7 +389,7 @@ impl Adeline {
         if following {
             self.traffic_scroll.scroll_to_bottom();
         }
-        self.control_pane.update(cx, |_, cx| cx.notify());
+        self.side_panel.update(cx, |_, cx| cx.notify());
     }
 
     pub(super) fn restart_agent(&mut self, cx: &mut Context<Self>) {

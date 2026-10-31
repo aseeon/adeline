@@ -7,6 +7,9 @@
 //! Elements are found by accessibility label, as GPUI Kit observes them. `find`,
 //! `click`, `press` and `type_text` are shared with the UI tests' `Ui` helper and
 //! the pixel tests, so the command line and the tests follow one rule.
+//!
+//! `--hidden` keeps the window off screen. The platform draws no frames for a
+//! hidden window, so each request draws one itself, as the Windows pixel test does.
 use crate::client;
 use adeline_core::{ipc, platform};
 use anyhow::{Context as _, bail};
@@ -198,8 +201,14 @@ fn tree(window: &Window) -> Value {
     json!(elements)
 }
 
+struct Hidden;
+impl Global for Hidden {}
+
 /// Opens this UI's control endpoint, removed again when the app quits.
-pub fn serve(demo: bool, cx: &mut App) -> Result<()> {
+pub fn serve(demo: bool, hidden: bool, cx: &mut App) -> Result<()> {
+    if hidden {
+        cx.set_global(Hidden);
+    }
     let listener = client::runtime().block_on(async { ipc::Listener::bind_control() })?;
     let (requests, inbox) = async_channel::unbounded();
     client::runtime().spawn(accept(listener, requests));
@@ -254,6 +263,9 @@ async fn accept(
 /// Waits until the window has drawn a frame, or `FRAME_TIMEOUT` for a window
 /// the platform doesn't draw, such as a minimized one.
 async fn next_frame(window: AnyWindowHandle, cx: &mut AsyncApp) -> Result<()> {
+    if cx.update(|cx| cx.has_global::<Hidden>()) {
+        return cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx));
+    }
     let (drawn, frame) = async_channel::bounded(1);
     let timeout = drawn.clone();
     let executor = cx.background_executor().clone();

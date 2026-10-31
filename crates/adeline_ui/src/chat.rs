@@ -14,13 +14,12 @@
 //! them) have fixed heights, so the list places its stacked labels by arithmetic.
 //! A label sticks once its natural place reaches its slot, like CSS sticky with a
 //! top of slot times the label height; the current section is the last to stick.
-//! `COLLAPSED_SEARCH` is NUL-prefixed because chat ids never are. `Transcript`'s
-//! `follow` and `reveal` leave redrawing the panel to the caller. The collapsed
-//! list is as wide as the mode rail beside it.
+//! `Transcript`'s `follow` and `reveal` leave redrawing the panel to the caller.
 //!
 //! Looping animations run at `ANIMATION_FPS`, and `spinner` is the Kit's
 //! `Spinner` with that cap.
 use super::*;
+use crate::panes::dp;
 use adeline_core::conversation::{MessageRole, ThreadStatus};
 use adeline_core::prepared::{Criteria, Group, Outcome};
 use gpui_kit::base::SelectableText;
@@ -30,7 +29,7 @@ use gpui_kit::component::{
     button::ButtonVariants as _,
     command::{Command, CommandGroup, CommandItem},
     input::Textarea,
-    menu::{DropdownMenu as _, PopupMenuItem},
+    menu::{ContextMenuExt as _, DropdownMenu as _, PopupMenuItem},
     scroll::Scrollbar,
     text::{TextView, TextViewState, TextViewStyle},
     tooltip::Tooltip,
@@ -44,8 +43,8 @@ mod composer;
 mod list;
 mod transcript;
 pub(super) use composer::Composer;
-pub(super) use list::{COLLAPSED_WIDTH, ChatList};
-pub(crate) use list::{ROW_HEIGHT, status_name};
+pub(super) use list::ChatList;
+pub(crate) use list::status_name;
 pub(super) use transcript::Transcript;
 
 pub(super) fn size_probe(
@@ -85,11 +84,9 @@ fn invalidate_range(state: &ListState, range: std::ops::Range<usize>) {
 
 pub(super) struct Header(pub WeakEntity<Adeline>);
 impl Render for Header {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.0
-            .update(cx, |app, cx| {
-                app.header(window, cx).w_full().into_any_element()
-            })
+            .update(cx, |app, cx| app.header(cx).w_full().into_any_element())
             .unwrap_or_else(|_| div().into_any_element())
     }
 }
@@ -97,22 +94,6 @@ impl Render for Header {
 impl Adeline {
     pub(super) fn sync_regions(&self, action: &Action, cx: &mut Context<Self>) {
         use super::Action::*;
-        if matches!(
-            action,
-            Section(_)
-                | Project(_)
-                | NewChat
-                | ShowCompleted
-                | ShowArchived
-                | HideToolCalls
-                | SubmitOnEnter
-                | ToggleLeftPanel
-                | ToggleSidePanel
-                | TrafficView
-                | PanelTab(_)
-        ) {
-            self.control_pane.update(cx, |_, cx| cx.notify());
-        }
         // Data mutations notify their dependents explicitly. Opening overlays,
         // changing focus and changing unrelated sections do not invalidate them.
         match action {
@@ -179,7 +160,9 @@ impl Adeline {
             .agent_catalog()
             .entries
             .iter()
-            .find(|entry| entry.definition.name == agent)
+            .find(|entry| {
+                entry.definition.name == agent || entry.definition.name == self.agent_name(agent)
+            })
             .map_or_else(
                 || "robot.svg".into(),
                 |entry| agents::avatar_path(&entry.id, &entry.definition.harness),
@@ -213,35 +196,8 @@ pub(super) fn option_menu_name(category: conversation::Category) -> &'static str
 pub(super) const CHAT_HEADER_HEIGHT: f32 = 3.;
 pub(super) const HEADER_FADE: f32 = 1.75;
 
-pub(super) const CHAT_COLUMN: f32 = 46.;
-
-pub(super) fn agent_header(
-    agent_icon: (String, Hsla),
-    name: impl Into<SharedString>,
-    cx: &App,
-) -> Div {
-    let theme = cx.theme();
-    row()
-        .h_7()
-        .gap_2()
-        .child(
-            div()
-                .size_5()
-                .flex_shrink_0()
-                .flex()
-                .items_center()
-                .justify_center()
-                .rounded(theme.radius)
-                .bg(theme.secondary)
-                .child(agent_mark(agent_icon).size(rems(0.75))),
-        )
-        .child(
-            div()
-                .text_sm()
-                .font_weight(FontWeight::SEMIBOLD)
-                .child(name.into()),
-        )
-}
+// In rems, for the composer's fit: the 760 px column.
+pub(super) const CHAT_COLUMN: f32 = 47.5;
 
 pub(super) const ANIMATION_FPS: f32 = 30.;
 
@@ -390,7 +346,7 @@ pub(super) fn thinking_label(progress: Option<String>, cx: &App) -> AnyElement {
 }
 
 pub(super) fn chat_column() -> Div {
-    div().w_full().max_w(rems(CHAT_COLUMN)).mx_auto().px_8()
+    div().w_full().max_w(dp(760.)).mx_auto().px(dp(28.))
 }
 
 pub(super) fn context_meter(usage: Option<(u64, u64)>, cx: &App) -> Stateful<Div> {

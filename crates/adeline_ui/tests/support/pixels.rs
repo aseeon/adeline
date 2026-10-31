@@ -11,8 +11,9 @@ use std::path::PathBuf;
 // How far apart two channels may be and still count as one color.
 const SAME: u8 = 6;
 
-// The open demo chat's TODO button, which shows its current step as text.
-pub const DEMO_TODO: &str = "TODO: Check matches across two messages, 3 of 4";
+// The window header names the open demo chat.
+pub const DEMO_TITLE: &str =
+    "Chats / ade-project / Search long conversations without pausing the interface";
 
 pub struct Frame {
     pub image: RgbaImage,
@@ -89,13 +90,13 @@ pub fn drawn_on(image: &RgbaImage, background: Rgba<u8>) -> usize {
 }
 
 /// Facts every renderer must show in the demo's chat view: the theme background,
-/// text on the TODO button and the icon of the main menu.
+/// the chat's title in the window header and the icon of the main menu.
 pub fn check_demo(frame: &Frame, find: &mut dyn FnMut(&str) -> ElementSnapshot, background: Hsla) {
     let background = rgb(background);
-    let todo = frame.region(&find(DEMO_TODO));
-    let around = dominant(&todo);
-    frame.check(drawn_on(&todo, around) > 200, || {
-        "The TODO button shows no text".to_owned()
+    let title = frame.region(&find(DEMO_TITLE));
+    let around = dominant(&title);
+    frame.check(drawn_on(&title, around) > 200, || {
+        "The window header shows no title".to_owned()
     });
 
     let menu = frame.region(&find("Main menu"));

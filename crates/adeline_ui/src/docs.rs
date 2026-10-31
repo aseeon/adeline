@@ -61,14 +61,7 @@ pub(crate) struct SwitchMode {
 
 actions!(
     adeline,
-    [
-        ToggleDocView,
-        SaveDoc,
-        NoteOnSelection,
-        NewDoc,
-        ChooseChat,
-        FindDoc
-    ]
+    [ToggleDocView, SaveDoc, NoteOnSelection, NewDoc, ChooseChat]
 );
 
 /// Docs mode's shortcuts (docs/shortcuts.md), Ctrl and Cmd alike.
@@ -89,7 +82,6 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
             KeyBinding::new(&key("shift-k"), ChooseChat, None),
             KeyBinding::new(&key("shift-n"), NoteOnSelection, None),
             KeyBinding::new(&key("alt-n"), NewDoc, None),
-            KeyBinding::new(&key("p"), FindDoc, None),
         ]);
         let editor = Some("DocsEditor");
         let format = |keys: &str, format: Format| {
@@ -1732,7 +1724,6 @@ impl Adeline {
             Act::SaveAll => self.docs_save_all(cx),
             Act::Discard => self.docs_discard(window, cx),
         }
-        self.control_pane.update(cx, |_, cx| cx.notify());
         cx.notify();
     }
 
@@ -1753,9 +1744,6 @@ impl Adeline {
             }))
             .on_action(cx.listener(|app, _: &NewDoc, window, cx| {
                 app.act(Action::Docs(Act::New), window, cx);
-            }))
-            .on_action(cx.listener(|app, _: &FindDoc, window, cx| {
-                window.focus(&app.docs.search.focus_handle(cx), cx);
             }))
             .on_action(cx.listener(|app, action: &ApplyFormat, window, cx| {
                 app.act(Action::Docs(Act::Format(action.format)), window, cx);

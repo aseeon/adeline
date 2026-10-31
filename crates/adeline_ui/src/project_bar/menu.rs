@@ -4,12 +4,12 @@ use super::*;
 use gpui_kit::base::input;
 
 impl Adeline {
-    pub(super) fn projects_menu(&self, trigger: Button, cx: &Context<Self>) -> Popover {
+    pub(crate) fn projects_menu(&self, cx: &Context<Self>) -> Popover {
         let owner = cx.weak_entity();
         let content_owner = owner.clone();
         Popover::new("projects")
-            .anchor(Anchor::TopRight)
-            .trigger(trigger)
+            .anchor(Anchor::TopCenter)
+            .trigger(menu_anchor("projects-anchor"))
             .open(self.menu == Some("projects"))
             .track_focus(&self.project_search.focus_handle(cx))
             .p_0()
@@ -88,7 +88,7 @@ impl Adeline {
         let key_owner = owner.clone();
         let delete_owner = owner.clone();
         col()
-            .w(rems(22.))
+            .w(dp(580.))
             // The search field binds Delete, and bindings run before key listeners.
             .capture_action(move |_: &input::Delete, window, cx| {
                 let handled = delete_owner
@@ -251,13 +251,7 @@ impl Adeline {
                     app.act(Action::Project(ix), window, cx);
                 });
             })
-            .child(letter_mark(
-                &project.config.name,
-                fill,
-                letter,
-                rems(1.5),
-                cx,
-            ))
+            .child(letter_mark(&project.config.name, fill, letter, dp(24.)))
             .child(
                 col()
                     .flex_1()

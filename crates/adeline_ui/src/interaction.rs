@@ -362,27 +362,24 @@ impl Adeline {
             Action::TrafficView => {
                 if self.verbose {
                     self.side_panel_open = true;
-                    self.traffic_tab = true;
+                    self.side_tab = panes::SideTab::Traffic;
                     self.watch_traffic(cx);
                 }
             }
             Action::PanelTab(tab) => {
-                self.traffic_tab = self.verbose && tab == 1;
+                // The open pane's own tab closes it; any other tab opens the pane on it.
+                self.side_panel_open = !(self.side_panel_open && self.side_tab == tab);
+                self.side_tab = tab;
                 self.watch_traffic(cx);
             }
             Action::CopyTraffic => {
                 cx.write_to_clipboard(ClipboardItem::new_string(self.traffic_text()));
             }
             Action::TodoList => {
-                if self.menu == Some("todo") {
-                    self.menu = None;
-                } else if self
-                    .current_live()
-                    .is_some_and(|live| !live.todo.is_empty())
-                {
-                    self.menu = Some("todo");
-                }
-                self.header_region.update(cx, |_, cx| cx.notify());
+                self.side_panel_open =
+                    !(self.side_panel_open && self.side_tab == panes::SideTab::Plan);
+                self.side_tab = panes::SideTab::Plan;
+                self.watch_traffic(cx);
             }
             Action::ShowThinking => {
                 if let Err(error) = config::update(|settings| {
@@ -593,6 +590,8 @@ impl Adeline {
                 | Action::ShowArchived
                 | Action::ToggleLeftPanel
                 | Action::ToggleSidePanel
+                | Action::PanelTab(_)
+                | Action::TodoList
         ) && let Err(error) = self.save_settings(&changed)
         {
             window.push_notification(format!("Could not save settings: {error:#}"), cx);
@@ -642,7 +641,7 @@ impl Adeline {
             Action::ToggleLeftPanel => {
                 s.modes.chats.show_left_panel = self.left_panel_open;
             }
-            Action::ToggleSidePanel => {
+            Action::ToggleSidePanel | Action::PanelTab(_) | Action::TodoList => {
                 s.modes.chats.show_agent_activity = self.side_panel_open;
             }
             _ => (),

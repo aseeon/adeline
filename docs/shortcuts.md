@@ -45,7 +45,7 @@ Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `crates
 | Alt+P / Cmd+Shift+P | Open More options |
 | Ctrl+Shift+A / Cmd+Shift+A | Attach files |
 | Ctrl+Shift+L / Cmd+Shift+L | Show the ACP traffic tab of the side panel (with `--verbose`) |
-| Ctrl+Shift+T / Cmd+Shift+T | Open the TODO list |
+| Ctrl+Shift+T / Cmd+Shift+T | Show or hide the Plan tab of the side panel |
 | Ctrl+L / Cmd+L | Focus the message box |
 | Ctrl+Shift+D / Cmd+Shift+D | Dismiss the errors under the chat |
 | Ctrl+Shift+F / Cmd+Shift+F | Fork the chat at its latest reply |
@@ -54,12 +54,13 @@ Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `crates
 
 ## Projects and machines
 
-Registered with both the Ctrl and the Cmd form on every OS, not in the keymap setting. Project tabs switch with Ctrl alone, since Cmd+Tab is the macOS app switcher. The machines menu follows the option menus: Alt on Windows and Linux, Cmd+Shift on macOS.
+Registered with both the Ctrl and the Cmd form on every OS, not in the keymap setting. Projects switch with Ctrl alone, since Cmd+Tab is the macOS app switcher. The machines menu follows the option menus: Alt on Windows and Linux, Cmd+Shift on macOS.
 
 | Shortcut | Action |
 |---|---|
-| Ctrl+Tab / Ctrl+Shift+Tab | Switch to the next / previous project tab, wrapping at the ends |
-| Ctrl+W / Cmd+W | Close the project tab |
+| Ctrl+P / Cmd+P | Open the projects menu (in Docs mode, search docs) |
+| Ctrl+Tab / Ctrl+Shift+Tab | Switch to the next / previous open project, wrapping at the ends |
+| Ctrl+W / Cmd+W | Close the project |
 | Ctrl+O / Cmd+O | Open a folder as a project (asks for the machine when several are checked) |
 | Alt+H / Cmd+Shift+H | Open the machines menu (with a remote machine saved). In Settings, focus the Machine dropdown, which Enter opens |
 
@@ -72,6 +73,8 @@ Registered with both the Ctrl and the Cmd form on every OS, not in the keymap se
 | Shortcut | Action |
 |---|---|
 | Ctrl+1 … Ctrl+9 / Cmd+1 … Cmd+9 | Switch to the mode at that position on the mode rail (enabled modes only) |
+| Ctrl+B / Cmd+B | Show or hide the chat list (in Docs mode, the tree). In the Editor it stays Bold |
+| Ctrl+Shift+B / Cmd+Shift+B | Show or hide the side panel |
 
 ## Docs
 
@@ -127,7 +130,7 @@ With the chat list focused, no modifier:
 |---|---|
 | Up / Down | Select the previous / next chat |
 | Home / End | Select the first / last chat |
-| Enter or Space | Open the chat (on a chat icon in the folded rail) |
+| Enter or Space | Open the chat |
 
 In the chat search (Ctrl+F), Enter opens the first chat it lists.
 
@@ -197,7 +200,6 @@ Menu bar items with no key:
 
 Projects:
 
-- Open the projects menu (only via Ctrl+F outside Chats mode)
 - Add a project, pick the project's machine
 - Rename a project
 - Delete a project
@@ -209,8 +211,7 @@ Chats:
 
 - Filter chats by agent, clear chat filters
 - Show completed chats, show archived chats
-- Mark a chat complete
-- Archive a chat
+- Mark a chat complete, archive a chat (the chat row's right-click menu)
 - Reply to (quote) a message
 - Copy a message
 - Fork a chat at an earlier reply
@@ -232,9 +233,7 @@ Composer pickers:
 
 Panels:
 
-- Toggle the left panel
-- Toggle the side panel
-- Docs: toggle the tree and the conversation panel; resize the panels
+- Docs: toggle the conversation panel; resize the panels
 
 Machines and engine:
 

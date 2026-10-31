@@ -57,6 +57,7 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `pin.svg` | `push-pin.svg` |
 | `play.svg` | `play.svg` |
 | `plus.svg` | `plus.svg` |
+| `pulse.svg` | `pulse.svg` |
 | `quotes.svg` | `quotes.svg` |
 | `reply.svg` | `arrow-bend-up-left.svg` |
 | `robot.svg` | `robot.svg` |

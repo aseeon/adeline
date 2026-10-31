@@ -99,8 +99,8 @@ pub struct ThemeFile {
 }
 impl ThemeFile {
     pub fn builtin() -> Self {
-        serde_yaml_ng::from_str(include_str!("../../../bundled-themes/claude-plus.yml"))
-            .expect("valid bundled Claude Plus theme")
+        serde_yaml_ng::from_str(include_str!("../../../bundled-themes/islands.yml"))
+            .expect("valid bundled Islands theme")
     }
     fn validate(&self) -> Result<BTreeMap<&'static str, u32>> {
         if self.name.trim().is_empty() {
@@ -162,7 +162,7 @@ impl Default for State {
 impl State {
     fn fallback(error: &anyhow::Error) -> Self {
         Self {
-            load_error: Some(format!("{error:#} Using Claude Plus until this is fixed.")),
+            load_error: Some(format!("{error:#} Using Islands until this is fixed.")),
             ..Self::default()
         }
     }
@@ -388,9 +388,111 @@ pub fn apply(cx: &mut App) {
         theme.tokens = (&theme.colors).into();
     });
     KitTheme::sync_base(cx);
+    let islands = Islands::new(KitTheme::global(cx));
+    cx.set_global(islands);
     style_scrollbars(cx);
     cx.refresh_windows();
 }
+
+// The Islands surfaces (docs/design/DESIGN.md), derived from the theme's
+// background so every theme keeps their brightness order: islands, then the
+// window, then the composer and cards. Overlays are `ink` at fixed opacities.
+#[derive(Clone, Copy)]
+pub struct Islands {
+    pub island: Hsla,
+    pub bg: Hsla,
+    pub card: Hsla,
+    pub raise: Hsla,
+    pub bubble: Hsla,
+    pub fg: Hsla,
+    pub fg2: Hsla,
+    pub fg3: Hsla,
+    pub line: Hsla,
+    pub hover: Hsla,
+    pub chip: Hsla,
+    pub sel: Hsla,
+    pub ring: Hsla,
+    pub ring_strong: Hsla,
+    pub active: Hsla,
+    pub accent: Hsla,
+    pub ok: Hsla,
+    pub err: Hsla,
+    pub ctx: Hsla,
+    pub send_bg: Hsla,
+    pub send_fg: Hsla,
+}
+impl gpui_kit::Global for Islands {}
+impl Islands {
+    fn new(theme: &KitTheme) -> Self {
+        let dark = theme.mode.is_dark();
+        let bg = theme.background;
+        let ink: Hsla = if dark {
+            gpui_kit::white()
+        } else {
+            gpui_kit::black()
+        };
+        let fg = theme.foreground;
+        let fg3 = theme.muted_foreground;
+        Self {
+            island: lift(bg, -0.03),
+            bg,
+            card: lift(bg, 0.025),
+            raise: lift(bg, 0.035),
+            bubble: lift(bg, if dark { 0.065 } else { -0.055 }),
+            fg,
+            fg2: fg.mix_oklab(fg3, 0.5),
+            fg3,
+            line: ink.alpha(0.09),
+            hover: ink.alpha(0.07),
+            chip: ink.alpha(0.08),
+            sel: ink.alpha(0.12),
+            ring: ink.alpha(0.1),
+            ring_strong: ink.alpha(0.22),
+            active: ink.alpha(0.11),
+            accent: theme.primary,
+            ok: theme.success,
+            err: theme.danger,
+            ctx: theme.info,
+            send_bg: fg.mix_oklab(bg, 0.94),
+            send_fg: bg,
+        }
+    }
+}
+pub fn islands(cx: &App) -> &Islands {
+    cx.global::<Islands>()
+}
+
+// Moves a color's OKLab lightness by `delta`, toward white or black.
+fn lift(color: Hsla, delta: f32) -> Hsla {
+    let rgb = color.to_rgb();
+    let linear = |c: f32| {
+        if c <= 0.04045 {
+            c / 12.92
+        } else {
+            ((c + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    let [red, green, blue] = [rgb.r, rgb.g, rgb.b].map(linear);
+    let cone = |[x, y, z]: [f32; 3]| (x * red + y * green + z * blue).cbrt();
+    let long = cone([0.412_221_46, 0.536_332_55, 0.051_445_995]);
+    let medium = cone([0.211_903_5, 0.680_699_5, 0.107_396_96]);
+    let short = cone([0.088_302_46, 0.281_718_85, 0.629_978_7]);
+    let lightness = 0.210_454_26 * long + 0.793_617_8 * medium - 0.004_072_047 * short;
+    if delta > 0. {
+        let toward = (delta / (1. - lightness).max(0.001)).min(1.);
+        gpui_kit::white().mix_oklab(color, toward)
+    } else {
+        let toward = (-delta / lightness.max(0.001)).min(1.);
+        gpui_kit::black().mix_oklab(color, toward)
+    }
+}
+
+// The Islands type scale, in pixels at the default 14 px interface size.
+pub const T_MICRO: f32 = 11.;
+pub const T_CAPTION: f32 = 12.;
+pub const T_UI: f32 = 13.;
+pub const T_BODY: f32 = 14.;
+pub const T_PROSE: f32 = 15.;
 
 // Panels that float over a scrolling view stop this far from its right edge
 // so the bar stays visible.
@@ -402,7 +504,7 @@ fn style_scrollbars(cx: &mut App) {
     use gpui_kit::base::{
         ScrollbarStyles, ScrollbarTheme, ScrollbarThumbStyle, ScrollbarTrackStyle,
     };
-    let bar = KitTheme::global(cx).border;
+    let bar = islands(cx).sel.alpha(0.2);
     let clear = gpui_kit::transparent_black();
     let track =
         |style: ScrollbarTrackStyle| style.bg(clear).border_color(clear).width(SCROLLBAR_TRACK);
@@ -430,12 +532,10 @@ pub fn project_colors() -> [u32; 5] {
 // Derived from the active palette, so every theme gets them without new YAML keys.
 pub struct BarColors {
     pub divider: Hsla,
-    pub hover: Hsla,
 }
 pub fn bar_colors(theme: &KitTheme) -> BarColors {
     BarColors {
         divider: theme.border.mix_oklab(theme.title_bar, 0.5),
-        hover: theme.foreground.mix_oklab(theme.title_bar, 0.04),
     }
 }
 
@@ -469,7 +569,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("adeline-bundled-themes-{}", std::process::id()));
         assert!(!root.exists());
-        assert_eq!(BUNDLED_THEMES.len(), 13);
+        assert_eq!(BUNDLED_THEMES.len(), 15);
         seed_bundled_themes(&root).unwrap();
         let (choices, errors) = discover_in(&root).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
@@ -545,17 +645,17 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
     #[test]
-    fn missing_theme_falls_back_to_embedded_claude_plus() {
+    fn missing_theme_falls_back_to_embedded_islands() {
         let missing = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("bundled-themes")
             .join("missing-theme-for-test.yml");
         let state = State::fallback(&read(&missing).err().unwrap());
-        assert_eq!(state.theme.name, "Claude Plus");
+        assert_eq!(state.theme.name, "Islands");
         assert_eq!(state.theme.brightness, Brightness::Dark);
         assert_eq!(state.colors, ThemeFile::builtin().validate().unwrap());
         let error = state.load_error.unwrap();
         assert!(error.contains("missing-theme-for-test.yml"));
-        assert!(error.contains("Using Claude Plus"));
+        assert!(error.contains("Using Islands"));
     }
     #[test]
     fn theme_yaml_round_trips_and_rejects_missing_or_bad_colors() {

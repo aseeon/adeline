@@ -1,5 +1,5 @@
-//! The chat list: search, sections with stacked labels, rows, the collapsed
-//! rail and the sidebar around it. Each row is a cached `ChatCard` view, and
+//! The chat list: the project switcher, search, sections with stacked labels,
+//! rows and the sidebar around them. Each row is a cached `ChatCard` view, and
 //! the list notifies every card whenever it is notified itself.
 use super::*;
 
@@ -29,38 +29,31 @@ impl Adeline {
             .update(cx, |list, cx| list.sync(self, criteria, cx));
     }
 
-    fn chat_line(&self, i: usize, selected: bool, cx: &Context<Self>) -> Div {
-        let thread = &self.workspace().threads[i];
-        self.chat_title(i, selected, cx)
-            .child(row_status(thread, updated(thread), cx))
-    }
-
     fn chat_title(&self, i: usize, selected: bool, cx: &Context<Self>) -> Div {
         let thread = &self.workspace().threads[i];
-        let theme = cx.theme();
+        let isl = theme::islands(cx);
         let done = thread.status.closed();
         let live = thread.status.live();
         // Unread, waiting and running chats read bright; the rest recede.
-        let title_color = if selected || thread.unread() || live {
-            theme.foreground
-        } else {
-            theme.muted_foreground
-        };
+        let bright = selected || thread.unread() || live;
         row()
-            .h(rems(ROW_HEIGHT))
-            .px_2()
-            .gap_2p5()
-            .rounded(theme.radius)
-            .text_sm()
-            .child(agent_mark(self.agent_icon(&thread.provider, cx)))
+            .h(dp(ROW_HEIGHT))
+            .px(dp(10.))
+            .gap(dp(10.))
+            .rounded(dp(8.))
+            .text_size(dp(theme::T_BODY))
+            .child(agent_mark(self.agent_icon(&thread.provider, cx)).size(dp(16.)))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
-                    .text_color(title_color)
+                    .text_color(if bright { isl.fg } else { isl.fg2 })
+                    .when(thread.unread(), |title| {
+                        title.font_weight(FontWeight::MEDIUM)
+                    })
                     .when(done, |title| {
-                        title.line_through().text_decoration_color(theme.border)
+                        title.line_through().text_decoration_color(isl.fg3)
                     })
                     .child(highlighted_title(thread.title.trim(), &self.query(cx), cx)),
             )
@@ -127,16 +120,16 @@ impl Adeline {
     }
 
     pub(crate) fn chat_card(&self, i: usize, cx: &Context<Self>) -> AnyElement {
-        let theme = cx.theme();
+        let isl = theme::islands(cx);
         let selected = self.selected == Some(i);
-        let id = SharedString::from(format!(
-            "chat:{}:{}",
-            self.workspace().config.id,
-            self.workspace().threads[i].id
-        ));
+        let thread = &self.workspace().threads[i];
+        let id = SharedString::from(format!("chat:{}:{}", self.workspace().config.id, thread.id));
+        let done = thread.status.closed();
+        let archived = thread.status == ThreadStatus::Archived;
+        let owner = cx.weak_entity();
         div()
             .w_full()
-            .px_1p5()
+            .px(dp(8.))
             .child(
                 self.chat_title(i, selected, cx)
                     .child(self.chat_row_end(i, &id, cx))
@@ -147,168 +140,37 @@ impl Adeline {
                     .aria_selected(selected)
                     .aria_label(self.chat_description(i))
                     .w_full()
-                    .when(selected, |row| row.bg(theme.sidebar_primary))
-                    .when(!selected, |row| {
-                        row.hover(|style| style.bg(theme.secondary))
-                    })
+                    .when(selected, |row| row.bg(isl.sel))
+                    .when(!selected, |row| row.hover(|style| style.bg(isl.hover)))
                     .on_click(
                         cx.listener(move |app, _, window, cx| app.act(Action::Chat(i), window, cx)),
-                    ),
+                    )
+                    .context_menu(move |menu, _, _| {
+                        let (complete, archive) = (owner.clone(), owner.clone());
+                        menu.item(
+                            PopupMenuItem::new(if done {
+                                "Mark as incomplete"
+                            } else {
+                                "Mark as complete"
+                            })
+                            .on_click(move |_, window, cx| {
+                                let _ = complete.update(cx, |app, cx| {
+                                    app.act(Action::Chat(i), window, cx);
+                                    app.act(Action::Complete, window, cx);
+                                });
+                            }),
+                        )
+                        .item(
+                            PopupMenuItem::new("Archive").disabled(archived).on_click(
+                                move |_, window, cx| {
+                                    let _ = archive.update(cx, |app, cx| {
+                                        app.act(Action::ArchiveChat(i), window, cx);
+                                    });
+                                },
+                            ),
+                        )
+                    }),
             )
-            .into_any_element()
-    }
-
-    pub(crate) fn collapsed_search(
-        &self,
-        open: bool,
-        matches: Option<usize>,
-        list: WeakEntity<ChatList>,
-        cx: &Context<Self>,
-    ) -> AnyElement {
-        let theme = cx.theme();
-        let key: Arc<str> = Arc::from(COLLAPSED_SEARCH);
-        let trigger = collapsed_button("chat-rail-search", "Search chats", "search")
-            .selected(matches.is_some())
-            .on_click(cx.listener(|app, _, window, cx| app.focus_chat_search(window, cx)));
-        let flyout = row()
-            .id("chat-rail-search-flyout")
-            .absolute()
-            .top(rems(-0.25))
-            .left(rems(-0.25))
-            .w(rems(20.))
-            .h_8()
-            .pl_2()
-            .pr_3()
-            .gap_2()
-            .rounded(theme.radius)
-            .border_1()
-            .border_color(theme.primary)
-            .bg(theme.background)
-            .on_hover({
-                let key = Arc::clone(&key);
-                let list = list.clone();
-                move |hovered, _, cx| {
-                    if !*hovered {
-                        let _ = list.update(cx, |list, cx| list.hover_collapsed(&key, false, cx));
-                    }
-                }
-            })
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|app, _, window, cx| app.focus_chat_search(window, cx)),
-            )
-            .child(icon("search").size(rems(1.)).text_color(theme.primary))
-            .child(
-                div().flex_1().min_w_0().child(
-                    Input::new(&self.query)
-                        .aria_label("Search chats")
-                        .cleanable(true)
-                        .appearance(false),
-                ),
-            )
-            .when_some(matches, |flyout, matches| {
-                flyout.child(
-                    div()
-                        .flex_shrink_0()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(matches.to_string()),
-                )
-            });
-        div()
-            .id("chat-rail-search-slot")
-            .relative()
-            .flex_shrink_0()
-            .on_hover(move |hovered, _, cx| {
-                if *hovered {
-                    let _ = list.update(cx, |list, cx| list.hover_collapsed(&key, true, cx));
-                }
-            })
-            .child(trigger)
-            .when(open, |slot| slot.child(deferred(flyout).with_priority(1)))
-            .into_any_element()
-    }
-
-    pub(crate) fn collapsed_chat(
-        &self,
-        i: usize,
-        hovered: bool,
-        focus: &FocusHandle,
-        keyboard_focus: bool,
-        list: WeakEntity<ChatList>,
-        cx: &Context<Self>,
-    ) -> AnyElement {
-        let thread = &self.workspace().threads[i];
-        let theme = cx.theme();
-        let selected = self.selected == Some(i);
-        let key: Arc<str> = Arc::from(thread.id.as_str());
-        let id = format!("{}:{}", self.workspace().config.id, thread.id);
-        let fill = if selected {
-            theme.sidebar_primary
-        } else {
-            theme.secondary
-        };
-        let open = move |app: &mut Self, window: &mut Window, cx: &mut Context<Self>| {
-            app.act(Action::Chat(i), window, cx);
-        };
-        let tile = row()
-            .id(SharedString::from(format!("chat-rail:{id}")))
-            .role(Role::ListBoxOption)
-            .aria_selected(selected)
-            .aria_label(self.chat_description(i))
-            .track_focus(focus)
-            .flex_shrink_0()
-            .size(rems(ROW_HEIGHT))
-            .px_2()
-            .rounded(theme.radius)
-            .when(selected, |tile| tile.bg(fill))
-            .when(!selected, |tile| tile.hover(|style| style.bg(fill)))
-            .on_hover({
-                let list = list.clone();
-                let key = Arc::clone(&key);
-                move |hovered, _, cx| {
-                    if *hovered {
-                        let _ = list.update(cx, |list, cx| list.hover_collapsed(&key, true, cx));
-                    }
-                }
-            })
-            .on_click(cx.listener(move |app, _, window, cx| open(app, window, cx)))
-            .on_key_down(cx.listener(move |app, event: &KeyDownEvent, window, cx| {
-                if !event.keystroke.modifiers.modified()
-                    && matches!(event.keystroke.key.as_str(), "enter" | "space")
-                {
-                    open(app, window, cx);
-                    cx.stop_propagation();
-                }
-            }))
-            .child(agent_mark(self.agent_icon(&thread.provider, cx)));
-        // The flyout is the list row, laid exactly over the icon so the icon
-        // does not move, and drawn above the chats beside the rail.
-        let flyout = self
-            .chat_line(i, selected, cx)
-            .id(SharedString::from(format!("chat-rail-flyout:{id}")))
-            .absolute()
-            .top_0()
-            .left_0()
-            .w(rems(20.))
-            .bg(fill)
-            .when(keyboard_focus, |row| {
-                row.border_1().border_color(theme.ring)
-            })
-            .on_hover(move |hovered, _, cx| {
-                if !*hovered {
-                    let _ = list.update(cx, |list, cx| list.hover_collapsed(&key, false, cx));
-                }
-            })
-            .on_click(cx.listener(move |app, _, window, cx| open(app, window, cx)));
-        div()
-            .relative()
-            .flex_shrink_0()
-            .size(rems(ROW_HEIGHT))
-            .child(tile)
-            .when(hovered || keyboard_focus, |slot| {
-                slot.child(deferred(flyout).with_priority(1))
-            })
             .into_any_element()
     }
 
@@ -405,40 +267,36 @@ impl Adeline {
         search_focused: bool,
         cx: &Context<Self>,
     ) -> Div {
-        let theme = cx.theme();
+        let isl = theme::islands(cx);
         let searching = self.chat_search_open
             || search_focused
             || !self.query.read(cx).value().is_empty()
             || self.agent_filter.is_some();
         // The frame belongs to the list rather than the input, so the agent button
-        // shares the frame's inset instead of the input's fixed text padding. Like
-        // every search field, focus shows as a primary border rather than a glow.
+        // shares the frame's inset instead of the input's fixed text padding.
+        // Focus shows as the stronger ring, as on the composer.
         let search = row()
             .id("chat-search-field")
             .w_full()
-            .h_8()
-            .pl_3()
-            // Matches the 1 px border so the agent button is inset evenly on every side.
+            .h(dp(32.))
+            .pl(dp(10.))
+            // Matches the 1 px ring so the agent button is inset evenly on every side.
             .pr(px(1.))
-            .rounded(theme.radius)
+            .rounded(dp(8.))
             .border_1()
             .border_color(if search_focused {
-                theme.primary
+                isl.ring_strong
             } else {
-                theme.input
+                isl.ring
             })
-            .bg(theme.background)
+            .bg(isl.chip)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|app, _, window, cx| {
                     window.focus(&app.query.focus_handle(cx), cx);
                 }),
             )
-            .child(icon("search").size(rems(1.)).text_color(if searching {
-                theme.primary
-            } else {
-                theme.muted_foreground
-            }))
+            .child(icon("search").size(dp(14.)).text_color(isl.fg3))
             .child(
                 div().flex_1().min_w_0().child(
                     Input::new(&self.query)
@@ -448,58 +306,91 @@ impl Adeline {
                 ),
             )
             .child(self.agent_filter_button(outcome, cx));
+        let tool = |button: Button| button.text_color(isl.fg3);
         let header = row()
-            .h(rems(2.75))
+            .h(dp(40.))
             .flex_shrink_0()
-            .pl(rems(0.875))
-            .pr_2()
-            .gap_0p5()
+            .pl(dp(18.))
+            .pr(dp(10.))
+            .gap(dp(2.))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .truncate()
+                    .text_size(dp(theme::T_BODY))
                     .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(isl.fg)
                     .child("Chats"),
             )
+            .when(!machines::remotes().is_empty(), |header| {
+                header.child(self.machines_button(cx))
+            })
             .child(
+                self.command_popover(
+                    "mode-settings",
+                    tool(
+                        Button::new("chat-settings")
+                            .ghost()
+                            .small()
+                            .icon(Icon::default().path("more.svg"))
+                            .accessibility_label("Chat settings")
+                            .tooltip("Chat settings"),
+                    ),
+                    Anchor::TopLeft,
+                    cx,
+                ),
+            )
+            .child(tool(
                 Button::new("chat-search-toggle")
                     .ghost()
                     .small()
                     .icon(Icon::default().path("search.svg"))
                     .selected(searching)
                     .accessibility_label("Search chats")
-                    .tooltip("Search chats")
+                    .tooltip(format!(
+                        "Search chats ({})",
+                        conversation_ui::shortcut("Ctrl+F")
+                    ))
                     .on_click(cx.listener(|app, _, window, cx| {
                         app.toggle_chat_search(window, cx);
                     })),
-            )
-            .child(self.icon_button(
-                "new-chat",
-                "New chat",
-                Icon::default().path("new-chat.svg"),
-                Action::NewChat,
-                cx,
+            ))
+            .child(tool(
+                Button::new("new-chat")
+                    .ghost()
+                    .small()
+                    .icon(Icon::default().path("new-chat.svg"))
+                    .accessibility_label("New chat")
+                    .tooltip(format!(
+                        "New chat ({})",
+                        conversation_ui::shortcut("Ctrl+N")
+                    ))
+                    .on_click(cx.listener(|app, _, window, cx| {
+                        cx.stop_propagation();
+                        app.act(Action::NewChat, window, cx);
+                    })),
             ));
         col()
             .w_full()
             .min_w_0()
             .h_full()
+            .child(self.project_switcher(cx))
             .child(header)
             .when(searching, |panel| {
-                panel.child(div().w_full().px_2().pb_2().child(search))
+                panel.child(div().w_full().px(dp(8.)).pb(dp(8.)).child(search))
             })
             .child(list)
     }
 }
 
-pub(crate) const ROW_HEIGHT: f32 = 1.75;
+pub(crate) const ROW_HEIGHT: f32 = 36.;
 
-pub(crate) const SECTION_HEIGHT: f32 = 2.125;
+pub(crate) const SECTION_HEIGHT: f32 = 36.;
 
-pub(crate) const LABEL_GAP: f32 = 0.375;
+pub(crate) const LABEL_GAP: f32 = 10.;
 
-const END_HEIGHT: f32 = 0.75;
+const END_HEIGHT: f32 = 12.;
 
 const COMPACT_WIDTH: f32 = 17.;
 
@@ -535,38 +426,6 @@ pub(crate) struct Stacks {
     pub current: usize,
 }
 
-pub(crate) const COLLAPSED_SEARCH: &str = "\0search";
-
-#[expect(
-    clippy::too_many_arguments,
-    reason = "the pinned tile and the virtualized rows share this"
-)]
-fn collapsed_tile(
-    owner: &WeakEntity<Adeline>,
-    list: &WeakEntity<ChatList>,
-    project: &str,
-    id: &str,
-    row: usize,
-    hovered: bool,
-    window: &mut Window,
-    cx: &mut App,
-) -> AnyElement {
-    let focus = window
-        .use_keyed_state(
-            SharedString::from(format!("chat-rail-focus:{project}:{id}")),
-            cx,
-            |_, cx| cx.focus_handle().tab_stop(true),
-        )
-        .read(cx)
-        .clone();
-    let keyboard_focus = focus.is_focused(window) && window.last_input_was_keyboard();
-    owner
-        .update(cx, |app, cx| {
-            app.collapsed_chat(row, hovered, &focus, keyboard_focus, list.clone(), cx)
-        })
-        .unwrap_or_else(|_| div().into_any_element())
-}
-
 pub(crate) struct ChatList {
     owner: WeakEntity<Adeline>,
     state: ListState,
@@ -586,8 +445,6 @@ pub(crate) struct ChatList {
     layout: Layout,
     width: Pixels,
     placeholder: &'static str,
-    collapsed_hover: Option<Arc<str>>,
-    collapsed_scroll: UniformListScrollHandle,
     folded: Vec<Group>,
     cards: std::rc::Rc<std::cell::RefCell<Vec<Entity<ChatCard>>>>,
     _redraw_cards: Subscription,
@@ -615,17 +472,6 @@ pub(crate) enum LabelPlacement {
     Top { last: bool },
 }
 
-pub(crate) const COLLAPSED_WIDTH: f32 = 2.75;
-
-pub(crate) fn collapsed_item(tile: AnyElement) -> impl IntoElement {
-    div()
-        .w_full()
-        .h(rems(ROW_HEIGHT))
-        .flex()
-        .justify_center()
-        .child(tile)
-}
-
 pub(crate) fn section_label(
     group: Group,
     chats: usize,
@@ -635,7 +481,6 @@ pub(crate) fn section_label(
     on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     cx: &App,
 ) -> AnyElement {
-    let theme = cx.theme();
     let id = match placement {
         LabelPlacement::Inline => "inline",
         LabelPlacement::Top { .. } => "top",
@@ -646,19 +491,20 @@ pub(crate) fn section_label(
         (LabelPlacement::Inline, false) => "Hide",
         _ => "Go to",
     };
+    let isl = theme::islands(cx);
     let color = if group == Group::NeedsInput {
-        theme.primary
+        isl.accent
     } else if current {
-        theme.foreground
+        isl.fg2
     } else {
-        theme.muted_foreground
+        isl.fg3
     };
     div()
         .w_full()
         .flex_shrink_0()
-        .px_1p5()
-        .pt(rems(LABEL_GAP))
-        .bg(theme.background)
+        .px(dp(8.))
+        .pt(dp(LABEL_GAP))
+        .bg(isl.island)
         .child(
             row()
                 .id(SharedString::from(format!(
@@ -671,40 +517,53 @@ pub(crate) fn section_label(
                     group.title(),
                     count(chats, "chat")
                 ))
-                .h(rems(SECTION_HEIGHT - LABEL_GAP))
-                .px_1p5()
-                .gap_1p5()
-                .rounded(theme.radius)
-                .font_family(theme.mono_font_family.clone())
-                .text_xs()
+                .h(dp(SECTION_HEIGHT - LABEL_GAP))
+                .px(dp(10.))
+                .gap(dp(6.))
+                .rounded(dp(8.))
+                .text_size(dp(theme::T_MICRO))
+                .font_weight(FontWeight::SEMIBOLD)
                 .text_color(color)
-                .hover(|style| style.text_color(theme.foreground))
+                .hover(|style| style.text_color(isl.fg))
                 .on_click(on_click)
-                .child(
-                    Icon::default()
-                        .path("chevron.svg")
-                        .size(rems(0.625))
-                        .when(folded, |chevron| {
-                            chevron.rotate(Radians(-std::f32::consts::FRAC_PI_2))
-                        }),
-                )
+                .when(folded, |label| {
+                    label.child(Icon::default().path("caret-right.svg").size(dp(10.)))
+                })
                 .child(
                     div()
                         .flex_1()
                         .min_w_0()
                         .truncate()
-                        .child(group.title().to_uppercase()),
+                        .child(spaced(&group.title().to_uppercase())),
                 )
-                .child(div().flex_shrink_0().child(chats.to_string())),
+                .child(
+                    div()
+                        .flex_shrink_0()
+                        .font_weight(FontWeight::NORMAL)
+                        .child(chats.to_string()),
+                ),
         )
         // The pinned stack's edge sits inside the label's side padding. The stack
         // stops short of the scrollbar on the right, so the line gives up the
         // same width on the left and sits evenly in the panel.
         .when(
             matches!(placement, LabelPlacement::Top { last: true }),
-            |label| label.child(div().h(px(1.)).ml(theme::SCROLLBAR_TRACK).bg(theme.border)),
+            |label| label.child(div().h(px(1.)).ml(theme::SCROLLBAR_TRACK).bg(isl.line)),
         )
         .into_any_element()
+}
+
+// GPUI has no letter spacing, so uppercase labels get hair spaces between
+// letters for the design's 0.08em tracking.
+fn spaced(label: &str) -> String {
+    let mut spaced = String::with_capacity(label.len() * 4);
+    for (ix, letter) in label.chars().enumerate() {
+        if ix > 0 {
+            spaced.push('\u{200A}');
+        }
+        spaced.push(letter);
+    }
+    spaced
 }
 
 fn highlighted_title(title: &str, query: &str, cx: &App) -> StyledText {
@@ -753,21 +612,19 @@ fn updated(thread: &Thread) -> Option<String> {
 }
 
 fn row_status(thread: &Thread, updated: Option<String>, cx: &App) -> AnyElement {
-    let theme = cx.theme();
+    let isl = theme::islands(cx);
     match thread.status {
-        ThreadStatus::Blocked => row()
+        ThreadStatus::Blocked => div()
             .flex_shrink_0()
-            .size(rems(0.8125))
-            .justify_center()
+            .size(dp(7.))
             .rounded_full()
-            .bg(theme.primary.alpha(0.22))
-            .child(div().size(rems(0.4375)).rounded_full().bg(theme.primary))
+            .bg(isl.accent)
             .into_any_element(),
         ThreadStatus::Processing => {
-            let (track, arc) = (theme.border, theme.foreground);
+            let (track, arc) = (isl.fg3.alpha(0.35), isl.fg2);
             div()
                 .flex_shrink_0()
-                .size(rems(0.625))
+                .size(dp(12.))
                 .with_animation(
                     "chat-row-running",
                     Animation::new(Duration::from_millis(RUNNING_TURN_MS))
@@ -779,21 +636,11 @@ fn row_status(thread: &Thread, updated: Option<String>, cx: &App) -> AnyElement 
         }
         _ => div()
             .flex_shrink_0()
-            .font_family(theme.mono_font_family.clone())
-            .text_xs()
-            .text_color(theme.muted_foreground)
+            .text_size(dp(theme::T_CAPTION))
+            .text_color(isl.fg3)
             .children(updated)
             .into_any_element(),
     }
-}
-
-pub(crate) fn collapsed_button(id: &'static str, label: &'static str, icon_name: &str) -> Button {
-    Button::new(id)
-        .ghost()
-        .small()
-        .icon(Icon::default().path(format!("{icon_name}.svg")))
-        .accessibility_label(label)
-        .tooltip(label)
 }
 
 pub(crate) fn status_name(thread: &Thread) -> &'static str {
@@ -899,8 +746,6 @@ impl ChatList {
             layout: Layout::default(),
             width: px(0.),
             placeholder: "Search chats",
-            collapsed_hover: None,
-            collapsed_scroll: UniformListScrollHandle::new(),
             // Finished chats stay out of the way until asked for.
             folded: vec![Group::Completed],
         }
@@ -1064,9 +909,8 @@ impl ChatList {
         cx.notify();
     }
 
-    fn measure(&mut self, window: &Window) {
-        let rem = window.rem_size();
-        let (row, section, end) = (rem * ROW_HEIGHT, rem * SECTION_HEIGHT, rem * END_HEIGHT);
+    fn measure(&mut self) {
+        let (row, section, end) = (dp(ROW_HEIGHT), dp(SECTION_HEIGHT), dp(END_HEIGHT));
         let mut tops = Vec::with_capacity(self.items.len() + 1);
         let mut sections = Vec::new();
         let mut y = px(0.);
@@ -1142,130 +986,6 @@ impl ChatList {
         }
     }
 
-    pub fn hover_collapsed(&mut self, id: &Arc<str>, hovered: bool, cx: &mut Context<Self>) {
-        // Entering a tile unfurls it; only leaving its own flyout folds it.
-        let next = if hovered {
-            Some(Arc::clone(id))
-        } else if self.collapsed_hover.as_ref() == Some(id) {
-            None
-        } else {
-            return;
-        };
-        if self.collapsed_hover != next {
-            self.collapsed_hover = next;
-            cx.notify();
-        }
-    }
-
-    fn render_collapsed(&mut self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let Some(owner) = self.owner.upgrade() else {
-            return div().into_any_element();
-        };
-        // While a search is typed, the scrolling tiles are its results instead.
-        let searching = !self.criteria.query.is_empty();
-        let selected = self.selected.filter(|&row| row < self.records.len());
-        let (rows, project, search_focused) = {
-            let app = owner.read(cx);
-            let rows: Vec<usize> = if searching {
-                self.outcome
-                    .groups
-                    .iter()
-                    .flat_map(|(_, rows)| rows.iter().copied())
-                    .filter(|&row| Some(row) != selected)
-                    .collect()
-            } else {
-                prepared::rail(
-                    &self.records,
-                    app.show_completed,
-                    app.show_archived,
-                    selected,
-                    recency::now(),
-                )
-            };
-            (
-                rows,
-                SharedString::from(app.workspace().config.id.clone()),
-                app.query.focus_handle(cx).is_focused(window),
-            )
-        };
-        let list = cx.weak_entity();
-        // The open chat stays pinned under search while the others scroll.
-        let pinned = selected.and_then(|row| {
-            let id = Arc::clone(&self.records.get(row)?.id);
-            let hovered = self.collapsed_hover.as_ref() == Some(&id);
-            Some(collapsed_tile(
-                &self.owner,
-                &list,
-                &project,
-                &id,
-                row,
-                hovered,
-                window,
-                cx,
-            ))
-        });
-        let items: Arc<[(usize, Arc<str>)]> = rows
-            .into_iter()
-            .filter_map(|row| Some((row, Arc::clone(&self.records.get(row)?.id))))
-            .collect();
-        let count = items.len();
-        let chats = uniform_list("chat-rail-items", count, {
-            let (owner, list, hover) = (
-                self.owner.clone(),
-                list.clone(),
-                self.collapsed_hover.clone(),
-            );
-            move |range, window, cx| {
-                range
-                    .map(|ix| {
-                        let (row, id) = &items[ix];
-                        let hovered = hover.as_ref() == Some(id);
-                        collapsed_item(collapsed_tile(
-                            &owner, &list, &project, id, *row, hovered, window, cx,
-                        ))
-                    })
-                    .collect::<Vec<_>>()
-            }
-        })
-        .track_scroll(&self.collapsed_scroll)
-        .size_full();
-        let search_open =
-            search_focused || self.collapsed_hover.as_deref() == Some(COLLAPSED_SEARCH);
-        let matches = searching.then(|| self.outcome.matches());
-        let (new_chat, search) = owner.update(cx, |app, cx| {
-            let new_chat = collapsed_button("chat-rail-new", "New chat", "new-chat")
-                .on_click(cx.listener(|app, _, window, cx| app.act(Action::NewChat, window, cx)));
-            let search = app.collapsed_search(search_open, matches, list.clone(), cx);
-            (new_chat, search)
-        });
-        col()
-            .id("chat-rail")
-            .h_full()
-            .w(rems(COLLAPSED_WIDTH))
-            // New, search, the open chat and the first scrolling chat sit one gap
-            // apart, and one gap below the top.
-            .pt_2()
-            .gap_2()
-            .items_center()
-            .child(new_chat)
-            .child(search)
-            .child(
-                col()
-                    .id("chat-rail-list")
-                    .role(Role::ListBox)
-                    .aria_label(if searching { "Search results" } else { "Chats" })
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .gap_2()
-                    .items_center()
-                    .children(pinned)
-                    // No scrollbar: it would cover the tiles in a rail this narrow.
-                    .child(div().flex_1().min_h_0().w_full().child(chats)),
-            )
-            .into_any_element()
-    }
-
     fn navigation_target(&self, key: &str) -> Option<(usize, usize)> {
         let chats: Vec<(usize, usize)> = self
             .items
@@ -1303,15 +1023,7 @@ impl Render for ChatList {
             self.state.splice(0..count, count);
             self.state.scroll_to(top);
         }
-        if self
-            .owner
-            .upgrade()
-            .is_some_and(|owner| !owner.read(cx).left_panel_is_open())
-        {
-            return self.render_collapsed(window, cx);
-        }
-        self.collapsed_hover = None;
-        self.measure(window);
+        self.measure();
         let stacks = self.layout.stacks(self.scroll());
         let this = cx.weak_entity();
         let measured = this.clone();
@@ -1423,14 +1135,14 @@ impl Render for ChatList {
                     Item::Chat(row) => match cards.borrow().get(row) {
                         Some(card) => region(
                             card,
-                            StyleRefinement::default().w_full().h(rems(ROW_HEIGHT)),
+                            StyleRefinement::default().w_full().h(dp(ROW_HEIGHT)),
                             window,
                         ),
                         None => owner
                             .update(cx, |app, cx| app.chat_card(row, cx))
                             .unwrap_or_else(|_| div().into_any_element()),
                     },
-                    Item::End => div().h(rems(END_HEIGHT)).into_any_element(),
+                    Item::End => div().h(dp(END_HEIGHT)).into_any_element(),
                     Item::Tail => div().h(tail).into_any_element(),
                 })
                 .size_full()

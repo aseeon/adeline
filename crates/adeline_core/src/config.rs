@@ -91,7 +91,7 @@ pub struct Appearance {
 impl Default for Appearance {
     fn default() -> Self {
         Self {
-            theme: "claude-plus.yml".into(),
+            theme: "islands.yml".into(),
             interface_font: DEFAULT_FONT.into(),
             font_size: 14,
             code_font: DEFAULT_CODE_FONT.into(),

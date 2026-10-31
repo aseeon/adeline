@@ -16,7 +16,6 @@ use gpui_kit::component::{
     menu::{ContextMenuExt as _, PopupMenuItem},
     popover::Popover,
     scroll::Scrollbar,
-    tab::{Tab, TabBar},
 };
 use std::sync::Arc;
 
@@ -136,12 +135,12 @@ impl Adeline {
             content = content.child(self.hang_notice(minutes, cx));
         } else if live.processing && (!writing || label.is_some()) {
             content = content.child(
-                chat::agent_header(
-                    self.agent_icon(&thread.provider, cx),
-                    self.agent_name(&thread.provider),
-                    cx,
-                )
-                .child(chat::thinking_label(label, cx)),
+                row()
+                    .h(panes::dp(24.))
+                    .gap(panes::dp(8.))
+                    .text_color(theme::islands(cx).fg3)
+                    .child(chat::spinner())
+                    .child(chat::thinking_label(label, cx)),
             );
         } else if !live.processing
             && turn.is_some_and(|turn| thread.turn_tools(turn).any(|t| t.running))
@@ -292,7 +291,7 @@ impl Adeline {
     }
 
     fn queued_entries(&self, live: &Live, cx: &Context<Self>) -> impl IntoElement {
-        let theme = cx.theme();
+        let isl = theme::islands(cx);
         let steering = live.features.steering;
         let send_now_help = if steering {
             format!("Send now ({})", shortcut("Ctrl+Shift+Enter"))
@@ -325,12 +324,15 @@ impl Adeline {
                     .aria_label(format!("Queued: {}", item.text))
                     .w_full()
                     .gap_2()
-                    .px_3()
-                    .py_2()
-                    .rounded(theme.radius)
-                    .border_1()
-                    .border_color(theme.border)
-                    .bg(theme.group_box)
+                    .px(panes::dp(14.))
+                    .py(panes::dp(10.))
+                    .rounded(panes::dp(12.))
+                    .bg(isl.card)
+                    .shadow(vec![
+                        BoxShadow::new(px(0.), px(0.), isl.ring)
+                            .blur_radius(px(0.))
+                            .spread_radius(px(1.)),
+                    ])
                     .child(
                         col()
                             .flex_1()
@@ -338,16 +340,23 @@ impl Adeline {
                             .gap_0p5()
                             .child(
                                 div()
-                                    .text_xs()
-                                    .text_color(theme.muted_foreground)
+                                    .text_size(panes::dp(theme::T_CAPTION))
+                                    .font_weight(FontWeight::SEMIBOLD)
+                                    .text_color(isl.fg2)
                                     .child("Queued"),
                             )
-                            .child(div().text_sm().line_clamp(3).child(item.text.clone()))
+                            .child(
+                                div()
+                                    .text_size(panes::dp(theme::T_BODY))
+                                    .text_color(isl.fg)
+                                    .line_clamp(3)
+                                    .child(item.text.clone()),
+                            )
                             .when(!item.files.is_empty(), |column| {
                                 column.child(
                                     div()
-                                        .text_xs()
-                                        .text_color(theme.muted_foreground)
+                                        .text_size(panes::dp(theme::T_CAPTION))
+                                        .text_color(isl.fg3)
                                         .child(item.files.join(", ")),
                                 )
                             }),
@@ -975,28 +984,66 @@ impl Adeline {
     }
 
     pub(super) fn right_panel(&self, cx: &Context<Self>) -> AnyElement {
-        let owner = cx.weak_entity();
-        let tabs = TabBar::new("right-panel-tabs")
-            .underline()
-            .selected_index(usize::from(self.traffic_tab))
-            .child(Tab::new().label("Agent activity"))
-            .child(Tab::new().label("ACP traffic"))
-            .on_click(move |ix, window, cx| {
-                let ix = *ix;
-                let _ = owner.update(cx, |app, cx| app.act(Action::PanelTab(ix), window, cx));
-            });
-        let body = if self.traffic_tab {
-            self.traffic_panel(cx)
-        } else {
-            self.activity_panel(cx).into_any_element()
+        let body = match self.side_tab {
+            panes::SideTab::Traffic if self.verbose => self.traffic_panel(cx),
+            panes::SideTab::Plan => self.plan_panel(cx),
+            _ => self.activity_panel(cx).into_any_element(),
         };
         col()
             .size_full()
-            .bg(cx.theme().sidebar)
-            .when(self.verbose, |column| {
-                column.child(div().px_2().pt_1().child(tabs))
-            })
+            .child(self.pane_header(cx))
             .child(div().flex_1().min_h_0().child(body))
+            .into_any_element()
+    }
+
+    fn plan_panel(&self, cx: &Context<Self>) -> AnyElement {
+        let isl = theme::islands(cx);
+        let steps = self
+            .current_live()
+            .map(|live| live.todo.clone())
+            .unwrap_or_default();
+        let done = steps
+            .iter()
+            .filter(|s| s.status == StepStatus::Completed)
+            .count();
+        let glyph = move |status| step_glyph(status, isl.fg3);
+        col()
+            .id("todo-list")
+            .test_support()
+            .role(Role::List)
+            .aria_label("Plan steps")
+            .size_full()
+            .overflow_y_scroll()
+            .px(panes::dp(16.))
+            .gap(panes::dp(2.))
+            .text_size(panes::dp(theme::T_UI))
+            .when(steps.is_empty(), |list| {
+                list.child(
+                    div()
+                        .text_color(isl.fg3)
+                        .child("The agent's plan shows here once it makes one."),
+                )
+            })
+            .when(!steps.is_empty(), |list| {
+                list.child(
+                    row()
+                        .pb(panes::dp(6.))
+                        .text_size(panes::dp(theme::T_CAPTION))
+                        .text_color(isl.fg3)
+                        .child(div().flex_1().child("Steps"))
+                        .child(format!("{done} of {}", steps.len())),
+                )
+            })
+            .children(steps.iter().map(|step| {
+                let finished = step.status == StepStatus::Completed;
+                row()
+                    .items_start()
+                    .gap(panes::dp(10.))
+                    .py(panes::dp(5.))
+                    .text_color(if finished { isl.fg2 } else { isl.fg })
+                    .child(div().pt(panes::dp(2.)).child(glyph(step.status)))
+                    .child(div().flex_1().min_w_0().child(step.text.clone()))
+            }))
             .into_any_element()
     }
 

@@ -73,7 +73,15 @@ impl Adeline {
                 .into_any_element();
         }
         let time = message_time(&message.created_at);
-        let mut body = col().w_full().min_w_0().gap_2();
+        let isl = theme::islands(cx);
+        // Prose: 15 px, at 1.55 in a bubble and 1.65 in replies.
+        let leading = relative(if user { 1.55 } else { 1.65 });
+        let mut body = col()
+            .w_full()
+            .min_w_0()
+            .gap(dp(10.))
+            .text_size(dp(theme::T_PROSE))
+            .line_height(leading);
         if user || self.demo_mode {
             for (n, paragraph) in message.text.split("\n\n").enumerate() {
                 let quote = unquote(paragraph);
@@ -81,7 +89,6 @@ impl Adeline {
                 body = body.child(
                     div()
                         .min_w_0()
-                        .text_sm()
                         .when(quote.is_some(), |div| {
                             div.border_l(px(3.))
                                 .border_color(theme.muted_foreground.alpha(0.5))
@@ -106,10 +113,10 @@ impl Adeline {
                     .selectable(selectable)
                     .style(
                         TextViewStyle::default()
-                            .paragraph_gap(rems(0.5))
+                            .paragraph_gap(rems(0.625))
                             .inline_code(HighlightStyle {
                                 color: Some(theme.primary),
-                                background_color: Some(theme.muted),
+                                background_color: Some(isl.chip),
                                 ..Default::default()
                             }),
                     )
@@ -132,7 +139,8 @@ impl Adeline {
                                     }),
                             )
                     })
-                    .text_sm()
+                    .text_size(dp(theme::T_PROSE))
+                    .line_height(leading)
                     .w_full()
                     .min_w_0(),
             );
@@ -157,36 +165,46 @@ impl Adeline {
                     .object_fit(ObjectFit::Contain),
             );
         }
+        let copy = |id: String| {
+            Button::new(SharedString::from(id))
+                .ghost()
+                .xsmall()
+                .text_color(isl.fg3)
+                .icon(Icon::default().path("copy.svg"))
+                .accessibility_label("Copy")
+                .tooltip("Copy")
+                .on_click(cx.listener(move |app, _, window, cx| {
+                    app.act(Action::CopyMessage(i), window, cx);
+                }))
+        };
+        let group = SharedString::from(format!("message:{}:{i}", thread.id));
         let content = if user {
             col()
+                .group(group.clone())
                 .items_end()
                 .child(
-                    row()
-                        .h_6()
-                        .gap_2()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child("You")
-                        .children(time),
-                )
-                .child(
-                    sheen(theme.secondary, 0.07, cx)
+                    div()
                         .max_w(relative(0.78))
-                        .rounded_tr(px(0.))
+                        .px(dp(16.))
+                        .py(dp(10.))
+                        .rounded(dp(14.))
+                        .bg(isl.bubble)
+                        .text_color(isl.fg)
                         .child(body),
                 )
                 .child(
-                    Button::new(SharedString::from(format!("copy-prompt:{}:{i}", thread.id)))
-                        .ghost()
-                        .small()
-                        .text_color(theme.muted_foreground)
-                        .mt_1()
-                        .icon(Icon::default().path("copy.svg"))
-                        .accessibility_label("Copy")
-                        .tooltip("Copy")
-                        .on_click(cx.listener(move |app, _, window, cx| {
-                            app.act(Action::CopyMessage(i), window, cx);
-                        })),
+                    row()
+                        .h(dp(28.))
+                        .gap(dp(4.))
+                        .text_size(dp(theme::T_CAPTION))
+                        .text_color(isl.fg3)
+                        .child(
+                            div()
+                                .invisible()
+                                .group_hover(group, |style| style.visible())
+                                .child(copy(format!("copy-prompt:{}:{i}", thread.id))),
+                        )
+                        .children(time),
                 )
                 .into_any_element()
         } else {
@@ -196,34 +214,31 @@ impl Adeline {
                 && thread
                     .turn_of(thread.messages.len())
                     .is_some_and(|last| i > last);
+            let meta = row()
+                .h(dp(24.))
+                .gap(dp(6.))
+                .text_size(dp(theme::T_CAPTION))
+                .text_color(isl.fg3)
+                .child(agent_mark(self.agent_icon(&thread.provider, cx)).size(dp(13.)))
+                .child(name)
+                .children(time.map(|time| format!("· {time}")));
             col()
                 .w_full()
                 .min_w_0()
-                .child(
-                    agent_header(self.agent_icon(&thread.provider, cx), name, cx).children(
-                        time.map(|time| {
-                            div()
-                                .text_xs()
-                                .text_color(theme.muted_foreground)
-                                .child(time)
-                        }),
-                    ),
-                )
                 .children(
                     self.thought_block(thread, i, cx)
-                        .map(|thought| div().mt_1().child(thought)),
+                        .map(|thought| div().mb(dp(6.)).child(thought)),
                 )
                 .when(!message.text.is_empty(), |content| {
                     content.child(
-                        sheen(theme.group_box, 0.05, cx)
+                        div()
                             .group("reply")
-                            .mt_1()
-                            .max_w(relative(0.88))
-                            .self_start()
-                            .rounded_tl(px(0.))
+                            .max_w(dp(640.))
+                            .text_color(isl.fg)
                             .child(body),
                     )
                 })
+                .child(meta.mt(dp(4.)))
                 .when(thread.ends_turn(i) && !writing, |content| {
                     content
                         .children(self.turn_cards(thread, i, cx))
@@ -245,7 +260,7 @@ impl Adeline {
             })
             .child(
                 chat_column()
-                    .pb(rems(if user { 1.5 } else { 2. }))
+                    .pb(dp(if user { 16. } else { 28. }))
                     .when_some(thread.fork.as_ref().filter(|_| i == 0), |column, fork| {
                         column.child(self.fork_marker(fork, cx))
                     })
@@ -636,28 +651,6 @@ impl Transcript {
 /// A message bubble lit from above: a faint top-to-bottom gradient and a 1px
 /// highlight along the top edge. Light themes light it with the background,
 /// since their foreground is dark.
-fn sheen(fill: Hsla, strength: f32, cx: &App) -> Div {
-    let theme = cx.theme();
-    let light = if theme.is_dark() {
-        theme.foreground
-    } else {
-        theme.background
-    };
-    div()
-        .min_w_0()
-        .px(rems(0.875))
-        .py(rems(0.5625))
-        .rounded(rems(0.875))
-        .bg(linear_gradient(
-            180.,
-            linear_color_stop(fill.blend(light.alpha(strength * 0.6)), 0.),
-            linear_color_stop(fill, 1.),
-        ))
-        .shadow(vec![
-            BoxShadow::new(px(0.), px(1.), light.alpha(strength)).inset(),
-        ])
-}
-
 /// The text of a paragraph quoted with `>` on every line, without the markers.
 fn unquote(paragraph: &str) -> Option<String> {
     let lines = paragraph
@@ -712,7 +705,15 @@ impl Render for Transcript {
         // The header and composer float over the transcript so its scrollbar runs
         // the full height; the messages start and end clear of both.
         let gap = window.rem_size() * 0.5;
-        let top = window.rem_size() * CHAT_HEADER_HEIGHT + gap;
+        let docs = self
+            .owner
+            .upgrade()
+            .is_some_and(|owner| owner.read(cx).section == Section::Docs);
+        let top = if docs {
+            window.rem_size() * CHAT_HEADER_HEIGHT + gap
+        } else {
+            gap
+        };
         let bottom = self.composer_height.get() + gap;
         if self.selected.is_none() {
             return self

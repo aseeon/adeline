@@ -1,0 +1,1624 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Adeline Islands</title>
+<style>
+:root {
+  --ui: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  /* type scale, by role. Steps grow by about 1.08 in UI text and 1.2 in headings */
+  --t-micro: 11px;   /* group labels, kbd hints, badges */
+  --t-caption: 12px; /* times, counts, meta, tooltips, mono beside 13 text */
+  --t-ui: 13px;      /* pickers, menus, tabs, trees, step and plan lists */
+  --t-body: 14px;    /* rows, header, island titles, buttons */
+  --t-prose: 15px;   /* messages, documents, the composer */
+  --t-input: 16px;   /* palette search */
+  --t-title: 17px;   /* page and section headings */
+  --t-display: 20px; /* empty states, big numbers */
+  --t-doc: 24px;     /* document title */
+  /* stacking: only these steps */
+  --z-float: 4;      /* the composer copy that moves between center and right */
+  --z-chrome: 5;     /* window controls */
+  --z-scrim: 10;
+  --z-palette: 11;
+  --z-menu: 20;      /* menus open above everything, the palette included */
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+body {
+  background: #111;
+  color: #eee;
+  font: var(--t-body)/1.45 var(--ui);
+  -webkit-font-smoothing: antialiased;
+  font-synthesis: none;
+  overflow: hidden;
+}
+#stage { position: fixed; inset: 0; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; text-align: left; }
+input, textarea { font: inherit; color: inherit; background: none; border: 0; outline: 0; }
+ol, ul { list-style: none; }
+svg.ic { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.trunc { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.grow { flex: 1; }
+.app button, .app kbd, #pop { -webkit-user-select: none; user-select: none; }
+kbd { font: var(--t-micro)/1 var(--ui); color: var(--fg3); }
+
+/* ---------- shared app shell ---------- */
+.app {
+  position: relative;
+  height: 100%;
+  display: flex;
+  color: var(--fg);
+  background: var(--bg);
+  font-variant-numeric: tabular-nums;
+  color-scheme: dark;
+}
+/* scrollbars: thin and invisible until the pointer is over the area that scrolls */
+.app .scroll, .app .side-scroll, .app .activity, .app .pane-b, .app .mrail, .pal-list {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+  transition: scrollbar-color 200ms ease-out;
+}
+@media (hover: hover) {
+  .app .scroll:hover, .app .side-scroll:hover, .app .activity:hover, .app .pane-b:hover, .app .mrail:hover, .pal-list:hover { scrollbar-color: var(--scroll, oklch(1 0 0 / 0.14)) transparent; }
+}
+@media (hover: none) {
+  .app .scroll, .app .side-scroll, .app .activity, .app .pane-b, .pal-list { scrollbar-color: var(--scroll, oklch(1 0 0 / 0.14)) transparent; }
+}
+.app :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; border-radius: 6px; }
+/* text fields show focus on their container (ring-strong) and the caret, not an outline */
+.app input:focus-visible, .app textarea:focus-visible { outline: none; }
+.tb { height: 44px; display: flex; align-items: center; gap: 6px; padding: 0 10px; flex: none; }
+.winctl { position: absolute; top: 0; right: 0; height: 40px; display: flex; z-index: var(--z-chrome); }
+.winctl span { width: 46px; display: grid; place-items: center; color: var(--fg3); }
+.winctl span:last-child:hover { background: #c42b1c; color: #fff; }
+.winctl span:not(:last-child):hover { background: var(--hover); }
+.iconbtn {
+  width: 30px; height: 30px; display: grid; place-items: center;
+  border-radius: 7px; color: var(--fg2); flex: none;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
+}
+.iconbtn[aria-pressed="true"] { color: var(--fg); background: var(--sel); }
+@media (hover: hover) { .iconbtn:hover { background: var(--hover); color: var(--fg); } }
+.iconbtn:active, .pick:active, .send:active, .opt:active, .qbtn:active { transform: scale(0.96); }
+
+/* agent glyphs */
+.ag { width: 16px; height: 16px; display: inline-grid; place-items: center; flex: none; }
+.ag svg { width: 100%; height: 100%; }
+.ag-claude { color: #d97757; }
+.ag-codex { color: oklch(0.8 0.07 250); }
+.ag-opencode { color: oklch(0.85 0 0); }
+.ag-omp { color: oklch(0.8 0.13 150); }
+
+/* status bits */
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+.spin {
+  width: 12px; height: 12px; border-radius: 50%; flex: none;
+  border: 1.5px solid color-mix(in oklch, var(--fg3) 45%, transparent);
+  border-top-color: var(--fg);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.pr { display: inline-flex; align-items: center; gap: 3px; flex: none; }
+.pr .ic { width: 13px; height: 13px; }
+.pr-ok { color: var(--ok); }
+.pr-fail { color: var(--err); }
+.pr-run { color: var(--warn); }
+.pr-merged { color: var(--fg3); }
+
+/* pickers */
+.pick {
+  height: 28px; display: inline-flex; align-items: center; gap: 5px;
+  padding: 0 6px 0 8px; border-radius: 7px; color: var(--fg2); white-space: nowrap;
+  transition: background-color 150ms ease-out, color 150ms ease-out;
+}
+.pick .ic { width: 14px; height: 14px; }
+.pick .chev { width: 12px; height: 12px; opacity: 0.7; }
+@media (hover: hover) { .pick:hover { background: var(--hover); color: var(--fg); } }
+
+/* ---------- conversation ---------- */
+.col { width: 100%; max-width: 760px; margin: 0 auto; padding: 0 28px; }
+.scroll { flex: 1; overflow-y: auto; min-height: 0; }
+.convo { display: flex; flex-direction: column; gap: 22px; padding: 28px 0 24px; }
+.u { align-self: flex-end; max-width: 78%; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.u-b { background: var(--bubble); padding: 10px 14px; border-radius: 14px; font-size: var(--t-prose); line-height: 1.55; overflow-wrap: anywhere; white-space: pre-wrap; }
+.u-meta { font-size: var(--t-caption); color: var(--fg3); }
+.files { display: flex; flex-wrap: wrap; gap: 6px; }
+.file {
+  display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 10px;
+  border-radius: 7px; background: var(--chip); font-size: var(--t-ui); color: var(--fg2);
+}
+.file b { font-weight: 500; color: var(--fg); }
+.a { display: flex; flex-direction: column; gap: 8px; }
+.a-t { font-size: var(--t-prose); line-height: 1.65; max-width: 68ch; text-wrap: pretty; }
+.a-t code, .ask code { font: var(--t-ui)/1 var(--mono); padding: 2px 5px; border-radius: 5px; background: var(--chip); color: var(--code); }
+.a-meta { display: flex; align-items: center; gap: 6px; font-size: var(--t-caption); color: var(--fg3); }
+.a-meta .ag { width: 13px; height: 13px; }
+
+.work { font-size: var(--t-ui); }
+.work-h { display: flex; align-items: center; gap: 8px; color: var(--fg3); padding: 4px 0; border-radius: 6px; transition: color 150ms ease-out; }
+.work-h .chev { width: 14px; height: 14px; transition: transform 200ms var(--ease-out); }
+.work.open .work-h .chev { transform: rotate(90deg); }
+@media (hover: hover) { .work-h:hover { color: var(--fg); } }
+.steps { display: flex; flex-direction: column; gap: 2px; margin: 6px 0 0 6px; padding-left: 14px; border-left: 1px solid var(--line); }
+.step { display: flex; align-items: center; gap: 8px; height: 28px; color: var(--fg2); min-width: 0; }
+.step .ic { width: 14px; height: 14px; color: var(--fg3); }
+.step .sk { color: var(--fg2); flex: none; }
+.step .sd { font: var(--t-caption) var(--mono); color: var(--fg); min-width: 0; }
+.step .sm { margin-left: auto; color: var(--fg3); font-size: var(--t-caption); flex: none; padding-left: 12px; }
+.step.s-fail .ic, .step.s-fail .sm { color: var(--err); }
+.step.s-run .sm { color: var(--fg2); }
+.add { color: var(--ok); }
+.del { color: var(--err); }
+
+.thinking { display: flex; align-items: center; gap: 10px; font-size: var(--t-body); color: var(--fg2); }
+.shimmer {
+  background: linear-gradient(90deg, var(--fg3) 0%, var(--fg3) 40%, var(--fg) 50%, var(--fg3) 60%, var(--fg3) 100%);
+  background-size: 300% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  animation: shimmer 2.4s linear infinite;
+}
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.since { color: var(--fg3); font-size: var(--t-caption); }
+
+.ask { display: flex; flex-direction: column; gap: 12px; padding: 16px; border-radius: 12px; background: var(--card); box-shadow: 0 0 0 1px var(--ring); }
+.ask p { font-size: var(--t-prose); line-height: 1.65; max-width: 68ch; text-wrap: pretty; }
+.ask-l { display: flex; align-items: center; gap: 6px; font-size: var(--t-caption); font-weight: 600; color: var(--accent); }
+.ask-opts { display: flex; flex-direction: column; gap: 6px; }
+.opt {
+  display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 8px 12px;
+  border-radius: 8px; background: var(--chip); font-size: var(--t-body);
+  transition: background-color 150ms ease-out;
+}
+.opt kbd { width: 20px; height: 20px; display: grid; place-items: center; border-radius: 5px; box-shadow: 0 0 0 1px var(--ring); }
+@media (hover: hover) { .opt:hover { background: var(--sel); } }
+
+.empty { padding: 18vh 0 0; text-align: center; color: var(--fg2); display: flex; flex-direction: column; gap: 6px; align-items: center; }
+.empty h2 { font-size: var(--t-display); line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; color: var(--fg); text-wrap: balance; }
+
+/* queue */
+.queue { display: flex; flex-direction: column; gap: 0; margin-bottom: 8px; border-radius: 12px; background: var(--card); box-shadow: 0 0 0 1px var(--ring); overflow: hidden; }
+.q-h { display: flex; align-items: center; gap: 6px; padding: 8px 12px 4px; font-size: var(--t-caption); color: var(--fg3); }
+.q-i { display: flex; align-items: center; gap: 10px; padding: 6px 6px 6px 12px; min-height: 40px; }
+.q-i + .q-i { box-shadow: 0 -1px 0 var(--line); }
+.q-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.q-txt span:first-child { font-size: var(--t-body); }
+.q-f { font-size: var(--t-caption); color: var(--fg3); display: flex; align-items: center; gap: 4px; }
+.q-f .ic { width: 12px; height: 12px; }
+.q-a { display: flex; gap: 2px; flex: none; }
+.qbtn { height: 28px; padding: 0 9px; border-radius: 6px; font-size: var(--t-ui); color: var(--fg2); transition: background-color 150ms ease-out, color 150ms ease-out; }
+@media (hover: hover) { .qbtn:hover { background: var(--hover); color: var(--fg); } }
+.qbtn.pri { color: var(--fg); }
+
+/* composer */
+.dock { flex: none; padding-bottom: 14px; }
+.composer { border-radius: 14px; background: var(--raise); box-shadow: 0 0 0 1px var(--ring); padding: 6px; display: flex; flex-direction: column; transition: box-shadow 150ms ease-out; }
+.composer:focus-within { box-shadow: 0 0 0 1px var(--ring-strong); }
+.composer textarea {
+  display: block; width: 100%; resize: none; padding: 8px 10px 4px; font-size: var(--t-prose); line-height: 1.5;
+  max-height: 40vh; min-height: 32px; color: var(--fg);
+}
+.composer textarea::placeholder { color: var(--fg3); }
+.c-files { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 6px 2px; }
+.c-files .file { padding-right: 4px; }
+.c-files .file button { position: relative; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 5px; color: var(--fg3); }
+.c-files .file button::before { content: ""; position: absolute; inset: -4px; }
+.c-files .file button .ic { width: 12px; height: 12px; }
+.c-bar { display: flex; align-items: center; gap: 2px; }
+.send {
+  width: 30px; height: 30px; border-radius: 50%; display: grid; place-items: center; flex: none; margin-left: 4px;
+  background: var(--fg); color: var(--bg); transition: opacity 150ms ease-out, transform 120ms ease-out;
+}
+.send:disabled { opacity: 0.25; cursor: default; }
+.cring { position: relative; width: 32px; height: 32px; flex: none; display: grid; place-items: center; border-radius: 8px; }
+.cring svg { width: 18px; height: 18px; transform: rotate(-90deg); }
+.cring circle { fill: none; stroke-width: 2.5; }
+.cring .tr { stroke: color-mix(in oklch, var(--fg3) 35%, transparent); }
+.cring .fl { stroke: var(--ctx, var(--fg2)); stroke-linecap: round; }
+.cring .tip { position: absolute; bottom: calc(100% + 8px); right: 0; white-space: nowrap; padding: 6px 9px; border-radius: 8px; background: var(--pal-bg, oklch(0.25 0 0)); box-shadow: 0 0 0 1px var(--ring, oklch(1 0 0 / 0.1)), 0 8px 20px oklch(0 0 0 / 0.3); font-size: var(--t-caption); color: var(--fg2); font-variant-numeric: tabular-nums; pointer-events: none; opacity: 0; transition: opacity 150ms ease-out; }
+.cring .tip b { color: var(--fg); font-weight: 500; }
+.cring:hover .tip, .cring:focus-visible .tip { opacity: 1; transition-delay: 200ms; }
+
+/* activity (shared content) */
+.act { display: flex; flex-direction: column; gap: 18px; }
+.act-h { display: flex; align-items: baseline; justify-content: space-between; font-size: var(--t-caption); color: var(--fg3); }
+.act-h b { font-weight: 600; color: var(--fg2); }
+.act .steps { margin: 0; padding: 0; border: 0; }
+.plan { display: flex; flex-direction: column; gap: 2px; }
+.plan li { display: flex; align-items: center; gap: 8px; min-height: 28px; font-size: var(--t-ui); color: var(--fg2); }
+.plan li .ic { width: 14px; height: 14px; }
+.plan li.done { color: var(--fg3); }
+.plan li.done .ic { color: var(--ok); }
+.plan li.now { color: var(--fg); }
+.plan li .n { width: 14px; text-align: center; font-size: var(--t-micro); color: var(--fg3); flex: none; }
+.stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 10px; }
+.stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stat b { font-size: var(--t-prose); font-weight: 600; color: var(--fg); }
+.stat span { font-size: var(--t-caption); color: var(--fg3); }
+.bar { height: 4px; border-radius: 2px; background: color-mix(in oklch, var(--fg3) 30%, transparent); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--fg2); border-radius: 2px; }
+.changes li { display: flex; align-items: center; gap: 8px; min-height: 30px; font-size: var(--t-ui); }
+.changes li .ic { width: 14px; height: 14px; color: var(--fg3); }
+.changes .p { font-family: var(--mono); font-size: var(--t-caption); }
+.changes .n { margin-left: auto; font-size: var(--t-caption); display: flex; gap: 6px; flex: none; }
+.term { font: var(--t-caption)/1.6 var(--mono); color: var(--fg2); white-space: pre-wrap; overflow-wrap: anywhere; }
+.term .ok { color: var(--ok); }
+.term .fail { color: var(--err); }
+
+/* search box */
+.sbox { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; background: var(--chip); color: var(--fg3); transition: box-shadow 150ms ease-out; }
+.sbox:focus-within { box-shadow: 0 0 0 1px var(--ring-strong); }
+.sbox input { flex: 1; min-width: 0; color: var(--fg); font-size: var(--t-body); }
+.sbox input::placeholder { color: var(--fg3); }
+.noresult { padding: 16px 12px; color: var(--fg3); font-size: var(--t-ui); }
+
+/* modes (shared) */
+/* main area of a mode: cards sit on the chat background, so they use --card like ask cards */
+.mpane { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 10px; padding: 8px 12px 13px; }
+.mcard { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; border-radius: 14px; background: var(--card); box-shadow: 0 0 0 1px var(--ring); }
+.mbar { height: 44px; flex: none; display: flex; align-items: center; gap: 2px; padding: 0 8px; box-shadow: 0 1px 0 var(--line); }
+.mbar .note { font-size: var(--t-caption); color: var(--fg3); padding: 0 6px; }
+
+/* file tree (Docs, Terminal) */
+.tree { display: flex; flex-direction: column; gap: 1px; }
+.tr-row { width: 100%; height: 30px; display: flex; align-items: center; gap: 6px; padding: 0 8px 0 calc(8px + var(--d) * 14px); border-radius: 7px; font-size: var(--t-ui); color: var(--fg2); transition: background-color 150ms ease-out, color 150ms ease-out; }
+.tr-row .ic { width: 14px; height: 14px; color: var(--fg3); }
+.tr-row .ic.chev { width: 12px; height: 12px; }
+.tr-row .sp { width: 12px; flex: none; }
+@media (hover: hover) { .tr-row:hover { background: var(--hover); color: var(--fg); } }
+.tr-row[aria-current="true"] { background: var(--sel); color: var(--fg); }
+
+/* Docs */
+.fmt { min-width: 30px; height: 30px; padding: 0 8px; display: grid; place-items: center; border-radius: 7px; font-size: var(--t-ui); color: var(--fg2); transition: background-color 150ms ease-out, color 150ms ease-out; }
+@media (hover: hover) { .fmt:hover { background: var(--hover); color: var(--fg); } }
+.fmt .ic { width: 15px; height: 15px; }
+.fmt b { font-weight: 600; }
+.doc { flex: 1; overflow-y: auto; padding: 28px 32px 48px; font-size: var(--t-prose); line-height: 1.65; color: var(--fg); }
+.app .doc:focus-visible { outline: none; }
+.doc > * { max-width: 68ch; margin-left: auto; margin-right: auto; }
+.doc h1 { font-size: var(--t-doc); line-height: 1.2; font-weight: 600; letter-spacing: -0.012em; margin-bottom: 12px; text-wrap: balance; }
+.doc h2 { font-size: var(--t-title); line-height: 1.3; font-weight: 600; margin-top: 24px; margin-bottom: 6px; text-wrap: balance; }
+.doc p, .doc ul, .doc ol { margin-bottom: 10px; color: var(--fg); }
+.doc ul { list-style: disc; padding-left: 22px; }
+.doc ol { list-style: decimal; padding-left: 22px; }
+.doc li + li { margin-top: 4px; }
+.doc code { font: var(--t-ui)/1 var(--mono); padding: 2px 5px; border-radius: 5px; background: var(--chip); color: var(--code); }
+
+/* Terminal */
+.term-h { height: 36px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 14px; font-size: var(--t-caption); color: var(--fg3); box-shadow: 0 1px 0 var(--line); }
+.term-h b { font-weight: 500; color: var(--fg2); }
+.term-b { flex: 1; overflow-y: auto; padding: 12px 14px 16px; font: var(--t-ui)/1.6 var(--mono); color: var(--fg2); cursor: text; }
+.term-b > div { white-space: pre-wrap; overflow-wrap: anywhere; }
+.t-cmd { color: var(--fg); }
+.t-ok { color: var(--ok); }
+.t-err { color: var(--err); }
+.t-dim { color: var(--fg3); }
+.t-hi { color: var(--code); }
+.t-pp { color: var(--ok); }
+.t-in { display: flex; gap: 8px; }
+.t-in input { flex: 1; min-width: 0; font: inherit; color: var(--fg); caret-color: var(--fg); }
+
+/* Board */
+.bfil { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.bfil .gap { width: 8px; }
+.fchip { height: 28px; display: inline-flex; align-items: center; gap: 6px; padding: 0 11px; border-radius: 14px; font-size: var(--t-ui); color: var(--fg2); box-shadow: 0 0 0 1px var(--ring); transition: background-color 150ms ease-out, color 150ms ease-out; }
+.fchip .ag { width: 13px; height: 13px; }
+@media (hover: hover) { .fchip:hover { background: var(--hover); color: var(--fg); } }
+.fchip[aria-pressed="true"] { background: var(--sel); color: var(--fg); }
+.bcols { flex: 1; min-height: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.bcol { min-height: 0; display: flex; flex-direction: column; }
+.bcol-h { height: 30px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 4px; font-size: var(--t-caption); font-weight: 600; color: var(--fg2); }
+.bcol-h .cnt { font-weight: 400; color: var(--fg3); }
+.bcol-l { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; padding: 1px 1px 8px; }
+.tk { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--card); box-shadow: 0 0 0 1px var(--ring); }
+.tk-top { display: flex; align-items: center; gap: 6px; font-size: var(--t-caption); color: var(--fg3); }
+.tk-top .ag { margin-left: auto; width: 14px; height: 14px; }
+.tk-t { font-size: var(--t-body); line-height: 1.4; }
+.bcol.done .tk-t { color: var(--fg2); }
+.tk-b { display: flex; align-items: center; gap: 8px; font-size: var(--t-caption); color: var(--fg3); }
+.lbl { padding: 1px 7px; border-radius: 5px; background: var(--chip); color: var(--fg2); }
+.tk-need { display: inline-flex; align-items: center; gap: 5px; color: var(--accent); white-space: nowrap; }
+
+/* Browser: the page itself is someone else's site, so it keeps its own colors in every theme */
+.burl { flex: 1; min-width: 0; height: 30px; display: flex; align-items: center; gap: 8px; margin: 0 4px; padding: 0 12px; border-radius: 8px; background: var(--chip); font-size: var(--t-ui); color: var(--fg3); }
+.burl b { font-weight: 400; color: var(--fg); }
+.bview { flex: 1; min-height: 0; overflow-y: auto; background: oklch(0.99 0 0); }
+.site { color: oklch(0.22 0 0); font: 14px/1.55 var(--ui); }
+.site nav { height: 52px; display: flex; align-items: center; gap: 18px; padding: 0 24px; box-shadow: 0 1px 0 oklch(0 0 0 / 0.08); font-size: 13px; color: oklch(0.45 0 0); }
+.site nav b { font-size: 15px; color: oklch(0.2 0 0); margin-right: auto; display: flex; align-items: center; gap: 8px; }
+.site nav b i { width: 18px; height: 18px; border-radius: 5px; background: oklch(0.6 0.13 var(--sh)); }
+.site .hero { padding: 48px 24px 36px; max-width: 640px; }
+.site h1 { font-size: 34px; line-height: 1.15; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 12px; text-wrap: balance; }
+.site .hero p { font-size: 16px; color: oklch(0.42 0 0); margin-bottom: 20px; max-width: 52ch; }
+.site .btns { display: flex; gap: 8px; }
+.site .btn { height: 36px; padding: 0 16px; display: inline-flex; align-items: center; border-radius: 8px; font-weight: 600; font-size: 13px; background: oklch(0.2 0 0); color: oklch(0.99 0 0); }
+.site .btn.ghost { background: none; color: oklch(0.2 0 0); box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.15); }
+.site .feats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; padding: 0 24px 40px; }
+.site .feat { padding: 16px; border-radius: 10px; background: oklch(0.96 0.01 var(--sh)); }
+.site .feat b { display: block; margin-bottom: 4px; }
+.site .feat span { font-size: 13px; color: oklch(0.45 0 0); }
+.site article { padding: 32px 24px 48px; max-width: 680px; }
+.site article h1 { font-size: 26px; }
+.site article p { margin-bottom: 12px; color: oklch(0.35 0 0); }
+.site article pre { font: 12.5px/1.6 var(--mono); padding: 12px 14px; border-radius: 8px; background: oklch(0.95 0 0); margin-bottom: 12px; white-space: pre-wrap; }
+.oth-row.cur { background: var(--sel); }
+.oth-row.cur .oth { color: var(--fg); }
+
+/* Usage */
+.mhead { flex: none; display: flex; align-items: center; gap: 8px; }
+.mhead h2 { font-size: var(--t-title); line-height: 1.3; font-weight: 600; }
+.v3 .mhead .seg { margin: 0 0 0 auto; width: 180px; }
+.uscroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: 1px; }
+.uscroll { container-type: inline-size; }
+.ustats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+@container (min-width: 520px) { .ustats { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.ustat, .ucard { border-radius: 12px; background: var(--card); box-shadow: 0 0 0 1px var(--ring); }
+.ustat { padding: 12px 14px; display: flex; flex-direction: column; gap: 2px; }
+.ustat b { font-size: var(--t-display); line-height: 1.25; font-weight: 600; letter-spacing: -0.01em; }
+.ustat span { font-size: var(--t-caption); color: var(--fg3); }
+.ucard { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.ucard h3 { display: flex; align-items: center; gap: 12px; font-size: var(--t-caption); font-weight: 600; color: var(--fg2); }
+.ucard h3 .leg { margin-left: auto; display: flex; flex-wrap: wrap; gap: 10px; font-size: var(--t-caption); font-weight: 400; color: var(--fg3); }
+.leg span { display: inline-flex; align-items: center; gap: 5px; }
+.leg i { width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
+.leg i + * { color: var(--fg3); }
+.uchart { height: 150px; display: flex; align-items: flex-end; gap: 3px; }
+.ubar { flex: 1; height: 100%; display: flex; flex-direction: column; justify-content: flex-end; }
+.ustack { display: flex; flex-direction: column-reverse; gap: 1px; border-radius: 3px 3px 1px 1px; overflow: hidden; }
+.ustack i { display: block; background: currentColor; }
+.uaxis { display: flex; gap: 3px; margin-top: -6px; }
+.uaxis span { flex: 1; text-align: center; font-size: var(--t-micro); color: var(--fg3); white-space: nowrap; }
+.hrows { display: flex; flex-direction: column; gap: 10px; }
+.hrow { display: grid; grid-template-columns: minmax(0, 150px) 1fr 52px; align-items: center; gap: 10px; font-size: var(--t-ui); color: var(--fg2); }
+.hrow > span:first-child { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hrow .mono { width: 16px; height: 16px; border-radius: 4px; }
+.hrow b { font-weight: 400; text-align: right; color: var(--fg3); font-size: var(--t-caption); }
+.htrack { height: 6px; border-radius: 3px; background: color-mix(in oklch, var(--fg3) 25%, transparent); overflow: hidden; }
+.htrack i { display: block; height: 100%; border-radius: 3px; background: currentColor; }
+.ufoot { font-size: var(--t-caption); color: var(--fg3); }
+.mbtn { position: relative; }
+.mrail { width: 56px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 14px 0; background: var(--rail); box-shadow: 1px 0 0 var(--rail-line, transparent); }
+.mrail button { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; color: var(--fg3); transition: background-color 150ms ease-out, color 150ms ease-out; }
+.mrail button .ic { width: 18px; height: 18px; }
+/* the active highlight is a ::before so it can slide between buttons without moving the icon */
+.mrail button { isolation: isolate; }
+.mrail button[aria-pressed="true"]::before { content: ""; position: absolute; inset: 0; z-index: -1; border-radius: inherit; background: oklch(var(--ink) / 0.11); }
+.mrail button[aria-pressed="true"] { position: relative; color: var(--fg); }
+@media (hover: hover) { .mrail button:hover { color: var(--fg); background: var(--hover); } }
+.mrail button:active { transform: scale(0.96); }
+.mrail .mdot { top: 6px; right: 6px; box-shadow: none; }
+.mtitle { padding-left: 8px; font-size: var(--t-body); font-weight: 600; }
+.mono { width: 20px; height: 20px; border-radius: 6px; display: inline-grid; place-items: center; flex: none; /* initials are glyphs, not text: 9 in boxes up to 22, --t-micro in bigger ones */ font: 600 9px/1 var(--ui); letter-spacing: 0.02em; color: oklch(0.99 0 0); background: oklch(0.56 0.11 var(--h)); }
+.pbadge { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; display: inline-grid; place-items: center; flex: none; background: var(--accent); color: oklch(0.22 0.04 50); font-size: var(--t-micro); font-weight: 600; }
+.pproc { width: 8px; height: 8px; border-radius: 50%; flex: none; background: var(--ok); box-shadow: 0 0 0 2px color-mix(in oklch, var(--ok) 30%, transparent); }
+#pop .mono { width: 22px; height: 22px; }
+#pop .ph-sec { padding-top: 10px; }
+.mdot { position: absolute; top: 5px; right: 5px; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--mdot-ring, var(--bg)); }
+
+/* popover menu (shared) */
+#pop {
+  position: fixed; z-index: var(--z-menu); min-width: 220px; max-width: 320px; padding: 4px;
+  border-radius: 10px; background: oklch(0.24 0 0); color: oklch(0.94 0 0);
+  box-shadow: 0 0 0 1px oklch(1 0 0 / 0.09), 0 12px 32px oklch(0 0 0 / 0.45);
+  font: var(--t-ui)/1.4 var(--ui); display: none;
+  transform-origin: var(--o, top left);
+}
+#pop.open { display: block; animation: pop-in 150ms var(--ease-out); }
+@keyframes pop-in { from { opacity: 0; transform: scale(0.97); } }
+#pop .ph { padding: 6px 10px 4px; font-size: var(--t-caption); color: oklch(0.6 0 0); }
+#pop button { width: 100%; display: flex; align-items: center; gap: 10px; min-height: 32px; padding: 5px 10px; border-radius: 6px; }
+#pop button:focus-visible, #pop button:focus { outline: none; background: oklch(1 0 0 / 0.08); }
+@media (hover: hover) { #pop button:hover { background: oklch(1 0 0 / 0.08); } }
+#pop .mi { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+#pop .mh { font-size: var(--t-caption); color: oklch(0.62 0 0); }
+#pop .tick { width: 14px; height: 14px; color: oklch(0.8 0.1 250); margin-left: auto; }
+#pop .plan { padding: 2px 8px 6px; --fg: oklch(0.94 0 0); --fg2: oklch(0.8 0 0); --fg3: oklch(0.58 0 0); --ok: oklch(0.75 0.14 150); }
+
+/* =========================================================
+   SURFACE TOKENS  (Islands builds on the .v3 tokens)
+   ========================================================= */
+.v3wrap { position: absolute; inset: 0; overflow: hidden; background: var(--wall-base); }
+.wall { position: absolute; inset: 0; pointer-events: none; }
+.wall i { position: absolute; border-radius: 50%; }
+.v3 {
+  --H: 265;
+  position: absolute; inset: 14px; height: auto; border-radius: 12px; overflow: hidden;
+  --fg: oklch(0.97 0.01 var(--H)); --fg2: oklch(0.84 0.03 var(--H)); --fg3: oklch(0.7 0.04 var(--H));
+  --ink: 1 0 0; /* overlay color: white in dark, black in light */
+  --line: oklch(var(--ink) / 0.09); --hover: oklch(var(--ink) / 0.07); --sel: oklch(var(--ink) / 0.12);
+  --chip: oklch(var(--ink) / 0.08); --ring: oklch(var(--ink) / 0.1); --ring-strong: oklch(var(--ink) / 0.22);
+  --code: oklch(0.9 0.06 var(--H)); --accent: oklch(0.78 0.15 55); --ctx: var(--sendbg);
+  --ok: oklch(0.82 0.14 150); --err: oklch(0.75 0.15 20); --warn: oklch(0.85 0.12 85); --focus: oklch(var(--ink) / 0.6);
+  --sendbg: oklch(0.8 0.1 var(--H)); --sendfg: oklch(0.2 0.05 var(--H)); --scroll: oklch(var(--ink) / 0.2);
+  box-shadow: 0 0 0 1px oklch(var(--ink) / 0.14), 0 24px 60px oklch(0.1 0.05 var(--H) / 0.45);
+}
+.v3[data-surface="tinted"] {
+  --bg: oklch(0.4 0.085 var(--H)); --side: oklch(0.35 0.08 var(--H)); --pane: oklch(0.43 0.085 var(--H));
+  --bubble: oklch(0.49 0.09 var(--H)); --card: oklch(0.46 0.085 var(--H)); --raise: oklch(0.46 0.085 var(--H));
+}
+.v3[data-surface="glass"] {
+  --bg: oklch(0.3 0.07 var(--H) / 0.5); --side: oklch(0.18 0.05 var(--H) / 0.32); --pane: oklch(1 0 0 / 0.06);
+  --bubble: oklch(1 0 0 / 0.13); --card: oklch(1 0 0 / 0.08); --raise: oklch(1 0 0 / 0.09);
+  -webkit-backdrop-filter: blur(36px) saturate(1.6); backdrop-filter: blur(36px) saturate(1.6);
+}
+.v3[data-surface="tinted"] { --rail: oklch(0.3 0.075 var(--H)); }
+/* Dark grey follows Quiet's neutral steps */
+.v3[data-tint="grey"] {
+  --fg: oklch(0.94 0 0); --fg2: oklch(0.74 0 0); --fg3: oklch(0.56 0 0); --code: oklch(0.85 0.09 70);
+  --sendbg: oklch(0.9 0 0); --sendfg: oklch(0.2 0 0); --ctx: oklch(0.72 0.13 250);
+}
+.v3[data-tint="grey"][data-surface="tinted"] {
+  --rail: oklch(0.17 0 0); --side: oklch(0.195 0 0); --bg: oklch(0.215 0 0); --pane: oklch(0.24 0 0);
+  --bubble: oklch(0.28 0 0); --card: oklch(0.24 0 0); --raise: oklch(0.25 0 0); --pal-bg: oklch(0.25 0 0); --isl-l: oklch(0.185 0 0);
+}
+.v3[data-tint="grey"][data-surface="glass"] {
+  --rail: oklch(0.08 0 0 / 0.4); --side: oklch(0.12 0 0 / 0.32); --bg: oklch(0.2 0 0 / 0.5);
+  --pal-bg: oklch(0.22 0 0 / 0.78); --isl-l: oklch(0.1 0 0 / 0.38);
+}
+.v3wrap[data-tint="grey"] { --wall-base: linear-gradient(160deg, oklch(0.42 0 0), oklch(0.2 0 0)) !important; }
+.v3wrap[data-tint="grey"] .wall { filter: grayscale(1) brightness(0.55); }
+.v3[data-surface="glass"] { --rail: oklch(0.12 0.04 var(--H) / 0.4); }
+.v3 .side { width: 286px; flex: none; background: var(--side); display: flex; flex-direction: column; }
+.v3 .seg { display: flex; gap: 2px; margin: 4px 12px 10px; padding: 3px; border-radius: 10px; background: oklch(0 0 0 / 0.16); }
+.v3 .seg button { flex: 1; height: 30px; display: flex; align-items: center; justify-content: center; gap: 6px; border-radius: 7px; font-size: var(--t-ui); color: var(--fg2); transition: background-color 150ms ease-out, color 150ms ease-out; }
+.v3 .seg button .ic { width: 14px; height: 14px; }
+.v3 .seg button[aria-pressed="true"] { background: oklch(1 0 0 / 0.12); color: var(--fg); box-shadow: 0 1px 2px oklch(0 0 0 / 0.15); }
+.v3 .seg button span.c { color: var(--fg3); font-size: var(--t-caption); }
+.v3 .side > .tb { height: 40px; }
+.v3 .side-scroll { flex: 1; overflow-y: auto; padding: 0 8px 12px; }
+.v3 .grp-h { display: flex; align-items: center; gap: 6px; width: 100%; height: 30px; padding: 10px 10px 0; font-size: var(--t-micro); font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg3); }
+.v3 .grp-h .chev { display: none; }
+.v3 .grp-h .cnt { margin-left: auto; letter-spacing: 0; font-weight: 400; }
+.v3 .grp-needs .grp-h { color: var(--accent); }
+.v3 .row { width: 100%; height: 36px; display: flex; align-items: center; gap: 10px; padding: 0 10px; border-radius: 8px; transition: background-color 150ms ease-out; }
+.v3 .row .t { flex: 1; font-size: var(--t-body); color: var(--fg2); }
+.v3 .row.is-unread .t { color: var(--fg); font-weight: 500; }
+.v3 .row .when { font-size: var(--t-caption); color: var(--fg3); flex: none; display: flex; align-items: center; }
+@media (hover: hover) { .v3 .row:hover { background: var(--hover); } }
+.v3 .row[aria-current="true"] { background: var(--sel); }
+.v3 .row[aria-current="true"] .t { color: var(--fg); }
+.sets { width: min(440px, 100% - 48px); margin: 24px auto; display: flex; flex-direction: column; gap: 4px; }
+.sets h2 { font-size: var(--t-title); line-height: 1.3; font-weight: 600; margin-bottom: 8px; }
+.surf { min-height: 48px; display: flex; align-items: center; gap: 12px; font-size: var(--t-body); color: var(--fg2); box-shadow: 0 1px 0 var(--line); }
+.v3 .surf .seg { margin: 0 0 0 auto; width: 200px; }
+.hues { display: flex; gap: 6px; }
+.hue { width: 18px; height: 18px; border-radius: 50%; box-shadow: 0 0 0 1px oklch(var(--ink) / 0.25) inset; transition: transform 150ms ease-out; }
+.hue[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--fg); }
+.v3 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.v3 .crumb { display: flex; align-items: center; gap: 8px; font-size: var(--t-body); color: var(--fg2); min-width: 0; }
+.v3 .crumb b { font-weight: 500; color: var(--fg); }
+.v3 .crumb .sl { color: var(--fg3); }
+.v3 .send { background: var(--sendbg); color: var(--sendfg); border-radius: 9px; }
+.v3 .pane-b { flex: 1; overflow-y: auto; padding: 8px 16px 16px; }
+
+/* =========================================================
+   3 · ISLANDS  (Tinted, split into floating islands)
+   brightness: both islands < chat (window background) < composer
+   ========================================================= */
+.isl { padding: 8px; gap: 8px; }
+.isl[data-surface="tinted"] { --isl-l: oklch(0.335 0.08 var(--H)); --pane: oklch(0.435 0.085 var(--H)); }
+.isl[data-surface="glass"] { --isl-l: oklch(0.14 0.05 var(--H) / 0.38); --pane: oklch(1 0 0 / 0.09); }
+.isl[data-tint="grey"][data-surface="tinted"] { --isl-l: oklch(0.185 0 0); }
+.isl[data-tint="grey"][data-surface="glass"] { --isl-l: oklch(0.1 0 0 / 0.38); }
+.isl .isl-l, .isl .isl-r { border-radius: 14px; box-shadow: 0 0 0 1px var(--ring), 0 10px 30px oklch(0.08 0.04 var(--H) / 0.3); }
+.isl .isl-l { flex: none; margin: 34px 0 13px; display: flex; overflow: hidden; background: var(--isl-l); }
+.isl .isl-l .mrail { background: transparent; box-shadow: 1px 0 0 var(--line); }
+.isl .isl-l .side { background: transparent; }
+/* island content keeps its width while the island opens or closes, so it slides under the rail instead of rewrapping */
+.isl .isl-l .side, .isl .isl-rp { overflow: hidden; }
+.isl .isl-l .side { align-items: flex-end; }
+.isl .isl-l .side > * { width: 286px; }
+.isl .isl-rp > * { width: 330px; }
+/* chat pane (Docs): conversation and composer inside the right island */
+.isl .isl-rp.chatp { width: 440px; }
+.isl .isl-rp.chatp > * { width: 440px; }
+.isl .chatp .ih { gap: 8px; }
+.isl .chatp .col { padding: 0 14px; }
+.isl .chatp .convo { padding: 8px 0 20px; }
+.isl .chatp .dock { padding-bottom: 12px; }
+/* bottom gap is 8px padding + 13px = 21px, half the 42px top gap; the composer matches the islands */
+.isl .dock { padding-bottom: 13px; }
+/* 8px window padding + 26px puts the title midway down the 42px gap above the islands */
+.isl .main .tb { height: 26px; display: flex; justify-content: center; }
+.isl .isl-r { flex: none; margin: 34px 0 13px; display: flex; overflow: hidden; background: var(--isl-l); }
+.isl .isl-rp { width: 330px; min-width: 0; display: flex; flex-direction: column; }
+.isl .isl-r .mrail { background: transparent; }
+.isl .isl-rp + .mrail { box-shadow: -1px 0 0 var(--line); }
+.isl .isl-r .ih { height: 46px; flex: none; display: flex; align-items: center; padding: 0 16px; font-size: var(--t-body); font-weight: 600; }
+
+/* project switcher + palette (shared) */
+.psw { width: 100%; display: flex; align-items: center; gap: 10px; padding: 9px 10px; margin: 12px 0 8px; border-radius: 10px; background: var(--chip); box-shadow: 0 0 0 1px var(--ring); transition: background-color 150ms ease-out; }
+.others { display: flex; flex-direction: column; gap: 1px; margin-bottom: 10px; }
+.oth-row { display: flex; align-items: center; border-radius: 8px; transition: background-color 150ms ease-out; }
+.oth { flex: 1; min-width: 0; height: 32px; display: flex; align-items: center; gap: 10px; padding: 0 8px; border-radius: 8px; font-size: var(--t-ui); color: var(--fg2); }
+.oth .mono { width: 18px; height: 18px; border-radius: 5px; }
+.oth .c { margin-left: auto; display: flex; align-items: center; }
+.oth-x { width: 24px; height: 24px; margin-right: 4px; display: grid; place-items: center; flex: none; border-radius: 6px; color: var(--fg3); opacity: 0; transition: opacity 150ms ease-out, background-color 150ms ease-out, color 150ms ease-out; }
+.oth-x .ic { width: 12px; height: 12px; }
+.oth-row:focus-within .oth-x { opacity: 1; }
+@media (hover: hover) { .oth-row:hover { background: var(--hover); } .oth-row:hover .oth { color: var(--fg); } .oth-row:hover .oth-x { opacity: 1; } .oth-x:hover { background: var(--hover); color: var(--fg); } }
+.v3[data-surface="tinted"] { --pal-bg: oklch(0.42 0.085 var(--H)); }
+.v3[data-surface="glass"] { --pal-bg: oklch(0.27 0.06 var(--H) / 0.78); }
+.v3[data-tint="grey"][data-surface="tinted"] { --pal-bg: oklch(0.25 0 0); }
+.v3[data-tint="grey"][data-surface="glass"] { --pal-bg: oklch(0.22 0 0 / 0.78); }
+.v3[data-surface="glass"] .pal { -webkit-backdrop-filter: blur(30px) saturate(1.5); backdrop-filter: blur(30px) saturate(1.5); }
+.v3 .pal-scrim { background: oklch(0.12 0.04 var(--H) / 0.45); }
+.pswitch { padding: 0 10px; flex: none; }
+.pswitch .others { margin-bottom: 4px; }
+.psw .mono { width: 30px; height: 30px; border-radius: 8px; font-size: var(--t-micro); }
+.psw .t { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.psw .t b { font-size: var(--t-body); font-weight: 600; }
+.psw .t span { font-size: var(--t-caption); color: var(--fg3); }
+.psw kbd { flex: none; }
+@media (hover: hover) { .psw:hover { background: var(--sel); } }
+.pal-scrim { position: absolute; inset: 0; z-index: var(--z-scrim); background: oklch(0.1 0.02 262 / 0.55); animation: fade-in 150ms ease-out; }
+.pal { position: absolute; left: 50%; top: 88px; z-index: var(--z-palette); width: min(580px, calc(100% - 32px)); transform: translateX(-50%); border-radius: 14px; overflow: hidden; background: var(--pal-bg); box-shadow: 0 0 0 1px var(--ring), 0 24px 60px oklch(0 0 0 / 0.5); animation: pal-in 180ms var(--ease-out); }
+@keyframes pal-in { from { opacity: 0; transform: translateX(-50%) scale(0.97); } }
+@keyframes fade-in { from { opacity: 0; } }
+.pal-in { display: flex; align-items: center; gap: 10px; height: 54px; padding: 0 16px; color: var(--fg3); box-shadow: 0 1px 0 var(--line); }
+.pal-in input { flex: 1; min-width: 0; font-size: var(--t-input); color: var(--fg); }
+.pal-in input::placeholder { color: var(--fg3); }
+.pal-list { max-height: min(440px, 60vh); overflow-y: auto; padding: 6px; }
+.pal-h { padding: 10px 10px 4px; font-size: var(--t-caption); color: var(--fg3); }
+.pal-i { width: 100%; display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 6px 10px; border-radius: 9px; }
+.pal-i[aria-selected="true"] { background: var(--sel); }
+@media (hover: hover) { .pal-i:hover { background: var(--hover); } .pal-i[aria-selected="true"]:hover { background: var(--sel); } }
+.pal-i .mono { width: 28px; height: 28px; border-radius: 8px; font-size: var(--t-micro); }
+.pal-i .t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.pal-i .t b { font-size: var(--t-body); font-weight: 500; }
+.pal-i .t span { font-size: var(--t-caption); color: var(--fg3); }
+.pal-i .cur { font-size: var(--t-caption); color: var(--fg3); }
+
+/* =========================================================
+   LIGHT THEME
+   Same tokens, swapped values. Overlays flip to black through --ink.
+   Brightness still goes up: islands < chat < composer and cards.
+   ========================================================= */
+[data-theme="light"] .v3 {
+  color-scheme: light; --ink: 0 0 0;
+  --fg: oklch(0.22 0.02 var(--H)); --fg2: oklch(0.42 0.03 var(--H)); --fg3: oklch(0.55 0.03 var(--H));
+  --code: oklch(0.45 0.1 var(--H)); --accent: oklch(0.64 0.17 50);
+  --ok: oklch(0.55 0.14 150); --err: oklch(0.55 0.18 25); --warn: oklch(0.62 0.13 75);
+  --sendbg: oklch(0.45 0.12 var(--H)); --sendfg: oklch(0.98 0.01 var(--H));
+  box-shadow: 0 0 0 1px oklch(0 0 0 / 0.12), 0 24px 60px oklch(0.2 0.05 var(--H) / 0.25);
+}
+[data-theme="light"] .v3[data-surface="tinted"] {
+  --rail: oklch(0.9 0.03 var(--H)); --side: oklch(0.92 0.025 var(--H)); --bg: oklch(0.955 0.02 var(--H)); --pane: oklch(0.97 0.015 var(--H));
+  --bubble: oklch(0.9 0.04 var(--H)); --card: oklch(0.985 0.008 var(--H)); --raise: oklch(0.995 0.005 var(--H)); --pal-bg: oklch(0.985 0.008 var(--H));
+}
+[data-theme="light"] .v3[data-surface="glass"] {
+  --bg: oklch(0.97 0.015 var(--H) / 0.6); --side: oklch(0.9 0.03 var(--H) / 0.45); --pane: oklch(1 0 0 / 0.3);
+  --bubble: oklch(0 0 0 / 0.07); --card: oklch(1 0 0 / 0.55); --raise: oklch(1 0 0 / 0.7); --pal-bg: oklch(0.98 0.01 var(--H) / 0.82);
+  --rail: oklch(0.9 0.03 var(--H) / 0.45);
+}
+[data-theme="light"] .isl[data-surface="tinted"] { --isl-l: oklch(0.925 0.025 var(--H)); }
+[data-theme="light"] .isl[data-surface="glass"] { --isl-l: oklch(0.92 0.03 var(--H) / 0.5); }
+[data-theme="light"] .v3[data-tint="grey"] {
+  --fg: oklch(0.2 0 0); --fg2: oklch(0.42 0 0); --fg3: oklch(0.56 0 0); --code: oklch(0.5 0.13 50);
+  --sendbg: oklch(0.22 0 0); --sendfg: oklch(0.98 0 0); --ctx: oklch(0.58 0.15 250);
+}
+[data-theme="light"] .v3[data-tint="grey"][data-surface="tinted"] {
+  --rail: oklch(0.92 0 0); --side: oklch(0.935 0 0); --bg: oklch(0.965 0 0); --pane: oklch(0.98 0 0);
+  --bubble: oklch(0.91 0 0); --card: oklch(0.99 0 0); --raise: oklch(1 0 0); --pal-bg: oklch(0.99 0 0); --isl-l: oklch(0.935 0 0);
+}
+[data-theme="light"] .v3[data-tint="grey"][data-surface="glass"] {
+  --rail: oklch(0.9 0 0 / 0.45); --side: oklch(0.92 0 0 / 0.45); --bg: oklch(0.97 0 0 / 0.6);
+  --pal-bg: oklch(0.98 0 0 / 0.82); --isl-l: oklch(0.92 0 0 / 0.5);
+}
+[data-theme="light"] .isl .isl-l, [data-theme="light"] .isl .isl-r { box-shadow: 0 0 0 1px var(--ring), 0 10px 30px oklch(0.3 0.04 var(--H) / 0.12); }
+[data-theme="light"] .v3 .seg { background: oklch(0 0 0 / 0.06); }
+[data-theme="light"] .v3 .seg button[aria-pressed="true"] { background: oklch(1 0 0); box-shadow: 0 1px 2px oklch(0 0 0 / 0.12); }
+[data-theme="light"] .v3 .pal-scrim { background: oklch(0.3 0.03 var(--H) / 0.25); }
+[data-theme="light"] .pal { box-shadow: 0 0 0 1px var(--ring), 0 24px 60px oklch(0 0 0 / 0.18); }
+[data-theme="light"] .ag-codex { color: oklch(0.55 0.1 250); }
+[data-theme="light"] .ag-opencode { color: oklch(0.4 0 0); }
+[data-theme="light"] .ag-omp { color: oklch(0.55 0.13 150); }
+[data-theme="light"] .v3wrap { --wall-base: linear-gradient(160deg, oklch(0.9 0.05 var(--WH)), oklch(0.78 0.08 calc(var(--WH) + 20))) !important; }
+[data-theme="light"] .v3wrap .wall { filter: brightness(1.25) saturate(0.7); }
+[data-theme="light"] .v3wrap[data-tint="grey"] { --wall-base: linear-gradient(160deg, oklch(0.92 0 0), oklch(0.78 0 0)) !important; }
+[data-theme="light"] .v3wrap[data-tint="grey"] .wall { filter: grayscale(1) brightness(1.3); }
+/* the menu stays neutral: light grey instead of dark grey */
+[data-theme="light"] #pop { background: oklch(0.99 0 0); color: oklch(0.2 0 0); box-shadow: 0 0 0 1px oklch(0 0 0 / 0.1), 0 12px 32px oklch(0 0 0 / 0.16); }
+[data-theme="light"] #pop button:focus-visible, [data-theme="light"] #pop button:focus { background: oklch(0 0 0 / 0.06); }
+@media (hover: hover) { [data-theme="light"] #pop button:hover { background: oklch(0 0 0 / 0.06); } }
+[data-theme="light"] #pop .ph, [data-theme="light"] #pop .mh { color: oklch(0.5 0 0); }
+[data-theme="light"] #pop .tick { color: oklch(0.5 0.13 250); }
+[data-theme="light"] #pop .plan { --fg: oklch(0.2 0 0); --fg2: oklch(0.4 0 0); --fg3: oklch(0.55 0 0); --ok: oklch(0.55 0.14 150); }
+
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation-duration: 3s; }
+  .shimmer { animation: none; color: var(--fg2); background: none; }
+  #pop.open, .pal, .pal-scrim { animation: none; }
+}
+
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="pop" role="menu" aria-hidden="true"></div>
+
+
+<script>
+/* ---------------- icons ---------------- */
+const svg = (d) => `<svg class="ic" viewBox="0 0 16 16" aria-hidden="true">${d}</svg>`;
+const I = {
+  search: svg('<circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/>'),
+  compose: svg('<path d="M9 2.5H4A1.5 1.5 0 0 0 2.5 4v8A1.5 1.5 0 0 0 4 13.5h8a1.5 1.5 0 0 0 1.5-1.5V7"/><path d="M12 2l2 2-5.5 5.5H6.5v-2z"/>'),
+  chevD: svg('<path d="M4 6l4 4 4-4"/>').replace('class="ic"', 'class="ic chev"'),
+  chevR: svg('<path d="M6 4l4 4-4 4"/>'),
+  plus: svg('<path d="M8 3v10M3 8h10"/>'),
+  up: svg('<path d="M8 13V3M4 7l4-4 4 4"/>'),
+  panelR: svg('<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M10 3v10"/>'),
+  panelL: svg('<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M6 3v10"/>'),
+  folder: svg('<path d="M2 4.5A1.5 1.5 0 0 1 3.5 3h3L8 4.5h4.5A1.5 1.5 0 0 1 14 6v5.5a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 2 11.5z"/>'),
+  branch: svg('<circle cx="5" cy="3.5" r="1.5"/><circle cx="5" cy="12.5" r="1.5"/><circle cx="11" cy="5" r="1.5"/><path d="M5 5v6M11 6.5c0 2.5-6 1.5-6 4"/>'),
+  pr: svg('<circle cx="4.5" cy="3.5" r="1.5"/><circle cx="4.5" cy="12.5" r="1.5"/><circle cx="11.5" cy="12.5" r="1.5"/><path d="M4.5 5v6M11.5 11V6.5A1.5 1.5 0 0 0 10 5H7.5M9 3.5L7.5 5 9 6.5"/>'),
+  machine: svg('<rect x="2" y="3" width="12" height="8" rx="1.2"/><path d="M6 14h4M8 11v3"/>'),
+  check: svg('<path d="M3.5 8.5l3 3 6-7"/>'),
+  x: svg('<path d="M4 4l8 8M12 4l-8 8"/>'),
+  term: svg('<rect x="2" y="3" width="12" height="10" rx="1.5"/><path d="M5 7l2 1.5L5 10M8.5 10H11"/>'),
+  file: svg('<path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3"/>'),
+  edit: svg('<path d="M10.5 3L13 5.5 6 12.5H3.5V10z"/>'),
+  think: svg('<path d="M8 2v2.5M8 11.5V14M2 8h2.5M11.5 8H14M3.8 3.8l1.8 1.8M10.4 10.4l1.8 1.8M12.2 3.8l-1.8 1.8M5.6 10.4l-1.8 1.8"/>'),
+  clip: svg('<path d="M10.5 5.5L6 10a1.4 1.4 0 0 0 2 2l5-5a3 3 0 0 0-4.2-4.2L3.8 7.8a4.5 4.5 0 0 0 6.4 6.4l3.3-3.3"/>'),
+  list: svg('<path d="M6 4h8M6 8h8M6 12h8M2.5 4h.01M2.5 8h.01M2.5 12h.01"/>'),
+  activity: svg('<path d="M2 8h2.5l2-4.5 3 9 2-4.5H14"/>'),
+  circle: svg('<circle cx="8" cy="8" r="5"/>'),
+  plug: svg('<path d="M6 2v3M10 2v3M4 5h8v2.5a4 4 0 0 1-8 0zM8 11.5V14"/>'),
+  sliders: svg('<path d="M3 5h6M12 5h1M3 11h1M7 11h6"/><circle cx="10.5" cy="5" r="1.5"/><circle cx="5.5" cy="11" r="1.5"/>'),
+  gear: svg('<circle cx="8" cy="8" r="2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M12.6 3.4l-1.4 1.4M4.8 11.2l-1.4 1.4"/><circle cx="8" cy="8" r="4.2"/>'),
+  chat: svg('<path d="M2.5 4A1.5 1.5 0 0 1 4 2.5h8A1.5 1.5 0 0 1 13.5 4v6a1.5 1.5 0 0 1-1.5 1.5H7l-3 2.5v-2.5A1.5 1.5 0 0 1 2.5 10z"/>'),
+  doc: svg('<path d="M4 2h5l3 3v9H4z"/><path d="M9 2v3h3M6 8.5h4M6 11h4"/>'),
+  board: svg('<rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M6 2.5v11M10 2.5v11"/>'),
+  globe: svg('<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c1.8 1.6 2.5 3.5 2.5 5.5S9.8 11.9 8 13.5C6.2 11.9 5.5 10 5.5 8S6.2 4.1 8 2.5z"/>'),
+  chart: svg('<path d="M3 13V8M6.5 13V4M10 13V9.5M13.5 13V6"/>'),
+  back: svg('<path d="M10 3.5L5.5 8l4.5 4.5"/>'),
+  fwd: svg('<path d="M6 3.5L10.5 8 6 12.5"/>'),
+  reload: svg('<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5v3h-3"/>'),
+  lock: svg('<rect x="3.5" y="7" width="9" height="6.5" rx="1.2"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>'),
+  ul: svg('<path d="M6.5 4.5H13M6.5 8H13M6.5 11.5H13"/><circle cx="3.5" cy="4.5" r=".6"/><circle cx="3.5" cy="8" r=".6"/><circle cx="3.5" cy="11.5" r=".6"/>'),
+  inbox: svg('<path d="M2 9l2-6h8l2 6v3.5a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5z"/><path d="M2 9h3.5l1 1.5h3l1-1.5H14"/>'),
+};
+const tick = svg('<path class="tick" d="M3.5 8.5l3 3 6-7"/>').replace('class="ic"', 'class="ic tick"');
+const winctl = () => `<div class="winctl" aria-hidden="true"><span>${svg('<path d="M3.5 8h9"/>')}</span><span>${svg('<rect x="4" y="4" width="8" height="8" rx="1"/>')}</span><span>${svg('<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>')}</span></div>`;
+
+const GLYPH = {
+  claude: '<svg viewBox="0 0 16 16"><path d="M8 2v12M2 8h12M3.8 3.8l8.4 8.4M12.2 3.8l-8.4 8.4" stroke="currentColor" stroke-width="2.1" stroke-linecap="round"/></svg>',
+  codex: '<svg viewBox="0 0 16 16"><path d="M8 1.8l5.4 3.1v6.2L8 14.2 2.6 11.1V4.9z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><circle cx="8" cy="8" r="1.8" fill="currentColor"/></svg>',
+  opencode: '<svg viewBox="0 0 16 16"><path d="M6 2.5H3.5v11H6M10 2.5h2.5v11H10" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  omp: '<svg viewBox="0 0 16 16"><path d="M2.5 4.5h11M5.5 4.5v9M10.5 4.5v7.5a1.5 1.5 0 0 0 2.5 1" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+};
+const AGENTS = {
+  claude: { name: 'Claude Code', models: ['Opus 5.5', 'Sonnet 5.5', 'Haiku 5.5', 'Fable 5.1'] },
+  codex: { name: 'Codex', models: ['GPT-5.5 Codex', 'GPT-5.5 Codex Mini'] },
+  opencode: { name: 'OpenCode', models: ['Kimi K2', 'Qwen3 Coder', 'DeepSeek V4'] },
+  omp: { name: 'oh-my-pi', models: ['Sonnet 5.5', 'Fable 5.1'] },
+};
+const glyph = (k) => `<span class="ag ag-${k}" role="img" aria-label="${AGENTS[k].name}">${GLYPH[k]}</span>`;
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ---------------- data ---------------- */
+const MACHINES = [['Nexus', 'This computer'], ['Matrix', 'Remote over SSH']];
+const PROJECTS = [
+  { id: 'ade-project', machine: 'Nexus', hue: 45 },
+  { id: 'adeline-marketing-site-and-documentation', machine: 'Nexus', hue: 330 },
+  { id: 'gpui-playground', machine: 'Nexus', hue: 210 },
+  { id: 'dotfiles', machine: 'Nexus', hue: 120 },
+  { id: 'just-skills', machine: 'Matrix', hue: 160 },
+  { id: 'render-farm-scripts', machine: 'Matrix', hue: 280 },
+];
+const MACHINE = Object.fromEntries(PROJECTS.map((p) => [p.id, p.machine]));
+const GROUPS = [['needs', 'Needs input'], ['processing', 'Processing'], ['today', 'Today'], ['last3', 'Last 3 days'], ['earlier', 'Earlier']];
+const C = (id, g, title, agent, project, branch, time, x = {}) => ({ id, g, title, agent, project, branch, time, ...x });
+const CHATS = [
+  C('n1', 'needs', 'Choose what Adeline should restore when a session reopens after a crash', 'claude', 'ade-project', 'fix/crash-restore', '12m', { unread: true }),
+  C('n2', 'needs', 'Pick a default agent for new chats', 'codex', 'ade-project', 'main', '26m', { unread: true }),
+  C('n3', 'needs', 'Approve the plan for splitting skill manifests into one file per skill', 'claude', 'just-skills', 'feat/split-manifests', '4m', { unread: true }),
+  C('c3', 'processing', 'Search long conversations without pausing the input', 'claude', 'ade-project', 'fix/search-keystroke-buffer', 'now', { pr: '#412', prs: 'run' }),
+  C('c4', 'processing', 'Import sessions from the old workspace format', 'opencode', 'just-skills', 'feat/import-v1-workspaces', 'now'),
+  C('t1', 'today', 'Make document edits safe when the preview is scrolled', 'claude', 'ade-project', 'fix/preview-scroll-edit', '2h', { pr: '#409', prs: 'ok' }),
+  C('t2', 'today', 'Keep the composer usable in a narrow desktop window', 'omp', 'ade-project', 'fix/narrow-composer', '3h', { unread: true }),
+  C('t3', 'today', 'Align the project picker rows', 'codex', 'ade-project', 'main', '4h'),
+  C('t4', 'today', 'Keep search text when changing filters', 'claude', 'just-skills', 'fix/filter-search-text', '5h', { pr: '#88', prs: 'fail' }),
+  C('t5', 'today', 'Collapse long tool output by default', 'claude', 'ade-project', 'feat/collapse-tool-output', '6h', { pr: '#406', prs: 'ok', unread: true }),
+  C('t6', 'today', 'Warn before closing a window with a running chat', 'opencode', 'ade-project', 'fix/close-warning', '8h'),
+  C('t7', 'today', 'Keep draft messages when switching chats', 'claude', 'adeline-marketing-site-and-documentation', 'main', '9h', { unread: true }),
+  C('l1', 'last3', 'Improve keyboard navigation in the sidebar', 'codex', 'ade-project', 'feat/sidebar-keys', 'Thu'),
+  C('l2', 'last3', 'Add Ctrl+K to jump between chats', 'claude', 'ade-project', 'feat/jump-to-chat', 'Thu', { pr: '#398', prs: 'merged' }),
+  C('l3', 'last3', 'Remember the width of the activity panel', 'omp', 'ade-project', 'fix/panel-width', 'Thu'),
+  C('l4', 'last3', 'Keep long project names readable', 'claude', 'adeline-marketing-site-and-documentation', 'fix/long-names', 'Wed'),
+  C('l5', 'last3', 'Retry failed uploads without losing the message', 'claude', 'ade-project', 'fix/upload-retry', 'Wed', { unread: true }),
+  C('l6', 'last3', 'Check the theme picker with dark palettes', 'opencode', 'just-skills', 'main', 'Wed'),
+  ...[
+    ['Add a clear action to chat search', 'Tue'], ['Show which files a chat has changed', 'Tue'], ["Stop notifications for chats you’re viewing", 'Mon'],
+    ['Keep the composer visible when resizing', 'Sun'], ['Make workflow descriptions easier to scan', 'Sun'], ['Check notification counter alignment', 'Sat'],
+    ['Fix the scroll jump when a long reply finishes', 'Sat'], ['Group tool calls by turn in the activity panel', 'Fri'], ['Show the machine name next to each project tab', 'Fri'],
+    ['Rename chats from the sidebar with a double click', 'Oct 23'], ['Paste images straight into the composer', 'Oct 23'], ['Reconnect to a remote machine after it wakes from sleep', 'Oct 22'],
+    ['Show token use per turn', 'Oct 22'], ['Respect the system accent colour on Windows', 'Oct 21'], ['Stream long replies without layout jumps', 'Oct 20'],
+    ['Ship the ACP agent settings page', 'Oct 19'], ['Write the first draft of the onboarding copy', 'Oct 18'],
+  ].map(([t, d], i) => C('e' + i, 'earlier', t, ['claude', 'codex', 'claude', 'omp', 'opencode'][i % 5], i % 4 === 3 ? 'just-skills' : 'ade-project', 'main', d)),
+];
+
+const T0 = Date.now();
+const PLAN = [
+  ['done', 'Profile what each keystroke costs'],
+  ['done', 'Build the search text when a message changes'],
+  ['now', 'Check matches across two messages'],
+  ['todo', 'Time a 41 MB build log'],
+];
+const FILES = ['src/chat/search.rs', 'src/chat/index.rs', 'src/ui/sidebar.rs', 'src/chat/composer.rs', 'src/project/picker.rs', 'src/window.rs', 'src/chat/draft.rs', 'src/tools/output.rs', 'src/preview/doc.rs'];
+const REPLIES = {
+  t1: 'Edits now apply to the document model, so the preview keeps its scroll position. I added a test that edits line 900 while the preview shows line 40.',
+  t5: 'Tool output longer than 20 lines now starts collapsed with a one line summary. Click the summary to expand it. The limit is in <code>Settings › Chat</code>.',
+  t4: 'The search text now survives a filter change. CI fails on <code>windows-latest</code> because a snapshot uses forward slashes. I have not fixed that yet.',
+  l2: 'Ctrl+K opens a chat switcher with fuzzy matching on titles and projects. Enter jumps, Escape closes. Merged in #398.',
+};
+
+/* app modes: Chats and Docs exist today, the rest are placeholders for the 7+ planned */
+const MODES = [
+  ['chats', 'Chats', 'chat', 'Talk to agents across your projects.'],
+  ['docs', 'Docs', 'doc', 'Documents the agents write and you edit.'],
+  ['board', 'Board', 'board', 'Chats as cards, grouped by state.'],
+  ['terminal', 'Terminal', 'term', "Shells on the project’s machine."],
+  ['browser', 'Browser', 'globe', 'Preview the app an agent is running.'],
+  ['usage', 'Usage', 'chart', 'Tokens and cost by agent and project.'],
+];
+
+const S = {
+  appMode: 'chats',
+  active: 'c3', collapsed: {}, open: {}, draft: '', files: [],
+  agent: 'claude', model: 'Opus 5.5', effort: 'High', mode: 'Default',
+  project: 'ade-project', openP: ['ade-project', 'just-skills', 'adeline-marketing-site-and-documentation'], lastChat: {},
+  palette: false, pq: '', pi: 0,
+  query: '', searchOpen: false,
+  panel: true, side: true,
+  theme: 'dark', surface: 'tinted', hue: 'grey', m3: 'all',
+  tab3: 'activity',
+  fold: {}, doc: 'docs/architecture/search.md',
+  term: [['t-dim', 'PowerShell 7.5 · type ls, cd, git status, cargo test or clear']], termIn: '', cwd: '.', // relative to the project root
+  board: 'app', blabel: '', bagent: '',
+  tab: 't1', tabs: [
+    { id: 't1', title: 'Adeline · Every coding agent', url: 'localhost:5173', hue: 45 },
+    { id: 't2', title: 'Composer · Storybook', url: 'localhost:6006/?path=/story/composer', hue: 330, body: ['The composer grows with its text up to 40% of the window height.', 'Pickers open upward and the send button stays disabled until there is text.'] },
+    { id: 't3', title: 'gpui::Window', url: 'docs.rs/gpui/latest/gpui/struct.Window.html', hue: 25, body: ['Holds the state of one platform window and drives layout and paint every frame.', '$pub fn request_animation_frame(&self)', 'Schedules a redraw on the next frame.'] },
+    { id: 't4', title: 'Search without pausing the input #412', url: 'github.com/aiforui/adeline/pull/412', hue: 250, body: ['Each keystroke rebuilt the search text from every message. This PR keeps a cached index and updates only the changed message.', '$cargo test search  # 42 passed'] },
+  ],
+  uscope: 'all-machines', urange: 7,
+  queues: {
+    c4: [
+      { id: 'q1', text: 'Also keep the original session titles when importing.', files: [] },
+      { id: 'q2', text: 'Here is the import log from the failed run.', files: ['build.log'] },
+    ],
+  },
+  convos: {}, focus: null,
+};
+const FILESIZE = { 'search-profile.txt': '18 KB', 'build.log': '41 MB', 'src/chat/search.rs': '9 KB', 'screenshot-search.png': '312 KB' };
+
+function convo(c) {
+  if (S.convos[c.id]) return S.convos[c.id];
+  let cv;
+  if (c.fresh) cv = [];
+  else if (c.id === 'c3') cv = [
+    { type: 'user', text: 'Search feels slow when a conversation includes a large build log. Keep typing responsive while matching the entire history.', files: ['search-profile.txt'], time: '7:23 PM' },
+    { type: 'work', id: 'w-c3', label: 'Worked for 1m 52s', steps: [
+      ['read', 'Read', 'search-profile.txt', '', 'ok'],
+      ['grep', 'Search', '"combined_text" in src/', '6 matches', 'ok'],
+      ['read', 'Read', 'src/chat/search.rs', '', 'ok'],
+      ['think', 'Thought', 'each keystroke rebuilds the buffer', '', 'ok'],
+      ['edit', 'Edit', 'src/chat/search.rs', '<span class="add">+38</span> <span class="del">−12</span>', 'ok'],
+      ['run', 'Run', 'cargo test search::span', 'exit 101', 'fail'],
+      ['edit', 'Edit', 'src/chat/index.rs', '<span class="add">+21</span> <span class="del">−4</span>', 'ok'],
+    ] },
+    { type: 'agent', agent: 'claude', time: '7:25 PM', text: 'Each keystroke rebuilt <code>combined_text</code> from every message in the chat. I moved that work to <code>on_message_update</code>, so typing only scans the cached index. The first test run failed on a match that spans two messages. I fixed the boundary offset in <code>index.rs</code> and I am running the tests again.' },
+    { type: 'thinking', label: 'Checking matches across two messages', since: T0 - 38e3 },
+  ];
+  else if (c.id === 'n1') cv = [
+    { type: 'user', text: 'Choose what Adeline should restore when a session reopens after a crash. Look at what we save today first.', files: [], time: '6:58 PM' },
+    { type: 'work', id: 'w-n1', label: 'Worked for 48s', steps: [['read', 'Read', 'src/session/snapshot.rs', '', 'ok'], ['grep', 'Search', '"save_snapshot" in src/', '3 matches', 'ok']] },
+    { type: 'ask', q: 'Adeline saves open chats, drafts and scroll positions every 5 seconds. After a crash, what should come back?', opts: ['Open chats, drafts and scroll positions', 'Open chats and drafts', 'Nothing, start with an empty window'] },
+  ];
+  else if (c.id === 'n2') cv = [
+    { type: 'user', text: 'Pick a default agent for new chats.', files: [], time: '6:44 PM' },
+    { type: 'ask', q: 'Which agent should a new chat start with? People can still switch agents in the composer.', opts: ['Claude Code', 'The agent used last in this project', 'Ask every time'] },
+  ];
+  else if (c.id === 'n3') cv = [
+    { type: 'user', text: 'Split the skill manifests so each skill has its own file. Plan it first.', files: [], time: '7:12 PM' },
+    { type: 'work', id: 'w-n3', label: 'Worked for 2m 05s', steps: [['grep', 'Search', '"manifest.toml" in skills/', '41 matches', 'ok'], ['read', 'Read', 'skills/manifest.toml', '', 'ok']] },
+    { type: 'ask', q: 'The plan moves 41 skills out of <code>skills/manifest.toml</code> into <code>skills/&lt;name&gt;/skill.toml</code> and keeps the old file as an index for one release. Go ahead?', opts: ['Yes, follow the plan', 'Yes, but delete the old file now', 'No, keep one manifest'] },
+  ];
+  else if (c.id === 'c4') cv = [
+    { type: 'user', text: 'Import sessions from the old workspace format. Keep titles, timestamps and attachments.', files: [], time: '7:19 PM' },
+    { type: 'work', id: 'w-c4', label: 'Worked for 3m 40s', steps: [['read', 'Read', 'docs/workspace-v1.md', '', 'ok'], ['edit', 'Edit', 'src/import/v1.rs', '<span class="add">+164</span>', 'ok'], ['run', 'Run', 'adeline import --dry-run', '214 sessions', 'ok']] },
+    { type: 'agent', agent: 'opencode', time: '7:23 PM', text: 'The dry run found 214 sessions. 9 of them reference attachments that no longer exist on disk. I keep those sessions and mark the missing files as unavailable.' },
+    { type: 'thinking', label: 'Converting 214 sessions', since: T0 - 251e3 },
+  ];
+  else {
+    const f = FILES[(c.title.length + c.id.charCodeAt(1)) % FILES.length];
+    cv = [
+      { type: 'user', text: c.title + '.', files: [], time: c.time === 'now' ? '' : '' },
+      { type: 'work', id: 'w-' + c.id, label: 'Worked for ' + (1 + (c.title.length % 6)) + 'm ' + (c.title.length % 50 + 10) + 's', steps: [['read', 'Read', f, '', 'ok'], ['edit', 'Edit', f, `<span class="add">+${c.title.length}</span> <span class="del">−${c.title.length % 13}</span>`, 'ok'], ['run', 'Run', 'cargo test', '212 passed', 'ok']] },
+      { type: 'agent', agent: c.agent, time: '', text: REPLIES[c.id] || `Done. The change is in <code>${f}</code> and I added a test that covers it. All 212 tests pass.` },
+    ];
+  }
+  return (S.convos[c.id] = cv);
+}
+
+/* ---------------- helpers ---------------- */
+const active = () => CHATS.find((c) => c.id === S.active);
+const dur = (ms) => { const s = Math.max(0, Math.floor(ms / 1000)); return s < 60 ? s + 's' : Math.floor(s / 60) + 'm ' + (s % 60) + 's'; };
+const nowTime = () => new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+let uidN = 0; const uid = () => 'x' + ++uidN;
+function visible(extra) {
+  const q = S.query.trim().toLowerCase();
+  return CHATS.filter((c) =>
+    c.project === S.project &&
+    (!q || c.title.toLowerCase().includes(q) || c.project.includes(q)) &&
+    (!extra || extra(c)));
+}
+const agentName = (k) => AGENTS[k].name;
+const stepIcon = { read: I.file, grep: I.search, edit: I.edit, run: I.term, think: I.think };
+
+function status(c, live) {
+  if (c.g === 'needs') return '<span class="dot" aria-hidden="true"></span><span class="sr">Needs input</span>';
+  if (c.g === 'processing') return `<span class="spin" aria-hidden="true"></span><span class="sr">Processing</span>`;
+  return c.time;
+}
+function groups(rowFn) {
+  const list = visible();
+  const html = GROUPS.map(([k, label]) => {
+    const rows = list.filter((c) => c.g === k);
+    if (!rows.length) return '';
+    const col = S.collapsed[k];
+    return `<section class="grp grp-${k}"><button class="grp-h" data-act="grp" data-arg="${k}" aria-expanded="${!col}">${I.chevD}<span>${label}</span><span class="cnt">${rows.length}</span></button>${col ? '' : rows.map(rowFn).join('')}</section>`;
+  }).join('');
+  return html || `<p class="noresult">No chats match "${esc(S.query)}".</p>`;
+}
+const cur = (c) => (c.id === S.active ? 'aria-current="true"' : '');
+const unread = (c) => (c.unread && c.id !== S.active ? 'is-unread' : '');
+const searchBox = (ph = 'Search chats') => `<label class="sbox">${I.search}<span class="sr">Search chats</span><input data-key="search" value="${esc(S.query)}" placeholder="${ph}" autocomplete="off" spellcheck="false"></label>`;
+
+/* ---------------- modes ---------------- */
+const isChats = () => S.appMode === 'chats';
+// every rail mode except Chats shows the last active chat in the right island; Settings doesn't
+const chatIsland = () => !isChats() && MODES.some((m) => m[0] === S.appMode);
+const SETTINGS = ['settings', 'Settings', 'gear', 'Theme, agents, machines and keyboard shortcuts.'];
+const modeOf = () => MODES.find((m) => m[0] === S.appMode) || SETTINGS;
+const needsN = () => CHATS.filter((c) => c.g === 'needs').length;
+const modeLabel = (m, i) => m[1] + (m[0] === 'chats' && needsN() ? `, ${needsN()} need input` : '') + ` (Ctrl+${i + 1})`;
+const mdot = (k) => (k === 'chats' && needsN() ? '<span class="mdot" aria-hidden="true"></span>' : '');
+const surfBtns = () => `<div class="seg" role="group" aria-label="Surface"><button data-act="surface" data-arg="glass" aria-pressed="${S.surface === 'glass'}">Glass</button><button data-act="surface" data-arg="tinted" aria-pressed="${S.surface === 'tinted'}">Tinted</button></div>`;
+const hueBtns = () => `<div class="hues" role="group" aria-label="Color">${HUES.map(([h, n]) => `<button class="hue" data-act="hue" data-arg="${h}" aria-label="${greyName(n, h)}" title="${greyName(n, h)}" aria-pressed="${S.hue === h}" style="background:${h === 'grey' ? (S.theme === 'light' ? 'oklch(0.9 0 0)' : 'oklch(0.3 0 0)') : `oklch(0.62 0.12 ${h})`}"></button>`).join('')}</div>`;
+const themeBtns = () => `<div class="seg" role="group" aria-label="Theme"><button data-act="theme" data-arg="dark" aria-pressed="${S.theme === 'dark'}">Dark</button><button data-act="theme" data-arg="light" aria-pressed="${S.theme === 'light'}">Light</button></div>`;
+const appearance = () => `<div class="sets"><h2>Appearance</h2>
+  <div class="surf"><span>Theme</span>${themeBtns()}</div>
+  <div class="surf"><span>Surface</span>${surfBtns()}</div>
+  <div class="surf"><span>Color</span><span class="grow"></span>${hueBtns()}</div>
+</div>`;
+const rail = (extra = '') => `<nav class="mrail" aria-label="${extra ? 'Modes and projects' : 'Modes'}">${MODES.map((m, i) => `<button class="mbtn" data-act="appmode" data-arg="${m[0]}" aria-label="${modeLabel(m, i)}" title="${modeLabel(m, i)}" aria-pressed="${S.appMode === m[0]}">${I[m[2]]}${mdot(m[0])}</button>`).join('')}<button data-act="appmode" data-arg="settings" aria-label="Settings" title="Settings (Ctrl+,)" aria-pressed="${S.appMode === 'settings'}">${I.gear}</button>${extra}<span class="grow"></span><button data-act="side" aria-label="${S.side ? 'Hide' : 'Show'} chat list" title="${S.side ? 'Hide' : 'Show'} chat list (Ctrl+B)" aria-expanded="${S.side}">${I.panelL}</button></nav>`;
+
+/* ---------------- projects ---------------- */
+const PROJ = (id) => PROJECTS.find((p) => p.id === id);
+const initials = (id) => id.split('-').slice(0, 2).map((w) => w[0].toUpperCase()).join('');
+const mono = (id) => `<span class="mono" style="--h:${PROJ(id).hue}" aria-hidden="true">${initials(id)}</span>`;
+const pstat = (id) => ({ needs: CHATS.filter((c) => c.project === id && c.g === 'needs').length, proc: CHATS.filter((c) => c.project === id && c.g === 'processing').length });
+const pdesc = (id) => { const s = pstat(id); return [s.needs && `${s.needs} need${s.needs > 1 ? '' : 's'} input`, s.proc && `${s.proc} running`].filter(Boolean).join(' · '); };
+function pbadge(id) {
+  const s = pstat(id);
+  if (s.needs) return `<span class="pbadge" aria-hidden="true">${s.needs}</span>`;
+  if (s.proc) return '<span class="pproc" aria-hidden="true"></span>';
+  return '';
+}
+const plabel = (id) => `${id} on ${MACHINE[id]}${pdesc(id) ? ', ' + pdesc(id) : ''}`;
+function newChat(project) {
+  const c = C(uid(), 'today', 'New chat', S.agent, project, 'main', 'now', { fresh: true });
+  CHATS.splice(CHATS.findIndex((x) => x.g === 'today'), 0, c);
+  return c;
+}
+function switchProject(id) {
+  S.lastChat[S.project] = S.active;
+  if (!S.openP.includes(id)) S.openP.push(id);
+  S.project = id; S.palette = false; S.pq = ''; S.query = ''; S.draft = ''; S.files = [];
+  let a = S.lastChat[id];
+  if (!a || !CHATS.some((c) => c.id === a)) {
+    const first = CHATS.find((c) => c.project === id && c.g === 'needs') || CHATS.find((c) => c.project === id);
+    a = (first || newChat(id)).id;
+  }
+  S.active = a; active().unread = false;
+}
+/* project switcher: current project button, other open projects, Ctrl+P palette */
+const pswHTML = () => `<button class="psw" data-act="palopen" aria-haspopup="dialog" aria-label="Switch project. Current: ${plabel(S.project)} (Ctrl+P)">${mono(S.project)}<span class="t"><b class="trunc">${esc(S.project)}</b><span>${MACHINE[S.project]}</span></span><kbd>Ctrl P</kbd></button>`;
+function othersHTML() {
+  const others = S.openP.filter((id) => id !== S.project);
+  if (!others.length) return '';
+  return `<div class="others" role="group" aria-label="Other open projects">${others.map((id) => `<div class="oth-row">
+      <button class="oth" data-act="proj" data-arg="${id}" aria-label="${plabel(id)}">${mono(id)}<span class="trunc">${esc(id)}</span>${pbadge(id) ? `<span class="c">${pbadge(id)}</span>` : ''}</button>
+      <button class="oth-x" data-act="closeproj" data-arg="${id}" aria-label="Close ${esc(id)}">${I.x}</button>
+    </div>`).join('')}</div>`;
+}
+function palHTML() {
+  if (!S.palette) return '';
+  let n = -1;
+  return `<div class="pal-scrim" data-act="palclose"></div>
+    <div class="pal" role="dialog" aria-modal="true" aria-label="Switch project">
+      <label class="pal-in">${I.search}<span class="sr">Find a project</span><input data-key="pq" value="${esc(S.pq)}" placeholder="Switch to a project or open one…" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="true" aria-controls="pal-list"><kbd>Esc</kbd></label>
+      <div class="pal-list" id="pal-list" role="listbox" aria-label="Projects">${palRows().map((r) => {
+        if (r.h) return `<div class="pal-h" role="presentation">${r.h}</div>`;
+        n++;
+        return `<button class="pal-i" role="option" aria-selected="${n === S.pi}" data-act="proj" data-arg="${r.id}" tabindex="-1">${mono(r.id)}<span class="t"><b class="trunc">${esc(r.id)}</b><span>${MACHINE[r.id]}${pdesc(r.id) ? ' · ' + pdesc(r.id) : S.openP.includes(r.id) ? '' : ' · not open'}</span></span>${r.id === S.project ? '<span class="cur">Current</span>' : pbadge(r.id)}</button>`;
+      }).join('') || '<p class="noresult">No project matches.</p>'}</div>
+    </div>`;
+}
+/* palette rows: open projects first, then the rest grouped by machine */
+function palRows() {
+  const q = S.pq.trim().toLowerCase();
+  const hit = (id) => !q || id.includes(q) || MACHINE[id].toLowerCase().includes(q);
+  const rows = [];
+  const open = S.openP.filter(hit);
+  if (open.length) rows.push({ h: 'Open projects' }, ...open.map((id) => ({ id })));
+  MACHINES.forEach(([m, note]) => {
+    const rest = PROJECTS.filter((p) => p.machine === m && !S.openP.includes(p.id) && hit(p.id));
+    if (rest.length) rows.push({ h: `${m} · ${note}` }, ...rest.map((p) => ({ id: p.id })));
+  });
+  return rows;
+}
+const modeSide = () => (S.appMode === 'docs' ? treeHTML(DOC_TREE, 'doc', S.doc)
+  : S.appMode === 'terminal' ? treeHTML(SRC_TREE, 'tfile', null)
+  : S.appMode === 'board' ? boardsSide()
+  : S.appMode === 'browser' ? tabsSide()
+  : S.appMode === 'usage' ? usageSide()
+  : `<p class="noresult">${modeOf()[1]} has no sidebar content yet.</p>`);
+// every header reads "Mode / project / item"; the last part is the bold one
+const crumb = (...parts) => {
+  const all = [modeOf()[1], ...parts];
+  return `<header class="tb"><div class="crumb trunc">${all.map((x, i) => (i === all.length - 1 ? `<b class="trunc">${esc(x)}</b>` : `<span>${esc(x)}</span><span class="sl">/</span>`)).join('')}</div></header>`;
+};
+function modeMain() {
+  const m = S.appMode;
+  if (m === 'docs') return crumb(S.project, S.doc.split('/').pop()) + docMain();
+  if (m === 'terminal') return crumb(S.project, S.cwd) + termMain();
+  if (m === 'board') return crumb(S.project, BOARDS.find((b) => b[0] === S.board)[1]) + boardMain();
+  if (m === 'browser') { const t = curTab(); return crumb(S.project, t ? t.url.split('/')[0] : 'No tabs') + browserMain(); }
+  // Usage has no project part: its filter already picks the projects
+  if (m === 'usage') return crumb(scopeName()) + usageMain();
+  return crumb() + appearance();
+}
+
+/* ---------------- file tree (Docs, Terminal) ---------------- */
+// a node is [name] for a file or [name, children] for a folder
+const DOC_TREE = [['docs', [['architecture', [['islands.md'], ['search.md']]], ['guides', [['keyboard-shortcuts.md'], ['onboarding.md']]], ['release-notes-0.9.md']]], ['README.md']];
+const SRC_TREE = [['src', [['chat', [['index.rs'], ['search.rs']]], ['ui', [['composer.rs'], ['islands.rs']]], ['main.rs']]], ['tests', [['search.rs']]], ['Cargo.toml'], ['README.md']];
+function treeHTML(nodes, act, sel, base = '', d = 0) {
+  return `${d ? '' : '<div class="tree">'}${nodes.map(([name, kids]) => {
+    const path = base + name;
+    if (!kids) return `<button class="tr-row" style="--d:${d}" data-act="${act}" data-arg="${path}" ${path === sel ? 'aria-current="true"' : ''}><span class="sp"></span>${I.file}<span class="trunc">${esc(name)}</span></button>`;
+    const open = !S.fold[act + path];
+    return `<button class="tr-row" style="--d:${d}" data-act="fold" data-arg="${act + path}" aria-expanded="${open}">${open ? I.chevD : I.chevR.replace('class="ic"', 'class="ic chev"')}${I.folder}<span class="trunc">${esc(name)}</span></button>${open ? treeHTML(kids, act, sel, path + '/', d + 1) : ''}`;
+  }).join('')}${d ? '' : '</div>'}`;
+}
+
+/* ---------------- Docs ---------------- */
+// edits land here on every input, so a repaint never loses them
+const DOC_HTML = {
+  'docs/architecture/search.md': `<h1>Chat search</h1><p>Search runs on every keystroke, so it has to stay under one frame even in chats with a large build log.</p><h2>How it works</h2><ul><li>Each message keeps a lowercase copy of its text in <code>SearchIndex</code>.</li><li><code>on_message_update</code> refreshes only the message that changed.</li><li>A query scans the cached copies, then joins neighbours to find matches that span two messages.</li></ul><h2>Limits</h2><p>Tool output longer than 20 lines is indexed by its summary until you expand it.</p>`,
+  'docs/architecture/islands.md': `<h1>Islands layout</h1><p>The window is one surface with two floating islands. Navigation sits on the left and agent details on the right.</p><h2>Rules</h2><ul><li>Islands sit 42 from the top and 21 from the bottom.</li><li>Both rails look and behave the same.</li></ul>`,
+  'docs/guides/onboarding.md': `<h1>Your first chat</h1><p>Pick a project with <code>Ctrl P</code>, choose an agent in the composer, and describe what you want built.</p><ol><li>Open a project.</li><li>Start a chat with <code>Ctrl N</code>.</li><li>Answer the agent when it needs input.</li></ol>`,
+  'docs/guides/keyboard-shortcuts.md': `<h1>Keyboard shortcuts</h1><ul><li><code>Ctrl 1</code> to <code>Ctrl 6</code> switch modes.</li><li><code>Ctrl B</code> shows or hides the chat list.</li><li><code>Ctrl P</code> opens the project palette.</li><li><code>Ctrl ,</code> opens Settings.</li></ul>`,
+  'docs/release-notes-0.9.md': `<h1>Adeline 0.9</h1><h2>New</h2><ul><li>Islands layout with a mode rail and a side panel.</li><li>Light theme.</li><li>Chat beside every mode.</li></ul><h2>Fixed</h2><ul><li>Typing no longer pauses in long chats.</li></ul>`,
+  'README.md': `<h1>ade-project</h1><p>Adeline is a native desktop app for running coding agents across your projects. It is built with Rust and GPUI.</p><p>Run <code>cargo run</code> to start it.</p>`,
+};
+function docMain() {
+  const f = (cmd, label, inner) => `<button class="fmt" data-act="fmt" data-arg="${cmd}" aria-label="${label}" title="${label}">${inner}</button>`;
+  return `<div class="mpane"><div class="mcard">
+    <div class="mbar" role="toolbar" aria-label="Formatting">${f('h2', 'Heading', 'H')}${f('bold', 'Bold', '<b>B</b>')}${f('italic', 'Italic', '<i>I</i>')}${f('ul', 'Bulleted list', I.ul)}<span class="grow"></span><span class="note">Saved</span></div>
+    <article class="doc" contenteditable="true" data-doc="${S.doc}" aria-label="${esc(S.doc)}" spellcheck="true">${DOC_HTML[S.doc] || `<h1>${esc(S.doc.split('/').pop())}</h1><p></p>`}</article>
+  </div></div>`;
+}
+
+/* ---------------- Terminal ---------------- */
+const TERM_OUT = {
+  ls: [['', 'Cargo.toml  README.md  src/  tests/']],
+  'git status': [['', 'On branch fix/search-keystroke-buffer'], ['', 'Changes not staged for commit:'], ['t-err', '        modified:   src/chat/index.rs'], ['t-err', '        modified:   src/chat/search.rs']],
+  'cargo test': [['t-dim', '   Compiling ade v0.9.0'], ['', 'running 42 tests'], ['t-ok', 'test result: ok. 42 passed; 0 failed; 0 ignored']],
+};
+const prompt = () => `<span class="t-pp">${esc(S.project)}</span> <span class="t-hi">fix/search-keystroke-buffer</span> <span class="t-dim">❯</span>`;
+function termMain() {
+  return `<div class="mpane"><div class="mcard">
+    <div class="term-h">${I.term}<b>pwsh</b><span>·</span><span class="trunc">${esc(S.project)} on ${MACHINE[S.project] || 'Nexus'}</span></div>
+    <div class="term-b" data-scroll="term" data-act="termfocus">${S.term.map(([cls, t]) => (cls === 'cmd' ? `<div>${prompt()} <span class="t-cmd">${esc(t)}</span></div>` : `<div class="${cls}">${esc(t) || ' '}</div>`)).join('')}
+      <label class="t-in">${prompt()}<span class="sr">Command</span><input data-key="term" value="${esc(S.termIn)}" autocomplete="off" spellcheck="false"></label></div>
+  </div></div>`;
+}
+function runTerm(cmd) {
+  S.termIn = '';
+  const cd = cmd.match(/^cd(?:\s+(.+))?$/);
+  if (cd) {
+    const to = (cd[1] || '').trim();
+    S.cwd = !to || to === '~' ? '.' : to === '..' ? S.cwd.replace(/\/[^/]+$/, '') : `${S.cwd}/${to.replace(/\/$/, '')}`;
+    S.term.push(['cmd', cmd]);
+  } else if (cmd === 'clear') S.term = [];
+  else if (cmd) S.term.push(['cmd', cmd], ...(TERM_OUT[cmd] || (cmd.startsWith('cat ') ? [['t-dim', `// ${cmd.slice(4)}`], ['', 'fn main() { ade::run() }']] : [['t-err', `${cmd.split(' ')[0]}: command not found`]])));
+  else S.term.push(['cmd', '']);
+  S.focus = 'term';
+  paint();
+  const b = stage.querySelector('.term-b'); b.scrollTop = b.scrollHeight;
+}
+
+/* ---------------- Board ---------------- */
+const BOARDS = [['app', 'Adeline app'], ['site', 'Marketing site'], ['skills', 'just-skills']];
+const COLS = [['todo', 'To do'], ['doing', 'In progress'], ['done', 'Done']];
+const LABELS = ['Bug', 'Feature', 'Docs'];
+const K = (id, b, col, title, label, agent, needs = false) => ({ id, b, col, title, label, agent, needs });
+const TICKETS = [
+  K('ADE-151', 'app', 'todo', 'Restore open chats after a crash', 'Feature', 'claude', true),
+  K('ADE-149', 'app', 'todo', 'Remember the side panel width per project', 'Feature', 'codex'),
+  K('ADE-147', 'app', 'todo', 'Model menu clips on small windows', 'Bug', 'opencode'),
+  K('ADE-144', 'app', 'todo', 'Write the keyboard shortcuts guide', 'Docs', 'claude'),
+  K('ADE-142', 'app', 'doing', 'Search long conversations without pausing the input', 'Bug', 'claude'),
+  K('ADE-140', 'app', 'doing', 'Import sessions from the old workspace format', 'Feature', 'opencode'),
+  K('ADE-138', 'app', 'doing', 'Pick a default agent for new chats', 'Feature', 'codex', true),
+  K('ADE-133', 'app', 'done', 'Light theme', 'Feature', 'claude'),
+  K('ADE-131', 'app', 'done', 'Island open and close motion', 'Feature', 'claude'),
+  K('ADE-129', 'app', 'done', 'Focus ring on text fields follows the theme', 'Bug', 'omp'),
+  K('SITE-24', 'site', 'todo', 'Pricing page for teams', 'Feature', 'codex'),
+  K('SITE-22', 'site', 'doing', 'Rewrite the download page copy', 'Docs', 'claude'),
+  K('SITE-19', 'site', 'done', 'Fix the broken hero image on Safari', 'Bug', 'opencode'),
+  K('SK-12', 'skills', 'todo', 'One manifest file per skill', 'Feature', 'claude', true),
+  K('SK-10', 'skills', 'doing', 'Validate skill names on save', 'Bug', 'omp'),
+  K('SK-7', 'skills', 'done', 'Document the skill format', 'Docs', 'claude'),
+];
+const boardsSide = () => `<div class="tree">${BOARDS.map(([k, n]) => `<button class="row" data-act="board" data-arg="${k}" ${S.board === k ? 'aria-current="true"' : ''}>${I.board}<span class="t trunc">${n}</span><span class="when">${TICKETS.filter((t) => t.b === k && t.col !== 'done').length}</span></button>`).join('')}</div>`;
+function boardMain() {
+  const shown = TICKETS.filter((t) => t.b === S.board && (!S.blabel || t.label === S.blabel) && (!S.bagent || t.agent === S.bagent));
+  const chip = (act, arg, on, inner) => `<button class="fchip" data-act="${act}" data-arg="${arg}" aria-pressed="${on}">${inner}</button>`;
+  const card = (t) => `<div class="tk"><div class="tk-top"><span>${t.id}</span>${glyph(t.agent)}</div><div class="tk-t">${esc(t.title)}</div><div class="tk-b"><span class="lbl">${t.label}</span>${t.needs ? '<span class="tk-need"><span class="dot" aria-hidden="true"></span>Needs input</span>' : ''}</div></div>`;
+  return `<div class="mpane">
+    <div class="bfil" role="group" aria-label="Filters">${chip('blabel', '', !S.blabel, 'All')}${LABELS.map((l) => chip('blabel', l, S.blabel === l, l)).join('')}<span class="gap"></span>${Object.keys(AGENTS).map((a) => chip('bagent', a, S.bagent === a, glyph(a) + agentName(a))).join('')}</div>
+    <div class="bcols">${COLS.map(([k, n]) => { const ts = shown.filter((t) => t.col === k); return `<section class="bcol ${k}" aria-label="${n}"><div class="bcol-h">${n}<span class="cnt">${ts.length}</span></div><div class="bcol-l">${ts.map(card).join('') || '<p class="noresult">No tickets.</p>'}</div></section>`; }).join('')}</div>
+  </div>`;
+}
+
+/* ---------------- Browser ---------------- */
+const curTab = () => S.tabs.find((t) => t.id === S.tab) || S.tabs[0];
+const tabsSide = () => (S.tabs.length ? `<div class="others">${S.tabs.map((t) => `<div class="oth-row ${t === curTab() ? 'cur' : ''}"><button class="oth" data-act="btab" data-arg="${t.id}" ${t === curTab() ? 'aria-current="true"' : ''}><span class="mono" style="--h:${t.hue}" aria-hidden="true">${t.title[0]}</span><span class="trunc">${esc(t.title)}</span></button><button class="oth-x" data-act="btabx" data-arg="${t.id}" aria-label="Close ${esc(t.title)}" title="Close tab">${I.x}</button></div>`).join('')}</div>` : '<p class="noresult">No open tabs.</p>');
+function siteHTML(t) {
+  if (t.id === 't1') return `<div class="site" style="--sh:${t.hue}"><nav><b><i></i>Adeline</b><span>Docs</span><span>Pricing</span><span>Download</span></nav>
+    <div class="hero"><h1>Every coding agent in one window</h1><p>Chat with Claude Code, Codex, OpenCode and any ACP agent across all your projects. Native, fast and built with Rust.</p><div class="btns"><span class="btn">Download for Windows</span><span class="btn ghost">Read the docs</span></div></div>
+    <div class="feats"><div class="feat"><b>Every agent</b><span>Switch agents per chat without leaving the window.</span></div><div class="feat"><b>Every machine</b><span>Run agents on this computer or over SSH.</span></div><div class="feat"><b>Stay in flow</b><span>The chat follows you into docs, the board and the terminal.</span></div></div></div>`;
+  return `<div class="site" style="--sh:${t.hue}"><nav><b><i></i>${esc(t.url.split('/')[0])}</b><span>Docs</span><span>Search</span></nav><article><h1>${esc(t.title)}</h1>${t.body.map((x) => (x.startsWith('$') ? `<pre>${esc(x.slice(1))}</pre>` : `<p>${esc(x)}</p>`)).join('')}</article></div>`;
+}
+function browserMain() {
+  const t = curTab();
+  const nav = (ic, label) => `<button class="iconbtn" aria-label="${label}" title="${label}">${I[ic]}</button>`;
+  return `<div class="mpane"><div class="mcard">
+    <div class="mbar">${nav('back', 'Back')}${nav('fwd', 'Forward')}${nav('reload', 'Reload')}<div class="burl">${t ? `${t.url.startsWith('localhost') ? '' : I.lock}<span class="trunc"><b>${esc(t.url.split('/')[0])}</b>${esc(t.url.slice(t.url.indexOf('/') < 0 ? t.url.length : t.url.indexOf('/')))}</span>` : 'Enter an address'}</div></div>
+    ${t ? `<div class="bview">${siteHTML(t)}</div>` : '<div class="empty"><h2>No open tabs</h2><p>Open the app preview to see what the agent is running.</p><button class="fchip" data-act="bnew">Open localhost:5173</button></div>'}
+  </div></div>`;
+}
+
+/* ---------------- Usage ---------------- */
+// ponytail: seeded fake numbers per scope, enough to show the charts
+const hash = (s) => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 2147483647, 7) || 1;
+const rnd = (seed) => () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+// calendar days, so daylight saving changes don't repeat or skip a day
+const daysAgo = (k) => { const d = new Date(); d.setDate(d.getDate() - k); return d; };
+const MIX = { claude: 0.56, codex: 0.21, opencode: 0.15, omp: 0.08 };
+const MODELS = [['Opus 5.5', 0.38], ['Sonnet 5.5', 0.22], ['GPT-5.5 Codex', 0.21], ['Kimi K2', 0.15], ['Fable 5.1', 0.04]];
+const scopeName = () => (S.uscope === 'all-machines' ? 'All machines' : S.uscope === 'all-projects' ? 'All projects' : S.uscope);
+const scopeProjects = () => (S.uscope === 'all-machines' ? PROJECTS : S.uscope === 'all-projects' ? PROJECTS.filter((p) => p.machine === 'Nexus') : PROJECTS.filter((p) => p.id === S.uscope));
+function usageDays(id, n) {
+  const r = rnd(hash(id) + n), scale = 0.25 + r() * 0.9;
+  return Array.from({ length: n }, (_, i) => {
+    const d = daysAgo(n - 1 - i), wk = d.getDay() % 6 === 0 ? 0.3 : 1;
+    const base = (0.6 + r() * 1.1) * 1e6 * scale * wk;
+    return Object.fromEntries(Object.entries(MIX).map(([k, m]) => [k, base * m * (0.5 + r())]));
+  });
+}
+function usageAll() {
+  const per = scopeProjects().map((p) => [p, usageDays(p.id, S.urange)]);
+  const days = per[0][1].map((_, i) => Object.fromEntries(Object.keys(MIX).map((k) => [k, per.reduce((s, [, d]) => s + d[i][k], 0)])));
+  return { per, days };
+}
+const fmtT = (n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : `${Math.round(n / 1e3)}k`);
+const sum = (o) => Object.values(o).reduce((a, b) => a + b, 0);
+function usageSide() {
+  const row = (id, ic, title, sub) => `<button class="row" data-act="uscope" data-arg="${id}" ${S.uscope === id ? 'aria-current="true"' : ''}>${I[ic]}<span class="t trunc">${title}</span><span class="when">${sub}</span></button>`;
+  return `<div class="tree">${row('all-machines', 'machine', 'All machines', `${PROJECTS.length} projects`)}${row('all-projects', 'folder', 'All projects', 'Nexus')}</div>
+    ${MACHINES.map(([m, note]) => `<div class="grp-h">${m} · ${note}</div><div class="tree">${PROJECTS.filter((p) => p.machine === m).map((p) => `<button class="row" data-act="uscope" data-arg="${p.id}" ${S.uscope === p.id ? 'aria-current="true"' : ''}>${mono(p.id)}<span class="t trunc">${p.id}</span></button>`).join('')}</div>`).join('')}`;
+}
+function usageMain() {
+  const { per, days } = usageAll();
+  const totals = days.map(sum), all = sum(totals), max = Math.max(...totals);
+  const byAgent = Object.keys(MIX).map((k) => [k, days.reduce((s, d) => s + d[k], 0)]);
+  const dayName = (i) => daysAgo(days.length - 1 - i).toLocaleDateString('en', S.urange === 7 ? { weekday: 'short' } : { day: 'numeric' });
+  const bars = days.map((d, i) => `<div class="ubar" title="${dayName(i)} · ${fmtT(totals[i])} tokens"><div class="ustack" style="height:${(totals[i] / max) * 100}%">${Object.keys(MIX).map((k) => `<i class="ag-${k}" style="flex:${d[k]}"></i>`).join('')}</div></div>`).join('');
+  const axis = days.map((_, i) => `<span>${S.urange === 7 || i % 5 === 4 ? dayName(i) : ''}</span>`).join('');
+  const hrow = (label, v, color, max2) => `<div class="hrow"><span>${label}</span><div class="htrack"><i class="${color}" style="width:${(v / max2) * 100}%"></i></div><b>${fmtT(v)}</b></div>`;
+  const agg = per.length > 1;
+  const second = agg
+    ? per.map(([p, d]) => [p, sum(d.map(sum))]).sort((a, b) => b[1] - a[1]).map(([p, v], _, a) => hrow(`${mono(p.id)}<span class="trunc">${p.id}</span>`, v, '', a[0][1])).join('')
+    : MODELS.map(([m, sh]) => hrow(`<span class="trunc">${m}</span>`, all * sh, '', all * MODELS[0][1])).join('');
+  return `<div class="mpane">
+    <div class="mhead"><h2>${scopeName()}</h2><div class="seg" role="group" aria-label="Range">${[[7, '7 days'], [30, '30 days']].map(([n, l]) => `<button data-act="urange" data-arg="${n}" aria-pressed="${S.urange === n}">${l}</button>`).join('')}</div></div>
+    <div class="uscroll">
+      <div class="ustats"><div class="ustat"><b>${fmtT(all)}</b><span>Tokens</span></div><div class="ustat"><b>$${(all / 1e6 * 4.2).toFixed(2)}</b><span>Cost</span></div><div class="ustat"><b>${Math.round(all / 9e4)}</b><span>Chats</span></div><div class="ustat"><b>${Math.round(all / 4e5)}h</b><span>Agent time</span></div></div>
+      <div class="ucard"><h3>Tokens per day<span class="leg">${Object.keys(MIX).map((k) => `<span><i class="ag-${k}"></i><span>${agentName(k)}</span></span>`).join('')}</span></h3><div class="uchart">${bars}</div><div class="uaxis">${axis}</div></div>
+      <div class="ucard"><h3>By agent</h3><div class="hrows">${byAgent.map(([k, v]) => hrow(`${glyph(k)}<span class="trunc">${agentName(k)}</span>`, v, `ag-${k}`, byAgent[0][1])).join('')}</div></div>
+      <div class="ucard"><h3>${agg ? 'By project' : 'By model'}</h3><div class="hrows">${second}</div></div>
+      <p class="ufoot">Cost uses each provider’s list price. Local models count tokens but cost nothing.</p>
+    </div>
+  </div>`;
+}
+
+/* ---------------- shared conversation blocks ---------------- */
+function convoHTML(c) {
+  const cv = convo(c);
+  if (!cv.length) return `<div class="empty"><h2>New chat in ${esc(c.project)}</h2><p>Ask ${agentName(S.agent)} to plan, build or explain something.</p></div>`;
+  return `<div class="convo">${cv.map((m, i) => {
+    if (m.type === 'user') return `<div class="u">${m.files.length ? `<div class="files">${m.files.map(fileChip).join('')}</div>` : ''}<div class="u-b">${esc(m.text)}</div>${m.time ? `<span class="u-meta">${m.note ? m.note + ' · ' : ''}${m.time}</span>` : ''}</div>`;
+    if (m.type === 'work') return workHTML(m);
+    if (m.type === 'agent') return `<div class="a"><div class="a-t">${m.text}</div><div class="a-meta">${glyph(m.agent)}<span>${agentName(m.agent)}</span>${m.time ? `<span>· ${m.time}</span>` : ''}</div></div>`;
+    if (m.type === 'thinking') return `<div class="thinking"><span class="spin" aria-hidden="true"></span><span class="shimmer">${m.label}</span><span class="since" data-since="${m.since}">${dur(Date.now() - m.since)}</span></div>`;
+    if (m.type === 'ask') return `<div class="ask"><span class="ask-l"><span class="dot" aria-hidden="true"></span>${agentName(c.agent)} needs your answer</span><p>${m.q}</p><div class="ask-opts">${m.opts.map((o, j) => `<button class="opt" data-act="answer" data-arg="${c.id}:${i}:${j}">${o}</button>`).join('')}</div></div>`;
+    return '';
+  }).join('')}</div>`;
+}
+function fileChip(f) { return `<span class="file">${I.file}<b>${esc(f)}</b>${FILESIZE[f] || ''}</span>`; }
+function workHTML(m) {
+  const open = S.open[m.id];
+  const fails = m.steps.filter((s) => s[4] === 'fail').length;
+  return `<div class="work ${open ? 'open' : ''}"><button class="work-h" data-act="work" data-arg="${m.id}" aria-expanded="${!!open}"><span class="wl">${m.label} · ${m.steps.length} steps${fails ? ` · ${fails} failed` : ''}</span>${I.chevR.replace('class="ic"', 'class="ic chev"')}</button>${open ? stepsHTML(m.steps) : ''}</div>`;
+}
+function stepsHTML(steps) {
+  return `<ol class="steps">${steps.map(([k, verb, d, meta, st]) => `<li class="step s-${st}">${st === 'run' ? '<span class="spin" aria-hidden="true"></span>' : stepIcon[k]}<span class="sk">${verb}</span><span class="sd trunc">${esc(d)}</span>${meta ? `<span class="sm">${meta}</span>` : ''}</li>`).join('')}</ol>`;
+}
+function queueHTML(c) {
+  const q = S.queues[c.id];
+  if (!q || !q.length) return '';
+  return `<div class="queue" role="region" aria-label="Queued messages"><div class="q-h">${I.list}${q.length} queued · sent when ${agentName(c.agent)} finishes</div>${q.map((m) => `<div class="q-i"><div class="q-txt"><span class="trunc">${esc(m.text)}</span>${m.files.length ? `<span class="q-f">${I.clip}${m.files.map(esc).join(', ')}</span>` : ''}</div><div class="q-a"><button class="qbtn" data-act="q-edit" data-arg="${m.id}">Edit</button><button class="qbtn" data-act="q-remove" data-arg="${m.id}">Remove</button><button class="qbtn pri" data-act="q-send" data-arg="${m.id}">Send now</button></div></div>`).join('')}</div>`;
+}
+// ponytail: fake per-chat context use (k tokens of 200k), only c3 has a real number
+const ctxK = (c) => (c.id === 'c3' ? 108 : 20 + ((c.title.length * 37) % 160));
+function composer(opts = {}) {
+  const c = active();
+  const busy = c.g === 'processing';
+  const ph = opts.ph || 'Ask your agent to do anything';
+  const has = S.draft.trim() || S.files.length;
+  const pk = (name, label, cls = '', icon = '') => `<button class="pick ${cls}" data-act="menu" data-arg="${name}" aria-haspopup="menu">${icon}<span>${label}</span>${I.chevD}</button>`;
+  // compact shows the agent as its glyph only, so the bar fits the 440 chat pane
+  const agentP = opts.compact
+    ? `<button class="pick" data-act="menu" data-arg="agent" aria-haspopup="menu" aria-label="Agent: ${agentName(S.agent)}" title="${agentName(S.agent)}">${glyph(S.agent)}${I.chevD}</button>`
+    : pk('agent', agentName(S.agent), opts.agentCls || '', glyph(S.agent));
+  const modelP = pk('model', S.model);
+  const effortP = pk('effort', S.effort, opts.effortCls || '');
+  const modeP = pk('mode', S.mode, opts.modeCls || '');
+  const attach = `<button class="iconbtn" data-act="menu" data-arg="attach" aria-haspopup="menu" aria-label="Attach a file">${I.plus}</button>`;
+  const send = `<button class="send" data-act="send" aria-label="${busy ? 'Add to queue' : 'Send'}" ${has ? '' : 'disabled'}>${I.up}</button>`;
+  const k = ctxK(c), pct = Math.round(k / 2);
+  const ring = `<button class="cring" aria-label="Context ${pct}% used, ${k}k of 200k tokens"><svg viewBox="0 0 20 20" aria-hidden="true"><circle class="tr" cx="10" cy="10" r="8"/><circle class="fl" cx="10" cy="10" r="8" pathLength="100" stroke-dasharray="${pct} 100"/></svg><span class="tip" aria-hidden="true"><b>Context ${pct}%</b> · ${k}k of 200k tokens</span></button>`;
+  const bar = opts.right
+    ? `${attach}<span class="grow"></span>${effortP}${agentP}${modelP}${modeP}${ring}${send}`
+    : `${attach}${agentP}${modelP}${effortP}<span class="grow"></span>${modeP}${ring}${send}`;
+  return `<div class="composer">${S.files.length ? `<div class="c-files">${S.files.map((f, i) => `<span class="file">${I.file}<b>${esc(f)}</b><button data-act="unfile" data-arg="${i}" aria-label="Remove ${esc(f)}">${I.x}</button></span>`).join('')}</div>` : ''}<textarea data-key="draft" rows="1" placeholder="${ph}" aria-label="Message">${esc(S.draft)}</textarea><div class="c-bar">${bar}</div></div>`;
+}
+function planHTML() {
+  return `<ol class="plan">${PLAN.map(([st, t], i) => `<li class="${st}">${st === 'done' ? I.check : st === 'now' ? '<span class="spin" aria-hidden="true"></span>' : `<span class="n">${i + 1}</span>`}<span>${t}</span></li>`).join('')}</ol>`;
+}
+function statsHTML() {
+  return `<div class="stats">
+    <div class="stat"><b data-since="${T0 - 134e3}">${dur(134e3)}</b><span>Active time</span></div>
+    <div class="stat"><b>48s</b><span>Tool time</span></div>
+    <div class="stat"><b>61 tok/s</b><span>Reply speed</span></div>
+    <div class="stat"><b>6</b><span>Succeeded</span></div>
+    <div class="stat"><b>1</b><span>Failed</span></div>
+    <div class="stat"><b>108k</b><span>of 200k context</span></div>
+  </div>`;
+}
+function turnSteps(c) {
+  const w = convo(c).find((m) => m.type === 'work');
+  if (!w) return '<p class="noresult">No tool calls yet.</p>';
+  const steps = c.g === 'processing' && c.id === 'c3' ? [...w.steps, ['run', 'Run', 'cargo test search', 'running', 'run']] : w.steps;
+  return stepsHTML(steps);
+}
+function activityHTML(c) {
+  const isMain = c.id === 'c3';
+  return `<div class="act">
+    ${isMain ? `<div><div class="act-h"><b>Plan</b><span>3 of 4</span></div>${planHTML()}</div>` : ''}
+    <div><div class="act-h"><b>Turn 1</b><span>7:23 PM</span></div>${turnSteps(c)}</div>
+    ${isMain ? statsHTML() : ''}
+  </div>`;
+}
+function changesHTML() {
+  return `<ul class="changes">
+    <li>${I.file}<span class="p trunc">src/chat/search.rs</span><span class="n"><span class="add">+38</span><span class="del">−12</span></span></li>
+    <li>${I.file}<span class="p trunc">src/chat/index.rs</span><span class="n"><span class="add">+21</span><span class="del">−4</span></span></li>
+    <li>${I.file}<span class="p trunc">tests/search_span.rs</span><span class="n"><span class="add">+56</span><span class="del">−0</span></span></li>
+  </ul>`;
+}
+const termHTML = () => `<pre class="term">$ cargo test search
+   Compiling adeline-chat v0.4.2
+    Finished test profile in 6.81s
+     Running unittests src/lib.rs
+test search::matches_single_message ... <span class="ok">ok</span>
+test search::ignores_tool_output ... <span class="ok">ok</span>
+test search::matches_across_two_messages ... <span class="fail">FAILED</span>
+
+$ cargo test search
+   Compiling adeline-chat v0.4.2
+     Running unittests src/lib.rs
+test search::matches_single_message ... <span class="ok">ok</span>
+test search::ignores_tool_output ... <span class="ok">ok</span>
+test search::matches_across_two_messages ... running</pre>`;
+
+/* =========================================================
+   COLORS AND WALLPAPER
+   ========================================================= */
+const HUES = [['grey', 'Dark grey'], [265, 'Periwinkle'], [215, 'Harbor'], [160, 'Moss'], [20, 'Clay']];
+const greyName = (n, h) => (h === 'grey' && S.theme === 'light' ? 'Light grey' : n);
+const tint = () => (S.hue === 'grey' ? 'grey' : 'hue');
+const hueN = () => (S.hue === 'grey' ? 265 : S.hue);
+// opens the wallpaper wrapper; the caller closes it
+const wallpaper = (H) => `<div class="v3wrap" data-tint="${tint()}" style="--WH:${H}; --wall-base: linear-gradient(160deg, oklch(0.6 0.1 ${H}), oklch(0.36 0.12 ${H + 20}))">
+    <div class="wall" aria-hidden="true">
+      <i style="width:70vmax;height:70vmax;left:-20vmax;top:-30vmax;background:radial-gradient(circle, oklch(0.78 0.12 ${H + 40}) 0%, transparent 65%)"></i>
+      <i style="width:60vmax;height:60vmax;right:-15vmax;bottom:-25vmax;background:radial-gradient(circle, oklch(0.62 0.17 ${H - 35}) 0%, transparent 65%)"></i>
+      <i style="width:22vmax;height:22vmax;left:52%;top:8%;background:oklch(0.86 0.1 ${H + 70})"></i>
+      <i style="width:14vmax;height:14vmax;left:18%;bottom:6%;background:oklch(0.5 0.16 ${H - 20})"></i>
+    </div>`;
+/* =========================================================
+   ISLANDS: a left island (rail + chats) and a right island (side pane + rail)
+   ========================================================= */
+function vIsl() {
+  const c = active();
+  const H = hueN();
+  const row = (x) => `<button class="row ${unread(x)}" data-act="chat" data-arg="${x.id}" ${cur(x)}>${glyph(x.agent)}<span class="t trunc">${esc(x.title)}</span><span class="when">${status(x)}</span></button>`;
+  const tabs = [['activity', 'Activity', I.activity], ['changes', 'Changes', I.file], ['plan', 'Plan', I.list]];
+  const pane = S.tab3 === 'activity' ? activityHTML(c) : S.tab3 === 'changes' ? changesHTML() : (c.id === 'c3' ? planHTML() : '<p class="noresult">This chat has no plan.</p>');
+  const open = S.panel;
+  // outside Chats the right island holds the last active chat and a composer, so you can talk to the agent from any mode
+  const other = chatIsland();
+  const rtabs = other ? [['chat', 'Chat', I.chat]] : tabs;
+  const rtab = other ? 'chat' : S.tab3;
+  const chatPane = `<div class="isl-rp chatp"><div class="ih"><span class="trunc">${esc(c.title)}</span></div>
+    <div class="scroll" data-scroll="rchat"><div class="col">${convoHTML(c)}</div></div>
+    <div class="dock"><div class="col">${queueHTML(c)}${composer({ compact: true })}</div></div></div>`;
+  return `${wallpaper(H)}
+    <div class="app v3 isl" data-surface="${S.surface}" data-tint="${tint()}" style="--H:${H}">
+      <div class="isl-l">
+        ${rail()}
+        ${S.side ? `<aside class="side">
+          <div class="pswitch">${pswHTML()}${othersHTML()}</div>
+          ${!isChats() ? `<div class="tb"><b class="mtitle">${modeOf()[1]}</b></div><div class="side-scroll">${modeSide()}</div>` : `<div class="tb"><b class="mtitle">Chats</b><span class="grow"></span><button class="iconbtn" data-act="search" aria-label="Search chats" aria-pressed="${S.searchOpen}">${I.search}</button><button class="iconbtn" data-act="new" aria-label="New chat">${I.compose}</button></div>
+          ${S.searchOpen ? `<div style="padding:0 12px 8px">${searchBox()}</div>` : ''}
+          <div class="side-scroll" data-scroll="side">${groups(row)}</div>`}
+        </aside>` : ''}
+      </div>
+      <main class="main">
+        ${!isChats() ? modeMain() : `${crumb(c.project, c.title)}
+        <div class="scroll" data-scroll="chat"><div class="col">${convoHTML(c)}</div></div>
+        <div class="dock"><div class="col">${queueHTML(c)}${composer({ ph: 'Enter sends, Shift+Enter adds a line. @ mentions a file.' })}</div></div>`}
+      </main>
+      ${isChats() || other ? `<section class="isl-r" aria-label="Side panel">
+        ${!open ? '' : other ? chatPane : `<div class="isl-rp"><div class="ih">${tabs.find(([k]) => k === S.tab3)[1]}</div><div class="pane-b" data-scroll="pane">${pane}</div></div>`}
+        <nav class="mrail prail" aria-label="Side panel tabs">
+          ${rtabs.map(([k, l, ic]) => `<button data-act="ptab" data-arg="${k}" aria-label="${l}" title="${l}" aria-pressed="${open && rtab === k}">${ic}</button>`).join('')}
+          <span class="grow"></span>
+          <button data-act="panel" aria-label="${open ? 'Hide' : 'Show'} side panel" title="${open ? 'Hide' : 'Show'} side panel" aria-expanded="${open}">${I.panelR}</button>
+        </nav>
+      </section>` : ''}
+      ${palHTML()}
+      ${winctl()}
+    </div>
+  </div>`;
+}
+
+
+/* ---------------- island open/close ----------------
+   Width animates so the chat column follows the island. GPUI lays out every frame anyway.
+   Open 200ms, close 160ms. Toggling again mid-way reverses from where it is. */
+const ISLAND = { side: '.isl-l .side', panel: '.isl-rp' };
+const ISLAND_W = { side: 286, get panel() { return chatIsland() ? 440 : 330; } };
+const islandRun = {};
+function toggleIsland(k) {
+  const run = islandRun[k];
+  if (run) {
+    // start from where it is with a fresh ease-out; reverse() would play the curve backwards and end abruptly
+    const cs = getComputedStyle(run.el), from = { width: cs.width, opacity: cs.opacity };
+    run.a.onfinish = null; run.a.cancel();
+    return animateIsland(k, run.el, from, !run.closing);
+  }
+  const opening = !S[k];
+  if (opening) { S[k] = true; paint(); }
+  const el = stage.querySelector(ISLAND[k]);
+  if (!el || matchMedia('(prefers-reduced-motion: reduce)').matches) { if (!opening) { S[k] = false; paint(); } return; }
+  animateIsland(k, el, opening ? { width: '0px', opacity: 0 } : { width: `${ISLAND_W[k]}px`, opacity: 1 }, !opening);
+}
+function animateIsland(k, el, from, closing) {
+  const to = closing ? { width: '0px', opacity: 0 } : { width: `${ISLAND_W[k]}px`, opacity: 1 };
+  const a = el.animate([from, to], { duration: closing ? 160 : 200, easing: 'cubic-bezier(0.23, 1, 0.32, 1)', fill: 'forwards' });
+  islandRun[k] = { a, el, closing };
+  a.onfinish = () => {
+    delete islandRun[k];
+    if (closing) { S[k] = false; paint(); } else a.cancel();
+  };
+}
+
+/* Pointer clicks slide a rail's active highlight from the old button to the new one.
+   Keyboard switches stay instant. */
+/* Leaving or entering Chats moves the chat between the center and the right island.
+   The composer travels there so the eye follows it. A copy flies on top because the islands clip,
+   and the real composer stays focused underneath at opacity 0. Runs on the keyboard too: it tells you where the chat went. */
+function moveChat(change) {
+  const was = isChats(), from = stage.querySelector('.composer')?.getBoundingClientRect();
+  change();
+  if (was === isChats() || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const comp = stage.querySelector('.composer');
+  if (!comp || !from) {
+    // right island closed: the chat went nowhere visible, so the Chat tab brightens once
+    const btn = !isChats() && stage.querySelector('.isl-r [data-arg="chat"]');
+    if (btn) { const cs = getComputedStyle(btn); btn.animate([{ backgroundColor: cs.getPropertyValue('--sel'), color: cs.getPropertyValue('--fg') }, {}], { duration: 600, easing: 'ease-out' }); }
+    return;
+  }
+  const app = stage.querySelector('.app'), a = app.getBoundingClientRect(), to = comp.getBoundingClientRect();
+  const ghost = comp.cloneNode(true);
+  Object.assign(ghost.style, { position: 'absolute', zIndex: 'var(--z-float)', margin: 0, left: `${to.left - a.left}px`, top: `${to.top - a.top}px`, width: `${to.width}px`, pointerEvents: 'none' });
+  app.append(ghost);
+  comp.style.opacity = 0;
+  // centers line up, so the width change needs no scaling
+  const dx = from.left + from.width / 2 - (to.left + to.width / 2), dy = from.bottom - to.bottom;
+  ghost.animate({ transform: [`translate(${dx}px, ${dy}px)`, 'none'] }, { duration: 220, easing: 'cubic-bezier(0.65, 0, 0.35, 1)' }).onfinish = () => { ghost.remove(); comp.style.opacity = ''; };
+  stage.querySelector(isChats() ? '.main .scroll' : '.chatp .scroll')?.animate({ opacity: [0, 1], transform: [`translateX(${isChats() ? 12 : -12}px)`, 'none'] }, { duration: 150, easing: 'cubic-bezier(0.23, 1, 0.32, 1)' });
+}
+function slideHighlight(island, e, change) {
+  const sel = `${island} .mrail button[aria-pressed="true"]`;
+  const from = e && e.detail > 0 && stage.querySelector(sel);
+  const y0 = from && from.offsetTop;
+  change();
+  const to = from && stage.querySelector(sel);
+  if (!to || to.offsetTop === y0 || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  to.animate({ transform: [`translateY(${y0 - to.offsetTop}px)`, 'none'] }, { duration: 150, easing: 'cubic-bezier(0.23, 1, 0.32, 1)', pseudoElement: '::before' });
+}
+
+/* ---------------- painting ---------------- */
+const stage = document.getElementById('stage');
+let firstPaint = true;
+function paint(fresh) {
+  const scrolls = {};
+  if (!fresh) stage.querySelectorAll('[data-scroll]').forEach((el) => (scrolls[el.dataset.scroll] = el.scrollTop));
+  const ae = document.activeElement;
+  const fkey = S.focus || (ae && ae.dataset && ae.dataset.key);
+  const sel = ae && 'selectionStart' in ae && ae.dataset.key ? [ae.selectionStart, ae.selectionEnd] : null;
+  const btnKey = !fkey && ae && ae.dataset && ae.dataset.act ? `[data-act="${ae.dataset.act}"]${ae.dataset.arg ? `[data-arg="${ae.dataset.arg}"]` : ''}` : null;
+  document.body.dataset.theme = S.theme;
+  try { localStorage.setItem('adeline-design', JSON.stringify(Object.fromEntries(KEEP.map((k) => [k, S[k]])))); } catch { /* storage blocked */ }
+  stage.innerHTML = vIsl();
+  stage.querySelectorAll('[data-scroll]').forEach((el) => {
+    const k = el.dataset.scroll;
+    if (k in scrolls) el.scrollTop = scrolls[k];
+    else if (k === 'chat' || k === 'rchat') el.scrollTop = el.scrollHeight;
+  });
+  if (fresh) {
+    const row = stage.querySelector('[data-scroll="side"] [aria-current="true"], [data-scroll="list"] [aria-current="true"]');
+    row && row.scrollIntoView({ block: 'nearest' });
+  }
+  if (fkey) {
+    const el = stage.querySelector(`[data-key="${fkey}"]`);
+    if (el) { el.focus(); if (sel && !S.focus) el.setSelectionRange(sel[0], sel[1]); else el.setSelectionRange(el.value.length, el.value.length); }
+  } else if (btnKey) {
+    const el = stage.querySelector(btnKey);
+    el && el.focus();
+  }
+  S.focus = null;
+  autosize();
+  requestAnimationFrame(autosize);
+}
+window.addEventListener('resize', autosize);
+function autosize() {
+  const t = stage.querySelector('textarea[data-key="draft"]');
+  if (!t) return;
+  t.style.height = 'auto';
+  t.style.height = t.scrollHeight + 'px';
+}
+
+/* ---------------- actions ---------------- */
+function goProcessing(c, label) {
+  c.g = 'processing'; c.time = 'now'; c.unread = false;
+  convo(c).push({ type: 'thinking', label, since: Date.now() });
+}
+function send() {
+  const text = S.draft.trim();
+  if (!text && !S.files.length) return;
+  const c = active();
+  if (c.g === 'processing') {
+    (S.queues[c.id] ||= []).push({ id: uid(), text, files: [...S.files] });
+  } else {
+    if (c.fresh) { c.title = text.length > 64 ? text.slice(0, 64) + '…' : text; c.fresh = false; }
+    convo(c).push({ type: 'user', text, files: [...S.files], time: nowTime() });
+    goProcessing(c, 'Reading the project');
+  }
+  S.draft = ''; S.files = []; S.focus = 'draft';
+  paint();
+}
+const ACT = {
+  chat(id) { S.active = id; const c = active(); c.unread = false; S.draft = ''; S.files = []; paint(); },
+  proj(id) { if (id !== S.project) switchProject(id); S.palette = false; paint(); },
+  closeproj(id) {
+    if (S.openP.length < 2) return;
+    const i = S.openP.indexOf(id);
+    S.openP.splice(i, 1);
+    if (id === S.project) switchProject(S.openP[Math.max(0, i - 1)]);
+    paint();
+  },
+  palopen() { S.palette = true; S.pq = ''; S.pi = 0; S.focus = 'pq'; paint(); },
+  palclose() { S.palette = false; paint(); stage.querySelector('.psw')?.focus(); },
+  grp(k) { S.collapsed[k] = !S.collapsed[k]; paint(); },
+  work(id) { S.open[id] = !S.open[id]; paint(); },
+  panel() { toggleIsland('panel'); },
+  side() { toggleIsland('side'); },
+  search() { S.searchOpen = !S.searchOpen; if (S.searchOpen) S.focus = 'search'; else S.query = ''; paint(); },
+  new() {
+    const c = newChat(S.project);
+    S.active = c.id; S.query = ''; S.focus = 'draft'; S.collapsed.today = false; paint();
+  },
+  send,
+  unfile(i) { S.files.splice(+i, 1); paint(); },
+  'q-edit'(id) { const q = S.queues[S.active]; const i = q.findIndex((m) => m.id === id); const [m] = q.splice(i, 1); S.draft = m.text; S.files = m.files; S.focus = 'draft'; paint(); },
+  'q-remove'(id) { const q = S.queues[S.active]; q.splice(q.findIndex((m) => m.id === id), 1); paint(); },
+  'q-send'(id) {
+    const q = S.queues[S.active]; const [m] = q.splice(q.findIndex((x) => x.id === id), 1);
+    const cv = convo(active()); const ti = cv.findIndex((x) => x.type === 'thinking');
+    cv.splice(ti < 0 ? cv.length : ti, 0, { type: 'user', text: m.text, files: m.files, time: nowTime(), note: 'Sent now' });
+    paint();
+  },
+  answer(arg) {
+    const [id, mi, oi] = arg.split(':'); const c = CHATS.find((x) => x.id === id); const cv = convo(c); const m = cv[+mi];
+    cv.splice(+mi, 1, { type: 'user', text: m.opts[+oi], files: [], time: nowTime() });
+    goProcessing(c, 'Applying your answer'); paint();
+  },
+  theme(v) { S.theme = v; paint(); },
+  surface(v) { S.surface = v; paint(); },
+  hue(h) { S.hue = h === 'grey' ? h : +h; paint(); },
+  ptab(k, e) { if (k !== 'chat') S.tab3 = k; if (S.panel) slideHighlight('.isl-r', e, paint); else toggleIsland('panel'); },
+  fold(k) { S.fold[k] = !S.fold[k]; paint(); },
+  doc(k) { S.doc = k; paint(); },
+  fmt(c) {
+    const ed = stage.querySelector('.doc'); ed.focus();
+    if (c === 'h2') document.execCommand('formatBlock', false, 'h2');
+    else if (c === 'ul') document.execCommand('insertUnorderedList');
+    else document.execCommand(c);
+  },
+  tfile(k) { S.termIn = (S.termIn ? S.termIn + ' ' : 'cat ') + k; S.focus = 'term'; paint(); },
+  termfocus() { if (!getSelection().toString()) stage.querySelector('[data-key="term"]')?.focus(); },
+  board(k) { S.board = k; paint(); },
+  blabel(l) { S.blabel = l; paint(); },
+  bagent(a) { S.bagent = S.bagent === a ? '' : a; paint(); },
+  btab(id) { S.tab = id; paint(); },
+  bnew() { S.tabs = [TABS0[0]]; S.tab = TABS0[0].id; paint(); },
+  btabx(id) { S.tabs = S.tabs.filter((t) => t.id !== id); paint(); },
+  uscope(k) { S.uscope = k; paint(); },
+  urange(n) { S.urange = +n; paint(); },
+  appmode(k, e) { slideHighlight('.isl-l', e, () => moveChat(() => { S.appMode = k; paint(); })); },
+};
+document.addEventListener('keydown', (e) => {
+  if (!e.ctrlKey || e.altKey || e.metaKey) return;
+  const n = parseInt(e.key, 10);
+  if (n >= 1 && n <= MODES.length) { e.preventDefault(); closeMenu(false); moveChat(() => { S.appMode = MODES[n - 1][0]; paint(); }); }
+  if (e.key === 'b' || e.key === 'B') { e.preventDefault(); closeMenu(false); ACT.side(); }
+  if (e.key === ',') { e.preventDefault(); closeMenu(false); ACT.appmode('settings'); }
+  if (e.key === 'p' || e.key === 'P') {
+    e.preventDefault(); closeMenu(false);
+    ACT.palopen();
+  }
+});
+
+stage.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el || !stage.contains(el)) return;
+  const a = el.dataset.act;
+  if (a === 'menu') return openMenu(el.dataset.arg, el);
+  ACT[a] && ACT[a](el.dataset.arg, e);
+});
+// formatting buttons act on the editor's selection, so they must not take focus from it
+stage.addEventListener('mousedown', (e) => { if (e.target.closest('.fmt')) e.preventDefault(); });
+stage.addEventListener('input', (e) => {
+  const k = e.target.dataset.key;
+  if (k === 'draft') {
+    S.draft = e.target.value; autosize();
+    const b = stage.querySelector('.send'); if (b) b.disabled = !(S.draft.trim() || S.files.length);
+  } else if (k === 'search') { S.query = e.target.value; paint(); }
+  else if (k === 'pq') { S.pq = e.target.value; S.pi = 0; paint(); }
+  else if (k === 'term') S.termIn = e.target.value;
+  else if (e.target.dataset.doc) DOC_HTML[e.target.dataset.doc] = e.target.innerHTML;
+});
+stage.addEventListener('keydown', (e) => {
+  const k = e.target.dataset && e.target.dataset.key;
+  if (k === 'draft' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+  if (k === 'term' && e.key === 'Enter') { e.preventDefault(); runTerm(e.target.value.trim()); }
+  if (k === 'search' && e.key === 'Escape') { S.query = ''; S.searchOpen = false; paint(); }
+  if (k === 'pq') {
+    const ids = palRows().filter((r) => r.id).map((r) => r.id);
+    if (e.key === 'Escape') { e.preventDefault(); ACT.palclose(); }
+    else if (e.key === 'ArrowDown' && ids.length) { e.preventDefault(); S.pi = (S.pi + 1) % ids.length; paint(); stage.querySelector('.pal-i[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }); }
+    else if (e.key === 'ArrowUp' && ids.length) { e.preventDefault(); S.pi = (S.pi - 1 + ids.length) % ids.length; paint(); stage.querySelector('.pal-i[aria-selected="true"]')?.scrollIntoView({ block: 'nearest' }); }
+    else if (e.key === 'Enter' && ids[S.pi]) { e.preventDefault(); ACT.proj(ids[S.pi]); }
+  }
+});
+
+/* ---------------- popover menu ---------------- */
+const pop = document.getElementById('pop');
+let popAnchor = null;
+function menuSpec(name) {
+  const radio = (label, on, run, hint, icon = '') => ({ label, on, run, hint, icon });
+  switch (name) {
+    case 'agent': return { title: 'Agent', items: Object.keys(AGENTS).map((k) => radio(agentName(k), S.agent === k, () => { S.agent = k; S.model = AGENTS[k].models[0]; }, null, glyph(k))) };
+    case 'model': return { title: agentName(S.agent) + ' models', items: AGENTS[S.agent].models.map((m) => radio(m, S.model === m, () => (S.model = m))) };
+    case 'effort': return { title: 'Effort', items: [['Low', 'Fast, for small edits'], ['Medium', 'Most everyday work'], ['High', 'Harder bugs and refactors'], ['X-High', 'Slow, for the hardest problems']].map(([l, h]) => radio(l, S.effort === l, () => (S.effort = l), h)) };
+    case 'mode': return { title: 'Permissions', items: [['Default', 'Asks before edits and commands'], ['Plan', 'Reads and plans, no edits'], ['Accept edits', 'Edits files, asks before commands'], ['Full access', 'Edits and runs without asking']].map(([l, h]) => radio(l, S.mode === l, () => (S.mode = l), h)) };
+    case 'attach': return { title: 'Recent files', items: Object.keys(FILESIZE).map((f) => radio(f, S.files.includes(f), () => { if (!S.files.includes(f)) S.files.push(f); S.focus = 'draft'; }, FILESIZE[f], I.file)) };
+  }
+}
+function openMenu(name, anchor) {
+  const spec = menuSpec(name);
+  popAnchor = { name, el: anchor };
+  pop.innerHTML = `<div class="ph">${spec.title}</div>` + (spec.html || spec.items.map((it, i) => it.header ? `<div class="ph ph-sec">${it.header}</div>` :
+    `<button role="menuitemradio" aria-checked="${!!it.on}" data-i="${i}">${it.icon}<span class="mi"><span>${it.label}</span>${it.hint ? `<span class="mh">${it.hint}</span>` : ''}</span>${it.on ? tick : ''}</button>`).join(''));
+  pop._items = spec.items || [];
+  pop.setAttribute('role', spec.html ? 'dialog' : 'menu');
+  pop.setAttribute('aria-label', spec.title);
+  pop.classList.remove('open');
+  pop.style.display = 'block'; pop.style.visibility = 'hidden';
+  const r = anchor.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
+  const below = r.bottom + 6 + h < innerHeight - 8;
+  const left = Math.max(8, Math.min(r.left, innerWidth - w - 8));
+  pop.style.left = left + 'px';
+  pop.style.top = (below ? r.bottom + 6 : r.top - h - 6) + 'px';
+  pop.style.setProperty('--o', `${r.left - left + r.width / 2}px ${below ? '0' : '100%'}`);
+  pop.style.display = ''; pop.style.visibility = '';
+  pop.classList.add('open');
+  pop.setAttribute('aria-hidden', 'false');
+  anchor.setAttribute('aria-expanded', 'true');
+  (pop.querySelector('[aria-checked="true"]') || pop.querySelector('button'))?.focus();
+}
+function closeMenu(refocus) {
+  if (!popAnchor) return;
+  pop.classList.remove('open'); pop.setAttribute('aria-hidden', 'true');
+  const { name, el } = popAnchor; popAnchor = null;
+  el.removeAttribute('aria-expanded');
+  if (refocus) (stage.querySelector(`[data-act="menu"][data-arg="${name}"]`) || el).focus();
+}
+pop.addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-i]'); if (!b) return;
+  const it = pop._items[+b.dataset.i]; const name = popAnchor.name;
+  closeMenu(false); it.run();
+  paint();
+  if (!S.focus) stage.querySelector(`[data-act="menu"][data-arg="${name}"]`)?.focus();
+});
+document.addEventListener('mousedown', (e) => { if (popAnchor && !pop.contains(e.target) && !popAnchor.el.contains(e.target)) closeMenu(false); });
+document.addEventListener('keydown', (e) => {
+  if (!popAnchor) return;
+  const btns = [...pop.querySelectorAll('button')];
+  const i = btns.indexOf(document.activeElement);
+  if (e.key === 'Escape') { e.preventDefault(); closeMenu(true); }
+  else if (e.key === 'ArrowDown' && btns.length) { e.preventDefault(); btns[(i + 1) % btns.length].focus(); }
+  else if (e.key === 'ArrowUp' && btns.length) { e.preventDefault(); btns[(i - 1 + btns.length) % btns.length].focus(); }
+  else if (e.key === 'Tab') closeMenu(false);
+}, true);
+window.addEventListener('resize', () => closeMenu(false));
+
+/* live timers */
+setInterval(() => document.querySelectorAll('[data-since]').forEach((el) => (el.textContent = dur(Date.now() - +el.dataset.since))), 1000);
+
+const TABS0 = S.tabs.slice();
+const KEEP = ['theme', 'surface', 'hue', 'side', 'panel', 'appMode'];
+try {
+  const saved = JSON.parse(localStorage.getItem('adeline-design') || '{}');
+  KEEP.forEach((k) => { if (k in saved) S[k] = saved[k]; });
+  if (S.appMode !== 'settings' && !MODES.some((m) => m[0] === S.appMode)) S.appMode = 'chats';
+} catch { /* storage blocked: start from the defaults */ }
+paint(true);
+</script>
+</body>
+</html>

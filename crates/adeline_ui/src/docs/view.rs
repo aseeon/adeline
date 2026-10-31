@@ -351,7 +351,7 @@ impl Adeline {
                     .aria_label(label)
                     .aria_selected(open)
                     .when(row_data.folder, |row| row.aria_expanded(row_data.open))
-                    .h(rems(chat::ROW_HEIGHT))
+                    .h(panes::dp(30.))
                     .pl(rems(0.5 + 0.875 * row_data.depth as f32))
                     .pr_2()
                     .gap_2()

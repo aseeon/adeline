@@ -1,12 +1,13 @@
-//! The composer: the message input, its option menus and the execution
-//! settings under it.
+//! The composer: the message input, then a bar of the agent, its option
+//! menus, the context ring and send.
 use super::*;
 
 impl Adeline {
-    pub(crate) fn composer_view(&self, width_rems: f32, cx: &Context<Self>) -> Div {
+    pub(crate) fn composer_view(&self, width_rems: f32, focused: bool, cx: &Context<Self>) -> Div {
         // The controls sit in the chat column, inside its side padding.
         let fit = Fit::for_width(width_rems.min(CHAT_COLUMN) - 4.);
         let theme = cx.theme();
+        let isl = theme::islands(cx);
         let bound = self.bound_definition();
         let selected = self.selected_definition();
         let agent_name: SharedString = bound
@@ -78,17 +79,22 @@ impl Adeline {
         } else {
             format!("Send ({})", conversation_ui::shortcut("Ctrl+Enter"))
         };
-        let send_keys = row()
-            .gap_0p5()
-            .when(!config::with(|s| s.modes.chats.submit_on_enter), |keys| {
-                let modifier = if cfg!(target_os = "macos") {
-                    "command.svg"
-                } else {
-                    "control.svg"
-                };
-                keys.child(Icon::default().path(modifier).size_4())
-            })
-            .child(Icon::default().path("arrow-elbow-down-left.svg").size_4());
+        // Send is a filled square: disabled until there's something to send.
+        let send_button = |id: &'static str, icon_path: &str, turn: f32| {
+            Button::new(id)
+                .size(dp(30.))
+                .p_0()
+                .rounded(dp(9.))
+                .bg(isl.send_bg)
+                .text_color(isl.send_fg)
+                .icon(
+                    Icon::default()
+                        .path(icon_path.to_owned())
+                        .size(dp(16.))
+                        .rotate(Radians(turn)),
+                )
+        };
+        let up = -std::f32::consts::FRAC_PI_2;
         let send = if no_agents {
             // Sending needs an agent, so adding one is the main action.
             Button::new("send-chat-message")
@@ -111,24 +117,14 @@ impl Adeline {
                 )
             };
             row()
-                .gap_0p5()
-                .child(
-                    Button::new("send-chat-message")
-                        .small()
-                        .ghost()
-                        .child(send_keys)
-                        .accessibility_label("Queue")
-                        .tooltip("Queue: sends when this turn ends")
-                        .disabled(!can_send)
-                        .on_click(
-                            cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx)),
-                        ),
-                )
+                .gap(dp(4.))
                 .child(
                     Button::new("send-chat-options")
-                        .small()
                         .ghost()
-                        .icon(Icon::default().path("chevron.svg").size_3())
+                        .size(dp(28.))
+                        .p_0()
+                        .text_color(isl.fg3)
+                        .icon(Icon::default().path("chevron.svg").size(dp(12.)))
                         .accessibility_label("Send options")
                         .tooltip("Send options")
                         .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
@@ -149,10 +145,17 @@ impl Adeline {
                         }),
                 )
                 .child(
-                    Button::new("stop-chat-turn")
-                        .small()
-                        .ghost()
-                        .icon(Icon::default().path("stop.svg"))
+                    send_button("send-chat-message", "arrow.svg", up)
+                        .accessibility_label("Queue")
+                        .tooltip("Queue: sends when this turn ends")
+                        .when(!can_send, |button| button.opacity(0.25))
+                        .disabled(!can_send)
+                        .on_click(
+                            cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx)),
+                        ),
+                )
+                .child(
+                    send_button("stop-chat-turn", "stop.svg", 0.)
                         .accessibility_label("Stop")
                         .tooltip(format!("Stop ({})", conversation_ui::shortcut("Ctrl+.")))
                         .on_click(
@@ -161,15 +164,10 @@ impl Adeline {
                 )
                 .into_any_element()
         } else {
-            // The icons spell the send shortcut: Enter, or Ctrl+Enter (Cmd on
-            // macOS). Both are content, not the button's icon, so the padding
-            // and the Enter key stay put when the shortcut changes.
-            Button::new("send-chat-message")
-                .small()
-                .ghost()
-                .child(send_keys)
+            send_button("send-chat-message", "arrow.svg", up)
                 .accessibility_label("Send")
                 .tooltip(send_tooltip)
+                .when(!can_send, |button| button.opacity(0.25))
                 .disabled(!can_send)
                 .on_click(cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx)))
                 .into_any_element()
@@ -197,18 +195,25 @@ impl Adeline {
                     column.child(div().text_sm().text_color(theme.danger).child(error))
                 })
         });
+        let context = self
+            .selected
+            .map(|ix| context_ring(self.workspace().threads[ix].context, cx));
         let island = col()
             .id("composer-island")
             .w_full()
             .min_w_0()
-            .bg(theme.group_box)
-            .border_1()
-            .border_color(theme.border)
-            .rounded(rems(0.875))
-            .pt_3()
-            .pb_2()
-            .pl(rems(0.875))
-            .pr(rems(0.625))
+            .p(dp(6.))
+            .bg(isl.raise)
+            .rounded(dp(14.))
+            .shadow(vec![
+                BoxShadow::new(
+                    px(0.),
+                    px(0.),
+                    if focused { isl.ring_strong } else { isl.ring },
+                )
+                .blur_radius(px(0.))
+                .spread_radius(px(1.)),
+            ])
             .on_drop(cx.listener(|app, paths: &ExternalPaths, _, cx| {
                 for path in paths.paths() {
                     app.attach_local(path.clone(), cx);
@@ -224,30 +229,35 @@ impl Adeline {
                     cx.stop_propagation();
                 }
             }))
-            .children(chips)
+            .children(chips.map(|chips| chips.px(dp(8.)).pt(dp(6.))))
             .child(
-                row()
+                div()
                     .w_full()
                     .min_w_0()
-                    .items_start()
-                    .gap_2()
-                    .child(textarea)
-                    .child(div().flex_shrink_0().child(send)),
+                    .px(dp(10.))
+                    .pt(dp(8.))
+                    .pb(dp(4.))
+                    .text_size(dp(theme::T_PROSE))
+                    .child(textarea),
             )
             .child(
                 row()
                     .w_full()
                     .min_w_0()
-                    .mt_2()
-                    .gap(rems(0.125))
+                    .h(dp(30.))
+                    .gap(dp(2.))
+                    .text_size(dp(theme::T_UI))
+                    .text_color(isl.fg2)
                     .child(
                         self.command_popover(
                             "files",
                             Button::new("attach-chat-files")
                                 .ghost()
-                                .small()
+                                .size(dp(28.))
+                                .p_0()
                                 .flex_shrink_0()
-                                .icon(Icon::default().path("plus.svg"))
+                                .text_color(isl.fg2)
+                                .icon(Icon::default().path("plus.svg").size(dp(16.)))
                                 .accessibility_label("Attach files…")
                                 .tooltip(format!(
                                     "Attach files… ({})",
@@ -257,7 +267,6 @@ impl Adeline {
                             cx,
                         ),
                     )
-                    .child(div().w_px().h_4().mx_1p5().flex_shrink_0().bg(theme.border))
                     .child(
                         row()
                             .id("chat-agent-selection")
@@ -267,21 +276,21 @@ impl Adeline {
                             .min_w_0()
                             // Clip rather than draw under the mode button.
                             .overflow_hidden()
-                            .gap_1()
+                            .gap(dp(2.))
                             .child(
                                 self.command_popover(
                                     "agent",
-                                    Button::new("chat-agent-picker")
-                                        .ghost()
-                                        .small()
-                                        .icon(
-                                            Icon::default()
-                                                .path(agent_path)
-                                                .text_color(agent_color),
-                                        )
-                                        .label(shorten(&agent_name, fit.agent))
-                                        .tooltip(agent_name)
-                                        .dropdown_caret(true),
+                                    picker(
+                                        Button::new("chat-agent-picker")
+                                            .icon(
+                                                Icon::default()
+                                                    .path(agent_path)
+                                                    .text_color(agent_color),
+                                            )
+                                            .label(shorten(&agent_name, fit.agent))
+                                            .tooltip(agent_name),
+                                        cx,
+                                    ),
                                     Anchor::BottomLeft,
                                     cx,
                                 ),
@@ -290,7 +299,9 @@ impl Adeline {
                             .children(effort)
                             .children(more),
                     )
-                    .children(mode),
+                    .children(mode)
+                    .children(context)
+                    .child(div().flex_shrink_0().ml(dp(4.)).child(send)),
             );
         let slash = self.slash_list(cx).map(|list| {
             div()
@@ -306,7 +317,6 @@ impl Adeline {
             .flex_shrink_0()
             .min_w_0()
             .bg(theme.background)
-            .pb_4()
             .child(chat_column().child(div().relative().child(island).children(slash)))
     }
 
@@ -354,9 +364,11 @@ impl Adeline {
         let trigger = if category == Category::Other {
             Button::new(id)
                 .ghost()
-                .small()
+                .size(dp(28.))
+                .p_0()
                 .flex_shrink_0()
-                .icon(Icon::default().path("more.svg"))
+                .text_color(theme::islands(cx).fg3)
+                .icon(Icon::default().path("more.svg").size(dp(16.)))
                 .accessibility_label(heading)
         } else {
             let option = &shown[0];
@@ -367,13 +379,13 @@ impl Adeline {
             } else {
                 name.to_owned().into()
             };
-            Button::new(id)
-                .ghost()
-                .small()
-                .flex_shrink_0()
-                .label(shorten(&label, max_chars))
-                .dropdown_caret(true)
-                .accessibility_label(format!("{heading}: {label}"))
+            picker(
+                Button::new(id)
+                    .flex_shrink_0()
+                    .label(shorten(&label, max_chars))
+                    .accessibility_label(format!("{heading}: {label}")),
+                cx,
+            )
         }
         .disabled(processing)
         .tooltip(if processing {
@@ -599,28 +611,91 @@ fn execution_setting(
 ) -> impl IntoElement {
     let owner = cx.weak_entity();
     let current: SharedString = value.into();
-    Button::new(id)
+    picker(
+        Button::new(id)
+            .flex_shrink_0()
+            .label(shorten(&current, max_chars))
+            .tooltip(format!("{heading}: {current}"))
+            .accessibility_label(format!("{heading}: {current}")),
+        cx,
+    )
+    .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
+        let owner = owner.clone();
+        menu.check_side(Side::Right)
+            .label(heading)
+            .item(PopupMenuItem::new(current.clone()).checked(true))
+            .separator()
+            .item(
+                PopupMenuItem::new("Agent settings…").on_click(move |_, window, cx| {
+                    let _ = owner.update(cx, |app, cx| {
+                        app.act(Action::AgentSettings, window, cx);
+                    });
+                }),
+            )
+    })
+}
+
+// A composer picker: 28 tall, 13 px, ending in a chevron, with 2 px less
+// padding on the chevron's side.
+fn picker(button: Button, cx: &App) -> Button {
+    button
         .ghost()
         .small()
-        .flex_shrink_0()
-        .label(shorten(&current, max_chars))
-        .tooltip(format!("{heading}: {current}"))
+        .h(dp(28.))
+        .pl(dp(8.))
+        .pr(dp(6.))
+        .text_color(theme::islands(cx).fg2)
         .dropdown_caret(true)
-        .accessibility_label(format!("{heading}: {current}"))
-        .dropdown_menu_with_anchor(Anchor::BottomLeft, move |menu, _, _| {
-            let owner = owner.clone();
-            menu.check_side(Side::Right)
-                .label(heading)
-                .item(PopupMenuItem::new(current.clone()).checked(true))
-                .separator()
-                .item(
-                    PopupMenuItem::new("Agent settings…").on_click(move |_, window, cx| {
-                        let _ = owner.update(cx, |app, cx| {
-                            app.act(Action::AgentSettings, window, cx);
-                        });
-                    }),
+}
+
+// The share of the context window in use: an 18 px ring, its value in the tooltip.
+fn context_ring(usage: Option<(u64, u64)>, cx: &App) -> Stateful<Div> {
+    let isl = theme::islands(cx);
+    let share = match usage {
+        Some((used, size)) if size > 0 => (used as f32 / size as f32).clamp(0., 1.),
+        _ => 0.,
+    };
+    let label = match usage {
+        Some((used, size)) => format!(
+            "Context {}% · {} of {} tokens",
+            (share * 100.).round(),
+            tokens(used),
+            tokens(size)
+        ),
+        None => "Context: the agent hasn’t reported its usage yet".to_owned(),
+    };
+    let (track, arc) = (isl.fg3.alpha(0.35), isl.ctx);
+    div()
+        .id("chat-context")
+        .role(Role::ProgressIndicator)
+        .aria_label(label.clone())
+        .tooltip(move |window, cx| Tooltip::new(label.clone()).build(window, cx))
+        .flex_shrink_0()
+        .size(dp(28.))
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(
+            div().size(dp(18.)).child(
+                canvas(
+                    |_, _, _| {},
+                    move |bounds, (), window, _| {
+                        let outer = f32::from(bounds.size.width.min(bounds.size.height)) / 2.;
+                        let inner = outer - f32::from(dp(2.5));
+                        let shape = ArcShape::new().inner_radius(inner).outer_radius(outer);
+                        for (index, (to, color)) in
+                            [(TAU, track), (TAU * share, arc)].into_iter().enumerate()
+                        {
+                            if to > 0. {
+                                let segment = ArcData::new(&(), index, 1., 0., to);
+                                shape.paint(&segment, color, &bounds, window);
+                            }
+                        }
+                    },
                 )
-        })
+                .size_full(),
+            ),
+        )
 }
 
 impl Composer {
@@ -629,8 +704,12 @@ impl Composer {
         input: &Entity<TextareaState>,
         cx: &mut Context<Self>,
     ) -> Self {
+        // Focus changes the composer's ring.
         let subscription = cx.subscribe(input, |_, _, event: &InputEvent, cx| {
-            if matches!(event, InputEvent::Change) {
+            if matches!(
+                event,
+                InputEvent::Change | InputEvent::Focus | InputEvent::Blur
+            ) {
                 cx.notify();
             }
         });
@@ -653,7 +732,8 @@ impl Render for Composer {
         let measured = cx.entity();
         self.owner
             .update(cx, |app, cx| {
-                app.composer_view(width, cx)
+                let focused = app.composer.focus_handle(cx).is_focused(window);
+                app.composer_view(width, focused, cx)
                     .relative()
                     .child(size_probe(move |size, cx| {
                         measured.update(cx, |composer, cx| {

@@ -1,30 +1,36 @@
 //! The machine selector in the title bar and its menu of machines and their
 //! connection states.
 use super::*;
+use gpui_kit::component::checkbox::Checkbox;
 
 impl Adeline {
-    pub(super) fn machine_selector(&self, cx: &Context<Self>) -> Popover {
-        let owner = cx.weak_entity();
-        let content_owner = owner.clone();
-        let checked = machines::checked();
-        let label = match checked.as_slice() {
+    /// Opens the machines menu, in the chat list's header.
+    pub(crate) fn machines_button(&self, cx: &Context<Self>) -> Button {
+        let label = match machines::checked().as_slice() {
             [one] => machines::name(one),
             several => format!("{} machines", several.len()),
         };
         let attention = client::connections(cx).iter().any(|c| failing(&c.state));
-        let trigger = Button::new("machines")
+        Button::new("machines")
             .ghost()
+            .small()
             .icon(Icon::default().path("devices.svg"))
-            .label(label)
-            .dropdown_caret(true)
             .accessibility_label("Machines")
-            .h_full()
-            .rounded_none()
-            .px(rems(0.875))
-            .when(attention, |button| button.text_color(cx.theme().danger));
+            .tooltip(format!("{label} ({})", conversation_ui::shortcut("Alt+H")))
+            .text_color(if attention {
+                cx.theme().danger
+            } else {
+                theme::islands(cx).fg3
+            })
+            .on_click(cx.listener(|app, _, window, cx| app.act(Action::Machines, window, cx)))
+    }
+
+    pub(crate) fn machine_selector(&self, cx: &Context<Self>) -> Popover {
+        let owner = cx.weak_entity();
+        let content_owner = owner.clone();
         Popover::new("machine-selector")
-            .anchor(Anchor::TopRight)
-            .trigger(trigger)
+            .anchor(Anchor::TopCenter)
+            .trigger(menu_anchor("machines-anchor"))
             .open(self.menu == Some("machines"))
             .p_0()
             .shadow(views::menu_shadow(cx))

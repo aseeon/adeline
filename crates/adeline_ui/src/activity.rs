@@ -1,8 +1,9 @@
-//! The agent activity panel: what the open chat's agent did, a line per step,
-//! with the chat's numbers in an island level with the composer. The
-//! jump-to-latest buttons over the chat and the list sit 0.5rem above both.
+//! The agent activity pane: what the open chat's agent did, a line per step,
+//! with the chat's numbers level with the composer. The jump-to-latest
+//! buttons over the chat and the list sit 0.5rem above both.
 use super::*;
-use crate::chat::{CHAT_HEADER_HEIGHT, agent_mark, message_time, tokens, tool_icon};
+use crate::chat::{agent_mark, message_time, tokens, tool_icon};
+use crate::panes::dp;
 use adeline_core::conversation::MessageRole;
 use gpui_kit::component::{
     ActiveTheme as _, Selectable as _, Sizable as _, button::ButtonVariants as _,
@@ -214,29 +215,19 @@ pub(super) fn jump_to_latest(id: &'static str, cx: &Context<Adeline>) -> impl In
 
 impl Adeline {
     pub(super) fn activity_panel(&self, cx: &Context<Self>) -> Stateful<Div> {
-        let theme = cx.theme();
-        let header = row()
-            .flex_none()
-            .h(rems(CHAT_HEADER_HEIGHT))
-            .px_3()
-            .font_weight(FontWeight::SEMIBOLD)
-            .text_color(theme.foreground)
-            .child("Agent activity");
         let panel = col()
             .id("agent-activity-panel")
             .role(Role::Group)
             .aria_label("Agent activity panel")
             .relative()
             .size_full()
-            .bg(theme.sidebar)
-            .text_color(theme.sidebar_foreground)
-            .child(header);
+            .text_color(theme::islands(cx).fg2);
         let Some(thread) = self.selected.map(|ix| &self.workspace().threads[ix]) else {
             return panel.child(
                 div()
-                    .px_3()
-                    .text_sm()
-                    .text_color(theme.muted_foreground)
+                    .px(dp(16.))
+                    .text_size(dp(theme::T_UI))
+                    .text_color(theme::islands(cx).fg3)
                     .child("Start a chat to see agent activity."),
             );
         };
@@ -255,15 +246,15 @@ impl Adeline {
         let list = if entries.is_empty() {
             col().child(
                 div()
-                    .px_3()
-                    .text_sm()
-                    .text_color(theme.muted_foreground)
+                    .px(dp(16.))
+                    .text_size(dp(theme::T_UI))
+                    .text_color(theme::islands(cx).fg3)
                     .child("No activity yet."),
             )
         } else {
             col()
                 .w_full()
-                .pl_1p5()
+                .pl(dp(8.))
                 // Room for the scrollbar, so it never covers a row.
                 .pr(theme::SCROLLBAR_TRACK)
                 .pb_2()
@@ -273,19 +264,12 @@ impl Adeline {
                         .map(|entry| self.activity_row(thread, entry, cx)),
                 )
         };
-        // The island takes the composer's height and bottom inset, so the two line up.
-        let composer = self.composer_height.get();
-        let island_height = if composer > px(0.) {
-            DefiniteLength::from(composer)
-        } else {
-            rems(6.5).into()
-        };
         let jump = (!following && !entries.is_empty()).then(|| {
             div()
                 .absolute()
                 .left_0()
                 .right_0()
-                .bottom(island_height)
+                .bottom_0()
                 .pb_2()
                 .flex()
                 .justify_center()
@@ -305,21 +289,21 @@ impl Adeline {
                             .track_scroll(&self.activity.scroll)
                             .child(list),
                     )
-                    .child(Scrollbar::vertical(&self.activity.scroll)),
+                    .child(Scrollbar::vertical(&self.activity.scroll))
+                    .children(jump),
             )
             .child(
                 div()
                     .flex_none()
-                    .h(island_height)
-                    .px_2()
-                    .pb_4()
+                    .px(dp(16.))
+                    .py(dp(14.))
+                    .border_t_1()
+                    .border_color(theme::islands(cx).line)
                     .child(self.activity_stats(thread, cx)),
             )
-            .children(jump)
     }
 
     fn activity_stats(&self, thread: &Thread, cx: &Context<Self>) -> Div {
-        let theme = cx.theme();
         let calls = || {
             thread
                 .activity
@@ -348,6 +332,14 @@ impl Adeline {
                 "Time the tool calls took, added up",
             ),
             (
+                "Reply speed",
+                thread
+                    .timing
+                    .tokens_per_second()
+                    .map_or_else(dash, |speed| format!("≈{speed:.0} tok/s")),
+                "Estimated from how fast reply text arrives, at about four characters a token",
+            ),
+            (
                 "Succeeded",
                 finished(conversation::ToolStatus::Completed).to_string(),
                 "Tool calls that completed",
@@ -360,15 +352,8 @@ impl Adeline {
                 }),
                 "Tokens in the agent's context, of its window",
             ),
-            (
-                "Reply speed",
-                thread
-                    .timing
-                    .tokens_per_second()
-                    .map_or_else(dash, |speed| format!("≈{speed:.0} tok/s")),
-                "Estimated from how fast reply text arrives, at about four characters a token",
-            ),
         ];
+        let isl = theme::islands(cx);
         let cell = |(label, value, help): (&'static str, String, &'static str)| {
             let alert = label == "Failed" && failed > 0;
             col()
@@ -379,34 +364,24 @@ impl Adeline {
                 .child(
                     div()
                         .truncate()
-                        .text_sm()
-                        .text_color(if alert {
-                            theme.danger
-                        } else {
-                            theme.foreground
-                        })
+                        .text_size(dp(theme::T_PROSE))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .text_color(if alert { isl.err } else { isl.fg })
                         .child(value),
                 )
                 .child(
                     div()
                         .truncate()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
+                        .text_size(dp(theme::T_CAPTION))
+                        .text_color(isl.fg3)
                         .child(label),
                 )
         };
         let mut cells = cells.into_iter().map(cell);
         col()
-            .size_full()
-            .justify_center()
-            .gap_2()
-            .px_3()
-            .bg(theme.group_box)
-            .border_1()
-            .border_color(theme.border)
-            .rounded(rems(0.875))
-            .child(row().gap_2().children(cells.by_ref().take(3)))
-            .child(row().gap_2().children(cells))
+            .gap(dp(12.))
+            .child(row().gap(dp(8.)).children(cells.by_ref().take(3)))
+            .child(row().gap(dp(8.)).children(cells))
     }
 
     fn activity_row(&self, thread: &Thread, entry: &Entry<'_>, cx: &Context<Self>) -> AnyElement {

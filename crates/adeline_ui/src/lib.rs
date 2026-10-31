@@ -185,8 +185,7 @@ enum Action {
     ShowThinking,
     TodoList,
     TrafficView,
-    // 0 activity, 1 traffic.
-    PanelTab(usize),
+    PanelTab(panes::SideTab),
     CopyTraffic,
     Login(String),
     Restart,
@@ -262,7 +261,10 @@ actions!(
         DismissErrors,
         ForkChat,
         ForkSource,
-        CopyCode
+        CopyCode,
+        ToggleChatList,
+        ToggleSidePane,
+        ProjectPalette
     ]
 );
 pub struct Adeline {
@@ -293,7 +295,6 @@ pub struct Adeline {
     project_list_scroll: ScrollHandle,
     pending_removal: Option<project_bar::PendingRemoval>,
     removal_generation: u64,
-    tab_fit: std::rc::Rc<project_bar::TabFit>,
     project: usize,
     section: Section,
     selected: Option<usize>,
@@ -304,8 +305,6 @@ pub struct Adeline {
     show_completed: bool,
     show_archived: bool,
     side_panel_open: bool,
-    right_panel_width: f32,
-    panel_state: Entity<component::ResizableState>,
     activity: activity::ActivityPanel,
     query: Entity<InputState>,
     composer: Entity<TextareaState>,
@@ -322,7 +321,7 @@ pub struct Adeline {
     slash: Option<usize>,
     // Closed with Escape for the text typed so far.
     slash_dismissed: bool,
-    traffic_tab: bool,
+    side_tab: panes::SideTab,
     // Newest last.
     traffic: Vec<conversation::TrafficEntry>,
     traffic_scroll: ScrollHandle,
@@ -330,7 +329,6 @@ pub struct Adeline {
     logged_in: std::collections::HashSet<String>,
     pictures: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<Image>>>,
     left_panel_open: bool,
-    sidebar_width: f32,
     selected_tint: usize,
     focus: FocusHandle,
     _subscriptions: Vec<Subscription>,
@@ -339,10 +337,8 @@ pub struct Adeline {
     transcript: Entity<chat::Transcript>,
     composer_region: Entity<chat::Composer>,
     header_region: Entity<chat::Header>,
-    control_pane: Entity<panes::ControlPane>,
     side_panel: Entity<conversation_ui::SidePanel>,
     chat_header: Entity<views::ChatHeader>,
-    project_bar: Entity<project_bar::ProjectBar>,
     docs: docs::Docs,
 }
 impl std::fmt::Debug for Adeline {
@@ -387,7 +383,7 @@ impl Adeline {
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats"));
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
-                .auto_grow(2, 4)
+                .auto_grow(1, 12)
                 .submit_on_enter(config::current().modes.chats.submit_on_enter)
                 .placeholder("Ask your agent to do anything")
         });
@@ -458,11 +454,9 @@ impl Adeline {
             chat::Transcript::new(owner.clone(), std::rc::Rc::clone(&composer_height), cx)
         });
         let composer_region = cx.new(|cx| chat::Composer::new(owner.clone(), &composer, cx));
-        let control_pane = cx.new(|_| panes::ControlPane::new(owner.clone()));
         let header_region = cx.new(|_| chat::Header(owner.clone()));
         let side_panel = cx.new(|_| conversation_ui::SidePanel(owner.clone()));
         let chat_header = cx.new(|_| views::ChatHeader(owner.clone()));
-        let project_bar = cx.new(|_| project_bar::ProjectBar(owner.clone()));
         subscriptions.push(cx.observe_self(Self::notify_cached_views));
         // A focused element that disappears, such as a closed menu's search box,
         // leaves keys dispatching above the "Adeline" context, so shortcuts stop.
@@ -493,8 +487,6 @@ impl Adeline {
                 .window_handle()
                 .downcast::<Root>()
                 .expect("Kit root window"),
-            right_panel_width: 302.,
-            panel_state: cx.new(|_| component::ResizableState::default()),
             empty_workspace: Workspace::default(),
             open_projects: vec![true; projects.len()],
             project_tints: (0..projects.len()).map(default_tint).collect(),
@@ -528,7 +520,6 @@ impl Adeline {
             project_list_scroll: ScrollHandle::new(),
             pending_removal: None,
             removal_generation: 0,
-            tab_fit: std::rc::Rc::default(),
             projects,
             project: 0,
             section: Section::Chats,
@@ -552,14 +543,13 @@ impl Adeline {
             dismissed_errors: std::collections::HashSet::new(),
             slash: None,
             slash_dismissed: false,
-            traffic_tab: false,
+            side_tab: panes::SideTab::Activity,
             traffic: Vec::new(),
             traffic_scroll: ScrollHandle::new(),
             open_thoughts: std::collections::HashSet::new(),
             logged_in: std::collections::HashSet::new(),
             pictures: std::cell::RefCell::default(),
             left_panel_open: true,
-            sidebar_width: 360.,
             selected_tint: 3,
             focus: cx.focus_handle(),
             _subscriptions: subscriptions,
@@ -567,10 +557,8 @@ impl Adeline {
             transcript,
             composer_region,
             header_region,
-            control_pane,
             side_panel,
             chat_header,
-            project_bar,
             docs,
         };
         app.load_settings();
@@ -659,7 +647,6 @@ impl Adeline {
         }
         self.composer_region.update(cx, |_, cx| cx.notify());
         self.header_region.update(cx, |_, cx| cx.notify());
-        self.control_pane.update(cx, |_, cx| cx.notify());
         cx.notify();
         cx.refresh_windows();
     }
@@ -669,7 +656,6 @@ impl Adeline {
         self.chat_list.update(cx, |_, cx| cx.notify());
         self.side_panel.update(cx, |_, cx| cx.notify());
         self.chat_header.update(cx, |_, cx| cx.notify());
-        self.project_bar.update(cx, |_, cx| cx.notify());
     }
 
     fn has_open_project(&self) -> bool {
@@ -780,17 +766,18 @@ impl Render for Adeline {
                 )
                 .into_any_element()
         } else if self.section == Section::Chats {
-            self.workspace_panels(window, cx)
+            self.chats(window, cx)
         } else if self.section == Section::Docs {
             self.docs_load_images(cx);
             self.docs_panels(window, cx)
         } else {
             div().size_full().into_any_element()
         };
-        let content = col()
-            .flex_1()
-            .min_h_0()
-            .w_full()
+        col()
+            .relative()
+            .size_full()
+            .bg(theme::islands(cx).bg)
+            .font_family(cx.theme().font_family.clone())
             .text_color(cx.theme().foreground)
             .track_focus(&self.focus)
             .key_context("Adeline")
@@ -913,6 +900,19 @@ impl Render for Adeline {
                     app.act(Action::Chat(ix), window, cx);
                 }
             }))
+            .on_action(cx.listener(|app, _: &ToggleChatList, window, cx| {
+                app.act(Action::ToggleLeftPanel, window, cx);
+            }))
+            .on_action(cx.listener(|app, _: &ToggleSidePane, window, cx| {
+                app.act(Action::ToggleSidePanel, window, cx);
+            }))
+            .on_action(cx.listener(|app, _: &ProjectPalette, window, cx| {
+                if app.has_open_project() && app.section == Section::Docs {
+                    window.focus(&app.docs.search.focus_handle(cx), cx);
+                } else {
+                    app.act(Action::Projects, window, cx);
+                }
+            }))
             .on_action(cx.listener(|_, _: &NextFocus, window, cx| window.focus_next(cx)))
             .on_action(cx.listener(|_, _: &PreviousFocus, window, cx| window.focus_prev(cx)))
             .on_action(cx.listener(|app, action: &docs::SwitchMode, window, cx| {
@@ -926,33 +926,8 @@ impl Render for Adeline {
             )
             .child(self.header_region.clone())
             .children(self.engine_banner(cx))
-            .child(
-                row()
-                    .flex_1()
-                    .min_h_0()
-                    .items_stretch()
-                    .child(self.mode_rail(cx))
-                    .child(
-                        col()
-                            .flex_1()
-                            .min_w_0()
-                            // The title bar, mode rail and control bar show the window blur;
-                            // the content between them stays opaque.
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_h_0()
-                                    .bg(cx.theme().background)
-                                    // The divider beside the rail stops at the content,
-                                    // so the rail runs into the title and control bars.
-                                    .border_l_1()
-                                    .border_color(theme::bar_colors(cx.theme()).divider)
-                                    .child(body),
-                            )
-                            .child(self.control_pane.clone()),
-                    ),
-            );
-        col().size_full().child(content)
+            .child(self.islands(body, window, cx))
+            .child(self.menu_overlays(cx))
     }
 }
 
@@ -962,18 +937,27 @@ pub fn open(demo_mode: bool, verbose: bool, control: bool) {
     application().with_assets(Assets).run(move |cx: &mut App| {
         // These pixels describe native window geometry, not control spacing.
         let bounds = Bounds::centered(None, size(px(1440.), px(940.)), cx);
-        start(
+        // `--hidden` (control builds) keeps the window off screen for `adeline ui`.
+        let hidden = control && std::env::args().any(|arg| arg == "--hidden");
+        let adeline = start(
             demo_mode,
             verbose,
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(800.), px(600.))),
+                show: !hidden,
+                focus: !hidden,
                 ..titlebar::main_window_options()
             },
             cx,
         );
+        // A hidden window keeps the platform's default placement until it shows.
+        if hidden {
+            let window = adeline.read(cx).main_window;
+            let _ = window.update(cx, |_, window, _| window.resize(bounds.size));
+        }
         #[cfg(feature = "control")]
-        if control && let Err(error) = control::serve(demo_mode, cx) {
+        if control && let Err(error) = control::serve(demo_mode, hidden, cx) {
             tracing::event!(
                 name: "control.serve.failed",
                 tracing::Level::WARN,
@@ -1129,6 +1113,9 @@ fn bind_keys(cx: &mut App) {
             KeyBinding::new(&key("shift-f"), ForkChat, None),
             KeyBinding::new(&key("shift-g"), ForkSource, None),
             KeyBinding::new(&key("shift-c"), CopyCode, None),
+            KeyBinding::new(&key("b"), ToggleChatList, None),
+            KeyBinding::new(&key("shift-b"), ToggleSidePane, None),
+            KeyBinding::new(&key("p"), ProjectPalette, None),
         ]);
     }
     // Cmd+Tab is the macOS app switcher, so tabs switch with Ctrl alone.
