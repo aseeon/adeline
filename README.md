@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/adeline-banner.png" alt="Adeline" />
+  <img src="docs/images/adeline-banner.png" alt="Adeline" />
 </p>
 
 <p align="center">
@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/adeline-screenshot.png" alt="Adeline with a project's chats on the left, a Claude Code conversation in the middle, and the agent's activity on the right" width="960" />
+  <img src="docs/images/adeline-screenshot.png" alt="Adeline with a project's chats on the left, a Claude Code conversation in the middle, and the agent's activity on the right" width="960" />
 </p>
 
 Adeline is an agentic development environment written in Rust. It keeps your projects, agents, and conversations in one fast native app. Agents keep working after you close the window, and every conversation is saved to disk.

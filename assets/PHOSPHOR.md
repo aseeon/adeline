@@ -10,15 +10,12 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | --- | --- |
 | `archive.svg` | `archive.svg` |
 | `arrow-counter-clockwise.svg` | `arrow-counter-clockwise.svg` |
-| `arrow-elbow-down-left.svg` | `arrow-elbow-down-left.svg` |
 | `arrow-u-up-left.svg` | `arrow-u-up-left.svg` |
 | `arrow-u-up-right.svg` | `arrow-u-up-right.svg` |
 | `arrow.svg` | `arrow-right.svg` |
 | `at.svg` | `at.svg` |
 | `caret-double-down.svg` | `caret-double-down.svg` |
 | `caret-right.svg` | `caret-right.svg` |
-| `chat-fill.svg` | `chat-circle-fill.svg` |
-| `chat-illustration.svg` | `chats-circle.svg` |
 | `chat.svg` | `chat-circle.svg` |
 | `check-square.svg` | `check-square.svg` |
 | `check.svg` | `check.svg` |
@@ -28,8 +25,6 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `close.svg` | `x.svg` |
 | `code-block.svg` | `code-block.svg` |
 | `code.svg` | `code.svg` |
-| `command.svg` | `command.svg` |
-| `control.svg` | `control.svg` |
 | `copy.svg` | `copy.svg` |
 | `devices.svg` | `devices.svg` |
 | `edit.svg` | `pencil-simple.svg` |
@@ -40,22 +35,16 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `floppy-disk.svg` | `floppy-disk.svg` |
 | `folder.svg` | `folder.svg` |
 | `fork.svg` | `arrows-split.svg`, turned 90° counter-clockwise |
-| `house.svg` | `house.svg` |
 | `info.svg` | `info.svg` |
 | `lightbulb.svg` | `lightbulb.svg` |
 | `link.svg` | `link.svg` |
 | `list-bullets.svg` | `list-bullets.svg` |
 | `list-checks.svg` | `list-checks.svg` |
 | `list-numbers.svg` | `list-numbers.svg` |
-| `logo.svg` | `circles-four.svg` |
-| `menu.svg` | `list.svg` |
-| `minus.svg` | `minus.svg` |
 | `more.svg` | `dots-three.svg` |
 | `new-chat.svg` | `note-pencil.svg` |
 | `note-pencil.svg` | `note-pencil.svg` |
 | `panel-left.svg` | `sidebar-simple.svg` |
-| `pin.svg` | `push-pin.svg` |
-| `play.svg` | `play.svg` |
 | `plus.svg` | `plus.svg` |
 | `pulse.svg` | `pulse.svg` |
 | `quotes.svg` | `quotes.svg` |
@@ -69,7 +58,6 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `square.svg` | `square.svg` |
 | `stop.svg` | `stop.svg` |
 | `table.svg` | `table.svg` |
-| `text-align-left.svg` | `text-align-left.svg` |
 | `text-b.svg` | `text-b.svg` |
 | `text-h-one.svg` | `text-h-one.svg` |
 | `text-h-three.svg` | `text-h-three.svg` |
@@ -82,6 +70,5 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `warning-octagon.svg` | `warning-octagon.svg` |
 | `warning.svg` | `warning.svg` |
 | `workflow.svg` | `flow-arrow.svg` |
-| `working.svg` | `spinner-gap.svg` |
 | `wrench.svg` | `wrench.svg` |
 
