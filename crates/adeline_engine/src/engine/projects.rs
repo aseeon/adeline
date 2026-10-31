@@ -65,6 +65,17 @@ impl Engine {
         }));
     }
 
+    // Drops what the engine holds in memory for a conversation whose project is gone.
+    fn forget_conversation(&mut self, id: &str) {
+        if let Some(live) = self.live.remove(id) {
+            for queued in live.queued {
+                self.queued_files.remove(&queued.id);
+            }
+        }
+        self.attachments.remove(id);
+        self.steering.remove(id);
+    }
+
     pub(super) fn finish_deletions(&mut self) {
         let ready: Vec<_> = self
             .deleting
@@ -82,7 +93,7 @@ impl Engine {
                 block_in_place(|| self.store.delete_project(&id)).map_err(|e| format!("{e:#}"));
             if result.is_ok() {
                 for conversation in self.project_conversations(&id) {
-                    self.live.remove(&conversation);
+                    self.forget_conversation(&conversation);
                 }
                 self.projects.retain(|p| p.config.id != id);
                 self.broadcast_message(&EngineMessage::Delta(Delta::ProjectRemoved {
@@ -362,7 +373,7 @@ impl Engine {
         }
         for id in changes.removed {
             for conversation in self.project_conversations(&id) {
-                self.live.remove(&conversation);
+                self.forget_conversation(&conversation);
             }
             self.projects.retain(|p| p.config.id != id);
             self.broadcast_message(&EngineMessage::Delta(Delta::ProjectRemoved { id }));
