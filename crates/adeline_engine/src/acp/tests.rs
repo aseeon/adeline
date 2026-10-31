@@ -580,7 +580,7 @@ fn files_are_embedded_or_linked_and_images_need_support() {
         mime: "text/plain".into(),
         ..Attachment::default()
     };
-    assert!(worker.content(&[Part::File(empty)]).is_ok());
+    worker.content(&[Part::File(empty)]).unwrap();
     // The linked copy goes when the worker does.
     let copies = worker.attachments.get().unwrap().path().to_owned();
     assert_eq!(std::fs::read_dir(&copies).unwrap().count(), 1);
