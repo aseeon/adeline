@@ -661,7 +661,6 @@ impl Adeline {
                         &self.docs_key(),
                         &path,
                         &self.docs.images,
-                        config::with(|s| s.modes.docs.load_remote_images),
                         panes::selectable_in(panes::DOCS_MAIN, cx),
                     )
                     .style(prose(cx))

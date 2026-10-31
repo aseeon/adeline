@@ -222,7 +222,6 @@ pub struct Docs {
     pub show_left_panel: bool,
     pub show_conversation_panel: bool,
     pub open_in: DocView,
-    pub load_remote_images: bool,
 }
 impl Default for Docs {
     fn default() -> Self {
@@ -231,7 +230,6 @@ impl Default for Docs {
             show_left_panel: true,
             show_conversation_panel: true,
             open_in: DocView::Viewer,
-            load_remote_images: false,
         }
     }
 }

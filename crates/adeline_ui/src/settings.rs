@@ -149,12 +149,6 @@ impl Adeline {
                     docs.open_in == config::DocView::Editor,
                     Action::Docs(docs::Act::OpenIn),
                 ),
-                (
-                    "Load remote images",
-                    "Show images from the web in the Viewer.",
-                    docs.load_remote_images,
-                    Action::Docs(docs::Act::RemoteImages),
-                ),
             ];
         }
         if section != Section::Chats {

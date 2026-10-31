@@ -1,7 +1,7 @@
 //! The Markdown Viewer: the Kit's text view with front matter as a table,
 //! GitHub alerts, task checkboxes that edit the file, mermaid diagrams,
-//! project images read through the engine, and remote images shown as links
-//! unless the user allows loading them.
+//! project images read through the engine, and remote images shown as links.
+//! Alert and task bodies are views of their own with the same extensions.
 //!
 //! Renderers run outside the app's entities, so clicks reach `Adeline` as
 //! actions carrying the byte offsets of the doc's source they act on.
@@ -199,15 +199,59 @@ fn link_handler(url: &SharedString, _: &ClickEvent, window: &mut Window, cx: &mu
     window.dispatch_action(Box::new(OpenLink { url: url.clone() }), cx);
 }
 
-fn nested(id: impl Into<ElementId>, body: &SharedString, cx: &App) -> TextView {
-    TextView::markdown(id, body.clone())
-        .selectable(crate::panes::selectable_in(crate::panes::DOCS_MAIN, cx))
-        .on_link_click(link_handler)
-        .w_full()
-        .min_w_0()
+// The doc a view shows, which its images are relative to.
+#[derive(Clone)]
+struct Source {
+    images: Images,
+    project: String,
+    path: String,
 }
 
-fn render_alert(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyElement {
+impl Source {
+    fn image(&self, uri: &SharedUri) -> ImageSource {
+        let url = uri.as_ref();
+        let found = adeline_docs::join(&self.path, url.split('#').next().unwrap_or(url))
+            .and_then(|path| self.images.get((self.project.clone(), path)));
+        ImageSource::Image(found.unwrap_or_else(|| Arc::clone(&PLACEHOLDER)))
+    }
+}
+
+fn extensions(extensions: MarkdownExtensions, source: &Source) -> MarkdownExtensions {
+    let (alerts, tasks) = (source.clone(), source.clone());
+    extensions
+        .plugin(RemoteImage)
+        .block_parser(alert)
+        .block_parser(task)
+        .block_parser(diagram)
+        .block_renderer("alert", move |node, window, cx| {
+            render_alert(node, &alerts, window, cx)
+        })
+        .block_renderer("task", move |node, window, cx| {
+            render_task(node, &tasks, window, cx)
+        })
+        .block_renderer("mermaid", render_diagram)
+}
+
+fn configured(view: TextView, extensions: MarkdownExtensions, source: &Source) -> TextView {
+    let images = source.clone();
+    view.markdown_extensions(extensions)
+        .on_link_click(link_handler)
+        .image_source(move |uri| images.image(uri))
+}
+
+fn nested(id: impl Into<ElementId>, body: &SharedString, source: &Source, cx: &App) -> TextView {
+    let view = TextView::markdown(id, body.clone());
+    configured(
+        view,
+        extensions(MarkdownExtensions::default(), source),
+        source,
+    )
+    .selectable(crate::panes::selectable_in(crate::panes::DOCS_MAIN, cx))
+    .w_full()
+    .min_w_0()
+}
+
+fn render_alert(node: &MarkdownNode, source: &Source, _: &mut Window, cx: &mut App) -> AnyElement {
     let Some(alert) = node.data::<Alert>() else {
         return div().into_any_element();
     };
@@ -243,12 +287,13 @@ fn render_alert(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyElement
         .child(nested(
             ("alert", node.source_range().map_or(0, |r| r.start)),
             &alert.body,
+            source,
             cx,
         ))
         .into_any_element()
 }
 
-fn render_task(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyElement {
+fn render_task(node: &MarkdownNode, source: &Source, _: &mut Window, cx: &mut App) -> AnyElement {
     let Some(task) = node.data::<Task>().cloned() else {
         return div().into_any_element();
     };
@@ -278,12 +323,12 @@ fn render_task(node: &MarkdownNode, _: &mut Window, cx: &mut App) -> AnyElement 
                     window.dispatch_action(Box::new(ToggleTask { offset: task.mark }), cx);
                 }),
         )
-        .child(
-            div()
-                .flex_1()
-                .min_w_0()
-                .child(nested(("task-body", task.mark), &task.body, cx)),
-        )
+        .child(div().flex_1().min_w_0().child(nested(
+            ("task-body", task.mark),
+            &task.body,
+            source,
+            cx,
+        )))
         .into_any_element()
 }
 
@@ -462,39 +507,19 @@ pub(crate) fn markdown(
     project: &str,
     path: &str,
     images: &Images,
-    remote_images: bool,
     selectable: bool,
 ) -> TextView {
-    let mut extensions = MarkdownExtensions::default()
+    let source = Source {
+        images: images.clone(),
+        project: project.to_owned(),
+        path: path.to_owned(),
+    };
+    let front = MarkdownExtensions::default()
         .frontmatter()
         .plugin(FrontmatterPlugin::new());
-    if !remote_images {
-        extensions = extensions.plugin(RemoteImage);
-    }
-    let extensions = extensions
-        .block_parser(alert)
-        .block_parser(task)
-        .block_parser(diagram)
-        .block_renderer("alert", render_alert)
-        .block_renderer("task", render_task)
-        .block_renderer("mermaid", render_diagram);
-    let images = images.clone();
-    let from = path.to_owned();
-    let project = project.to_owned();
-    TextView::new(state)
-        .markdown_extensions(extensions)
+    configured(TextView::new(state), extensions(front, &source), &source)
         .scrollable(true)
         .selectable(selectable)
-        .on_link_click(link_handler)
-        .image_source(move |uri| {
-            let url = uri.as_ref();
-            if remote(url) {
-                return ImageSource::Resource(Resource::Uri(uri.clone()));
-            }
-            let found = adeline_docs::join(&from, url.split('#').next().unwrap_or(url))
-                .and_then(|path| images.get((project.clone(), path)));
-            ImageSource::Image(found.unwrap_or_else(|| Arc::clone(&PLACEHOLDER)))
-        })
 }
 
 #[cfg(test)]

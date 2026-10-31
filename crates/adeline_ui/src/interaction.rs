@@ -58,7 +58,6 @@ impl Adeline {
                             | docs::Act::LeftPanel
                             | docs::Act::ChatPanel
                             | docs::Act::OpenIn
-                            | docs::Act::RemoteImages
                     )
             )
         {

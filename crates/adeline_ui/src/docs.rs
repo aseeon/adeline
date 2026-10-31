@@ -131,7 +131,6 @@ pub(crate) enum Act {
     ChatPanel,
     Gitignore,
     OpenIn,
-    RemoteImages,
     Chooser,
     Chat(Option<String>),
     More(String),
@@ -1560,7 +1559,6 @@ impl Adeline {
                 Act::LeftPanel => docs.show_left_panel = !docs.show_left_panel,
                 Act::ChatPanel => docs.show_conversation_panel = !docs.show_conversation_panel,
                 Act::Gitignore => docs.respect_gitignore = !docs.respect_gitignore,
-                Act::RemoteImages => docs.load_remote_images = !docs.load_remote_images,
                 Act::OpenIn => {
                     docs.open_in = match docs.open_in {
                         DocView::Viewer => DocView::Editor,
@@ -1709,7 +1707,7 @@ impl Adeline {
                 self.docs.shown = None;
                 self.docs_record(cx);
             }
-            Act::LeftPanel | Act::ChatPanel | Act::Gitignore | Act::OpenIn | Act::RemoteImages => {
+            Act::LeftPanel | Act::ChatPanel | Act::Gitignore | Act::OpenIn => {
                 self.docs_setting(&act, window, cx);
             }
             Act::Chooser => self.open_commands("chats", window, cx),
