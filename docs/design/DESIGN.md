@@ -26,7 +26,7 @@ All numbers are in logical pixels at 1× scale.
 | Right island | A 330 pane, then a 56 rail. The rail stays visible when the pane is closed. In other modes the pane holds the chat and is 440. |
 | Chat header | 26 tall, starting at the 8 padding. Its text centers at 21, the middle of the 42 gap. |
 | Window controls | Three 46×40 buttons in the top right corner. They sit in the gap above the right island. |
-| Chat column | Max width 760, with 28 side padding. Agent prose stops at 68ch. |
+| Chat column | Max width 760, with 28 side padding. Agent prose uses the full column. |
 | Composer | Its bottom sits 21 from the window's bottom edge, level with the islands. |
 
 The header text is "Mode / project / item" in every mode. The mode and project are in `--fg2`, each `/` is in `--fg3`, and the item is in `--fg` at weight 500. It centers over the main area. Nothing else goes in the header. Buttons for a chat's side details belong on the right rail.
@@ -109,7 +109,7 @@ Every size comes from the scale below, set as tokens on `:root` in design.html. 
 - **Weights.** Use only 400, 500 and 600. `font-synthesis: none` stops the browser from faking a weight that wasn't loaded.
 - **Mono.** Code runs one step below the text around it: 13 inside 15 prose, 12 inside 13 lists.
 - **Monogram initials.** These are glyphs, not text. They're 9 in boxes up to 22, and `--t-micro` in boxes of 28 and up.
-- **Headings.** They use `text-wrap: balance`. Prose blocks use `text-wrap: pretty` and stop at 68ch.
+- **Headings.** They use `text-wrap: balance`. Prose blocks use `text-wrap: pretty`. Documents and ask cards stop at 68ch.
 - **Floor.** Never set text below 11. Monogram initials are the only exception.
 - **Hover and selection.** Never change font weight on hover or selection, because the text reflows. The one weight change is unread rows going to 500, which marks state and not interaction.
 

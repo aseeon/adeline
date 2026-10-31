@@ -230,13 +230,7 @@ impl Adeline {
                         .map(|thought| div().mb(dp(6.)).child(thought)),
                 )
                 .when(!message.text.is_empty(), |content| {
-                    content.child(
-                        div()
-                            .group("reply")
-                            .max_w(dp(640.))
-                            .text_color(isl.fg)
-                            .child(body),
-                    )
+                    content.child(div().group("reply").text_color(isl.fg).child(body))
                 })
                 .child(meta.mt(dp(4.)))
                 .when(thread.ends_turn(i) && !writing, |content| {
