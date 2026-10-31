@@ -420,6 +420,10 @@ mod tests {
         assert!(error.contains("not a file"), "{error}");
         #[cfg(unix)]
         {
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "a test thread, not the UI thread"
+            )]
             let made = std::process::Command::new("mkfifo")
                 .arg(root.join("wait.md"))
                 .status()
