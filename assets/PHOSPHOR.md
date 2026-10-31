@@ -4,6 +4,7 @@ Regular-weight SVGs from [Phosphor Icons](https://phosphoricons.com/).
 Application aliases retain the names used by the UI. Agent avatars are copied from
 their harness icon when the agent is added: `omp.svg` for OMP, otherwise the ACP
 registry icon.
+`board.svg`, `terminal.svg`, `globe.svg` and `chart.svg` are drawn from the Islands design (`docs/design/design.html`).
 See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 
 | Asset | Phosphor source |

@@ -16,6 +16,10 @@ pub enum Section {
     Groupchats,
     Issues,
     Whiteboard,
+    Board,
+    Terminal,
+    Browser,
+    Usage,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
@@ -64,11 +68,17 @@ impl Features {
             Section::Groupchats => self.groupchats,
             Section::Issues => self.issues,
             Section::Whiteboard => self.whiteboard,
+            // Hidden until they are built.
+            Section::Board | Section::Terminal | Section::Browser | Section::Usage => false,
         }
     }
     pub fn toggle(&mut self, section: Section) {
         let enabled = match section {
-            Section::Chats => return,
+            Section::Chats
+            | Section::Board
+            | Section::Terminal
+            | Section::Browser
+            | Section::Usage => return,
             Section::Docs => &mut self.docs,
             Section::Workflows => &mut self.workflows,
             Section::Services => &mut self.services,
@@ -401,6 +411,15 @@ mod tests {
             settings.general.features.toggle(section);
         }
         settings.general.features.toggle(Section::Chats);
+        for section in [
+            Section::Board,
+            Section::Terminal,
+            Section::Browser,
+            Section::Usage,
+        ] {
+            settings.general.features.toggle(section);
+            assert!(!settings.general.features.enabled(section));
+        }
         let yaml = serde_yaml_ng::to_string(&settings).unwrap();
         assert!(!yaml.contains("close_picker_after_selection"));
         let restored: Settings = serde_yaml_ng::from_str(&yaml).unwrap();

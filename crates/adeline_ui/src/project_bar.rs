@@ -32,9 +32,13 @@ pub(super) struct PendingRemoval {
     generation: u64,
 }
 
-const RAIL: [(Section, &str, &str); 7] = [
+const RAIL: [(Section, &str, &str); 11] = [
     (Section::Chats, "Chats", "chat.svg"),
     (Section::Docs, "Docs", "file.svg"),
+    (Section::Board, "Board", "board.svg"),
+    (Section::Terminal, "Terminal", "terminal.svg"),
+    (Section::Browser, "Browser", "globe.svg"),
+    (Section::Usage, "Usage", "chart.svg"),
     (Section::Workflows, "Workflows", "workflow.svg"),
     (Section::Services, "Services", "service.svg"),
     (Section::Groupchats, "Groupchats", "group.svg"),

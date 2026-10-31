@@ -116,7 +116,7 @@ Docs is the first mode beyond chat. It follows the plan below in a simpler form;
 
 ## Modes (planned)
 
-Docs is built (see Docs mode). The rest is the agreed shape for the other modes (Issues, Workflows, Services, Group chats, Whiteboard) and for extensions.
+Docs is built (see Docs mode). The rest is the agreed shape for the other modes (Issues, Workflows, Services, Group chats, Whiteboard, and the Islands design's Board, Terminal, Browser and Usage) and for extensions. The design's four are on the rail in `project_bar.rs`, but `Features::enabled` hides them until each is built.
 
 Each mode is a first-party crate (`adeline_docs`, `adeline_issues`, …), not an extension. Its engine half has no GPUI. It turns conversation state into cards and answers the mode's own `Command`s (reading a doc, fetching an issue). Its view half sits behind a `ui` feature, so the headless build compiles the crate without GPUI.
 
