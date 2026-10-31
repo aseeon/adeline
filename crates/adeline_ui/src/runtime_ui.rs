@@ -179,6 +179,7 @@ impl Adeline {
         };
         let project_id = self.workspace().config.id.clone();
         let key = self.workspace().key();
+        let sent = attachments.clone();
         let command = Command::Send {
             project_id,
             conversation_id,
@@ -201,7 +202,8 @@ impl Adeline {
                     app.composer
                         .update(cx, |state, cx| state.set_value("", window, cx));
                 }
-                app.attachments.clear();
+                // Files attached since sending stay.
+                app.attachments.retain(|file| !sent.contains(file));
                 app.attachment_error = None;
                 app.refresh_runtime_views(cx);
             }
