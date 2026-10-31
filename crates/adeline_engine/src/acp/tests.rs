@@ -575,6 +575,12 @@ fn files_are_embedded_or_linked_and_images_need_support() {
         matches!(&blocks[0], wire::ContentBlock::Image(image) if image.mime_type == "image/png")
     );
     assert!(matches!(&blocks[1], wire::ContentBlock::Resource(_)));
+    let empty = Attachment {
+        name: "empty.txt".into(),
+        mime: "text/plain".into(),
+        ..Attachment::default()
+    };
+    assert!(worker.content(&[Part::File(empty)]).is_ok());
     // The linked copy goes when the worker does.
     let copies = worker.attachments.get().unwrap().path().to_owned();
     assert_eq!(std::fs::read_dir(&copies).unwrap().count(), 1);

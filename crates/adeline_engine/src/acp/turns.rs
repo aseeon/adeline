@@ -473,6 +473,10 @@ pub(super) fn tool_detail(
 }
 
 fn attachment_bytes(file: &Attachment) -> anyhow::Result<Vec<u8>> {
+    // An empty file has no data and no path.
+    if file.path.is_none() && file.size == 0 {
+        return Ok(Vec::new());
+    }
     if !file.data.is_empty() {
         return adeline_core::conversation::unbase64(&file.data)
             .with_context(|| format!("{} could not be read.", file.name));
