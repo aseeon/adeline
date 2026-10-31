@@ -94,12 +94,18 @@ struct Alert {
 }
 
 #[derive(Clone)]
-struct Task {
-    checked: bool,
-    // Where the `[ ]` or `[x]` sits in the doc's source.
-    mark: usize,
+struct Item {
+    // `None` for an item that isn't a task.
+    checked: Option<bool>,
+    // Where a task's `[ ]` or `[x]` sits in the doc's source, else where the item starts.
+    at: usize,
+    // The bullet or number of an item that isn't a task.
+    marker: SharedString,
     body: SharedString,
 }
+
+#[derive(Clone)]
+struct Tasks(Vec<Item>);
 
 #[derive(Clone)]
 struct Diagram {
@@ -138,27 +144,51 @@ fn alert(node: &mdast::Node, parse: &MarkdownParseContext<'_>) -> Option<Markdow
     )
 }
 
-fn task(node: &mdast::Node, parse: &MarkdownParseContext<'_>) -> Option<MarkdownNode> {
-    let mdast::Node::ListItem(item) = node else {
+// The Kit's lists draw only their own items, so a list holding a task becomes one node.
+fn tasks(node: &mdast::Node, parse: &MarkdownParseContext<'_>) -> Option<MarkdownNode> {
+    let mdast::Node::List(list) = node else {
         return None;
     };
-    let checked = item.checked?;
-    let start = item.position.as_ref()?.start.offset;
-    let source = parse.node_source(node)?;
-    let open = source.find('[')?;
-    let close = source[open..].find(']')? + open;
-    let body = task_body(source, close);
-    Some(
-        MarkdownNode::new(
-            "task",
-            Task {
-                checked,
-                mark: parse.offset() + start + open,
-                body: body.clone().into(),
-            },
-        )
-        .text(body),
-    )
+    let is_task = |child: &mdast::Node| matches!(child, mdast::Node::ListItem(item) if item.checked.is_some());
+    if !list.children.iter().any(is_task) {
+        return None;
+    }
+    let mut items = Vec::new();
+    for (ix, child) in list.children.iter().enumerate() {
+        let mdast::Node::ListItem(item) = child else {
+            continue;
+        };
+        let source = parse.node_source(child)?;
+        let start = parse.offset() + item.position.as_ref()?.start.offset;
+        let (at, close) = if item.checked.is_some() {
+            let open = source.find('[')?;
+            (start + open, source[open..].find(']')? + open)
+        } else {
+            let marker_end = source.find([' ', '\t']).unwrap_or(source.len());
+            (start, marker_end.saturating_sub(1))
+        };
+        let marker = if list.ordered {
+            let number = list
+                .start
+                .unwrap_or(1)
+                .saturating_add(u32::try_from(ix).unwrap_or(u32::MAX));
+            format!("{number}.")
+        } else {
+            "•".to_owned()
+        };
+        items.push(Item {
+            checked: item.checked,
+            at,
+            marker: marker.into(),
+            body: task_body(source, close).into(),
+        });
+    }
+    let text = items
+        .iter()
+        .map(|item| item.body.as_ref())
+        .collect::<Vec<_>>()
+        .join("\n");
+    Some(MarkdownNode::new("tasks", Tasks(items)).text(text))
 }
 
 // The text after the `]` at `close`, with later lines dedented to where it starts.
@@ -217,17 +247,17 @@ impl Source {
 }
 
 fn extensions(extensions: MarkdownExtensions, source: &Source) -> MarkdownExtensions {
-    let (alerts, tasks) = (source.clone(), source.clone());
+    let (alerts, lists) = (source.clone(), source.clone());
     extensions
         .plugin(RemoteImage)
         .block_parser(alert)
-        .block_parser(task)
+        .block_parser(tasks)
         .block_parser(diagram)
         .block_renderer("alert", move |node, window, cx| {
             render_alert(node, &alerts, window, cx)
         })
-        .block_renderer("task", move |node, window, cx| {
-            render_task(node, &tasks, window, cx)
+        .block_renderer("tasks", move |node, window, cx| {
+            render_tasks(node, &lists, window, cx)
         })
         .block_renderer("mermaid", render_diagram)
 }
@@ -293,25 +323,33 @@ fn render_alert(node: &MarkdownNode, source: &Source, _: &mut Window, cx: &mut A
         .into_any_element()
 }
 
-fn render_task(node: &MarkdownNode, source: &Source, _: &mut Window, cx: &mut App) -> AnyElement {
-    let Some(task) = node.data::<Task>().cloned() else {
+fn render_tasks(node: &MarkdownNode, source: &Source, _: &mut Window, cx: &mut App) -> AnyElement {
+    let Some(Tasks(items)) = node.data::<Tasks>().cloned() else {
         return div().into_any_element();
-    };
-    let label = if task.checked {
-        "Mark as not done"
-    } else {
-        "Mark as done"
     };
     div()
         .w_full()
+        .my_1()
         .flex()
-        .items_start()
-        .gap_2()
-        .child(
-            Button::new(("task", task.mark))
+        .flex_col()
+        .gap_0p5()
+        .children(items.into_iter().map(|item| render_item(item, source, cx)))
+        .into_any_element()
+}
+
+fn render_item(item: Item, source: &Source, cx: &App) -> AnyElement {
+    let at = item.at;
+    let lead = match item.checked {
+        Some(checked) => {
+            let label = if checked {
+                "Mark as not done"
+            } else {
+                "Mark as done"
+            };
+            Button::new(("task", at))
                 .ghost()
                 .xsmall()
-                .icon(Icon::default().path(if task.checked {
+                .icon(Icon::default().path(if checked {
                     "check-square.svg"
                 } else {
                     "square.svg"
@@ -320,15 +358,29 @@ fn render_task(node: &MarkdownNode, source: &Source, _: &mut Window, cx: &mut Ap
                 .accessibility_label(label)
                 .tooltip(label)
                 .on_click(move |_, window, cx| {
-                    window.dispatch_action(Box::new(ToggleTask { offset: task.mark }), cx);
-                }),
+                    window.dispatch_action(Box::new(ToggleTask { offset: at }), cx);
+                })
+                .into_any_element()
+        }
+        None => div()
+            .w_5()
+            .flex()
+            .justify_center()
+            .child(item.marker)
+            .into_any_element(),
+    };
+    div()
+        .w_full()
+        .flex()
+        .items_start()
+        .gap_2()
+        .child(lead)
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .child(nested(("list-item", at), &item.body, source, cx)),
         )
-        .child(div().flex_1().min_w_0().child(nested(
-            ("task-body", task.mark),
-            &task.body,
-            source,
-            cx,
-        )))
         .into_any_element()
 }
 

@@ -536,6 +536,20 @@ fn docs_failed_rename_keeps_editing(cx: &mut TestAppContext) {
     ui.named("plan.md");
 }
 
+// The plan's list has one done task and three open ones.
+#[gpui_kit::test]
+fn docs_task_checkboxes_show_and_toggle(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.press("ctrl-2");
+    open_doc(&mut ui, "notes/plan", 2);
+    ui.named("notes/plan.md, Viewer");
+    let count = |ui: &mut Ui, label: &str| ui.all(|l| l == label).len();
+    assert_eq!(count(&mut ui, "Mark as done"), 3);
+    ui.click("Mark as not done");
+    assert_eq!(count(&mut ui, "Mark as done"), 4);
+    assert_eq!(count(&mut ui, "Mark as not done"), 0);
+}
+
 #[gpui_kit::test]
 fn docs_diagrams_render_in_the_background(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
