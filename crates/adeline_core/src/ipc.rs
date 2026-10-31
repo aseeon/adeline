@@ -191,9 +191,11 @@ impl Listener {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
-            let dir = engine_dir()?;
-            std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
-                .with_context(|| dir.display().to_string())?;
+            // The parent holds settings and transcripts, so it is the user's alone too.
+            for dir in [crate::config::directory()?, engine_dir()?] {
+                std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+                    .with_context(|| dir.display().to_string())?;
+            }
             // A socket left by a crashed process. The engine lock, or the
             // process ID in the name, proves it's stale.
             let _ = std::fs::remove_file(address);
