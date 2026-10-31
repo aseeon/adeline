@@ -946,7 +946,7 @@ impl Engine {
             Command::WatchTraffic { id } => {
                 let recorded = id
                     .as_ref()
-                    .map(|id| self.store.traffic(id, TRAFFIC_BACKLOG))
+                    .map(|id| block_in_place(|| self.store.traffic(id, TRAFFIC_BACKLOG)))
                     .unwrap_or_default();
                 match id {
                     Some(id) => self.watching.insert(client, id),

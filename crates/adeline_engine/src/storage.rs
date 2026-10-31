@@ -837,12 +837,34 @@ impl ProjectStore {
             .collect()
     }
 
+    // Saved traffic isn't kept in memory, so this reads it from the transcript.
     pub fn traffic(&self, conversation_id: &str, limit: usize) -> Vec<Value> {
-        let Some(conversation) = self.conversation(conversation_id) else {
+        let Ok(root) = &self.root else {
             return Vec::new();
         };
-        let mut last: Vec<_> = conversation
-            .events
+        let Some((project, conversation)) = self.projects.iter().find_map(|p| {
+            p.conversations
+                .iter()
+                .find(|c| c.id == conversation_id)
+                .map(|c| (p, c))
+        }) else {
+            return Vec::new();
+        };
+        let path = conversation_dir(root, &project.id, conversation_id).join("transcript.jsonl");
+        // ponytail: reads the whole transcript; read backwards from the end if that gets slow.
+        let bytes = safe_conversation_path(&path)
+            .and_then(|()| ensure_regular_file(&path))
+            .and_then(|()| Ok(fs::read(&path)?))
+            .unwrap_or_default();
+        let persisted = usize::try_from(conversation.persisted_len)
+            .unwrap_or(usize::MAX)
+            .min(bytes.len());
+        let saved: Vec<_> = bytes[..persisted]
+            .split(|byte| *byte == b'\n')
+            .filter_map(|line| serde_json::from_slice::<TranscriptEvent>(line).ok())
+            .filter(|event| event.kind == "traffic")
+            .collect();
+        let mut last: Vec<_> = saved
             .iter()
             .chain(&conversation.unsaved_events)
             .rev()

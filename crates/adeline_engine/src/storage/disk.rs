@@ -124,7 +124,12 @@ pub(super) fn flush_events(conversation: &mut StoredConversation, path: &Path) -
                 return Err(error);
             }
         }
-        conversation.events.append(&mut conversation.unsaved_events);
+        conversation.events.extend(
+            conversation
+                .unsaved_events
+                .drain(..)
+                .filter(|event| event.kind != "traffic"),
+        );
         conversation.storage_error = None;
         Ok(())
     })();
@@ -191,9 +196,12 @@ pub(super) fn load_conversation(folder: &Path) -> Result<Option<StoredConversati
             needs_rollback = true;
             break;
         }
-        match serde_json::from_slice(line) {
+        match serde_json::from_slice::<TranscriptEvent>(line) {
             Ok(event) => {
-                events.push(event);
+                // Traffic stays on disk; `ProjectStore::traffic` reads it back when watched.
+                if event.kind != "traffic" {
+                    events.push(event);
+                }
                 persisted_len += line.len() as u64;
             }
             Err(e) => {

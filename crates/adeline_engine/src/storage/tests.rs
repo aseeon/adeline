@@ -474,6 +474,13 @@ fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
 
     let reloaded = open_store(&test);
     assert!(reloaded.errors.is_empty(), "{:?}", reloaded.errors);
+    // Traffic is read from disk when watched, not held with the events.
+    let stored = reloaded.conversation(&conversation).unwrap();
+    assert!(stored.events.iter().all(|event| event.kind != "traffic"));
+    assert_eq!(
+        reloaded.traffic(&conversation, 10),
+        [serde_json::json!({"at":1,"direction":"from_agent","text":"{}"})]
+    );
     let thread = reloaded.conversation(&conversation).unwrap().to_thread();
     assert_eq!(
         thread
