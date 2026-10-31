@@ -76,7 +76,7 @@ impl Worker {
                     )));
                 }
                 Part::File(file) => {
-                    let path = linked_path(file)?;
+                    let path = self.linked_path(file)?;
                     blocks.push(wire::ContentBlock::ResourceLink(
                         wire::ResourceLink::new(file.name.clone(), path_uri(&path))
                             .mime_type(file.mime.clone())
@@ -86,6 +86,36 @@ impl Worker {
             }
         }
         Ok(blocks)
+    }
+
+    // A private folder of the worker's own, so other users can't read or replace the copies.
+    fn linked_path(&self, file: &Attachment) -> anyhow::Result<std::path::PathBuf> {
+        if let Some(path) = &file.path {
+            return Ok(path.clone());
+        }
+        let bytes = attachment_bytes(file)?;
+        if self.attachments.get().is_none() {
+            let folder = tempfile::Builder::new()
+                .prefix("adeline-attachments-")
+                .tempdir()
+                .context("Could not make a folder for attachments")?;
+            let _ = self.attachments.set(folder);
+        }
+        let root = self
+            .attachments
+            .get()
+            .context("No folder for attachments")?;
+        // A folder per copy, so two attachments with one name both fit.
+        let folder = root.path().join(adeline_core::files::unique("file"));
+        let name = Path::new(&file.name)
+            .file_name()
+            .map_or_else(|| "attachment".into(), |name| name.to_os_string());
+        let path = folder.join(name);
+        block_in_place(|| {
+            std::fs::create_dir(&folder).with_context(|| folder.display().to_string())?;
+            adeline_core::files::write_new(&path, &bytes)
+        })?;
+        Ok(path)
     }
 
     pub(super) fn steer(&mut self, prompt: &[Part]) {
@@ -460,21 +490,6 @@ fn attachment_data(file: &Attachment) -> anyhow::Result<String> {
     } else {
         Ok(file.data.clone())
     }
-}
-
-fn linked_path(file: &Attachment) -> anyhow::Result<std::path::PathBuf> {
-    if let Some(path) = &file.path {
-        return Ok(path.clone());
-    }
-    let bytes = attachment_bytes(file)?;
-    let folder = std::env::temp_dir().join(adeline_core::files::unique("adeline-attachment"));
-    let name = Path::new(&file.name)
-        .file_name()
-        .map_or_else(|| "attachment".into(), |name| name.to_os_string());
-    let path = folder.join(name);
-    block_in_place(|| std::fs::create_dir_all(&folder).and_then(|()| std::fs::write(&path, bytes)))
-        .with_context(|| path.display().to_string())?;
-    Ok(path)
 }
 
 fn file_uri(file: &Attachment) -> String {

@@ -152,6 +152,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml_ng",
+ "tempfile",
  "tokio",
  "tracing",
  "windows-sys 0.61.2",

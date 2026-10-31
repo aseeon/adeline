@@ -528,6 +528,8 @@ struct Worker {
     fork: Option<(Option<String>, String)>,
     forking: bool,
     probing: bool,
+    // Copies of attachments the agent reads by path, deleted with the worker.
+    attachments: std::cell::OnceCell<tempfile::TempDir>,
     #[expect(
         clippy::option_option,
         reason = "nothing pending, a logout, or a login"
@@ -588,6 +590,7 @@ impl Worker {
             fork: None,
             forking: false,
             probing: false,
+            attachments: std::cell::OnceCell::new(),
             auth: None,
         }
     }
