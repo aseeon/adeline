@@ -48,7 +48,9 @@ pub(super) fn island(cx: &App) -> Div {
             BoxShadow::new(px(0.), px(0.), isl.ring)
                 .blur_radius(px(0.))
                 .spread_radius(px(1.)),
-            BoxShadow::new(px(0.), px(10.), hsla(0., 0., 0., 0.3)).blur_radius(px(30.)),
+            // Shorter than the design's 0 10 30 at 30%: GPUI doesn't dither, and a
+            // long faint shadow on a dark window shows wide 8-bit bands.
+            BoxShadow::new(px(0.), px(3.), hsla(0., 0., 0., 0.35)).blur_radius(px(10.)),
         ])
 }
 
