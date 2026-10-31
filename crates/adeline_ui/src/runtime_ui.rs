@@ -6,7 +6,7 @@
 //! Every other change goes through `refresh_runtime_views`, which redraws all
 //! the regions.
 use super::*;
-use adeline_core::conversation::{MessageRole, ThreadStatus};
+use adeline_core::conversation::{Attachment, MessageRole, ThreadStatus};
 use adeline_core::protocol::{Command, Delta, Live, Snapshot};
 use anyhow::Context as _;
 use serde_json::Value;
@@ -282,10 +282,13 @@ impl Adeline {
         self.request(
             Command::TakeQueued { id, queued },
             cx,
-            move |app, result, window, cx| match result {
-                Ok(Value::String(text)) if edit => {
+            move |app, result, window, cx| match result.and_then(|v| {
+                serde_json::from_value::<(String, Vec<Attachment>)>(v).map_err(|e| e.to_string())
+            }) {
+                Ok((text, files)) if edit => {
                     app.composer
                         .update(cx, |state, cx| state.set_value(text, window, cx));
+                    app.attachments.extend(files);
                     window.focus(&app.composer.focus_handle(cx), cx);
                 }
                 Ok(_) => {}

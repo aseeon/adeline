@@ -201,9 +201,9 @@ impl Engine {
     }
 
     pub(super) fn take_queued(&mut self, id: &str, queued: u64) -> Result<Value, String> {
-        let (text, _) = self.take_queued_parts(id, queued)?;
+        let parts = self.take_queued_parts(id, queued)?;
         self.send_live(id);
-        Ok(Value::String(text))
+        Ok(serde_json::to_value(parts).unwrap_or_default())
     }
 
     pub(super) fn send_queue(&mut self, id: &str) {

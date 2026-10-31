@@ -13,7 +13,8 @@
 //!
 //! Replies other than `null`: `Send` and `Fork` give a conversation ID,
 //! `SaveProject` a project ID, `SaveAgent` an agent ID, `TakeQueued` the
-//! message's text, `Probe` a `Result<Probed, ProbeError>`, `PlanInstall` a
+//! message's text and attachments as `(String, Vec<Attachment>)`, `Probe` a
+//! `Result<Probed, ProbeError>`, `PlanInstall` a
 //! `Vec<install::Planned>`, `ListDirectory` a `Listing` (of the home folder
 //! without a path), `WatchTraffic` the traffic recorded so far, `ListDocs` the
 //! project's doc paths, `ReadDoc` a `DocFile`, `WriteDoc` the saved file's
@@ -42,7 +43,7 @@ use std::{
     path::PathBuf,
 };
 
-pub const PROTOCOL: u32 = 5;
+pub const PROTOCOL: u32 = 6;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probed {

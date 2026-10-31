@@ -10,6 +10,7 @@
 
 mod common;
 
+use adeline_core::conversation::Attachment;
 use adeline_core::protocol::{ClientMessage, Command, EngineSettings, Live, PROTOCOL, Resume};
 use common::PROJECT;
 use serde_json::{Value, json};
@@ -374,6 +375,39 @@ fn a_message_sent_during_a_turn_waits_in_the_queue_and_runs_next() {
         .map(|message| message["params"]["prompt"][0]["text"].clone())
         .collect();
     assert_eq!(prompts, [json!("SLOW 2"), json!("and then this")]);
+}
+
+#[test]
+fn a_queued_message_taken_back_keeps_its_attachments() {
+    let mut home = Home::new("take-queued");
+    let mut client = home.connect();
+    let id = client.send(None, "SLOW 2");
+    client.wait_live(&id, |live| live.processing);
+    let file = Attachment {
+        name: "note.txt".into(),
+        mime: "text/plain".into(),
+        size: 2,
+        data: adeline_core::conversation::base64(b"hi"),
+        path: None,
+    };
+    client
+        .call(Command::Send {
+            project_id: PROJECT.into(),
+            conversation_id: Some(id.clone()),
+            agent_id: None,
+            prompt: "with a file".into(),
+            attachments: vec![file.clone()],
+            now: false,
+        })
+        .unwrap();
+    let queued = client.wait_live(&id, |live| live.queued.len() == 1).queued[0].id;
+    let taken = client
+        .call(Command::TakeQueued {
+            id: id.clone(),
+            queued,
+        })
+        .unwrap();
+    assert_eq!(taken, json!(["with a file", [file]]));
 }
 
 #[test]
