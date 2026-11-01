@@ -83,7 +83,7 @@ fn demo_conversation(cx: &mut TestAppContext) {
 fn expanded_activity_row_shows_the_whole_command(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
     ui.open_chat("Keep search text when changing filters");
-    ui.activate("Agent activity");
+    ui.press("ctrl-shift-i");
     let row = "cargo test --workspace \\";
     let collapsed = ui.named(row).bounds().size.height;
     ui.activate(row);
@@ -92,6 +92,23 @@ fn expanded_activity_row_shows_the_whole_command(cx: &mut TestAppContext) {
     ui.activate(row);
     ui.gone("Show in chat");
     assert_eq!(ui.named(row).bounds().size.height, collapsed);
+    no_engine();
+}
+
+#[gpui_kit::test]
+fn chat_list_options_stay_open_while_switching(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    let tool_calls = |ui: &mut Ui| {
+        ui.all(|name| name == "Tool calls")
+            .iter()
+            .find_map(|element| element.checked())
+    };
+    ui.activate("Chat list options");
+    assert_eq!(tool_calls(&mut ui), Some(true));
+    // Down twice crosses from "In the list" into "In chats".
+    ui.press("down down enter");
+    assert_eq!(tool_calls(&mut ui), Some(false));
+    ui.named("Archived chats");
     no_engine();
 }
 
@@ -381,6 +398,15 @@ fn a_lost_mouse_up_ends_the_selection(cx: &mut TestAppContext) {
     assert_eq!(selected(&mut ui), dragged);
 }
 
+#[gpui_kit::test]
+fn the_window_title_centers_on_the_main_area(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    let title = ui.find(|label| label.starts_with("Chats / ")).unwrap();
+    let main = ui.named("Conversation panel").bounds();
+    let off = f32::from(title.bounds().center().x - main.center().x).abs();
+    assert!(off < 1., "title is {off}px off the main area's center");
+}
+
 /// Moves GPUI's clock past the composer's 200 ms glide.
 fn finish_glide(ui: &mut Ui) {
     for _ in 0..15 {
@@ -574,4 +600,24 @@ fn delete_agent(cx: &mut TestAppContext) {
     ui.activate("Delete agent…");
     ui.activate("Delete");
     ui.gone("Grok Build");
+}
+
+#[gpui_kit::test]
+fn edit_an_agent_opens_the_open_chats_agent(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    let main = ui.cx.windows();
+    // Settings opens once, then shows the next agent in the same window.
+    let edit_agent = |ui: &mut Ui| {
+        ui.click("Main menu");
+        // "Add an agent" starts highlighted, and the Agents heading is skipped.
+        ui.press("down enter");
+        ui.new_window(&main);
+        let name = ui.named("Name").value().map(str::to_owned);
+        ui.main_window();
+        name
+    };
+    ui.open_chat("Pick a default agent for new chats");
+    assert_eq!(edit_agent(&mut ui).as_deref(), Some("Codex"));
+    ui.press("ctrl-n");
+    assert_eq!(edit_agent(&mut ui).as_deref(), Some("Claude Code"));
 }

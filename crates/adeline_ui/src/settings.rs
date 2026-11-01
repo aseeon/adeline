@@ -114,6 +114,7 @@ const KEYMAP: [&str; 8] = [
     "Activate focused control (built in)",
 ];
 type SettingOption = (&'static str, &'static str, bool, Action);
+type SettingGroup = (Option<&'static str>, Vec<SettingOption>);
 const SILENCE_LABEL: &str = "Silence notice after (minutes)";
 const SILENCE_DESCRIPTION: &str = "0 turns the notice off.";
 const MCP_DESCRIPTION: &str = "Every agent on this machine gets these MCP servers when a session starts, before its own. A server whose transport an agent doesn't support is skipped with a note in the chat.";
@@ -121,81 +122,71 @@ const THINKING_LABEL: &str = "Thinking animation";
 const THINKING_DESCRIPTION: &str = "How the row under your message moves while the agent works.";
 
 impl Adeline {
-    pub(super) fn mode_options(&self, section: Section) -> Vec<SettingOption> {
+    pub(super) fn mode_options(&self, section: Section) -> Vec<SettingGroup> {
         if section == Section::Docs {
             let docs = config::current().modes.docs;
-            return vec![
-                (
-                    "Respect .gitignore",
-                    "Leave out files that .gitignore ignores and files in hidden folders.",
-                    docs.respect_gitignore,
-                    Action::Docs(docs::Act::Gitignore),
-                ),
-                (
-                    "Show left panel",
-                    "Display the docs tree.",
-                    docs.show_left_panel,
-                    Action::Docs(docs::Act::LeftPanel),
-                ),
-                (
-                    "Show conversation panel",
-                    "Display a conversation beside the doc.",
-                    docs.show_conversation_panel,
-                    Action::Docs(docs::Act::ChatPanel),
-                ),
-                (
-                    "Open files in the Editor",
-                    "Open docs in the Editor instead of the Viewer.",
-                    docs.open_in == config::DocView::Editor,
-                    Action::Docs(docs::Act::OpenIn),
-                ),
-            ];
+            return vec![(
+                None,
+                vec![
+                    (
+                        "Respect .gitignore",
+                        "Leave out files that .gitignore ignores and files in hidden folders.",
+                        docs.respect_gitignore,
+                        Action::Docs(docs::Act::Gitignore),
+                    ),
+                    (
+                        "Open files in the Editor",
+                        "Open docs in the Editor instead of the Viewer.",
+                        docs.open_in == config::DocView::Editor,
+                        Action::Docs(docs::Act::OpenIn),
+                    ),
+                ],
+            )];
         }
         if section != Section::Chats {
             return Vec::new();
         }
+        let chats = config::current().modes.chats;
         vec![
             (
-                "Show completed chats",
-                "Include completed conversations in the chat list.",
-                self.show_completed,
-                Action::ShowCompleted,
+                Some("In the list"),
+                vec![
+                    (
+                        "Completed chats",
+                        "Include completed conversations in the chat list.",
+                        self.show_completed,
+                        Action::ShowCompleted,
+                    ),
+                    (
+                        "Archived chats",
+                        "Include archived conversations in the chat list.",
+                        self.show_archived,
+                        Action::ShowArchived,
+                    ),
+                ],
             ),
             (
-                "Show archived chats",
-                "Include archived conversations in the chat list.",
-                self.show_archived,
-                Action::ShowArchived,
-            ),
-            (
-                "Hide tool calls",
-                "Hide tool calls and results in chats. Permission requests stay visible.",
-                config::current().modes.chats.hide_tool_calls,
-                Action::HideToolCalls,
-            ),
-            (
-                "Show thinking",
-                "Stream the agent's reasoning into the chat.",
-                config::current().modes.chats.show_thinking,
-                Action::ShowThinking,
-            ),
-            (
-                "Submit on Enter",
-                "Enter sends the message and Shift+Enter starts a new line.",
-                config::current().modes.chats.submit_on_enter,
-                Action::SubmitOnEnter,
-            ),
-            (
-                "Show left panel",
-                "Display chat navigation.",
-                self.left_panel_open,
-                Action::ToggleLeftPanel,
-            ),
-            (
-                "Show agent activity",
-                "Display chat agent activity.",
-                self.side_panel_open,
-                Action::ToggleSidePanel,
+                Some("In chats"),
+                vec![
+                    (
+                        "Tool calls",
+                        "Show tool calls and their results. Permission requests always show.",
+                        !chats.hide_tool_calls,
+                        Action::HideToolCalls,
+                    ),
+                    (
+                        "Thinking",
+                        "Stream the agent's reasoning into the chat.",
+                        chats.show_thinking,
+                        Action::ShowThinking,
+                    ),
+                    (
+                        "Send with Enter",
+                        "Enter sends the message and Shift+Enter starts a new line.",
+                        chats.submit_on_enter,
+                        Action::SubmitOnEnter,
+                    ),
+                ],
             ),
         ]
     }
@@ -621,7 +612,7 @@ fn switch_row(label: &'static str, description: &'static str, switch: Switch, cx
                     )
                 }),
         )
-        .child(switch)
+        .child(switch.color(cx.theme().info))
 }
 fn field_row(field: Field, message: Option<String>, cx: &App) -> Div {
     div()
@@ -642,8 +633,8 @@ fn diagnostics(errors: Vec<String>, cx: &App) -> Div {
     list
 }
 
-const ADD_MACHINE: &str = "Add machine…";
-const MANAGE_MACHINES: &str = "Manage machines…";
+const ADD_MACHINE: &str = "Add machine";
+const MANAGE_MACHINES: &str = "Manage machines";
 
 fn machine_labels() -> Vec<String> {
     let mut labels: Vec<String> = machines::all().iter().map(|m| machines::name(m)).collect();

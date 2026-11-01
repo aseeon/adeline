@@ -134,7 +134,7 @@ kbd { font: var(--t-micro)/1 var(--ui); color: var(--fg3); }
 }
 .file b { font-weight: 500; color: var(--fg); }
 .a { display: flex; flex-direction: column; gap: 8px; }
-.a-t { font-size: var(--t-prose); line-height: 1.65; text-wrap: pretty; }
+.a-t { font-size: var(--t-prose); line-height: 1.65; max-width: 68ch; text-wrap: pretty; }
 .a-t code, .ask code { font: var(--t-ui)/1 var(--mono); padding: 2px 5px; border-radius: 5px; background: var(--chip); color: var(--code); }
 .a-meta { display: flex; align-items: center; gap: 6px; font-size: var(--t-caption); color: var(--fg3); }
 .a-meta .ag { width: 13px; height: 13px; }
@@ -236,7 +236,7 @@ kbd { font: var(--t-micro)/1 var(--ui); color: var(--fg3); }
 .plan li.now { color: var(--fg); }
 .plan li .n { width: 14px; text-align: center; font-size: var(--t-micro); color: var(--fg3); flex: none; }
 .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px 10px; }
-.stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stat { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 0; }
 .stat b { font-size: var(--t-prose); font-weight: 600; color: var(--fg); }
 .stat span { font-size: var(--t-caption); color: var(--fg3); }
 .bar { height: 4px; border-radius: 2px; background: color-mix(in oklch, var(--fg3) 30%, transparent); overflow: hidden; }
@@ -416,6 +416,13 @@ kbd { font: var(--t-micro)/1 var(--ui); color: var(--fg3); }
 #pop .mi { display: flex; flex-direction: column; flex: 1; min-width: 0; }
 #pop .mh { font-size: var(--t-caption); color: oklch(0.62 0 0); }
 #pop .tick { width: 14px; height: 14px; color: oklch(0.8 0.1 250); margin-left: auto; }
+#pop kbd { margin-left: auto; color: oklch(0.62 0 0); }
+#pop .sep { height: 1px; margin: 4px 6px; background: oklch(1 0 0 / 0.08); }
+/* switch: the off track stays visible on the menu, on uses the tick's blue */
+#pop .sw { position: relative; width: 28px; height: 16px; flex: none; margin-left: auto; border-radius: 8px; background: oklch(1 0 0 / 0.16); box-shadow: inset 0 0 0 1px oklch(1 0 0 / 0.08); transition: background-color 150ms ease-out; }
+#pop .sw::after { content: ""; position: absolute; top: 2px; left: 2px; width: 12px; height: 12px; border-radius: 50%; background: oklch(0.78 0 0); box-shadow: 0 1px 2px oklch(0 0 0 / 0.3); transition: transform 150ms var(--ease-out), background-color 150ms ease-out; }
+#pop [aria-checked="true"] .sw { background: oklch(0.66 0.12 250); box-shadow: none; }
+#pop [aria-checked="true"] .sw::after { transform: translateX(12px); background: oklch(0.99 0 0); }
 #pop .plan { padding: 2px 8px 6px; --fg: oklch(0.94 0 0); --fg2: oklch(0.8 0 0); --fg3: oklch(0.58 0 0); --ok: oklch(0.75 0.14 150); }
 
 /* =========================================================
@@ -627,12 +634,18 @@ kbd { font: var(--t-micro)/1 var(--ui); color: var(--fg3); }
 @media (hover: hover) { [data-theme="light"] #pop button:hover { background: oklch(0 0 0 / 0.06); } }
 [data-theme="light"] #pop .ph, [data-theme="light"] #pop .mh { color: oklch(0.5 0 0); }
 [data-theme="light"] #pop .tick { color: oklch(0.5 0.13 250); }
+[data-theme="light"] #pop kbd { color: oklch(0.5 0 0); }
+[data-theme="light"] #pop .sep { background: oklch(0 0 0 / 0.08); }
+[data-theme="light"] #pop .sw { background: oklch(0 0 0 / 0.14); box-shadow: inset 0 0 0 1px oklch(0 0 0 / 0.06); }
+[data-theme="light"] #pop .sw::after { background: oklch(1 0 0); box-shadow: 0 1px 2px oklch(0 0 0 / 0.25); }
+[data-theme="light"] #pop [aria-checked="true"] .sw { background: oklch(0.55 0.13 250); box-shadow: none; }
 [data-theme="light"] #pop .plan { --fg: oklch(0.2 0 0); --fg2: oklch(0.4 0 0); --fg3: oklch(0.55 0 0); --ok: oklch(0.55 0.14 150); }
 
 @media (prefers-reduced-motion: reduce) {
   .spin { animation-duration: 3s; }
   .shimmer { animation: none; color: var(--fg2); background: none; }
   #pop.open, .pal, .pal-scrim { animation: none; }
+  #pop .sw, #pop .sw::after { transition: none; }
 }
 
 </style>
@@ -681,6 +694,7 @@ const I = {
   reload: svg('<path d="M13 8a5 5 0 1 1-1.5-3.5M13 2.5v3h-3"/>'),
   lock: svg('<rect x="3.5" y="7" width="9" height="6.5" rx="1.2"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>'),
   ul: svg('<path d="M6.5 4.5H13M6.5 8H13M6.5 11.5H13"/><circle cx="3.5" cy="4.5" r=".6"/><circle cx="3.5" cy="8" r=".6"/><circle cx="3.5" cy="11.5" r=".6"/>'),
+  more: svg('<circle cx="8" cy="3.5" r=".6"/><circle cx="8" cy="8" r=".6"/><circle cx="8" cy="12.5" r=".6"/>'),
   inbox: svg('<path d="M2 9l2-6h8l2 6v3.5a.5.5 0 0 1-.5.5h-11a.5.5 0 0 1-.5-.5z"/><path d="M2 9h3.5l1 1.5h3l1-1.5H14"/>'),
 };
 const tick = svg('<path class="tick" d="M3.5 8.5l3 3 6-7"/>').replace('class="ic"', 'class="ic tick"');
@@ -795,6 +809,7 @@ const S = {
     ],
   },
   convos: {}, focus: null,
+  showDone: true, showArchived: false, toolCalls: true, thinking: false, enterSends: true, // chat list options
 };
 const FILESIZE = { 'search-profile.txt': '18 KB', 'build.log': '41 MB', 'src/chat/search.rs': '9 KB', 'screenshot-search.png': '312 KB' };
 
@@ -1159,7 +1174,7 @@ function convoHTML(c) {
   if (!cv.length) return `<div class="empty"><h2>New chat in ${esc(c.project)}</h2><p>Ask ${agentName(S.agent)} to plan, build or explain something.</p></div>`;
   return `<div class="convo">${cv.map((m, i) => {
     if (m.type === 'user') return `<div class="u">${m.files.length ? `<div class="files">${m.files.map(fileChip).join('')}</div>` : ''}<div class="u-b">${esc(m.text)}</div>${m.time ? `<span class="u-meta">${m.note ? m.note + ' · ' : ''}${m.time}</span>` : ''}</div>`;
-    if (m.type === 'work') return workHTML(m);
+    if (m.type === 'work') return S.toolCalls ? workHTML(m) : '';
     if (m.type === 'agent') return `<div class="a"><div class="a-t">${m.text}</div><div class="a-meta">${glyph(m.agent)}<span>${agentName(m.agent)}</span>${m.time ? `<span>· ${m.time}</span>` : ''}</div></div>`;
     if (m.type === 'thinking') return `<div class="thinking"><span class="spin" aria-hidden="true"></span><span class="shimmer">${m.label}</span><span class="since" data-since="${m.since}">${dur(Date.now() - m.since)}</span></div>`;
     if (m.type === 'ask') return `<div class="ask"><span class="ask-l"><span class="dot" aria-hidden="true"></span>${agentName(c.agent)} needs your answer</span><p>${m.q}</p><div class="ask-opts">${m.opts.map((o, j) => `<button class="opt" data-act="answer" data-arg="${c.id}:${i}:${j}">${o}</button>`).join('')}</div></div>`;
@@ -1209,12 +1224,9 @@ function planHTML() {
 }
 function statsHTML() {
   return `<div class="stats">
-    <div class="stat"><b data-since="${T0 - 134e3}">${dur(134e3)}</b><span>Active time</span></div>
-    <div class="stat"><b>48s</b><span>Tool time</span></div>
-    <div class="stat"><b>61 tok/s</b><span>Reply speed</span></div>
-    <div class="stat"><b>6</b><span>Succeeded</span></div>
-    <div class="stat"><b>1</b><span>Failed</span></div>
-    <div class="stat"><b>108k</b><span>of 200k context</span></div>
+    <div class="stat"><b>7</b><span>Tool calls</span></div>
+    <div class="stat"><b>1</b><span>Failed calls</span></div>
+    <div class="stat"><b>108k of 200k</b><span>Context</span></div>
   </div>`;
 }
 function turnSteps(c) {
@@ -1291,7 +1303,7 @@ function vIsl() {
         ${rail()}
         ${S.side ? `<aside class="side">
           <div class="pswitch">${pswHTML()}${othersHTML()}</div>
-          ${!isChats() ? `<div class="tb"><b class="mtitle">${modeOf()[1]}</b></div><div class="side-scroll">${modeSide()}</div>` : `<div class="tb"><b class="mtitle">Chats</b><span class="grow"></span><button class="iconbtn" data-act="search" aria-label="Search chats" aria-pressed="${S.searchOpen}">${I.search}</button><button class="iconbtn" data-act="new" aria-label="New chat">${I.compose}</button></div>
+          ${!isChats() ? `<div class="tb"><b class="mtitle">${modeOf()[1]}</b></div><div class="side-scroll">${modeSide()}</div>` : `<div class="tb"><b class="mtitle">Chats</b><button class="iconbtn" data-act="menu" data-arg="chatopts" aria-haspopup="menu" aria-label="Chat list options" title="Chat list options">${I.more}</button><span class="grow"></span><button class="iconbtn" data-act="search" aria-label="Search chats" aria-pressed="${S.searchOpen}">${I.search}</button><button class="iconbtn" data-act="new" aria-label="New chat">${I.compose}</button></div>
           ${S.searchOpen ? `<div style="padding:0 12px 8px">${searchBox()}</div>` : ''}
           <div class="side-scroll" data-scroll="side">${groups(row)}</div>`}
         </aside>` : ''}
@@ -1299,7 +1311,7 @@ function vIsl() {
       <main class="main">
         ${!isChats() ? modeMain() : `${crumb(c.project, c.title)}
         <div class="scroll" data-scroll="chat"><div class="col">${convoHTML(c)}</div></div>
-        <div class="dock"><div class="col">${queueHTML(c)}${composer({ ph: 'Enter sends, Shift+Enter adds a line. @ mentions a file.' })}</div></div>`}
+        <div class="dock"><div class="col">${queueHTML(c)}${composer({ ph: `${S.enterSends ? 'Enter sends, Shift+Enter' : 'Ctrl+Enter sends, Enter'} adds a line. @ mentions a file.` })}</div></div>`}
       </main>
       ${isChats() || other ? `<section class="isl-r" aria-label="Side panel">
         ${!open ? '' : other ? chatPane : `<div class="isl-rp"><div class="ih">${tabs.find(([k]) => k === S.tab3)[1]}</div><div class="pane-b" data-scroll="pane">${pane}</div></div>`}
@@ -1535,7 +1547,7 @@ stage.addEventListener('input', (e) => {
 });
 stage.addEventListener('keydown', (e) => {
   const k = e.target.dataset && e.target.dataset.key;
-  if (k === 'draft' && e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); send(); }
+  if (k === 'draft' && e.key === 'Enter' && (S.enterSends ? !e.shiftKey : e.ctrlKey || e.metaKey) && !e.isComposing) { e.preventDefault(); send(); }
   if (k === 'term' && e.key === 'Enter') { e.preventDefault(); runTerm(e.target.value.trim()); }
   if (k === 'search' && e.key === 'Escape') { S.query = ''; S.searchOpen = false; paint(); }
   if (k === 'pq') {
@@ -1557,17 +1569,26 @@ function menuSpec(name) {
     case 'model': return { title: agentName(S.agent) + ' models', items: AGENTS[S.agent].models.map((m) => radio(m, S.model === m, () => (S.model = m))) };
     case 'effort': return { title: 'Effort', items: [['Low', 'Fast, for small edits'], ['Medium', 'Most everyday work'], ['High', 'Harder bugs and refactors'], ['X-High', 'Slow, for the hardest problems']].map(([l, h]) => radio(l, S.effort === l, () => (S.effort = l), h)) };
     case 'mode': return { title: 'Permissions', items: [['Default', 'Asks before edits and commands'], ['Plan', 'Reads and plans, no edits'], ['Accept edits', 'Edits files, asks before commands'], ['Full access', 'Edits and runs without asking']].map(([l, h]) => radio(l, S.mode === l, () => (S.mode = l), h)) };
+    case 'chatopts': {
+      const sw = (label, k) => ({ label, sw: () => S[k], run: () => (S[k] = !S[k]) });
+      return { title: 'In the list', label: 'Chat list options', items: [
+        sw('Completed chats', 'showDone'), sw('Archived chats', 'showArchived'),
+        { header: 'In chats', sep: true }, sw('Tool calls', 'toolCalls'), sw('Thinking', 'thinking'), sw('Send with Enter', 'enterSends'),
+        { header: '', sep: true }, { label: 'All chat settings', kbd: 'Ctrl ,', icon: '', run: () => ACT.appmode('settings') },
+      ] };
+    }
     case 'attach': return { title: 'Recent files', items: Object.keys(FILESIZE).map((f) => radio(f, S.files.includes(f), () => { if (!S.files.includes(f)) S.files.push(f); S.focus = 'draft'; }, FILESIZE[f], I.file)) };
   }
 }
 function openMenu(name, anchor) {
   const spec = menuSpec(name);
   popAnchor = { name, el: anchor };
-  pop.innerHTML = `<div class="ph">${spec.title}</div>` + (spec.html || spec.items.map((it, i) => it.header ? `<div class="ph ph-sec">${it.header}</div>` :
-    `<button role="menuitemradio" aria-checked="${!!it.on}" data-i="${i}">${it.icon}<span class="mi"><span>${it.label}</span>${it.hint ? `<span class="mh">${it.hint}</span>` : ''}</span>${it.on ? tick : ''}</button>`).join(''));
+  pop.innerHTML = `<div class="ph">${spec.title}</div>` + (spec.html || spec.items.map((it, i) => it.header !== undefined ? `${it.sep ? '<div class="sep"></div>' : ''}${it.header ? `<div class="ph${it.sep ? '' : ' ph-sec'}">${it.header}</div>` : ''}` :
+    it.sw ? `<button role="menuitemcheckbox" aria-checked="${it.sw()}" data-i="${i}"><span class="mi"><span>${it.label}</span></span><span class="sw" aria-hidden="true"></span></button>` :
+    `<button role="${it.kbd ? 'menuitem' : 'menuitemradio'}" ${it.kbd ? '' : `aria-checked="${!!it.on}"`} data-i="${i}">${it.icon}<span class="mi"><span>${it.label}</span>${it.hint ? `<span class="mh">${it.hint}</span>` : ''}</span>${it.kbd ? `<kbd>${it.kbd}</kbd>` : ''}${it.on ? tick : ''}</button>`).join(''));
   pop._items = spec.items || [];
   pop.setAttribute('role', spec.html ? 'dialog' : 'menu');
-  pop.setAttribute('aria-label', spec.title);
+  pop.setAttribute('aria-label', spec.label || spec.title);
   pop.classList.remove('open');
   pop.style.display = 'block'; pop.style.visibility = 'hidden';
   const r = anchor.getBoundingClientRect(), w = pop.offsetWidth, h = pop.offsetHeight;
@@ -1580,7 +1601,7 @@ function openMenu(name, anchor) {
   pop.classList.add('open');
   pop.setAttribute('aria-hidden', 'false');
   anchor.setAttribute('aria-expanded', 'true');
-  (pop.querySelector('[aria-checked="true"]') || pop.querySelector('button'))?.focus();
+  (pop.querySelector('[role="menuitemradio"][aria-checked="true"]') || pop.querySelector('button'))?.focus();
 }
 function closeMenu(refocus) {
   if (!popAnchor) return;
@@ -1592,6 +1613,14 @@ function closeMenu(refocus) {
 pop.addEventListener('click', (e) => {
   const b = e.target.closest('button[data-i]'); if (!b) return;
   const it = pop._items[+b.dataset.i]; const name = popAnchor.name;
+  // switches stay open, so several options can change in one go
+  if (it.sw) {
+    it.run(); paint();
+    b.setAttribute('aria-checked', it.sw());
+    popAnchor.el = stage.querySelector(`[data-act="menu"][data-arg="${name}"]`) || popAnchor.el;
+    popAnchor.el.setAttribute('aria-expanded', 'true');
+    return;
+  }
   closeMenu(false); it.run();
   paint();
   if (!S.focus) stage.querySelector(`[data-act="menu"][data-arg="${name}"]`)?.focus();
@@ -1612,7 +1641,7 @@ window.addEventListener('resize', () => closeMenu(false));
 setInterval(() => document.querySelectorAll('[data-since]').forEach((el) => (el.textContent = dur(Date.now() - +el.dataset.since))), 1000);
 
 const TABS0 = S.tabs.slice();
-const KEEP = ['theme', 'surface', 'hue', 'side', 'panel', 'appMode'];
+const KEEP = ['theme', 'surface', 'hue', 'side', 'panel', 'appMode', 'showDone', 'showArchived', 'toolCalls', 'thinking', 'enterSends'];
 try {
   const saved = JSON.parse(localStorage.getItem('adeline-design') || '{}');
   KEEP.forEach((k) => { if (k in saved) S[k] = saved[k]; });

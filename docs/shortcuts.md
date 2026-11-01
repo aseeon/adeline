@@ -21,14 +21,14 @@ Set in `general.keymap` in `settings.yml` (defaults in `Keymap::default`, `crate
 
 | Shortcut | Action |
 |---|---|
-| Enter | Send, when Settings > Chats > "Submit on Enter" is on (default). Otherwise inserts a line break |
+| Enter | Send, when Settings > Chats > "Send with Enter" is on (default). Otherwise inserts a line break |
 | Shift+Enter | Insert a line break |
-| Ctrl+Enter / Cmd+Enter | Send, when "Submit on Enter" is on |
+| Ctrl+Enter / Cmd+Enter | Send, when "Send with Enter" is on |
 | Up | With the box empty and messages queued, take the last queued message back to edit it |
 | `/` | At the start of the box, list the agent's commands; Up / Down move, Enter or Tab insert, Escape closes the list |
 | Ctrl+V / Cmd+V | Paste text, or attach a copied image |
 
-With "Submit on Enter" off, the text box inserts a line break for Enter, Shift+Enter and Ctrl+Enter alike and stops the key there, so the keyboard has no way to send. The send button's icon shows Shift+Enter in that state, which does not send either. (From reading the code in `crates/adeline_ui/src/chat/composer.rs` and gpui-base's `InputState::enter`, not tested.)
+With "Send with Enter" off, the text box inserts a line break for Enter, Shift+Enter and Ctrl+Enter alike and stops the key there, so the keyboard has no way to send. The send button's icon shows Shift+Enter in that state, which does not send either. (From reading the code in `crates/adeline_ui/src/chat/composer.rs` and gpui-base's `InputState::enter`, not tested.)
 
 ## Conversation
 
@@ -46,6 +46,7 @@ Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `crates
 | Ctrl+Shift+A / Cmd+Shift+A | Attach files |
 | Ctrl+Shift+L / Cmd+Shift+L | Show the ACP traffic tab of the side panel (with `--verbose`) |
 | Ctrl+Shift+T / Cmd+Shift+T | Show or hide the Plan tab of the side panel |
+| Ctrl+Shift+I / Cmd+Shift+I | Show or hide the Activity tab of the side panel |
 | Ctrl+L / Cmd+L | Focus the message box |
 | Ctrl+Shift+D / Cmd+Shift+D | Dismiss the errors under the chat |
 | Ctrl+Shift+F / Cmd+Shift+F | Fork the chat at its latest reply |
@@ -185,7 +186,7 @@ All text fields (message box, search fields, dialog fields) get the kit's editin
 
 ## macOS menu bar
 
-The menus (`crates/adeline_ui/src/menu_bar.rs`) show the keymap's shortcuts: Settings… (Cmd+,), New Chat (Cmd+N), Quit Adeline (Cmd+Q), and the system Edit items (Undo, Redo, Cut, Copy, Paste, Select All).
+The menus (`crates/adeline_ui/src/menu_bar.rs`) show the keymap's shortcuts: Settings (Cmd+,), New Chat (Cmd+N), Quit Adeline (Cmd+Q), and the system Edit items (Undo, Redo, Cut, Copy, Paste, Select All).
 
 ## Actions without a shortcut
 
@@ -210,7 +211,7 @@ Projects:
 Chats:
 
 - Filter chats by agent, clear chat filters
-- Show completed chats, show archived chats
+- Show completed chats, show archived chats (the chat list options menu)
 - Mark a chat complete, archive a chat (the chat row's right-click menu)
 - Reply to (quote) a message
 - Copy a message
@@ -224,6 +225,12 @@ Chats:
 - Remove an attachment, preview an attached image
 - Copy the ACP traffic
 - Select text in a message
+
+Main menu (the settings button on the left rail):
+
+- Open the main menu. Ctrl+, opens General settings directly
+- Add an agent, edit an agent, stop all agents
+- Project settings, About Adeline
 
 Composer pickers:
 
@@ -248,7 +255,7 @@ Settings:
 
 - Save settings
 - Open mode settings
-- Toggle "Submit on Enter"
+- Toggle "Send with Enter"
 - Add, edit or remove an MCP server
 - Install, update or log in to an agent (the agent form)
 - Toggle a mode on or off

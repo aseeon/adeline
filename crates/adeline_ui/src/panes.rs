@@ -276,25 +276,31 @@ impl Adeline {
                     })
             });
         let (left, right) = self.island_widths(window);
+        let (left, right) = (dp(PAD * 2. + left), dp(PAD * 2. + right));
+        // Shrink both sides alike where the caption buttons overhang the main area, so the
+        // title stays clear of them and centered on it.
+        let clear = (titlebar::caption_buttons_width(window) - right).max(px(0.));
         let title = row()
             .absolute()
             .top(dp(PAD))
             .h(dp(26.))
-            .left(dp(PAD * 2. + left))
-            .right(dp(PAD * 2. + right))
+            .left(left + clear)
+            .right(right + clear)
             .justify_center()
             .child(crumbs);
         let bar = TitleBar::new()
             .h(dp(TOP))
             .when(!cfg!(target_os = "macos"), |bar| bar.pl_0())
             .border_b_0()
-            .bg(transparent_black())
-            .child(title);
+            .bg(transparent_black());
+        // The title sits over the bar instead of in it, because the bar's content stops at
+        // the caption buttons and would center the title off the main area.
         div()
             .id("window-header")
             .relative()
             .flex_shrink_0()
             .child(titlebar::without_text_selection(bar))
+            .child(title)
     }
 
     fn left_width(&self) -> f32 {

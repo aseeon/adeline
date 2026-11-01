@@ -98,6 +98,7 @@ impl SettingsWindow {
         let options: Vec<_> = app
             .mode_options(Section::Chats)
             .into_iter()
+            .flat_map(|(_, options)| options)
             .enumerate()
             .filter(|(_, option)| matches_query(query, &["Modes", "Chats", option.0, option.1]))
             .collect();
@@ -148,6 +149,7 @@ impl SettingsWindow {
         let rows: Vec<Div> = app
             .mode_options(Section::Docs)
             .into_iter()
+            .flat_map(|(_, options)| options)
             .enumerate()
             .filter(|(_, option)| matches_query(query, &["Modes", "Docs", option.0, option.1]))
             .map(|(index, (label, description, checked, action))| {

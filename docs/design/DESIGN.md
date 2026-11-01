@@ -26,7 +26,7 @@ All numbers are in logical pixels at 1× scale.
 | Right island | A 330 pane, then a 56 rail. The rail stays visible when the pane is closed. In other modes the pane holds the chat and is 440. |
 | Chat header | 26 tall, starting at the 8 padding. Its text centers at 21, the middle of the 42 gap. |
 | Window controls | Three 46×40 buttons in the top right corner. They sit in the gap above the right island. |
-| Chat column | Max width 760, with 28 side padding. Agent prose uses the full column. |
+| Chat column | Max width 760, with 28 side padding. Agent prose stops at 68ch. |
 | Composer | Its bottom sits 21 from the window's bottom edge, level with the islands. |
 
 The header text is "Mode / project / item" in every mode. The mode and project are in `--fg2`, each `/` is in `--fg3`, and the item is in `--fg` at weight 500. It centers over the main area. Nothing else goes in the header. Buttons for a chat's side details belong on the right rail.
@@ -109,7 +109,7 @@ Every size comes from the scale below, set as tokens on `:root` in design.html. 
 - **Weights.** Use only 400, 500 and 600. `font-synthesis: none` stops the browser from faking a weight that wasn't loaded.
 - **Mono.** Code runs one step below the text around it: 13 inside 15 prose, 12 inside 13 lists.
 - **Monogram initials.** These are glyphs, not text. They're 9 in boxes up to 22, and `--t-micro` in boxes of 28 and up.
-- **Headings.** They use `text-wrap: balance`. Prose blocks use `text-wrap: pretty`. Documents and ask cards stop at 68ch.
+- **Headings.** They use `text-wrap: balance`. Prose blocks use `text-wrap: pretty` and stop at 68ch.
 - **Floor.** Never set text below 11. Monogram initials are the only exception.
 - **Hover and selection.** Never change font weight on hover or selection, because the text reflows. The one weight change is unread rows going to 500, which marks state and not interaction.
 
@@ -193,11 +193,14 @@ The context ring is an 18px circle with a 2.5 stroke. The track is `--fg3` at 35
 ```
 Choosing an overlay?
  ├── The user picks one value from a short list (agent, model, effort, mode) → menu
+ ├── The user turns several options on or off → switch menu
  ├── The user searches or switches projects → project palette
  └── The user needs a value explained → tooltip (no buttons inside)
 ```
 
-- **Menu.** At least 220 wide, radius 10, padding 4, on neutral `oklch(0.24 0 0)` in every color. Items are 32 tall with 6 radius. The header is 12 in grey, and the chosen item has a blue tick. It opens upward from its picker in the composer. It scales in from 0.97 over 150ms.
+- **Menu.** At least 220 wide, radius 10, padding 4, on neutral `oklch(0.24 0 0)` in every color. Items are 32 tall with 6 radius. The header is 12 in grey, and the chosen item has a blue tick. It opens upward from its picker in the composer. It scales in from 0.97 over 150ms. Menu items never end in "…", even when they open a window.
+- **Main menu.** The settings button at the bottom of the left rail opens it. Groups: Agents (Add an agent, Edit an agent, Stop all agents), then Settings (Project settings, General settings with its `Ctrl ,` hint), then Adeline (About Adeline, Quit Adeline). Edit an agent opens the settings of the open chat's agent, or of the first agent in the list.
+- **Switch menu.** The same menu, for options that turn on and off. The ⋮ button after the "Chats" title opens the chat list options. Groups: In the list (Completed chats, Archived chats), then In chats (Tool calls, Thinking, Send with Enter), then "All chat settings" with its `Ctrl ,` hint. A 1px line splits the groups. Each row ends in a 28×16 switch. Off is a track of white at 16% with a light grey knob, so it reads clearly on the menu. On is the tick's blue with a white knob. The knob slides over 150ms. The menu stays open while you flip switches, so you can change several in one go. Name each option for what it shows ("Tool calls"), never "Hide …", so on always means visible. Decided in the November 2026 prototype. Rejected there: orange switches (orange means a person needs to act), a dark off track that vanished on the menu, a search field in a menu this short, ticks, and chips for the list filters. Panel toggles left this menu because the rails already hold them.
 - **Project palette.** Ctrl+P or the switcher card opens it. It's 580 wide and 88 from the window's top, with radius 14 and `--pal-bg`. A scrim dims the window behind it. The search input is 54 tall with 16px text. Rows are 48 tall with a 28 monogram. Open projects come first, then the other projects grouped by machine ("Nexus · This computer"). Arrow keys move, Enter switches and Escape closes.
 - **Tooltip.** Radius 8, `--pal-bg`, 12px text. It appears after a 200ms delay.
 

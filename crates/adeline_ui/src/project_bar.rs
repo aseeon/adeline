@@ -424,7 +424,7 @@ fn project_actions(
             });
         }
     };
-    let rename = PopupMenuItem::new("Rename project…").on_click(by_key(Action::RenameProject));
+    let rename = PopupMenuItem::new("Rename project").on_click(by_key(Action::RenameProject));
     let last = if open {
         PopupMenuItem::new("Close project").on_click(by_key(Action::CloseProject))
     } else {

@@ -43,6 +43,19 @@ pub(super) fn without_text_selection(bar: impl IntoElement) -> Div {
         .child(bar)
 }
 
+// Mirrors which caption buttons Kit's `WindowControls` draws at the bar's right end.
+pub(super) fn caption_buttons_width(window: &Window) -> Pixels {
+    let drawn = !cfg!(target_os = "macos")
+        && (!cfg!(target_os = "linux")
+            || matches!(window.window_decorations(), Decorations::Client { .. }));
+    if !drawn {
+        return px(0.);
+    }
+    let controls = window.window_controls();
+    let count = 1 + u8::from(controls.minimize) + u8::from(controls.maximize);
+    component::TITLE_BAR_HEIGHT * f32::from(count)
+}
+
 // Match the raster to the monitor's physical pixels instead of shrinking a large PNG.
 fn portrait_asset(scale_factor: f32) -> String {
     let physical_size = 24. * scale_factor;

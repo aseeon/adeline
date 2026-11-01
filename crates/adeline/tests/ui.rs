@@ -603,7 +603,7 @@ fn add_machine(cx: &mut TestAppContext) {
         "the selector shows with no remote machine"
     );
     settings(&mut ui);
-    // The machine dropdown lists this computer, then "Add machine…".
+    // The machine dropdown lists this computer, then "Add machine".
     ui.press(&format!("{MENU}-h enter down enter"));
     type_into(&mut ui, "Machine name", "Desktop");
     type_into(&mut ui, "Destination", "me@desktop");
@@ -983,7 +983,7 @@ fn upgrade_and_browse(cx: &mut TestAppContext) {
             .is_some(),
         "the old version isn't named"
     );
-    ui.click("Upgrade…");
+    ui.click("Upgrade");
     ui.wait_named("Upgrade Old?", WAIT);
     ui.click("Upgrade now (stops them)");
     ui.wait("the new engine on Old", LONG, |_| {

@@ -638,7 +638,7 @@ fn execution_setting(
             .item(PopupMenuItem::new(current.clone()).checked(true))
             .separator()
             .item(
-                PopupMenuItem::new("Agent settings…").on_click(move |_, window, cx| {
+                PopupMenuItem::new("Agent settings").on_click(move |_, window, cx| {
                     let _ = owner.update(cx, |app, cx| {
                         app.act(Action::AgentSettings, window, cx);
                     });

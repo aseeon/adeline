@@ -361,8 +361,14 @@ pub fn apply(cx: &mut App) {
         theme.tab_active = c("sidebar_accent");
         theme.tab_active_foreground = c("sidebar_accent_foreground");
         theme.tab_foreground = c("secondary_foreground");
-        theme.switch = c("muted");
-        theme.switch_thumb = c("primary_foreground");
+        // An off track of ink at a fixed opacity shows on every surface.
+        let dark = state.theme.brightness.is_dark();
+        theme.switch = if dark {
+            gpui_kit::white().alpha(0.16)
+        } else {
+            gpui_kit::black().alpha(0.14)
+        };
+        theme.switch_thumb = gpui_kit::white();
         theme.drag_border = c("ring");
         theme.button = c("secondary");
         theme.button_foreground = c("secondary_foreground");

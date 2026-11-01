@@ -2,9 +2,19 @@
 //! modal dialogs (including quit, SSH prompt and upgrade), and UI helpers
 //! shared across windows.
 use super::*;
-use gpui_kit::component::command::{Command, CommandItem, CommandState};
+use gpui_kit::component::Disableable as _;
+use gpui_kit::component::command::{Command, CommandGroup, CommandItem, CommandState};
 use gpui_kit::component::dialog::Dialog;
 use gpui_kit::component::switch::Switch;
+
+type MenuGroup = (Option<&'static str>, Vec<(String, Action)>);
+
+const MENU_ITEM: f32 = 0.925;
+const MENU_HEADING: f32 = 0.8;
+
+fn searchable(menu: &str) -> bool {
+    !matches!(menu, "app" | "files" | "mode-settings")
+}
 
 pub(super) struct ChatHeader(pub WeakEntity<Adeline>);
 impl Render for ChatHeader {
@@ -97,6 +107,7 @@ impl Adeline {
             ));
         div()
             .id("conversation-panel")
+            .test_support()
             .role(Role::Group)
             .aria_label("Conversation panel")
             .relative()
@@ -158,7 +169,27 @@ impl Adeline {
             .into_any_element()
     }
 
-    fn command_entries(&self, menu: &'static str) -> Vec<(String, Action)> {
+    fn command_entries(&self, menu: &'static str) -> Vec<MenuGroup> {
+        if menu == "mode-settings" {
+            let mut groups: Vec<MenuGroup> = self
+                .mode_options(self.section)
+                .into_iter()
+                .map(|(heading, options)| {
+                    let entries = options
+                        .into_iter()
+                        .map(|(label, _, _, action)| (label.into(), action))
+                        .collect();
+                    (heading, entries)
+                })
+                .collect();
+            let all = if self.section == Section::Docs {
+                "All docs settings"
+            } else {
+                "All chat settings"
+            };
+            groups.push((None, vec![(all.into(), Action::ConfigureModeSettings)]));
+            return groups;
+        }
         let mut entries: Vec<(String, Action)> = Vec::new();
         match menu {
             "agents" | "agent" => {
@@ -168,8 +199,8 @@ impl Adeline {
                         Action::Agent(entry.id.clone()),
                     )
                 }));
-                entries.push(("Add an agent…".into(), Action::AddAgent));
-                entries.push(("Agent settings…".into(), Action::AgentSettings));
+                entries.push(("Add an agent".into(), Action::AddAgent));
+                entries.push(("Agent settings".into(), Action::AgentSettings));
                 if menu == "agent" && self.demo_mode {
                     entries.extend([
                         ("Standard speed".into(), Action::Speed(0)),
@@ -179,39 +210,37 @@ impl Adeline {
             }
             "files" => {
                 entries.extend([
-                    ("Add a file…".into(), Action::AddFile),
-                    ("Add a directory…".into(), Action::AddDirectory),
+                    ("Add a file".into(), Action::AddFile),
+                    ("Add a directory".into(), Action::AddDirectory),
                 ]);
             }
-            "mode-settings" => {
-                entries.extend(
-                    self.mode_options(self.section)
-                        .into_iter()
-                        .map(|(label, _, _, action)| (label.into(), action)),
-                );
-                let full = if self.section == Section::Docs {
-                    "Full docs settings…"
-                } else {
-                    "Full chat settings…"
-                };
-                entries.push((full.into(), Action::ConfigureModeSettings));
-            }
             _ => {
-                entries.push(("Add an agent…".into(), Action::AddAgent));
-                if self.has_open_project() {
-                    entries.push(("Project settings…".into(), Action::Settings));
+                entries.push(("Add an agent".into(), Action::AddAgent));
+                if !self.agent_catalog().entries.is_empty() {
+                    entries.push(("Edit an agent".into(), Action::EditAgent));
                 }
                 if !self.demo_mode {
                     entries.push(("Stop all agents".into(), Action::StopAll));
                 }
-                entries.extend([
-                    ("Settings…".into(), Action::AppSettings),
-                    ("About Adeline…".into(), Action::About),
-                    ("Quit Adeline".into(), Action::QuitApp),
-                ]);
+                let mut settings = Vec::new();
+                if self.has_open_project() {
+                    settings.push(("Project settings".into(), Action::Settings));
+                }
+                settings.push(("General settings".into(), Action::AppSettings));
+                return vec![
+                    (Some("Agents"), entries),
+                    (Some("Settings"), settings),
+                    (
+                        Some("Adeline"),
+                        vec![
+                            ("About Adeline".into(), Action::About),
+                            ("Quit Adeline".into(), Action::QuitApp),
+                        ],
+                    ),
+                ];
             }
         }
-        entries
+        vec![(None, entries)]
     }
 
     pub(super) fn refocus_after_menu(&self, window: &mut Window, cx: &mut App) {
@@ -236,8 +265,11 @@ impl Adeline {
         let owner = cx.weak_entity();
         let content_owner = owner.clone();
         let entries = self.command_entries(menu);
-        let toggles = if menu == "mode-settings" {
+        let toggles: Vec<_> = if menu == "mode-settings" {
             self.mode_options(self.section)
+                .into_iter()
+                .flat_map(|(_, options)| options)
+                .collect()
         } else {
             Vec::new()
         };
@@ -295,61 +327,104 @@ impl Adeline {
                         )
                     })
                     .when_some(state.as_ref(), |column, state| {
-                        column.child(
-                            Command::new(state)
-                                .bordered(false)
-                                .searchable(menu != "files")
-                                .placeholder("Search")
-                                .items(entries.iter().map(|(label, _)| {
-                                    let item = CommandItem::new().label(label.clone());
-                                    let Some((label, _, checked, action)) =
-                                        toggles.iter().find(|(name, _, _, _)| *name == label)
-                                    else {
-                                        return item;
-                                    };
-                                    let (label, checked) = (*label, *checked);
-                                    let action = action.clone();
-                                    let owner = owner.clone();
-                                    item.child(move |_, _| {
-                                        let owner = owner.clone();
-                                        let action = action.clone();
-                                        row()
-                                            .w_full()
-                                            .gap_3()
-                                            .child(div().flex_1().child(label))
-                                            .child(
-                                                Switch::new(label)
-                                                    .checked(checked)
-                                                    .accessibility_label(label)
-                                                    .on_change(move |_, window, cx| {
-                                                        cx.stop_propagation();
-                                                        let _ = owner.update(cx, |app, cx| {
-                                                            app.act(action.clone(), window, cx);
-                                                        });
-                                                    }),
-                                            )
-                                    })
-                                }))
-                                .on_confirm(move |path, window, cx| {
-                                    if let Some((_, action)) = entries.get(path.row) {
-                                        if !matches!(
-                                            action,
-                                            Action::ShowCompleted
-                                                | Action::ShowArchived
-                                                | Action::HideToolCalls
-                                                | Action::ShowThinking
-                                                | Action::SubmitOnEnter
-                                                | Action::Docs(_)
-                                        ) {
-                                            popover
-                                                .update(cx, |state, cx| state.dismiss(window, cx));
-                                        }
-                                        let _ = owner.update(cx, |app, cx| {
-                                            app.act(action.clone(), window, cx);
-                                        });
-                                    }
-                                }),
-                        )
+                        let item = |label: &String, action: &Action| {
+                            let item = CommandItem::new().label(label.clone());
+                            if matches!(action, Action::AppSettings | Action::ConfigureModeSettings)
+                            {
+                                let label = label.clone();
+                                return item.child(move |_, cx| {
+                                    row()
+                                        .w_full()
+                                        .gap_3()
+                                        .text_size(rems(MENU_ITEM))
+                                        .child(div().flex_1().child(label.clone()))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(cx.theme().muted_foreground)
+                                                .child(conversation_ui::shortcut("Ctrl+,")),
+                                        )
+                                });
+                            }
+                            let Some((label, _, checked, action)) =
+                                toggles.iter().find(|(name, _, _, _)| *name == label)
+                            else {
+                                let label = label.clone();
+                                return item.child(move |_, _| {
+                                    div().text_size(rems(MENU_ITEM)).child(label.clone())
+                                });
+                            };
+                            let (label, checked) = (*label, *checked);
+                            let action = action.clone();
+                            let owner = owner.clone();
+                            item.child(move |_, cx| {
+                                let owner = owner.clone();
+                                let action = action.clone();
+                                row()
+                                    .w_full()
+                                    .gap_3()
+                                    .text_size(rems(MENU_ITEM))
+                                    .child(div().flex_1().child(label))
+                                    .child(
+                                        Switch::new(label)
+                                            .small()
+                                            .color(cx.theme().info)
+                                            .checked(checked)
+                                            .accessibility_label(label)
+                                            .on_change(move |_, window, cx| {
+                                                cx.stop_propagation();
+                                                let _ = owner.update(cx, |app, cx| {
+                                                    app.act(action.clone(), window, cx);
+                                                });
+                                            }),
+                                    )
+                            })
+                        };
+                        let command = Command::new(state)
+                            .bordered(false)
+                            .searchable(searchable(menu))
+                            .max_h(rems(24.))
+                            .placeholder("Search");
+                        let command = entries.iter().enumerate().fold(
+                            command,
+                            |command, (ix, (heading, group))| {
+                                // Kit draws group labels at a fixed size, so a
+                                // heading is a disabled row the highlight skips.
+                                let heading = heading.map(|heading| {
+                                    CommandItem::new().label(heading).disabled(true).child(
+                                        move |_, _| {
+                                            div().text_size(rems(MENU_HEADING)).child(heading)
+                                        },
+                                    )
+                                });
+                                let items = CommandGroup::new().items(heading.into_iter().chain(
+                                    group.iter().map(|(label, action)| item(label, action)),
+                                ));
+                                if ix > 0 { command.separator() } else { command }.group(items)
+                            },
+                        );
+                        column.child(command.on_confirm(move |path, window, cx| {
+                            if let Some((_, action)) =
+                                entries.get(path.section).and_then(|(heading, group)| {
+                                    group.get(path.row.checked_sub(usize::from(heading.is_some()))?)
+                                })
+                            {
+                                if !matches!(
+                                    action,
+                                    Action::ShowCompleted
+                                        | Action::ShowArchived
+                                        | Action::HideToolCalls
+                                        | Action::ShowThinking
+                                        | Action::SubmitOnEnter
+                                        | Action::Docs(_)
+                                ) {
+                                    popover.update(cx, |state, cx| state.dismiss(window, cx));
+                                }
+                                let _ = owner.update(cx, |app, cx| {
+                                    app.act(action.clone(), window, cx);
+                                });
+                            }
+                        }))
                     })
             })
     }
@@ -371,6 +446,13 @@ impl Adeline {
             return;
         }
         let state = cx.new(|cx| CommandState::new(window, cx));
+        // The state learns it has no search box, and so takes focus on its
+        // list, only when a Command renders it.
+        RenderOnce::render(
+            Command::new(&state).searchable(searchable(menu)),
+            window,
+            cx,
+        );
         window.focus(&state.focus_handle(cx), cx);
         self.command_popup = Some(state);
         self.menu = Some(menu);

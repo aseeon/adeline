@@ -154,6 +154,8 @@ enum Action {
     Settings,
     AppSettings,
     AgentSettings,
+    // The conversation's agent, or the first agent in the list.
+    EditAgent,
     ModeSettings,
     ConfigureModeSettings,
     Close,
@@ -252,6 +254,7 @@ actions!(
         AttachFile,
         TrafficView,
         TodoList,
+        ActivityTab,
         NextProject,
         PreviousProject,
         CloseProjectTab,
@@ -851,6 +854,9 @@ impl Render for Adeline {
             .on_action(
                 cx.listener(|app, _: &TodoList, window, cx| app.act(Action::TodoList, window, cx)),
             )
+            .on_action(cx.listener(|app, _: &ActivityTab, window, cx| {
+                app.act(Action::PanelTab(panes::SideTab::Activity), window, cx);
+            }))
             .on_action(cx.listener(|app, _: &NextProject, window, cx| {
                 app.step_project(true, window, cx);
             }))
@@ -1123,6 +1129,7 @@ fn bind_keys(cx: &mut App) {
             KeyBinding::new(&key("shift-a"), AttachFile, None),
             KeyBinding::new(&key("shift-l"), TrafficView, None),
             KeyBinding::new(&key("shift-t"), TodoList, None),
+            KeyBinding::new(&key("shift-i"), ActivityTab, None),
             KeyBinding::new(&key("w"), CloseProjectTab, None),
             KeyBinding::new(&key("o"), OpenFolder, None),
             KeyBinding::new(&key("l"), FocusMessage, None),

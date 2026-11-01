@@ -61,7 +61,7 @@ pub(super) fn init(
     let mut app_items = vec![
         MenuItem::action("About Adeline", About),
         MenuItem::separator(),
-        MenuItem::action("Settings…", OpenSettings),
+        MenuItem::action("Settings", OpenSettings),
     ];
     // Demo mode has no engine, so no agents to stop.
     if !demo_mode {

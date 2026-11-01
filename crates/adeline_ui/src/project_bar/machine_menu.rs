@@ -74,7 +74,7 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
         let detail = state.as_ref().and_then(client::State::detail);
         let action = match &state {
             Some(client::State::UpgradeNeeded { .. }) => {
-                Some(("Upgrade…", Action::MachineUpgrade(machine.clone())))
+                Some(("Upgrade", Action::MachineUpgrade(machine.clone())))
             }
             Some(state)
                 if failing(state)
@@ -165,7 +165,7 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
                     .small()
                     .w_full()
                     .icon(Icon::default().path("settings.svg"))
-                    .label("Manage machines…")
+                    .label("Manage machines")
                     .on_click(owner_action(owner, Action::ManageMachines)),
                 owner,
                 Action::ManageMachines,

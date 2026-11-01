@@ -302,64 +302,42 @@ impl Adeline {
     }
 
     fn activity_stats(&self, thread: &Thread, cx: &Context<Self>) -> Div {
-        let calls = || {
-            thread
-                .activity
-                .iter()
-                .filter(|call| call.kind.starts_with("tool:"))
-        };
-        let timed: Vec<u64> = calls().filter_map(Activity::duration_ms).collect();
-        let finished =
-            |status: conversation::ToolStatus| calls().filter(|call| call.status == status).count();
-        let failed = finished(conversation::ToolStatus::Failed);
-        let active = thread.timing.active_ms();
-        let dash = || "–".to_owned();
+        let calls: Vec<&Activity> = thread
+            .activity
+            .iter()
+            .filter(|call| call.kind.starts_with("tool:"))
+            .collect();
+        let failed = calls
+            .iter()
+            .filter(|call| call.status == conversation::ToolStatus::Failed)
+            .count();
         let cells = [
             (
-                "Active time",
-                if active > 0 { duration(active) } else { dash() },
-                "Time from each prompt to the agent's last reply or tool call",
+                "Tool calls",
+                calls.len().to_string(),
+                "Tool calls the agent made",
             ),
-            (
-                "Tool time",
-                if timed.is_empty() {
-                    dash()
-                } else {
-                    duration(timed.iter().sum())
-                },
-                "Time the tool calls took, added up",
-            ),
-            (
-                "Reply speed",
-                thread
-                    .timing
-                    .tokens_per_second()
-                    .map_or_else(dash, |speed| format!("≈{speed:.0} tok/s")),
-                "Estimated from how fast reply text arrives, at about four characters a token",
-            ),
-            (
-                "Succeeded",
-                finished(conversation::ToolStatus::Completed).to_string(),
-                "Tool calls that completed",
-            ),
-            ("Failed", failed.to_string(), "Tool calls that failed"),
+            ("Failed calls", failed.to_string(), "Tool calls that failed"),
             (
                 "Context",
-                thread.context.map_or_else(dash, |(used, size)| {
-                    format!("{} of {}", tokens(used), tokens(size))
-                }),
+                thread.context.map_or_else(
+                    || "–".to_owned(),
+                    |(used, size)| format!("{} of {}", tokens(used), tokens(size)),
+                ),
                 "Tokens in the agent's context, of its window",
             ),
         ];
         let isl = theme::islands(cx);
         let cell = |(label, value, help): (&'static str, String, &'static str)| {
-            let alert = label == "Failed" && failed > 0;
+            let alert = label == "Failed calls" && failed > 0;
             col()
                 .id(label)
                 .min_w_0()
+                .items_center()
                 .tooltip(move |window, cx| Tooltip::new(help).build(window, cx))
                 .child(
                     div()
+                        .max_w_full()
                         .truncate()
                         .text_size(dp(theme::T_PROSE))
                         .font_weight(FontWeight::SEMIBOLD)
@@ -368,20 +346,17 @@ impl Adeline {
                 )
                 .child(
                     div()
+                        .max_w_full()
                         .truncate()
                         .text_size(dp(theme::T_CAPTION))
                         .text_color(isl.fg3)
                         .child(label),
                 )
         };
-        // Columns take their widest value, so the side margins match.
-        let mut cells = cells.into_iter().map(cell);
-        let top: Vec<_> = cells.by_ref().take(3).collect();
-        row().justify_between().gap(dp(8.)).children(
-            top.into_iter()
-                .zip(cells)
-                .map(|(above, below)| col().min_w_0().gap(dp(12.)).child(above).child(below)),
-        )
+        row()
+            .justify_between()
+            .gap(dp(8.))
+            .children(cells.into_iter().map(cell))
     }
 
     fn activity_row(&self, thread: &Thread, entry: &Entry<'_>, cx: &Context<Self>) -> AnyElement {

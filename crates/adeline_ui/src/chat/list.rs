@@ -331,8 +331,8 @@ impl Adeline {
                             .rotate(Radians(std::f32::consts::FRAC_PI_2)),
                         cx,
                     )
-                    .accessibility_label("Chat settings")
-                    .tooltip("Chat settings"),
+                    .accessibility_label("Chat list options")
+                    .tooltip("Chat list options"),
                     Anchor::TopLeft,
                     cx,
                 ),

@@ -32,6 +32,7 @@ impl Adeline {
                     | Action::AppMenu
                     | Action::AppSettings
                     | Action::AgentSettings
+                    | Action::EditAgent
                     | Action::About
                     | Action::QuitApp
                     | Action::Close
@@ -85,17 +86,25 @@ impl Adeline {
             .expect("Kit root window");
         match action {
             Action::AppSettings => settings::open(root, cx.weak_entity(), cx),
-            Action::AgentSettings => {
-                let id = self
+            Action::AgentSettings | Action::EditAgent => {
+                let entries = &self.agent_catalog().entries;
+                let known = |id: &String| entries.iter().any(|entry| &entry.id == id);
+                // A demo chat has no live session, only its agent's name.
+                let conversation = self
                     .current_id()
                     .and_then(|id| self.conversation_agent(&id))
-                    .or_else(|| self.selected_agent.clone())
-                    .filter(|id| {
-                        self.agent_catalog()
-                            .entries
-                            .iter()
-                            .any(|entry| &entry.id == id)
-                    });
+                    .or_else(|| {
+                        let thread = self.workspace().threads.get(self.selected?)?;
+                        let name = self.agent_name(&thread.provider);
+                        let entry = entries.iter().find(|e| e.definition.name == name)?;
+                        Some(entry.id.clone())
+                    })
+                    .filter(known);
+                let id = if matches!(changed, Action::EditAgent) {
+                    conversation.or_else(|| entries.first().map(|entry| entry.id.clone()))
+                } else {
+                    conversation.or_else(|| self.selected_agent.clone().filter(known))
+                };
                 settings::open_agent_page(root, cx.weak_entity(), self.current_machine(), id, cx);
             }
             Action::AddAgent => {
