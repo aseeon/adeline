@@ -329,7 +329,6 @@ impl Adeline {
             .w_full()
             .flex_shrink_0()
             .min_w_0()
-            .bg(chat_surface(self.section, cx))
             .child(chat_column(self.section).child(div().relative().child(island).children(slash)))
     }
 
