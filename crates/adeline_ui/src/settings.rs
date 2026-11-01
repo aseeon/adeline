@@ -120,6 +120,8 @@ const SILENCE_DESCRIPTION: &str = "0 turns the notice off.";
 const MCP_DESCRIPTION: &str = "Every agent on this machine gets these MCP servers when a session starts, before its own. A server whose transport an agent doesn't support is skipped with a note in the chat.";
 const THINKING_LABEL: &str = "Thinking animation";
 const THINKING_DESCRIPTION: &str = "How the row under your message moves while the agent works.";
+const GLASS_LABEL: &str = "Glass";
+const GLASS_DESCRIPTION: &str = "Let the desktop show through the window frame and side panels.";
 
 impl Adeline {
     pub(super) fn mode_options(&self, section: Section) -> Vec<SettingGroup> {
@@ -306,10 +308,11 @@ fn open_at(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(760.), px(500.))),
-                ..titlebar::main_window_options()
+                ..titlebar::main_window_options(cx)
             },
             |window, cx| {
                 window.set_window_title("Settings · Adeline");
+                titlebar::size_hidden(window, bounds, cx);
                 let mode = match target {
                     Some(AfterAgent::OpenMode(mode)) => Some(mode),
                     _ => None,
@@ -354,6 +357,8 @@ pub(super) fn open_agent(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(620.), px(500.))),
+                show: !cx.has_global::<titlebar::Hidden>(),
+                focus: !cx.has_global::<titlebar::Hidden>(),
                 titlebar: Some(TitlebarOptions {
                     title: Some("Add an agent · Adeline".into()),
                     appears_transparent: cfg!(target_os = "windows"),
@@ -362,6 +367,7 @@ pub(super) fn open_agent(
                 ..Default::default()
             },
             |window, cx| {
+                titlebar::size_hidden(window, bounds, cx);
                 let view = cx.new(|cx| AgentWindow::new(owner, machine, window, cx));
                 cx.new(|cx| Root::new(view, window, cx))
             },
@@ -1309,7 +1315,7 @@ impl Render for SettingsWindow {
             .px_2()
             .pb_2()
             .pt(titlebar::MAIN_HEIGHT + px(4.))
-            .bg(cx.theme().title_bar.alpha(titlebar::GLASS))
+            .bg(cx.theme().title_bar.alpha(titlebar::glass_alpha(0.7)))
             .child(search_field(
                 Input::new(&self.query).aria_label("Search settings"),
                 &self.query,

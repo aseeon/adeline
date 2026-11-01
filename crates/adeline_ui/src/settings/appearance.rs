@@ -1,4 +1,4 @@
-//! General › Appearance: theme, fonts and font sizes.
+//! General › Appearance: theme, Glass, fonts and font sizes.
 use super::*;
 
 fn font_label(which: usize) -> &'static str {
@@ -43,6 +43,19 @@ impl SettingsWindow {
             Ok(()) => {
                 self.theme_status = None;
                 theme::apply(cx);
+            }
+            Err(message) => self.theme_status = Some(format!("{message:#}")),
+        }
+        cx.notify();
+    }
+    fn toggle_glass(&mut self, cx: &mut Context<Self>) {
+        match config::update(|settings| {
+            settings.general.appearance.glass = !settings.general.appearance.glass;
+        }) {
+            Ok(()) => {
+                self.theme_status = None;
+                theme::apply(cx);
+                titlebar::apply_background(cx);
             }
             Err(message) => self.theme_status = Some(format!("{message:#}")),
         }
@@ -109,6 +122,21 @@ impl SettingsWindow {
             );
         if let Some(status) = &self.theme_status {
             page = page.child(error(status.clone(), cx));
+        }
+        // Linux has no dependable window blur.
+        if !cfg!(target_os = "linux") {
+            page = page.children(card(
+                vec![switch_row(
+                    GLASS_LABEL,
+                    GLASS_DESCRIPTION,
+                    Switch::new("glass")
+                        .checked(titlebar::glass())
+                        .accessibility_label(GLASS_LABEL)
+                        .on_change(cx.listener(|this, _, _, cx| this.toggle_glass(cx))),
+                    cx,
+                )],
+                cx,
+            ));
         }
         for which in 0..2 {
             let fallback = if which == 0 {

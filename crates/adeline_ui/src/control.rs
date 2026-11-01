@@ -201,14 +201,8 @@ fn tree(window: &Window) -> Value {
     json!(elements)
 }
 
-struct Hidden;
-impl Global for Hidden {}
-
 /// Opens this UI's control endpoint, removed again when the app quits.
-pub fn serve(demo: bool, hidden: bool, cx: &mut App) -> Result<()> {
-    if hidden {
-        cx.set_global(Hidden);
-    }
+pub fn serve(demo: bool, cx: &mut App) -> Result<()> {
     let listener = client::runtime().block_on(async { ipc::Listener::bind_control() })?;
     let (requests, inbox) = async_channel::unbounded();
     client::runtime().spawn(accept(listener, requests));
@@ -263,7 +257,7 @@ async fn accept(
 /// Waits until the window has drawn a frame, or `FRAME_TIMEOUT` for a window
 /// the platform doesn't draw, such as a minimized one.
 async fn next_frame(window: AnyWindowHandle, cx: &mut AsyncApp) -> Result<()> {
-    if cx.update(|cx| cx.has_global::<Hidden>()) {
+    if cx.update(|cx| cx.has_global::<crate::titlebar::Hidden>()) {
         return cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx));
     }
     let (drawn, frame) = async_channel::bounded(1);
@@ -285,8 +279,16 @@ async fn next_frame(window: AnyWindowHandle, cx: &mut AsyncApp) -> Result<()> {
 }
 
 async fn handle(request: Request, demo: bool, cx: &mut AsyncApp) -> Result<Value> {
+    // Hidden windows never become active, so the newest one stands in for the front window.
+    // ponytail: newest by slot order, track opens if windows ever close out of order.
     let window = cx
-        .update(|cx| cx.active_window().or_else(|| cx.windows().first().copied()))
+        .update(|cx| {
+            if cx.has_global::<crate::titlebar::Hidden>() {
+                cx.windows().last().copied()
+            } else {
+                cx.active_window().or_else(|| cx.windows().first().copied())
+            }
+        })
         .context("Adeline has no window")?;
     next_frame(window, cx).await?;
     let done = json!({});

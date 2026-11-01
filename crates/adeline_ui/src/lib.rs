@@ -786,7 +786,7 @@ impl Render for Adeline {
         col()
             .relative()
             .size_full()
-            .bg(theme::islands(cx).bg)
+            .bg(theme::islands(cx).backdrop)
             .font_family(cx.theme().font_family.clone())
             .text_color(cx.theme().foreground)
             .track_focus(&self.focus)
@@ -960,27 +960,26 @@ pub fn open(demo_mode: bool, verbose: bool, control: bool) {
     application().with_assets(Assets).run(move |cx: &mut App| {
         // These pixels describe native window geometry, not control spacing.
         let bounds = Bounds::centered(None, size(px(1440.), px(940.)), cx);
-        // `--hidden` (control builds) keeps the window off screen for `adeline ui`.
-        let hidden = control && std::env::args().any(|arg| arg == "--hidden");
+        // `--hidden` (control builds) keeps the windows off screen for `adeline ui`.
+        if control && std::env::args().any(|arg| arg == "--hidden") {
+            cx.set_global(titlebar::Hidden);
+        }
         let adeline = start(
             demo_mode,
             verbose,
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 window_min_size: Some(size(px(800.), px(600.))),
-                show: !hidden,
-                focus: !hidden,
-                ..titlebar::main_window_options()
+                ..titlebar::main_window_options(cx)
             },
             cx,
         );
-        // A hidden window keeps the platform's default placement until it shows.
-        if hidden {
-            let window = adeline.read(cx).main_window;
-            let _ = window.update(cx, |_, window, _| window.resize(bounds.size));
-        }
+        let window = adeline.read(cx).main_window;
+        let _ = window.update(cx, |_, window, cx| {
+            titlebar::size_hidden(window, bounds, cx);
+        });
         #[cfg(feature = "control")]
-        if control && let Err(error) = control::serve(demo_mode, hidden, cx) {
+        if control && let Err(error) = control::serve(demo_mode, cx) {
             tracing::event!(
                 name: "control.serve.failed",
                 tracing::Level::WARN,
@@ -1007,6 +1006,11 @@ pub fn start(
     config::init();
     theme::init();
     theme::apply(cx);
+    // The caller builds the options before the config loads.
+    let options = WindowOptions {
+        window_background: titlebar::background(),
+        ..options
+    };
     cx.set_global(Harnesses(harness::Catalog {
         harnesses: if demo_mode {
             harness::load()

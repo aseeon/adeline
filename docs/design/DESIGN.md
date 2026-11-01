@@ -75,6 +75,8 @@ Use a 1px `box-shadow` ring for edges, not borders. Rings don't change layout an
 
 Glass is an optional surface. Islands become translucent over the desktop with `blur(36px) saturate(1.6)`. In Dark grey, `--bg` is `oklch(0.2 0 0 / 0.5)` and `--isl-l` is `oklch(0.1 0 0 / 0.38)`. Glass works best on macOS, mostly works on Windows and is clumsy on Linux. Linux falls back to the solid surface.
 
+Settings › Appearance › Glass turns it on, for the main window and the Settings window. It's off by default, and Linux doesn't offer it. In the app, Glass makes the window background translucent, including under the chat in Chats. The islands and rails stay solid. The chat drops its own surface and its fades at the top and above the composer. The Settings sidebar becomes translucent and its content stays solid.
+
 ### Light theme
 
 Settings › Appearance › Theme switches between Dark and Light. Light uses the same tokens with new values, set under `[data-theme="light"]` in design.html. The overlay tokens (`--line`, `--hover`, `--chip`, `--sel`, `--ring`, `--ring-strong`) read their color from `--ink`. It's white in Dark and black in Light, at the same opacities.

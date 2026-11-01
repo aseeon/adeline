@@ -29,6 +29,8 @@ pub(super) fn general_matches(child: usize, query: &str) -> bool {
         }),
         1 => [
             "Theme",
+            GLASS_LABEL,
+            GLASS_DESCRIPTION,
             "Interface font",
             "Code font",
             "Interface font size",

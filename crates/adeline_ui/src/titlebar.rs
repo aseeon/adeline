@@ -9,17 +9,52 @@ use gpui_kit::component::GlobalState;
 // 4px of headroom over the 32px project tabs.
 pub(super) const MAIN_HEIGHT: Pixels = px(36.);
 
-// Over the system blur (Acrylic on Windows, vibrancy on macOS). Linux has no dependable blur,
-// so its chrome stays opaque.
-pub(super) const GLASS: f32 = if cfg!(target_os = "linux") { 1. } else { 0.7 };
+// Glass draws over the system blur (Acrylic on Windows, vibrancy on macOS). Linux has no
+// dependable blur, so its windows stay opaque.
+pub(super) fn glass() -> bool {
+    !cfg!(target_os = "linux") && config::current().general.appearance.glass
+}
 
-pub(super) fn main_window_options() -> WindowOptions {
+// A surface's opacity: `alpha` under Glass, solid otherwise.
+pub(super) fn glass_alpha(alpha: f32) -> f32 {
+    if glass() { alpha } else { 1. }
+}
+
+pub(super) fn background() -> WindowBackgroundAppearance {
+    if glass() {
+        WindowBackgroundAppearance::Blurred
+    } else {
+        WindowBackgroundAppearance::Opaque
+    }
+}
+
+pub(super) fn apply_background(cx: &mut App) {
+    cx.defer(|cx| {
+        for window in cx.windows() {
+            let _ = window.update(cx, |_, window, _| {
+                window.set_background_appearance(background());
+            });
+        }
+    });
+}
+
+// Set by `--hidden` (control builds): every window stays off screen for `adeline ui`.
+pub(super) struct Hidden;
+impl Global for Hidden {}
+
+// A hidden window keeps the platform's default placement until it shows.
+pub(super) fn size_hidden(window: &mut Window, bounds: Bounds<Pixels>, cx: &App) {
+    if cx.has_global::<Hidden>() {
+        window.resize(bounds.size);
+    }
+}
+
+pub(super) fn main_window_options(cx: &App) -> WindowOptions {
+    let hidden = cx.has_global::<Hidden>();
     WindowOptions {
-        window_background: if cfg!(target_os = "linux") {
-            WindowBackgroundAppearance::Opaque
-        } else {
-            WindowBackgroundAppearance::Blurred
-        },
+        show: !hidden,
+        focus: !hidden,
+        window_background: background(),
         titlebar: Some(TitlebarOptions {
             title: Some("Adeline".into()),
             appears_transparent: true,

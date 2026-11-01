@@ -402,10 +402,12 @@ pub fn apply(cx: &mut App) {
 // The Islands surfaces (docs/design/DESIGN.md), derived from the theme's
 // background so every theme keeps their brightness order: islands, then the
 // window, then the composer and cards. Overlays are `ink` at fixed opacities.
+// Under Glass the window backdrop turns translucent and the islands stay solid.
 #[derive(Clone, Copy)]
 pub struct Islands {
     pub island: Hsla,
     pub bg: Hsla,
+    pub backdrop: Hsla,
     pub card: Hsla,
     pub raise: Hsla,
     pub bubble: Hsla,
@@ -441,6 +443,7 @@ impl Islands {
         Self {
             island: lift(bg, -0.03),
             bg,
+            backdrop: bg.alpha(crate::titlebar::glass_alpha(if dark { 0.5 } else { 0.6 })),
             card: lift(bg, 0.025),
             raise: lift(bg, 0.035),
             bubble: lift(bg, if dark { 0.065 } else { -0.055 }),

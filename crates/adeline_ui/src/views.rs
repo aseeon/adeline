@@ -102,7 +102,7 @@ impl Adeline {
             .h(rems(chat::HEADER_FADE))
             .bg(linear_gradient(
                 180.,
-                linear_color_stop(surface.alpha(0.9), 0.),
+                linear_color_stop(surface.opacity(0.9), 0.),
                 linear_color_stop(surface.alpha(0.), 1.),
             ));
         div()
@@ -138,7 +138,7 @@ impl Adeline {
                             .h(rems(chat::HEADER_FADE))
                             .bg(linear_gradient(
                                 0.,
-                                linear_color_stop(surface.alpha(0.9), 0.),
+                                linear_color_stop(surface.opacity(0.9), 0.),
                                 linear_color_stop(surface.alpha(0.), 1.),
                             )),
                     )
