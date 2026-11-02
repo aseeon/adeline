@@ -61,12 +61,24 @@ pub(crate) struct SwitchMode {
 
 actions!(
     adeline,
-    [ToggleDocView, SaveDoc, NoteOnSelection, NewDoc, ChooseChat]
+    [
+        ToggleDocView,
+        SaveDoc,
+        NoteOnSelection,
+        NewDoc,
+        ChooseChat,
+        ViewerPageUp,
+        ViewerPageDown
+    ]
 );
 
 /// Docs mode's shortcuts (docs/shortcuts.md), Ctrl and Cmd alike.
 pub(crate) fn key_bindings() -> Vec<KeyBinding> {
-    let mut bindings = Vec::new();
+    // Text fields bind these in their own context, which wins while they have focus.
+    let mut bindings = vec![
+        KeyBinding::new("pageup", ViewerPageUp, None),
+        KeyBinding::new("pagedown", ViewerPageDown, None),
+    ];
     for modifier in ["ctrl", "cmd"] {
         let key = |rest: &str| format!("{modifier}-{rest}");
         for index in 0..9 {
@@ -1751,6 +1763,8 @@ impl Adeline {
             .on_action(cx.listener(|app, _: &NewDoc, window, cx| {
                 app.act(Action::Docs(Act::New), window, cx);
             }))
+            .on_action(cx.listener(|app, _: &ViewerPageUp, _, cx| app.docs_page(-1., cx)))
+            .on_action(cx.listener(|app, _: &ViewerPageDown, _, cx| app.docs_page(1., cx)))
             .on_action(cx.listener(|app, action: &ApplyFormat, window, cx| {
                 app.act(Action::Docs(Act::Format(action.format)), window, cx);
             }))
@@ -1763,6 +1777,19 @@ impl Adeline {
             .on_action(cx.listener(|app, action: &OpenLink, window, cx| {
                 app.docs_link(&action.url, window, cx);
             }))
+    }
+
+    // The Viewer takes no focus, so its pages scroll from the root.
+    fn docs_page(&mut self, pages: f32, cx: &mut Context<Self>) {
+        let Some((path, doc)) = self.docs_open_doc() else {
+            return;
+        };
+        if doc.editor || !adeline_docs::is_markdown(path) {
+            return;
+        }
+        let list = self.docs.viewer.read(cx).list_state().clone();
+        list.scroll_by(list.viewport_bounds().size.height * pages);
+        cx.notify();
     }
 
     // Reads the images the Viewer asked for since the last frame.

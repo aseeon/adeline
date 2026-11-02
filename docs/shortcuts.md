@@ -89,6 +89,7 @@ Registered with both the Ctrl and the Cmd form on every OS (`docs::key_bindings`
 | Ctrl+Alt+N / Cmd+Alt+N | New doc |
 | Ctrl+Shift+K / Cmd+Shift+K | Choose the conversation on the right |
 | Ctrl+Shift+N / Cmd+Shift+N | Note on the selection, in the Viewer or the Editor: quote it with its path and lines in the message box |
+| Page Up / Page Down | Scroll the Viewer by a page, unless a text field has focus |
 
 In the tree search field, Down moves into the tree. With the tree focused, no modifier:
 

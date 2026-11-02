@@ -562,6 +562,18 @@ fn docs_failed_rename_keeps_editing(cx: &mut TestAppContext) {
     ui.named("plan.md");
 }
 
+#[gpui_kit::test]
+fn page_down_and_up_scroll_the_viewer(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.press("ctrl-2");
+    open_doc(&mut ui, "mdguide", 2);
+    let top = ui.names();
+    ui.press("pagedown");
+    assert_ne!(ui.names(), top, "Page Down left the Viewer at the top");
+    ui.press("pageup");
+    assert_eq!(ui.names(), top, "Page Up didn't return to the top");
+}
+
 // The plan's list has one done task and three open ones.
 #[gpui_kit::test]
 fn docs_task_checkboxes_show_and_toggle(cx: &mut TestAppContext) {
