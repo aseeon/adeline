@@ -1,0 +1,16 @@
+# Source: https://github.com/rose-pine/neovim/blob/main/lua/rose-pine/palette.lua
+name: "Rosé Pine Dawn"
+brightness: Light
+colors:
+  background: '#faf4ed'
+  background_dark: '#f2e9e1'
+  background_light: '#dfdad9'
+  main_text: '#464261'
+  muted_text: '#797593'
+  fail: '#b4637a'
+  attention: '#d7827e'
+  warning: '#ea9d34'
+  success: '#6d8f89'
+  inline_highlight: '#56949f'
+  button_highlight: '#286983'
+  effects: '#907aa9'

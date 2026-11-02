@@ -1,0 +1,16 @@
+# Source: https://github.com/zed-industries/zed/blob/main/assets/themes/ayu/ayu.json
+name: "Ayu Dark"
+brightness: Dark
+colors:
+  background: '#0d1016'
+  background_dark: '#0a0d12'
+  background_light: '#1f2127'
+  main_text: '#bfbdb6'
+  muted_text: '#707a8c'
+  fail: '#ef7177'
+  attention: '#ff8f3f'
+  warning: '#feb454'
+  success: '#aad84c'
+  inline_highlight: '#95e5cb'
+  button_highlight: '#5ac1fe'
+  effects: '#d2a6ff'

@@ -1,0 +1,16 @@
+# Source: https://github.com/joshdick/onedark.vim/blob/main/autoload/onedark.vim
+name: "One Dark"
+brightness: Dark
+colors:
+  background: '#282c34'
+  background_dark: '#21252b'
+  background_light: '#333842'
+  main_text: '#abb2bf'
+  muted_text: '#7f848e'
+  fail: '#e06c75'
+  attention: '#d19a66'
+  warning: '#e5c07b'
+  success: '#98c379'
+  inline_highlight: '#56b6c2'
+  button_highlight: '#61afef'
+  effects: '#c678dd'

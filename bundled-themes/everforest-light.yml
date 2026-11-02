@@ -1,0 +1,16 @@
+# Source: https://github.com/sainnhe/everforest/blob/master/autoload/everforest.vim
+name: "Everforest Light"
+brightness: Light
+colors:
+  background: '#fdf6e3'
+  background_dark: '#efebd4'
+  background_light: '#e6e2cc'
+  main_text: '#5c6a72'
+  muted_text: '#829181'
+  fail: '#f85552'
+  attention: '#f57d26'
+  warning: '#dfa000'
+  success: '#8da101'
+  inline_highlight: '#35a77c'
+  button_highlight: '#3a94c5'
+  effects: '#df69ba'

@@ -152,7 +152,7 @@ fn prose(cx: &App) -> TextViewStyle {
             }
         })
         .with_inline_code(HighlightStyle {
-            color: Some(cx.theme().primary),
+            color: Some(theme::hsla("inline_highlight")),
             background_color: Some(theme::islands(cx).chip),
             ..Default::default()
         })

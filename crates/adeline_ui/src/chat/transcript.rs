@@ -115,7 +115,7 @@ impl Adeline {
                         TextViewStyle::default()
                             .paragraph_gap(rems(0.625))
                             .inline_code(HighlightStyle {
-                                color: Some(theme.primary),
+                                color: Some(theme::hsla("inline_highlight")),
                                 background_color: Some(isl.chip),
                                 ..Default::default()
                             }),

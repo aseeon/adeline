@@ -149,6 +149,7 @@ impl Adeline {
                         .accessibility_label("Queue")
                         .tooltip("Queue: sends when this turn ends")
                         .when(!can_send, |button| button.opacity(0.25))
+                        .when(can_send, |button| button.border_0())
                         .disabled(!can_send)
                         .on_click(
                             cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx)),
@@ -156,6 +157,7 @@ impl Adeline {
                 )
                 .child(
                     send_button("stop-chat-turn", "stop.svg", 0.)
+                        .border_0()
                         .accessibility_label("Stop")
                         .tooltip(format!("Stop ({})", conversation_ui::shortcut("Ctrl+.")))
                         .on_click(
@@ -168,6 +170,7 @@ impl Adeline {
                 .accessibility_label("Send")
                 .tooltip(send_tooltip)
                 .when(!can_send, |button| button.opacity(0.25))
+                .when(can_send, |button| button.border_0())
                 .disabled(!can_send)
                 .on_click(cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx)))
                 .into_any_element()

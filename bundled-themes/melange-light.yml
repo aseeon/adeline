@@ -1,0 +1,16 @@
+# Source: https://github.com/savq/melange-nvim/blob/master/lua/melange/palettes/light.lua
+name: "Melange Light"
+brightness: Light
+colors:
+  background: '#f1f1f1'
+  background_dark: '#e9e1db'
+  background_light: '#d9d3ce'
+  main_text: '#54433a'
+  muted_text: '#7d6658'
+  fail: '#bf0021'
+  attention: '#bc5c00'
+  warning: '#a06d00'
+  success: '#3a684a'
+  inline_highlight: '#3d6568'
+  button_highlight: '#465aa4'
+  effects: '#904180'

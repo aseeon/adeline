@@ -1,0 +1,16 @@
+# Source: https://github.com/catppuccin/palette/blob/main/palette.json
+name: "Catppuccin Latte"
+brightness: Light
+colors:
+  background: '#eff1f5'
+  background_dark: '#e6e9ef'
+  background_light: '#ccd0da'
+  main_text: '#4c4f69'
+  muted_text: '#7c7f93'
+  fail: '#d20f39'
+  attention: '#fe640b'
+  warning: '#df8e1d'
+  success: '#40a02b'
+  inline_highlight: '#179299'
+  button_highlight: '#1e66f5'
+  effects: '#8839ef'

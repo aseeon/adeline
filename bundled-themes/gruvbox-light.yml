@@ -1,0 +1,16 @@
+# Source: https://github.com/sainnhe/gruvbox-material/blob/master/autoload/gruvbox_material.vim
+name: "Gruvbox Light"
+brightness: Light
+colors:
+  background: '#fbf1c7'
+  background_dark: '#f2e5bc'
+  background_light: '#ddccab'
+  main_text: '#654735'
+  muted_text: '#7c6f64'
+  fail: '#c14a4a'
+  attention: '#c35e0a'
+  warning: '#b47109'
+  success: '#6c782e'
+  inline_highlight: '#4c7a5d'
+  button_highlight: '#45707a'
+  effects: '#945e80'

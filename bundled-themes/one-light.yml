@@ -1,0 +1,16 @@
+# Source: https://github.com/atom/atom/blob/master/packages/one-light-syntax/styles/colors.less
+name: "One Light"
+brightness: Light
+colors:
+  background: '#fafafa'
+  background_dark: '#ebebec'
+  background_light: '#e5e5e6'
+  main_text: '#383a42'
+  muted_text: '#696c77'
+  fail: '#e45649'
+  attention: '#c18401'
+  warning: '#cb7701'
+  success: '#50a14f'
+  inline_highlight: '#0184bc'
+  button_highlight: '#4078f2'
+  effects: '#a626a4'

@@ -1,5 +1,6 @@
-//! Application themes. Existing 32-color YAML files project onto Kit's global
-//! theme for every window. Preferences stay separate from workspace data.
+//! Application themes. Twelve-color YAML files (`docs/design/new_color_themes.md`)
+//! project onto Kit's global theme for every window. Borders and hovers are
+//! white ink in dark themes and black ink in light ones. Preferences stay separate from workspace data.
 //! `apply` runs after Kit's initialization and after every appearance change.
 use anyhow::{Context as _, Result, bail};
 use gpui_kit::{
@@ -20,52 +21,35 @@ fn seed_bundled_themes(directory: &Path) -> Result<()> {
         theme
             .validate()
             .with_context(|| format!("Bundled theme {name}"))?;
-        adeline_core::files::seed(&directory.join(name), contents.as_bytes())?;
+        let path = directory.join(name);
+        // Bundled files from before the 12-color format no longer load.
+        if std::fs::read_to_string(&path).is_ok_and(|text| text.contains("sidebar_ring:")) {
+            std::fs::write(&path, contents)?;
+        }
+        adeline_core::files::seed(&path, contents.as_bytes())?;
     }
     Ok(())
 }
 
-macro_rules! palette {
-    ($($name:ident, $label:literal, $color:literal;)*) => {
-        pub const ROLES: &[(&str, &str, u32)] = &[$((stringify!($name), $label, $color)),*];
-    };
+pub const TOKENS: &[(&str, &str)] = &[
+    ("background", "Background"),
+    ("background_dark", "Dark background"),
+    ("background_light", "Light background"),
+    ("main_text", "Main text"),
+    ("muted_text", "Muted text"),
+    ("fail", "Fail"),
+    ("attention", "Attention"),
+    ("warning", "Warning"),
+    ("success", "Success"),
+    ("inline_highlight", "Inline highlight"),
+    ("button_highlight", "Button highlight"),
+    ("effects", "Effects"),
+];
+pub fn color(token: &str) -> u32 {
+    ACTIVE.with(|s| s.borrow().colors[token])
 }
-pub fn color(role: &str) -> u32 {
-    ACTIVE.with(|s| s.borrow().colors[role])
-}
-palette! {
-    background, "Background", 0xfcfbf7;
-    foreground, "Foreground", 0x1c1c1a;
-    card, "Card", 0xfafeff;
-    card_foreground, "Card foreground", 0x1c1c1a;
-    popover, "Popover", 0xfafeff;
-    popover_foreground, "Popover foreground", 0x1c1c1a;
-    primary, "Primary", 0xbb5e3a;
-    primary_foreground, "Primary foreground", 0xfafeff;
-    secondary, "Secondary", 0xe9e7e0;
-    secondary_foreground, "Secondary foreground", 0x4a4a44;
-    muted, "Muted", 0xf2f1eb;
-    muted_foreground, "Muted foreground", 0x7a7a72;
-    accent, "Accent", 0xecb37e;
-    accent_foreground, "Accent foreground", 0xfcfbf7;
-    destructive, "Destructive", 0xe15a44;
-    destructive_foreground, "Destructive foreground", 0xffffff;
-    border, "Border", 0xe2e0d5;
-    input, "Input outline", 0xe2e0d5;
-    ring, "Focus ring", 0xbb5e3a;
-    chart_1, "Chart 1", 0xbb5e3a;
-    chart_2, "Chart 2", 0xecb37e;
-    chart_3, "Chart 3", 0xa2b771;
-    chart_4, "Chart 4", 0x4b6584;
-    chart_5, "Chart 5", 0xb894db;
-    sidebar, "Sidebar background", 0xf7f6f0;
-    sidebar_foreground, "Sidebar foreground", 0x1c1c1a;
-    sidebar_primary, "Sidebar primary", 0xbb5e3a;
-    sidebar_primary_foreground, "Sidebar primary foreground", 0xfafeff;
-    sidebar_accent, "Sidebar selection", 0xedebe4;
-    sidebar_accent_foreground, "Sidebar selection foreground", 0xce8264;
-    sidebar_border, "Sidebar border", 0xe2e0d5;
-    sidebar_ring, "Sidebar focus ring", 0xbb5e3a;
+pub fn hsla(token: &str) -> Hsla {
+    rgb(color(token)).into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -105,12 +89,12 @@ impl ThemeFile {
         if self.name.trim().is_empty() {
             bail!("Theme name cannot be empty.");
         }
-        if self.colors.len() != ROLES.len() {
-            bail!("A theme must contain exactly the 32 named colors.");
+        if self.colors.len() != TOKENS.len() {
+            bail!("A theme must contain exactly the 12 named colors.");
         }
-        ROLES
+        TOKENS
             .iter()
-            .map(|&(key, label, _)| {
+            .map(|&(key, label)| {
                 self.colors
                     .get(key)
                     .and_then(|v| parse_hex(v))
@@ -179,11 +163,6 @@ pub fn parse_hex(value: &str) -> Option<u32> {
     (value.len() == 6 && value.bytes().all(|b| b.is_ascii_hexdigit()))
         .then(|| u32::from_str_radix(value, 16).ok())
         .flatten()
-}
-pub fn sidebar_focus() -> Hsla {
-    // Kit has one global focus ring, so sidebar navigation draws the YAML
-    // sidebar ring on its focused border.
-    rgb(color("sidebar_ring")).into()
 }
 fn read(path: &Path) -> Result<State> {
     let text = std::fs::read_to_string(path).with_context(|| path.display().to_string())?;
@@ -264,126 +243,136 @@ pub fn select(file: &str, cx: &mut App) -> Result<()> {
 pub fn apply(cx: &mut App) {
     ACTIVE.with(|state| {
         let state = state.borrow();
-        let c = |role| rgb(state.colors[role]).into();
+        let c = |token| -> Hsla { rgb(state.colors[token]).into() };
+        let dark = state.theme.brightness.is_dark();
+        let ink: Hsla = if dark {
+            gpui_kit::white()
+        } else {
+            gpui_kit::black()
+        };
+        let (bg, fg, muted_text) = (c("background"), c("main_text"), c("muted_text"));
+        let (island, raised) = (c("background_dark"), c("background_light"));
+        // Menus and code blocks lift toward the ink: lighter in dark themes, darker in light ones.
+        let toward_ink = if dark { 1. } else { -1. };
+        let surface = lift(bg, 0.025 * toward_ink);
+        let line = ink.alpha(0.09);
+        let hover = ink.alpha(0.07);
+        let highlight = c("button_highlight");
         let theme = KitTheme::global_mut(cx);
-        theme.mode = if state.theme.brightness.is_dark() {
+        theme.mode = if dark {
             ThemeMode::Dark
         } else {
             ThemeMode::Light
         };
-        theme.background = c("background");
-        theme.foreground = c("foreground");
+        theme.background = bg;
+        theme.foreground = fg;
         // Code in the Docs Editor follows the theme's brightness and background.
-        let mut highlight = if state.theme.brightness.is_dark() {
+        let mut highlight_theme = if dark {
             HighlightTheme::default_dark()
         } else {
             HighlightTheme::default_light()
         };
-        let style = &mut std::sync::Arc::make_mut(&mut highlight).style;
-        style.editor_background = Some(theme.background);
-        style.editor_gutter_background = Some(theme.background);
-        style.editor_foreground = Some(theme.foreground);
-        theme.highlight_theme = highlight;
-        theme.group_box = c("card");
-        theme.title_bar = c("sidebar");
-        theme.title_bar_border = c("sidebar_border");
-        theme.status_bar = c("sidebar");
-        theme.status_bar_border = c("sidebar_border");
-        theme.window_border = c("border");
+        let style = &mut std::sync::Arc::make_mut(&mut highlight_theme).style;
+        style.editor_background = Some(bg);
+        style.editor_gutter_background = Some(bg);
+        style.editor_foreground = Some(fg);
+        theme.highlight_theme = highlight_theme;
+        theme.group_box = surface;
+        theme.title_bar = island;
+        theme.title_bar_border = line;
+        theme.status_bar = island;
+        theme.status_bar_border = line;
+        theme.window_border = line;
         // Dim with black: a foreground scrim turns milky in dark themes.
         theme.overlay = gpui_kit::black().alpha(0.5);
-        theme.group_box_foreground = c("card_foreground");
-        theme.popover = c("popover");
-        theme.popover_foreground = c("popover_foreground");
-        theme.primary = c("primary");
-        theme.primary_foreground = c("primary_foreground");
-        theme.primary_hover = theme.primary.mix_oklab(theme.foreground, 0.12);
-        theme.primary_active = theme.primary.mix_oklab(theme.foreground, 0.22);
-        theme.secondary = c("secondary");
-        theme.secondary_foreground = c("secondary_foreground");
-        theme.secondary_hover = c("sidebar_accent");
-        theme.secondary_active = c("sidebar_accent");
-        theme.muted = c("muted");
-        theme.muted_foreground = c("muted_foreground");
+        theme.group_box_foreground = fg;
+        theme.popover = surface;
+        theme.popover_foreground = fg;
+        theme.primary = highlight;
+        theme.primary_foreground = bg;
+        theme.primary_hover = highlight.mix_oklab(fg, 0.12);
+        theme.primary_active = highlight.mix_oklab(fg, 0.22);
+        theme.secondary = raised;
+        theme.secondary_foreground = fg;
+        theme.secondary_hover = hover;
+        theme.secondary_active = hover;
+        theme.muted = lift(bg, 0.035 * toward_ink);
+        theme.muted_foreground = muted_text;
         // The kit highlights menu, list and command rows with `accent`: a quiet
         // wash of the text over the popover, as in the projects menu.
-        theme.accent = theme.foreground.mix_oklab(theme.popover, 0.08);
-        theme.accent_foreground = theme.popover_foreground;
-        theme.danger = c("destructive");
-        theme.danger_foreground = c("destructive_foreground");
-        theme.danger_hover = theme.danger.mix_oklab(theme.foreground, 0.12);
-        theme.danger_active = theme.danger.mix_oklab(theme.foreground, 0.22);
-        theme.border = c("border");
-        theme.input = c("input");
-        theme.ring = c("ring");
-        theme.caret = c("foreground");
-        // Text paints over the selection fill, so it must stay see-through; dark
-        // themes' near-black `sidebar_accent` hid the selection and its text.
-        theme.selection = c("primary").alpha(0.3);
-        theme.chart_1 = c("chart_1");
-        theme.chart_2 = c("chart_2");
-        theme.chart_3 = c("chart_3");
-        theme.chart_4 = c("chart_4");
-        theme.chart_5 = c("chart_5");
-        theme.success = c("chart_3");
-        theme.warning = c("chart_2");
-        theme.link = c("chart_2");
-        theme.link_hover = theme.link.mix_oklab(theme.foreground, 0.12);
-        theme.link_active = theme.link.mix_oklab(theme.foreground, 0.22);
-        theme.info = c("chart_4");
-        theme.success_foreground = c("background");
-        theme.warning_foreground = c("foreground");
-        theme.info_foreground = c("background");
-        theme.sidebar = c("sidebar");
-        theme.sidebar_foreground = c("sidebar_foreground");
-        theme.sidebar_primary = c("sidebar_primary");
-        theme.sidebar_primary_foreground = c("sidebar_primary_foreground");
-        theme.sidebar_accent = c("sidebar_accent");
-        theme.sidebar_accent_foreground = c("sidebar_accent_foreground");
-        theme.sidebar_border = c("sidebar_border");
-        theme.scrollbar = c("sidebar");
-        theme.scrollbar_thumb = c("sidebar_border");
-        theme.scrollbar_thumb_hover = c("sidebar_primary");
-        theme.colors.list = c("card");
-        theme.list_hover = c("sidebar_accent");
-        theme.list_active = c("sidebar_accent");
-        theme.list_head = c("muted");
-        theme.table = c("card");
-        theme.table_head = c("muted");
-        theme.table_head_foreground = c("foreground");
-        theme.table_hover = c("sidebar_accent");
-        theme.table_active = c("sidebar_accent");
-        theme.table_row_border = c("border");
-        theme.tab_bar = c("sidebar");
+        theme.accent = fg.mix_oklab(surface, 0.08);
+        theme.accent_foreground = fg;
+        theme.danger = c("fail");
+        theme.danger_foreground = bg;
+        theme.danger_hover = theme.danger.mix_oklab(fg, 0.12);
+        theme.danger_active = theme.danger.mix_oklab(fg, 0.22);
+        theme.border = line;
+        theme.input = ink.alpha(0.12);
+        theme.ring = fg.mix_oklab(muted_text, 0.5);
+        theme.caret = fg;
+        // Text paints over the selection fill, so it must stay see-through.
+        theme.selection = highlight.alpha(0.3);
+        [
+            theme.chart_1,
+            theme.chart_2,
+            theme.chart_3,
+            theme.chart_4,
+            theme.chart_5,
+        ] = PROJECT_TOKENS.map(c);
+        theme.success = c("success");
+        theme.warning = c("warning");
+        theme.link = highlight;
+        theme.link_hover = theme.primary_hover;
+        theme.link_active = theme.primary_active;
+        theme.info = highlight;
+        theme.success_foreground = bg;
+        theme.warning_foreground = bg;
+        theme.info_foreground = bg;
+        theme.sidebar = island;
+        theme.sidebar_foreground = theme.ring;
+        theme.sidebar_primary = raised;
+        theme.sidebar_primary_foreground = fg;
+        theme.sidebar_accent = hover;
+        theme.sidebar_accent_foreground = fg;
+        theme.sidebar_border = line;
+        theme.scrollbar = island;
+        theme.scrollbar_thumb = line;
+        theme.scrollbar_thumb_hover = raised;
+        theme.colors.list = surface;
+        theme.list_hover = hover;
+        theme.list_active = hover;
+        theme.list_head = theme.muted;
+        theme.table = surface;
+        theme.table_head = theme.muted;
+        theme.table_head_foreground = fg;
+        theme.table_hover = hover;
+        theme.table_active = hover;
+        theme.table_row_border = line;
+        theme.tab_bar = island;
         // The track behind segmented tabs; the selected tab sits on the background.
-        theme.tab_bar_segmented = c("sidebar_accent");
-        theme.tab = c("secondary");
-        theme.tab_active = c("sidebar_accent");
-        theme.tab_active_foreground = c("sidebar_accent_foreground");
-        theme.tab_foreground = c("secondary_foreground");
+        theme.tab_bar_segmented = hover;
+        theme.tab = raised;
+        theme.tab_active = hover;
+        theme.tab_active_foreground = fg;
+        theme.tab_foreground = fg;
         // An off track of ink at a fixed opacity shows on every surface.
-        let dark = state.theme.brightness.is_dark();
-        theme.switch = if dark {
-            gpui_kit::white().alpha(0.16)
-        } else {
-            gpui_kit::black().alpha(0.14)
-        };
+        theme.switch = ink.alpha(if dark { 0.16 } else { 0.14 });
         theme.switch_thumb = gpui_kit::white();
-        theme.drag_border = c("ring");
-        theme.button = c("secondary");
-        theme.button_foreground = c("secondary_foreground");
-        theme.button_hover = c("sidebar_accent");
-        theme.button_active = c("sidebar_accent");
-        theme.button_primary = c("primary");
-        theme.button_primary_foreground = c("primary_foreground");
+        theme.drag_border = theme.ring;
+        theme.button = raised;
+        theme.button_foreground = fg;
+        theme.button_hover = hover;
+        theme.button_active = hover;
+        theme.button_primary = highlight;
+        theme.button_primary_foreground = bg;
         theme.button_primary_hover = theme.primary_hover;
         theme.button_primary_active = theme.primary_active;
-        theme.button_secondary = c("secondary");
-        theme.button_secondary_foreground = c("secondary_foreground");
-        theme.button_secondary_hover = c("sidebar_accent");
-        theme.button_secondary_active = c("sidebar_accent");
-        theme.button_danger = c("destructive");
-        theme.button_danger_foreground = c("destructive_foreground");
+        theme.button_secondary = raised;
+        theme.button_secondary_foreground = fg;
+        theme.button_secondary_hover = hover;
+        theme.button_secondary_active = hover;
+        theme.button_danger = theme.danger;
+        theme.button_danger_foreground = bg;
         theme.button_danger_hover = theme.danger_hover;
         theme.button_danger_active = theme.danger_active;
         theme.font_family = crate::fonts::interface().into();
@@ -399,9 +388,9 @@ pub fn apply(cx: &mut App) {
     cx.refresh_windows();
 }
 
-// The Islands surfaces (docs/design/DESIGN.md), derived from the theme's
-// background so every theme keeps their brightness order: islands, then the
-// window, then the composer and cards. Overlays are `ink` at fixed opacities.
+// The Islands surfaces (docs/design/DESIGN.md): the theme's dark background
+// for islands, its light background for bubbles and the composer, and cards
+// lifted from the window. Overlays are `ink` at fixed opacities.
 // Under Glass the window backdrop turns translucent and the islands stay solid.
 #[derive(Clone, Copy)]
 pub struct Islands {
@@ -441,12 +430,12 @@ impl Islands {
         let fg = theme.foreground;
         let fg3 = theme.muted_foreground;
         Self {
-            island: lift(bg, -0.03),
+            island: hsla("background_dark"),
             bg,
             backdrop: bg.alpha(crate::titlebar::glass_alpha(if dark { 0.5 } else { 0.6 })),
             card: lift(bg, 0.025),
-            raise: lift(bg, 0.035),
-            bubble: lift(bg, if dark { 0.065 } else { -0.055 }),
+            raise: hsla("background_light"),
+            bubble: hsla("background_light"),
             fg,
             fg2: fg.mix_oklab(fg3, 0.5),
             fg3,
@@ -457,12 +446,12 @@ impl Islands {
             ring: ink.alpha(0.1),
             ring_strong: ink.alpha(0.22),
             active: ink.alpha(0.11),
-            accent: theme.primary,
+            accent: hsla("attention"),
             ok: theme.success,
             err: theme.danger,
             ctx: theme.info,
-            send_bg: fg.mix_oklab(bg, 0.94),
-            send_fg: bg,
+            send_bg: lift(hsla("background_light"), 0.025),
+            send_fg: theme.primary,
         }
     }
 }
@@ -535,8 +524,16 @@ fn style_scrollbars(cx: &mut App) {
         );
 }
 
+// Project marks cycle through the accents in the order the old chart colors had.
+const PROJECT_TOKENS: [&str; 5] = [
+    "attention",
+    "warning",
+    "success",
+    "button_highlight",
+    "effects",
+];
 pub fn project_colors() -> [u32; 5] {
-    ["chart_1", "chart_2", "chart_3", "chart_4", "chart_5"].map(color)
+    PROJECT_TOKENS.map(color)
 }
 
 pub fn project_mark(tint: Hsla, active: bool, theme: &KitTheme) -> (Hsla, Hsla) {
@@ -569,7 +566,7 @@ mod tests {
         let root =
             std::env::temp_dir().join(format!("adeline-bundled-themes-{}", std::process::id()));
         assert!(!root.exists());
-        assert_eq!(BUNDLED_THEMES.len(), 15);
+        assert_eq!(BUNDLED_THEMES.len(), 23);
         seed_bundled_themes(&root).unwrap();
         let (choices, errors) = discover_in(&root).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
@@ -578,15 +575,24 @@ mod tests {
             assert_eq!(std::fs::read_to_string(root.join(name)).unwrap(), contents);
         }
         // Preserve even malformed user edits; startup must never replace them.
-        std::fs::write(root.join("lightos.yml"), "user-edited theme").unwrap();
+        std::fs::write(root.join("rose.yml"), "user-edited theme").unwrap();
         let missing = BUNDLED_THEMES
             .iter()
-            .find(|(name, _)| *name != "lightos.yml")
+            .find(|(name, _)| *name != "rose.yml")
             .unwrap();
         std::fs::remove_file(root.join(missing.0)).unwrap();
+        let legacy = BUNDLED_THEMES
+            .iter()
+            .find(|(name, _)| *name != "rose.yml" && *name != missing.0)
+            .unwrap();
+        std::fs::write(root.join(legacy.0), "colors:\n  sidebar_ring: '#000000'\n").unwrap();
         seed_bundled_themes(&root).unwrap();
         assert_eq!(
-            std::fs::read_to_string(root.join("lightos.yml")).unwrap(),
+            std::fs::read_to_string(root.join(legacy.0)).unwrap(),
+            legacy.1
+        );
+        assert_eq!(
+            std::fs::read_to_string(root.join("rose.yml")).unwrap(),
             "user-edited theme"
         );
         assert_eq!(
@@ -599,7 +605,7 @@ mod tests {
         std::fs::remove_dir(root).unwrap();
     }
     #[test]
-    fn bundled_themes_load_with_all_native_roles() {
+    fn bundled_themes_load_with_all_tokens() {
         let directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../bundled-themes");
         let (choices, errors) = discover_in(&directory).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
@@ -608,7 +614,7 @@ mod tests {
         for choice in choices {
             assert!(names.insert(choice.name));
             let state = read(&directory.join(choice.file)).unwrap();
-            assert_eq!(state.colors.len(), ROLES.len());
+            assert_eq!(state.colors.len(), TOKENS.len());
         }
     }
     #[test]
@@ -619,14 +625,14 @@ mod tests {
         let mut theme = ThemeFile::builtin();
         theme.name = "My theme".into();
         theme.brightness = Brightness::VeryDark;
-        theme.colors.insert("primary".into(), "#123456".into());
+        theme.colors.insert("attention".into(), "#123456".into());
         adeline_core::config::seed_yaml(&root.join("custom.yml"), &theme).unwrap();
         let (choices, errors) = discover_in(&root).unwrap();
         assert_eq!(choices.len(), 1);
         assert_eq!(choices[0].name, "My theme");
         assert!(errors.is_empty());
         assert_eq!(
-            read(&root.join("custom.yml")).unwrap().colors["primary"],
+            read(&root.join("custom.yml")).unwrap().colors["attention"],
             0x123456
         );
         adeline_core::config::seed_yaml(&root.join("custom.yml"), &ThemeFile::builtin()).unwrap();
@@ -665,12 +671,12 @@ mod tests {
         let theme = ThemeFile::builtin();
         let yaml = serde_yaml_ng::to_string(&theme).unwrap();
         let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
-        assert_eq!(document["colors"].as_mapping().unwrap().len(), ROLES.len());
+        assert_eq!(document["colors"].as_mapping().unwrap().len(), TOKENS.len());
         let mut loaded: ThemeFile = serde_yaml_ng::from_str(&yaml).unwrap();
         assert_eq!(loaded.validate().unwrap(), theme.validate().unwrap());
-        loaded.colors.remove("primary");
+        loaded.colors.remove("attention");
         loaded.validate().unwrap_err();
-        loaded.colors.insert("primary".into(), "#GGFFFF".into());
+        loaded.colors.insert("attention".into(), "#GGFFFF".into());
         loaded.validate().unwrap_err();
         serde_yaml_ng::from_str::<ThemeFile>("name: bad\nbrightness: Medium").unwrap_err();
         serde_yaml_ng::from_str::<ThemeFile>(

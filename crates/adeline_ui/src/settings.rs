@@ -1152,7 +1152,7 @@ fn group_header(
         .hover(|style| style.text_color(theme.foreground))
         .border_1()
         .border_color(theme.transparent)
-        .focus_visible(|style| style.border_color(theme::sidebar_focus()))
+        .focus_visible(|style| style.border_color(theme.ring))
         .child(
             Icon::default()
                 .path("chevron.svg")
@@ -1176,6 +1176,7 @@ fn navigation_button(
     cx: &App,
 ) -> Button {
     let label = label.into();
+    let ring = cx.theme().ring;
     Button::new(id)
         .ghost()
         .accessibility_label(label.clone())
@@ -1185,7 +1186,7 @@ fn navigation_button(
         .focus_ring(false)
         .border_1()
         .border_color(cx.theme().transparent)
-        .focus_visible(|style| style.border_color(theme::sidebar_focus()))
+        .focus_visible(|style| style.border_color(ring))
 }
 impl Render for SettingsWindow {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {

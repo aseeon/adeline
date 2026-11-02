@@ -1,0 +1,16 @@
+# Source: https://github.com/sainnhe/everforest/blob/master/autoload/everforest.vim
+name: "Everforest Dark"
+brightness: Dark
+colors:
+  background: '#2d353b'
+  background_dark: '#232a2e'
+  background_light: '#3d484d'
+  main_text: '#d3c6aa'
+  muted_text: '#859289'
+  fail: '#e67e80'
+  attention: '#e69875'
+  warning: '#dbbc7f'
+  success: '#a7c080'
+  inline_highlight: '#83c092'
+  button_highlight: '#7fbbb3'
+  effects: '#d699b6'

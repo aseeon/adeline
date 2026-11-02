@@ -1,0 +1,16 @@
+# Source: https://github.com/savq/melange-nvim/blob/master/lua/melange/palettes/dark.lua
+name: "Melange Dark"
+brightness: Dark
+colors:
+  background: '#292522'
+  background_dark: '#221f1c'
+  background_light: '#34302c'
+  main_text: '#ece1d7'
+  muted_text: '#c1a78e'
+  fail: '#d47766'
+  attention: '#e49b5d'
+  warning: '#ebc06d'
+  success: '#85b695'
+  inline_highlight: '#89b3b6'
+  button_highlight: '#a3a9ce'
+  effects: '#cf9bc2'

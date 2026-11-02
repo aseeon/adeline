@@ -1,0 +1,16 @@
+# Source: https://github.com/ayu-theme/ayu-colors/blob/master/themes/light.yaml
+name: "Ayu Light"
+brightness: Light
+colors:
+  background: '#fcfcfc'
+  background_dark: '#f3f4f5'
+  background_light: '#e4e8eb'
+  main_text: '#5c6166'
+  muted_text: '#828e9f'
+  fail: '#f07171'
+  attention: '#fa8532'
+  warning: '#eba400'
+  success: '#86b300'
+  inline_highlight: '#4cbf99'
+  button_highlight: '#1f8ac4'
+  effects: '#a37acc'

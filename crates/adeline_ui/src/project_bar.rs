@@ -309,7 +309,7 @@ impl Adeline {
                 .justify_center()
                 .rounded_full()
                 .bg(isl.accent)
-                .text_color(isl.send_fg)
+                .text_color(isl.bg)
                 .text_size(dp(theme::T_MICRO))
                 .font_weight(FontWeight::SEMIBOLD)
                 .child(attention.to_string())

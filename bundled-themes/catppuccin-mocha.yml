@@ -1,0 +1,16 @@
+# Source: https://github.com/catppuccin/palette/blob/main/palette.json
+name: "Catppuccin Mocha"
+brightness: Dark
+colors:
+  background: '#1e1e2e'
+  background_dark: '#181825'
+  background_light: '#313244'
+  main_text: '#cdd6f4'
+  muted_text: '#9399b2'
+  fail: '#f38ba8'
+  attention: '#fab387'
+  warning: '#f9e2af'
+  success: '#a6e3a1'
+  inline_highlight: '#94e2d5'
+  button_highlight: '#89b4fa'
+  effects: '#cba6f7'
