@@ -1003,6 +1003,7 @@ pub fn start(
     machines::init(demo_mode);
     init(cx);
     fonts::init(cx);
+    Root::register_plugin(cx, |_, _| fonts::Ligatures);
     config::init();
     theme::init();
     theme::apply(cx);

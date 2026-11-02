@@ -98,6 +98,7 @@ pub struct Appearance {
     pub font_size: u16,
     pub code_font: String,
     pub code_font_size: u16,
+    pub ligatures: bool,
 }
 impl Default for Appearance {
     fn default() -> Self {
@@ -107,6 +108,7 @@ impl Default for Appearance {
             font_size: 15,
             code_font: DEFAULT_CODE_FONT.into(),
             code_font_size: 14,
+            ligatures: false,
         }
     }
 }

@@ -1,4 +1,4 @@
-//! General › Appearance: theme, fonts and font sizes.
+//! General › Appearance: theme, fonts, font sizes and ligatures.
 use super::*;
 
 fn font_label(which: usize) -> &'static str {
@@ -39,6 +39,18 @@ impl SettingsWindow {
             } else {
                 settings.general.appearance.code_font = family.into();
             }
+        }) {
+            Ok(()) => {
+                self.theme_status = None;
+                theme::apply(cx);
+            }
+            Err(message) => self.theme_status = Some(format!("{message:#}")),
+        }
+        cx.notify();
+    }
+    fn toggle_ligatures(&mut self, cx: &mut Context<Self>) {
+        match config::update(|settings| {
+            settings.general.appearance.ligatures = !settings.general.appearance.ligatures;
         }) {
             Ok(()) => {
                 self.theme_status = None;
@@ -193,7 +205,19 @@ impl SettingsWindow {
                 page = page.child(error(message.clone(), cx));
             }
         }
-        page.child(
+        page.children(card(
+            vec![switch_row(
+                LIGATURES_LABEL,
+                LIGATURES_DESCRIPTION,
+                Switch::new("ligatures")
+                    .checked(config::current().general.appearance.ligatures)
+                    .accessibility_label(LIGATURES_LABEL)
+                    .on_change(cx.listener(|this, _, _, cx| this.toggle_ligatures(cx))),
+                cx,
+            )],
+            cx,
+        ))
+        .child(
             Button::new("refresh-fonts")
                 .small()
                 .ghost()

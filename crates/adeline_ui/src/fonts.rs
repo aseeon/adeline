@@ -1,8 +1,14 @@
 //! Bundled interface font, the font families available to GPUI this session,
 //! and the fonts and text sizes the settings resolve to.
 use adeline_core::config::{self, DEFAULT_CODE_FONT as CODE_DEFAULT, DEFAULT_FONT as DEFAULT};
+use gpui_kit::base::RootPlugin;
+use gpui_kit::{
+    App, Context, Div, Empty, FontFeatures, IntoElement, Refineable, Render, Stateful,
+    StyleRefinement, Styled, Window,
+};
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::sync::Arc;
 
 pub const LICENSE: &str = include_str!("../../../assets/fonts/ChivoMono-OFL.txt");
 
@@ -10,7 +16,7 @@ thread_local! {
     static FAMILIES: RefCell<Vec<String>> = RefCell::new(vec![DEFAULT.into(), CODE_DEFAULT.into()]);
 }
 
-pub fn init(cx: &gpui_kit::App) {
+pub fn init(cx: &App) {
     // Register before any window shapes text. The font travels inside the binary.
     cx.text_system()
         .add_fonts(vec![
@@ -21,7 +27,7 @@ pub fn init(cx: &gpui_kit::App) {
     refresh(cx);
 }
 
-pub fn refresh(cx: &gpui_kit::App) {
+pub fn refresh(cx: &App) {
     let families = catalogue(cx.text_system().all_font_names());
     FAMILIES.with(|active| *active.borrow_mut() = families);
 }
@@ -62,6 +68,27 @@ pub fn code() -> String {
     config::with(|s| resolve(&s.general.appearance.code_font, CODE_DEFAULT))
 }
 
+// Coding fonts draw `->` and `!=` through `calt`, and pairs like the `ff` in `diff` through
+// `liga`. Turning both off on every window's root reaches all code text, inline code, Kit
+// code blocks and overlays included. Inline code has no font features of its own, so the
+// interface font loses them too.
+pub struct Ligatures;
+impl Render for Ligatures {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        Empty
+    }
+}
+impl RootPlugin for Ligatures {
+    fn style(&self, surface: &mut Stateful<Div>, _: &mut Window, _: &mut App) {
+        if !config::with(|s| s.general.appearance.ligatures) {
+            let off = FontFeatures(Arc::new(vec![("calt".into(), 0), ("liga".into(), 0)]));
+            surface
+                .style()
+                .refine(&StyleRefinement::default().font_features(off));
+        }
+    }
+}
+
 // Virtual rows must be measured again when any of these changes.
 #[derive(PartialEq)]
 pub struct Typography {
@@ -69,6 +96,7 @@ pub struct Typography {
     interface_size: u16,
     code: String,
     code_size: u16,
+    ligatures: bool,
 }
 
 pub fn typography() -> Typography {
@@ -77,6 +105,7 @@ pub fn typography() -> Typography {
         interface_size: config::font_size(),
         code: code(),
         code_size: config::code_font_size(),
+        ligatures: config::with(|s| s.general.appearance.ligatures),
     }
 }
 pub fn text_pixels(base: f32) -> gpui_kit::Pixels {

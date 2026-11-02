@@ -603,6 +603,21 @@ fn delete_agent(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn ligatures_start_off_and_switch_on(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    let before = ui.cx.windows();
+    ui.press("ctrl-,");
+    ui.new_window(&before);
+    ui.activate("Appearance");
+    let ligatures = || adeline_core::config::current().general.appearance.ligatures;
+    assert!(!ligatures(), "Ligatures start on");
+    ui.activate("Ligatures");
+    assert!(ligatures(), "the switch didn't turn Ligatures on");
+    ui.activate("Ligatures");
+    assert!(!ligatures(), "the switch didn't turn Ligatures off");
+}
+
+#[gpui_kit::test]
 fn edit_an_agent_opens_the_open_chats_agent(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
     let main = ui.cx.windows();

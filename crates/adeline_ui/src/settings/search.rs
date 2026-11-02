@@ -33,6 +33,8 @@ pub(super) fn general_matches(child: usize, query: &str) -> bool {
             "Code font",
             "Interface font size",
             "Code font size",
+            LIGATURES_LABEL,
+            LIGATURES_DESCRIPTION,
         ]
         .iter()
         .any(|label| matches_query(query, &["General", "Appearance", label])),

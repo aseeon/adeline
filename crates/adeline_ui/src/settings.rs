@@ -120,6 +120,9 @@ const SILENCE_DESCRIPTION: &str = "0 turns the notice off.";
 const MCP_DESCRIPTION: &str = "Every agent on this machine gets these MCP servers when a session starts, before its own. A server whose transport an agent doesn't support is skipped with a note in the chat.";
 const THINKING_LABEL: &str = "Thinking animation";
 const THINKING_DESCRIPTION: &str = "How the row under your message moves while the agent works.";
+const LIGATURES_LABEL: &str = "Ligatures";
+const LIGATURES_DESCRIPTION: &str =
+    "Draw pairs such as -> and ff as one symbol in fonts that support it.";
 
 impl Adeline {
     pub(super) fn mode_options(&self, section: Section) -> Vec<SettingGroup> {
