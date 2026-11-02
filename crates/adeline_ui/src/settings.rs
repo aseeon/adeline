@@ -120,8 +120,6 @@ const SILENCE_DESCRIPTION: &str = "0 turns the notice off.";
 const MCP_DESCRIPTION: &str = "Every agent on this machine gets these MCP servers when a session starts, before its own. A server whose transport an agent doesn't support is skipped with a note in the chat.";
 const THINKING_LABEL: &str = "Thinking animation";
 const THINKING_DESCRIPTION: &str = "How the row under your message moves while the agent works.";
-const GLASS_LABEL: &str = "Glass";
-const GLASS_DESCRIPTION: &str = "Let the desktop show through the window frame and side panels.";
 
 impl Adeline {
     pub(super) fn mode_options(&self, section: Section) -> Vec<SettingGroup> {
@@ -1316,7 +1314,7 @@ impl Render for SettingsWindow {
             .px_2()
             .pb_2()
             .pt(titlebar::MAIN_HEIGHT + px(4.))
-            .bg(cx.theme().title_bar.alpha(titlebar::glass_alpha(0.7)))
+            .bg(cx.theme().title_bar)
             .child(search_field(
                 Input::new(&self.query).aria_label("Search settings"),
                 &self.query,
@@ -1471,7 +1469,7 @@ impl Render for SettingsWindow {
             );
         }
         // One bar across the window, drawn over both panes without a line under it: the
-        // sidebar's glass shows through on the left, the content's surface on the right.
+        // sidebar's surface shows through on the left, the content's on the right.
         // macOS keeps Kit's left padding for the traffic lights.
         let lead = if cfg!(target_os = "macos") {
             sidebar_width - px(80.)

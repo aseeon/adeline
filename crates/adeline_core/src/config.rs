@@ -90,14 +90,14 @@ impl Features {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-#[serde(default, deny_unknown_fields)]
+// Not `deny_unknown_fields`: 0.3.6 files carry `glass`.
+#[serde(default)]
 pub struct Appearance {
     pub theme: String,
     pub interface_font: String,
     pub font_size: u16,
     pub code_font: String,
     pub code_font_size: u16,
-    pub glass: bool,
 }
 impl Default for Appearance {
     fn default() -> Self {
@@ -107,7 +107,6 @@ impl Default for Appearance {
             font_size: 15,
             code_font: DEFAULT_CODE_FONT.into(),
             code_font_size: 14,
-            glass: false,
         }
     }
 }
@@ -365,7 +364,7 @@ mod tests {
     fn legacy_font_settings_load_and_each_size_is_bounded_on_its_own() {
         let defaults = Appearance::default();
         let legacy: Appearance =
-            serde_yaml_ng::from_str("interface_font: Arial\nfont_size: 18").unwrap();
+            serde_yaml_ng::from_str("interface_font: Arial\nfont_size: 18\nglass: true").unwrap();
         assert_eq!(legacy.interface_font, "Arial");
         assert_eq!(legacy.font_size, 18);
         assert_eq!(legacy.code_font, defaults.code_font);

@@ -355,12 +355,9 @@ pub(super) fn chat_column(section: Section) -> Div {
 }
 
 /// What the chat sits on: the window in Chats, the right island elsewhere.
-/// Under Glass the window shows through, so the chat paints nothing of its own.
 pub(super) fn chat_surface(section: Section, cx: &App) -> Hsla {
     let isl = theme::islands(cx);
-    if section == Section::Chats && titlebar::glass() {
-        transparent_black()
-    } else if section == Section::Chats {
+    if section == Section::Chats {
         isl.bg
     } else {
         isl.island

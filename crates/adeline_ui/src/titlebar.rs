@@ -9,35 +9,6 @@ use gpui_kit::component::GlobalState;
 // 4px of headroom over the 32px project tabs.
 pub(super) const MAIN_HEIGHT: Pixels = px(36.);
 
-// Glass draws over the system blur (Acrylic on Windows, vibrancy on macOS). Linux has no
-// dependable blur, so its windows stay opaque.
-pub(super) fn glass() -> bool {
-    !cfg!(target_os = "linux") && config::current().general.appearance.glass
-}
-
-// A surface's opacity: `alpha` under Glass, solid otherwise.
-pub(super) fn glass_alpha(alpha: f32) -> f32 {
-    if glass() { alpha } else { 1. }
-}
-
-pub(super) fn background() -> WindowBackgroundAppearance {
-    if glass() {
-        WindowBackgroundAppearance::Blurred
-    } else {
-        WindowBackgroundAppearance::Opaque
-    }
-}
-
-pub(super) fn apply_background(cx: &mut App) {
-    cx.defer(|cx| {
-        for window in cx.windows() {
-            let _ = window.update(cx, |_, window, _| {
-                window.set_background_appearance(background());
-            });
-        }
-    });
-}
-
 // Set by `--hidden` (control builds): every window stays off screen for `adeline ui`.
 pub(super) struct Hidden;
 impl Global for Hidden {}
@@ -54,7 +25,6 @@ pub(super) fn main_window_options(cx: &App) -> WindowOptions {
     WindowOptions {
         show: !hidden,
         focus: !hidden,
-        window_background: background(),
         titlebar: Some(TitlebarOptions {
             title: Some("Adeline".into()),
             appears_transparent: true,

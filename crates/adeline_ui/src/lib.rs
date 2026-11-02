@@ -786,7 +786,7 @@ impl Render for Adeline {
         col()
             .relative()
             .size_full()
-            .bg(theme::islands(cx).backdrop)
+            .bg(theme::islands(cx).bg)
             .font_family(cx.theme().font_family.clone())
             .text_color(cx.theme().foreground)
             .track_focus(&self.focus)
@@ -1006,11 +1006,6 @@ pub fn start(
     config::init();
     theme::init();
     theme::apply(cx);
-    // The caller builds the options before the config loads.
-    let options = WindowOptions {
-        window_background: titlebar::background(),
-        ..options
-    };
     cx.set_global(Harnesses(harness::Catalog {
         harnesses: if demo_mode {
             harness::load()

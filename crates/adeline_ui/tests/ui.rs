@@ -603,25 +603,6 @@ fn delete_agent(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn glass_starts_off_and_switches_on(cx: &mut TestAppContext) {
-    let mut ui = Ui::demo(cx, false);
-    let before = ui.cx.windows();
-    ui.press("ctrl-,");
-    ui.new_window(&before);
-    ui.activate("Appearance");
-    let glass = || adeline_core::config::current().general.appearance.glass;
-    assert!(!glass(), "Glass starts on");
-    if cfg!(target_os = "linux") {
-        assert!(ui.try_named("Glass").is_none(), "Linux offers Glass");
-        return;
-    }
-    ui.activate("Glass");
-    assert!(glass(), "the switch didn't turn Glass on");
-    ui.activate("Glass");
-    assert!(!glass(), "the switch didn't turn Glass off");
-}
-
-#[gpui_kit::test]
 fn edit_an_agent_opens_the_open_chats_agent(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
     let main = ui.cx.windows();

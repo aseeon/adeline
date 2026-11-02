@@ -391,12 +391,10 @@ pub fn apply(cx: &mut App) {
 // The Islands surfaces (docs/design/DESIGN.md): the theme's dark background
 // for islands, its light background for bubbles and the composer, and cards
 // lifted from the window. Overlays are `ink` at fixed opacities.
-// Under Glass the window backdrop turns translucent and the islands stay solid.
 #[derive(Clone, Copy)]
 pub struct Islands {
     pub island: Hsla,
     pub bg: Hsla,
-    pub backdrop: Hsla,
     pub card: Hsla,
     pub raise: Hsla,
     pub bubble: Hsla,
@@ -432,7 +430,6 @@ impl Islands {
         Self {
             island: hsla("background_dark"),
             bg,
-            backdrop: bg.alpha(crate::titlebar::glass_alpha(if dark { 0.5 } else { 0.6 })),
             card: lift(bg, 0.025),
             raise: hsla("background_light"),
             bubble: hsla("background_light"),
