@@ -111,9 +111,10 @@ fn timeline(thread: &Thread) -> Vec<Entry<'_>> {
 fn duration(ms: u64) -> String {
     if ms < 100 {
         "<0.1s".into()
-    } else if ms < 60_000 {
+    } else if ms < 59_950 {
         format!("{:.1}s", ms as f64 / 1000.)
     } else if ms < 3_600_000 {
+        let ms = ms.max(60_000);
         format!("{}m {:02}s", ms / 60_000, ms / 1000 % 60)
     } else {
         format!("{}h {:02}m", ms / 3_600_000, ms / 60_000 % 60)
@@ -140,9 +141,9 @@ fn first_line(text: &str) -> &str {
 }
 
 pub(super) fn excerpt(text: &str, lines: usize, chars: usize) -> String {
-    let kept: Vec<&str> = text.trim().lines().take(lines).collect();
-    let mut kept = kept.join("\n");
-    let mut cut = kept.len() < text.trim().len();
+    let text = text.trim();
+    let mut kept = text.lines().take(lines).collect::<Vec<_>>().join("\n");
+    let mut cut = text.lines().nth(lines).is_some();
     if kept.chars().count() > chars {
         kept = kept.chars().take(chars).collect();
         cut = true;
@@ -783,8 +784,16 @@ mod tests {
     fn durations_read_at_a_glance() {
         assert_eq!(duration(40), "<0.1s");
         assert_eq!(duration(41_200), "41.2s");
+        assert_eq!(duration(59_950), "1m 00s");
         assert_eq!(duration(124_300), "2m 04s");
         assert_eq!(duration(3_900_000), "1h 05m");
+    }
+
+    #[test]
+    fn excerpts_mark_only_cut_text() {
         assert_eq!(excerpt("a\nb\nc", 2, 99), "a\nb…");
+        assert_eq!(excerpt("a\r\nb\r\n", 2, 99), "a\nb");
+        assert_eq!(excerpt("a\r\nb\r\nc", 2, 99), "a\nb…");
+        assert_eq!(excerpt("abcdef", 2, 3), "abc…");
     }
 }

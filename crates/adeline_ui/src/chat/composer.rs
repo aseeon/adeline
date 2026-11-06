@@ -786,17 +786,3 @@ impl Fit {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::tokens;
-
-    #[test]
-    fn token_counts_round_to_short_units() {
-        assert_eq!(tokens(950), "950");
-        assert_eq!(tokens(38_400), "38k");
-        assert_eq!(tokens(200_000), "200k");
-        assert_eq!(tokens(1_000_000), "1M");
-        assert_eq!(tokens(1_500_000), "1.5M");
-    }
-}

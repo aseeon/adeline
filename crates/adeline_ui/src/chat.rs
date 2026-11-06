@@ -365,7 +365,7 @@ pub(super) fn chat_surface(section: Section, cx: &App) -> Hsla {
 }
 
 pub(super) fn tokens(count: u64) -> String {
-    if count >= 1_000_000 {
+    if count >= 999_500 {
         format!("{:.1}M", count as f64 / 1_000_000.).replace(".0M", "M")
     } else if count >= 1_000 {
         format!("{}k", (count + 500) / 1_000)
@@ -439,4 +439,19 @@ pub(super) fn tool_steps(calls: Vec<&Activity>, cx: &App) -> Div {
                 })
                 .child(div().min_w_0().truncate().child(step_title(call)))
         }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tokens;
+
+    #[test]
+    fn token_counts_round_to_short_units() {
+        assert_eq!(tokens(950), "950");
+        assert_eq!(tokens(38_400), "38k");
+        assert_eq!(tokens(200_000), "200k");
+        assert_eq!(tokens(999_499), "999k");
+        assert_eq!(tokens(999_500), "1M");
+        assert_eq!(tokens(1_500_000), "1.5M");
+    }
 }
