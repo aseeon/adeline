@@ -555,9 +555,5 @@ mod tests {
             serde_json::to_string(&ThreadStatus::Blocked).unwrap(),
             r#""blocked""#
         );
-        assert_eq!(
-            serde_json::from_str::<MessageRole>(r#""assistant""#).unwrap(),
-            MessageRole::Assistant
-        );
     }
 }

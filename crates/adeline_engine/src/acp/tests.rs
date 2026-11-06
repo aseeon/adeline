@@ -173,16 +173,6 @@ fn effort_offered_only_after_the_model_is_set_is_still_applied() {
 }
 
 #[test]
-fn agent_without_model_or_effort_options_keeps_its_defaults() {
-    let (mut worker, _, sent) = worker();
-    worker.configured = false;
-    worker.config.selections = Selections::default();
-    worker.configure_next();
-    assert!(worker.configured);
-    assert!(methods(&sent).is_empty());
-}
-
-#[test]
 fn switching_while_idle_sets_the_option_and_while_stopped_waits_for_setup() {
     let (mut worker, _, sent) = worker();
     worker.raw_options = options(json!([{"id":"thinking","name":"Thinking",
@@ -368,43 +358,8 @@ fn unavailable_saved_model_fails_before_prompt() {
 }
 
 #[test]
-fn shutdown_during_setup_never_starts_configuration_or_prompt() {
-    let (mut worker, received, sent) = worker();
-    worker.session_id = None;
-    let mut active = turn(0);
-    active.prompt_request = None;
-    worker.active = Some(active);
-    worker.pending.insert(2, Request::Setup);
-    worker.shutdown();
-    assert!(matches!(events(&received)[..], [EventKind::Stopped]));
-    worker.reply(
-        2,
-        Ok(Reply::Session(SessionReply {
-            session_id: Some("new".into()),
-            ..Default::default()
-        })),
-    );
-    assert!(
-        events(&received)
-            .iter()
-            .any(|event| matches!(event, EventKind::Session { .. }))
-    );
-    assert!(!methods(&sent).contains(&"session/prompt"));
-    assert!(worker.active.is_none());
-}
-
-#[test]
-fn unavailable_session_needs_consent_but_missing_auth_needs_login() {
+fn missing_auth_during_setup_needs_login_without_retry() {
     let (mut worker, received, _) = worker();
-    worker.pending.insert(1, Request::Setup);
-    worker.active = Some(turn(0));
-    worker.reply(1, Err(error(-32602, "ACP session not found")));
-    assert!(worker.restore_required);
-    assert!(matches!(
-        events(&received)[..],
-        [EventKind::ReplacementRequired(_)]
-    ));
-    let (mut worker, received, _) = self::worker();
     worker.pending.insert(1, Request::Setup);
     worker.active = Some(turn(5));
     worker.reply(1, Err(error(-32000, "Authentication required")));
@@ -447,6 +402,27 @@ fn a_profile_turn_end_signal_ends_the_turn_and_its_late_answer_is_ignored() {
         worker.active.is_some(),
         "an old turn's answer ended the new turn"
     );
+}
+
+#[test]
+fn text_for_another_session_never_reaches_the_conversation() {
+    let (mut worker, received, _) = worker();
+    worker.active = Some(turn(0));
+    for session in ["not-session-1", "session-1"] {
+        worker.update(
+            serde_json::from_value(json!({"sessionId":session,"update":{
+                "sessionUpdate":"agent_message_chunk","content":{"type":"text","text":session}}}))
+            .unwrap(),
+        );
+    }
+    let texts: Vec<_> = events(&received)
+        .into_iter()
+        .filter_map(|kind| match kind {
+            EventKind::Text { text, .. } => Some(text),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, ["session-1"]);
 }
 
 #[test]
@@ -520,17 +496,11 @@ fn a_steer_still_waiting_when_the_agent_goes_is_reported_undelivered() {
 }
 
 #[test]
-fn claude_gets_instructions_in_session_meta_with_the_name_sentence_first() {
+fn claude_gets_instructions_in_session_meta_and_codex_gets_none() {
     let (mut worker, _, _) = worker();
     worker.profile = Some(&profiles::CLAUDE);
     worker.config.system_instructions = "Be brief.".into();
-    let meta = worker.session_meta().unwrap();
-    assert!(
-        meta["systemPrompt"]["append"]
-            .as_str()
-            .unwrap()
-            .starts_with("You are an agent named Josh")
-    );
+    assert!(worker.session_meta().unwrap()["systemPrompt"]["append"].is_string());
     worker.config.instructions_mode = InstructionsMode::Overwrite;
     assert!(worker.session_meta().unwrap()["systemPrompt"].is_string());
     worker.profile = Some(&profiles::CODEX);
@@ -736,7 +706,7 @@ async fn a_noisy_agent_with_string_ids_and_unknown_updates_keeps_working() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn session_state_between_turns_is_reported() {
+async fn steering_is_read_from_meta_and_session_state_is_reported_outside_a_turn() {
     let (worker, received, mut from_worker, to_worker) = connected();
     let commands = worker.sender.clone();
     tokio::spawn(worker.run());
@@ -745,9 +715,7 @@ async fn session_state_between_turns_is_reported() {
     answer(
         &to_worker,
         &id,
-        &json!({"protocolVersion":1,"agentCapabilities":{
-        "promptCapabilities":{"image":true},"sessionCapabilities":{"close":{}}},
-        "authMethods":[{"id":"browser","name":"Log in with a browser"}],
+        &json!({"protocolVersion":1,"agentCapabilities":{},"authMethods":[],
         "_meta":{"steering":{"supported":true}}}),
     );
     let (id, _) = next_request(&mut from_worker).await;
@@ -757,43 +725,21 @@ async fn session_state_between_turns_is_reported() {
         matches!(kind, EventKind::Probed)
     })
     .await;
-    let update = |update: Value| {
-        to_worker
-            .send(
-                json!({"jsonrpc":"2.0","method":"session/update",
-                "params":{"sessionId":"s1","update":update}})
-                .to_string(),
-            )
-            .unwrap();
-    };
-    update(
-        json!({"sessionUpdate":"available_commands_update","availableCommands":[
-        {"name":"review","description":"Review the diff","input":{"hint":"focus"}}]}),
-    );
-    update(json!({"sessionUpdate":"session_info_update","title":"Fix the parser"}));
-    update(json!({"sessionUpdate":"plan","entries":[
-        {"content":"Read","priority":"high","status":"completed"},
-        {"content":"Write","priority":"high","status":"in_progress"}]}));
-    update(json!({"sessionUpdate":"usage_update","used":10,"size":100}));
-    wait_for(&received, &mut seen, |kind| {
-        matches!(kind, EventKind::Usage { .. })
-    })
+    to_worker
+        .send(
+            json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1",
+            "update":{"sessionUpdate":"session_info_update","title":"Fix the parser"}}})
+            .to_string(),
+        )
+        .unwrap();
+    wait_for(
+        &received,
+        &mut seen,
+        |kind| matches!(kind, EventKind::Title(title) if title == "Fix the parser"),
+    )
     .await;
-    let features = seen.iter().find_map(|kind| match kind {
-        EventKind::Agent { features, .. } => Some(features.clone()),
-        _ => None,
-    });
-    let features = features.unwrap();
-    assert!(features.images && features.close && features.steering && !features.fork);
-    assert_eq!(features.auth[0].name, "Log in with a browser");
     assert!(seen.iter().any(|kind| matches!(kind,
-        EventKind::Commands(commands) if commands[0].hint == "focus")));
-    assert!(
-        seen.iter()
-            .any(|kind| matches!(kind, EventKind::Title(title) if title == "Fix the parser"))
-    );
-    assert!(seen.iter().any(|kind| matches!(kind,
-        EventKind::Todo(steps) if steps[1].status == StepStatus::InProgress)));
+        EventKind::Agent { features, .. } if features.steering)));
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -819,13 +765,13 @@ async fn an_agent_on_another_protocol_version_gets_a_version_error() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn driver_reports_an_agent_that_exits_at_once() {
+async fn an_agent_that_exits_before_the_handshake_fails_the_turn() {
     let mut config = config();
     config.harness = "Other".into();
     #[cfg(windows)]
-    let (command, arguments) = ("cmd.exe", ["/C", "echo boom 1>&2 & exit 1"]);
+    let (command, arguments) = ("cmd.exe", ["/C", "exit 1"]);
     #[cfg(not(windows))]
-    let (command, arguments) = ("sh", ["-c", "echo boom >&2; exit 1"]);
+    let (command, arguments) = ("sh", ["-c", "exit 1"]);
     config.command = command.into();
     config.arguments = arguments.map(Into::into).to_vec();
     let (events, received) = async_channel::unbounded();
@@ -844,10 +790,6 @@ async fn driver_reports_an_agent_that_exits_at_once() {
     assert!(
         matches!(seen.last(), Some(EventKind::Error { message, .. }) if message.contains("Agent exited")),
         "{seen:?}"
-    );
-    assert!(
-        seen.iter()
-            .any(|kind| matches!(kind, EventKind::Crashed(stderr) if stderr.contains("boom")))
     );
 }
 

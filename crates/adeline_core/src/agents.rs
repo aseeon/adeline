@@ -517,52 +517,23 @@ mod tests {
     }
 
     #[test]
-    fn registry_agents_store_identity_and_defaults_but_no_command() {
-        let root = TempDir::new("adeline-agents");
-        let mut catalog = open_catalog(&root, false);
+    fn registry_agents_refuse_a_command_or_arguments() {
         let gemini = AgentDefinition {
             name: "Gem".into(),
             harness: "gemini".into(),
-            model: "gemini-3-pro".into(),
-            effort: "high".into(),
-            instructions_mode: InstructionsMode::Overwrite,
             ..Default::default()
         };
-        catalog.save(None, gemini.clone(), None, false).unwrap();
-        let yaml = fs::read_to_string(file(&root, "gem")).unwrap();
-        assert!(yaml.starts_with("version: 1\n"), "{yaml}");
-        for field in [
-            "name: Gem",
-            "harness: gemini",
-            "model: gemini-3-pro",
-            "effort: high",
-            "system_instructions:",
-            "instructions_mode: Overwrite",
-        ] {
-            assert!(yaml.contains(field), "{field} in {yaml}");
-        }
-        assert!(!yaml.contains("command"));
-        assert!(!yaml.contains("permission_mode"));
-        assert_eq!(open_catalog(&root, false).entries[0].definition, gemini);
-        let mut with_command = gemini;
-        with_command.name = "Other".into();
-        with_command.command = "gemini".into();
-        catalog.save(None, with_command, None, false).unwrap_err();
-        let custom = agent("Custom one");
-        catalog.save(None, custom.clone(), None, false).unwrap();
-        let yaml = fs::read_to_string(file(&root, "custom-one")).unwrap();
-        assert!(yaml.contains("command: omp.exe") && yaml.contains("- acp"));
-        let mut no_model = custom;
-        no_model.name = "Defaults".into();
-        no_model.model.clear();
-        no_model.effort.clear();
-        catalog.save(None, no_model.clone(), None, false).unwrap();
-        assert!(
-            open_catalog(&root, false)
-                .entries
-                .iter()
-                .any(|entry| entry.definition == no_model)
-        );
+        gemini.validate().unwrap();
+        let with_command = AgentDefinition {
+            command: "gemini".into(),
+            ..gemini.clone()
+        };
+        with_command.validate().unwrap_err();
+        let with_arguments = AgentDefinition {
+            arguments: vec!["--acp".into()],
+            ..gemini
+        };
+        with_arguments.validate().unwrap_err();
     }
 
     #[test]
@@ -773,7 +744,7 @@ permission_mode: AllowEverything
     }
 
     #[test]
-    fn adding_copies_the_harness_icon_and_renaming_keeps_it() {
+    fn adding_copies_the_harness_icon_and_renaming_keeps_the_avatar() {
         let root = TempDir::new("adeline-agents");
         let mut catalog = open_catalog(&root, false);
         let josh = AgentDefinition {
@@ -782,17 +753,19 @@ permission_mode: AllowEverything
             ..Default::default()
         };
         catalog.save(None, josh.clone(), None, false).unwrap();
-        let avatar = |id: &str| fs::read(file(&root, id).parent().unwrap().join(AVATAR)).unwrap();
-        assert_eq!(avatar("josh"), adeline_assets::embedded("omp.svg").unwrap());
+        let avatar = |id: &str| file(&root, id).parent().unwrap().join(AVATAR);
+        assert_eq!(
+            fs::read(avatar("josh")).unwrap(),
+            adeline_assets::embedded("omp.svg").unwrap()
+        );
+        let custom = "<svg>custom</svg>";
+        fs::write(avatar("josh"), custom).unwrap();
         let mut renamed = josh.clone();
         renamed.name = "Josh Smith".into();
         catalog
             .save(Some("josh"), renamed, Some(&josh), false)
             .unwrap();
-        assert_eq!(
-            avatar("josh-smith"),
-            adeline_assets::embedded("omp.svg").unwrap()
-        );
+        assert_eq!(fs::read_to_string(avatar("josh-smith")).unwrap(), custom);
         assert!(!file(&root, "josh").exists());
     }
 

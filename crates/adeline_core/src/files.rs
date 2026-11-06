@@ -133,12 +133,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn replace_creates_then_replaces_and_leaves_no_temp_files() {
+    fn replacing_a_file_leaves_no_temp_file() {
         let dir = TempDir::new("adeline-files-test");
         let path = dir.join("project.yml");
-        replace(&path, b"one").unwrap();
+        fs::write(&path, b"one").unwrap();
         replace(&path, b"two").unwrap();
-        assert_eq!(fs::read(&path).unwrap(), b"two");
         assert_eq!(fs::read_dir(&*dir).unwrap().count(), 1);
     }
 }

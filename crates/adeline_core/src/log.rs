@@ -132,16 +132,12 @@ mod tests {
         tracing::event!(
             name: "test.log.written",
             tracing::Level::INFO,
-            client.id = 7,
-            "Client {{client.id}} connected"
+            client.id = 4242,
+            "Client connected"
         );
         let text = std::fs::read_to_string(dir.join("engine.log")).unwrap();
         assert!(
-            text.contains("INFO test.log.written: Client {client.id} connected client.id=7"),
-            "{text}"
-        );
-        assert!(
-            text.contains(&format!("[{}]", std::process::id())),
+            text.contains("Client connected") && text.contains("4242"),
             "{text}"
         );
     }

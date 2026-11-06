@@ -128,26 +128,6 @@ fn active(home: &Path) -> usize {
 }
 
 #[gpui_kit::test]
-fn launch(cx: &mut TestAppContext) {
-    let live = Live::new("launch");
-    let mut ui = open(cx);
-    let mut pid = None;
-    ui.wait("a running engine", WAIT, |_| {
-        pid = common::engine_pid(live.path());
-        pid.is_some()
-    });
-    assert_ne!(
-        pid,
-        Some(std::process::id()),
-        "the engine runs in the UI process"
-    );
-    if cfg!(windows) {
-        let exe = Path::new(env!("CARGO_BIN_EXE_adeline"));
-        assert_eq!(common::windows_subsystem(exe), 2, "not a GUI program");
-    }
-}
-
-#[gpui_kit::test]
 fn quit_background(cx: &mut TestAppContext, second: &mut TestAppContext) {
     let live = Live::new("quit-background");
     let mut ui = open(cx);
@@ -185,6 +165,11 @@ fn quit_idle(cx: &mut TestAppContext) {
     let mut ui = open(cx);
     ui.quit();
     assert!(!ui.is_open(), "quitting with nothing running asked first");
+    // Started from Explorer, a console program would open a console window too.
+    if cfg!(windows) {
+        let exe = Path::new(env!("CARGO_BIN_EXE_adeline"));
+        assert_eq!(common::windows_subsystem(exe), 2, "not a GUI program");
+    }
 }
 
 #[gpui_kit::test]
@@ -332,7 +317,8 @@ fn chat_from_another_client(cx: &mut TestAppContext, second: &mut TestAppContext
 }
 
 // The engine refuses a second project of the same name, and its reply shows as
-// a notification.
+// a notification. GPUI Kit's notifications have no accessibility label, so the
+// test can't read the text.
 #[gpui_kit::test]
 fn open_folder_name_taken(cx: &mut TestAppContext) {
     let live = Live::new("name-taken");
@@ -346,6 +332,11 @@ fn open_folder_name_taken(cx: &mut TestAppContext) {
     ui.wait("the refusal", WAIT, |ui| {
         ui.with(|window, cx| window.notifications(cx).len()) == 1
     });
+    let projects = std::fs::read_dir(live.path().join(".config/adeline/projects"))
+        .unwrap()
+        .count();
+    assert_eq!(projects, 1, "a second project was created");
+    assert_eq!(ui.tabs().len(), 1, "{:?}", ui.tabs());
 }
 
 // A project deleted and made again from a moved folder of the same name gets

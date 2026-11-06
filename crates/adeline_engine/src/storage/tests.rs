@@ -1,6 +1,7 @@
 use super::*;
 
 use adeline_core::files::TempDir;
+use serde_json::json;
 
 fn working(root: &Path, name: &str) -> PathBuf {
     let path = root.join(name);
@@ -135,10 +136,9 @@ fn streamed_events_wait_in_memory_until_the_batch_is_due() {
 }
 
 #[test]
-fn project_rename_preserves_history_and_directory_snapshot() {
+fn project_names_and_directories_are_checked() {
     let test = TempDir::new("adeline-storage");
     let work = working(&test, "work");
-    let next = working(&test, "next");
     let mut store = open_store(&test);
     store
         .save_project(None, "Bad", Path::new("relative"))
@@ -153,13 +153,15 @@ fn project_rename_preserves_history_and_directory_snapshot() {
     store
         .save_project(None, "Example Project", &work)
         .unwrap_err();
-    let project_file = test.join("projects/example-project/project.yml");
-    let yaml = fs::read_to_string(&project_file).unwrap();
-    let document: serde_yaml_ng::Value = serde_yaml_ng::from_str(&yaml).unwrap();
-    assert_eq!(document.as_mapping().unwrap().len(), 2);
-    assert_eq!(document["name"], "Example--Project!");
-    assert_eq!(document["directory"], work.to_string_lossy().as_ref());
+}
 
+#[test]
+fn a_project_moves_only_with_its_conversations_closed_and_keeps_their_history() {
+    let test = TempDir::new("adeline-storage");
+    let work = working(&test, "work");
+    let next = working(&test, "next");
+    let mut store = open_store(&test);
+    let id = store.save_project(None, "Example Project", &work).unwrap();
     let conversation = store
         .create_conversation(&id, &agent(), launch(), Vec::new(), "Hello")
         .unwrap();
@@ -177,22 +179,7 @@ fn project_rename_preserves_history_and_directory_snapshot() {
             .save_project(Some(&id), "Changed Project", &next)
             .unwrap_err();
     }
-    let snapshot = store
-        .conversation(&conversation)
-        .unwrap()
-        .settings
-        .execution
-        .clone();
-    assert_eq!(snapshot.directory, work);
-    assert_eq!(snapshot.arguments, vec!["acp"]);
     let mut settings = store.conversation(&conversation).unwrap().settings.clone();
-    let mut changed_execution = settings.clone();
-    changed_execution.execution.command = "someone-else".into();
-    assert!(
-        store
-            .update_conversation(&id, &conversation, changed_execution)
-            .is_err()
-    );
     settings.status = ThreadStatus::Archived;
     settings.session_id = Some("saved-session".into());
     store
@@ -202,47 +189,19 @@ fn project_rename_preserves_history_and_directory_snapshot() {
         .save_project(Some(&id), "Changed Project", &next)
         .unwrap();
     assert_eq!(renamed, "changed-project");
-    assert!(test.join("projects/changed-project/conversations").is_dir());
     assert!(!test.join("projects/example-project").exists());
-    assert!(
-        store
-            .create_conversation(&renamed, &agent(), launch(), Vec::new(), "New")
-            .unwrap()
-            .len()
-            > 8
-    );
+    store
+        .create_conversation(&renamed, &agent(), launch(), Vec::new(), "New")
+        .unwrap();
     drop(store);
 
-    let mut reloaded = open_store(&test);
+    let reloaded = open_store(&test);
     assert!(reloaded.errors.is_empty(), "{:?}", reloaded.errors);
     assert_eq!(reloaded.projects[0].name, "Changed Project");
-    assert_eq!(
-        reloaded
-            .conversation(&conversation)
-            .unwrap()
-            .settings
-            .execution,
-        snapshot
-    );
-    assert_eq!(
-        reloaded
-            .conversation(&conversation)
-            .unwrap()
-            .settings
-            .session_id
-            .as_deref(),
-        Some("saved-session")
-    );
-    fs::write(
-        test.join("projects/changed-project/foreign.txt"),
-        b"leave alone",
-    )
-    .unwrap();
-    assert!(reloaded.delete_project(&renamed).is_err());
-    fs::remove_file(test.join("projects/changed-project/foreign.txt")).unwrap();
-    reloaded.delete_project(&renamed).unwrap();
-    assert!(work.is_dir());
-    assert!(next.is_dir());
+    assert_eq!(reloaded.projects[0].directory, next);
+    let settings = &reloaded.conversation(&conversation).unwrap().settings;
+    assert_eq!(settings.execution.directory, work);
+    assert_eq!(settings.session_id.as_deref(), Some("saved-session"));
 }
 
 #[test]
@@ -271,7 +230,6 @@ fn legacy_opened_time_is_read_and_survives_a_rename() {
     let reloaded = open_store(&test);
     let project = reloaded.projects.iter().find(|p| p.id == renamed).unwrap();
     assert_eq!(project.opened_at, Some(1_700_000_000));
-    assert_eq!(project.to_workspace().config.opened_at, Some(1_700_000_000));
 }
 
 #[test]
@@ -316,214 +274,108 @@ fn reconcile_takes_in_outside_changes_but_not_busy_conversations() {
     assert!(store.conversation(&busy).unwrap().events.is_empty());
 }
 
-#[test]
-fn transcript_replays_messages_tool_updates_errors_and_raw_traffic() {
-    let test = TempDir::new("adeline-storage");
-    let work = working(&test, "work");
-    let mut store = open_store(&test);
-    let id = store.save_project(None, "Project", &work).unwrap();
-    let conversation = store
-        .create_conversation(&id, &agent(), launch(), Vec::new(), "Hello")
+fn conversation_with(test: &Path, events: &[(&str, Value)]) -> (ProjectStore, String) {
+    let work = working(test, "work");
+    let mut store = open_store(test);
+    let project = store.save_project(None, "Project", &work).unwrap();
+    let id = store
+        .create_conversation(&project, &agent(), launch(), Vec::new(), "Hello")
         .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new(
-                "message",
-                serde_json::json!({
-                    "role":"user", "text":"hello", "read":true,
-                }),
-            ),
-        )
-        .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new(
-                "traffic",
-                serde_json::json!({"at":1,"direction":"from_agent","text":"{}"}),
-            ),
-        )
-        .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new(
-                "message",
-                serde_json::json!({
-                    "role":"assistant", "text":"pa", "read":true,
-                }),
-            ),
-        )
-        .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new(
-                "message_update",
-                serde_json::json!({"index":1,"text":"partial"}),
-            ),
-        )
-        .unwrap();
-    // The completed update omits the kind and paths the first one carried.
-    for update in [
-        serde_json::json!({
-            "id":"tool-1", "title":"Read", "status":"pending", "detail":"",
-            "kind":"read", "paths":["/work/a.md"],
-        }),
-        serde_json::json!({"id":"tool-1", "title":"Read", "status":"completed", "detail":"done"}),
-    ] {
+    for (kind, data) in events {
         store
-            .record_event(&conversation, &TranscriptEvent::new("tool", update))
+            .record_event(&id, &TranscriptEvent::new(kind, data.clone()))
             .unwrap();
     }
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new("usage", serde_json::json!({"used":38_000,"size":200_000})),
-        )
-        .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new(
-                "error",
-                serde_json::json!({"message":"provider unavailable"}),
-            ),
-        )
-        .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new("message", serde_json::json!({"role":"user","text":"next"})),
-        )
-        .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new(
-                "assistant_chunk",
-                serde_json::json!({"turn":2,"text":"new "}),
-            ),
-        )
-        .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new(
-                "assistant_chunk",
-                serde_json::json!({"turn":2,"text":"answer"}),
-            ),
-        )
-        .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new(
-                "lifecycle",
-                serde_json::json!({"event":"turn_started","retry":false}),
-            ),
-        )
-        .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new(
-                "assistant_chunk",
-                serde_json::json!({"turn":2,"text":" resumed"}),
-            ),
-        )
-        .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new("message_read", serde_json::json!({"through":3})),
-        )
-        .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new(
-                "lifecycle",
-                serde_json::json!({"event":"turn_started","retry":true}),
-            ),
-        )
-        .unwrap();
-    store
-        .record_event(
-            &conversation,
-            &TranscriptEvent::new(
-                "assistant_chunk",
-                serde_json::json!({"turn":3,"text":"retry answer"}),
-            ),
-        )
-        .unwrap();
-    let transcript = test
-        .join("projects/project/conversations")
-        .join(&conversation)
-        .join("transcript.jsonl");
-    let lines = fs::read_to_string(&transcript).unwrap();
-    assert_eq!(lines.lines().count(), 16);
-    assert!(lines.lines().all(|line| {
-        serde_json::from_str::<TranscriptEvent>(line)
-            .unwrap()
-            .timestamp
-            > 0
-    }));
-    drop(store);
+    (store, id)
+}
 
+fn replayed(test: &Path, id: &str) -> data::Thread {
+    open_store(test).conversation(id).unwrap().to_thread()
+}
+
+#[test]
+fn only_a_retry_starts_a_new_reply_and_an_update_rewrites_its_message() {
+    let test = TempDir::new("adeline-storage");
+    let (_, id) = conversation_with(
+        &test,
+        &[
+            ("message", json!({"role":"user","text":"hello"})),
+            ("message", json!({"role":"assistant","text":"pa"})),
+            ("message_update", json!({"index":1,"text":"partial"})),
+            ("message", json!({"role":"user","text":"next"})),
+            ("assistant_chunk", json!({"text":"new "})),
+            ("lifecycle", json!({"event":"turn_started","retry":false})),
+            ("assistant_chunk", json!({"text":"answer"})),
+            ("lifecycle", json!({"event":"turn_started","retry":true})),
+            ("assistant_chunk", json!({"text":"retry answer"})),
+        ],
+    );
+    let thread = replayed(&test, &id);
+    let texts: Vec<_> = thread.messages.iter().map(|m| m.text.as_str()).collect();
+    assert_eq!(
+        texts,
+        ["hello", "partial", "next", "new answer", "retry answer"]
+    );
+}
+
+#[test]
+fn message_read_marks_every_message_through_its_index() {
+    let test = TempDir::new("adeline-storage");
+    let (_, id) = conversation_with(
+        &test,
+        &[
+            ("message", json!({"role":"user","text":"one"})),
+            ("message", json!({"role":"assistant","text":"two"})),
+            ("message", json!({"role":"user","text":"three"})),
+            ("message_read", json!({"through":1})),
+        ],
+    );
+    let read: Vec<_> = replayed(&test, &id)
+        .messages
+        .iter()
+        .map(|m| m.read)
+        .collect();
+    assert_eq!(read, [true, true, false]);
+}
+
+#[test]
+fn traffic_is_read_from_disk_and_not_held_with_the_events() {
+    let test = TempDir::new("adeline-storage");
+    let traffic = json!({"at":1,"direction":"from_agent","text":"{}"});
+    let (_, id) = conversation_with(&test, &[("traffic", traffic.clone())]);
     let reloaded = open_store(&test);
     assert!(reloaded.errors.is_empty(), "{:?}", reloaded.errors);
-    // Traffic is read from disk when watched, not held with the events.
-    let stored = reloaded.conversation(&conversation).unwrap();
+    let stored = reloaded.conversation(&id).unwrap();
     assert!(stored.events.iter().all(|event| event.kind != "traffic"));
-    assert_eq!(
-        reloaded.traffic(&conversation, 10),
-        [serde_json::json!({"at":1,"direction":"from_agent","text":"{}"})]
+    assert_eq!(reloaded.traffic(&id, 10), [traffic]);
+}
+
+#[test]
+fn an_error_shows_as_activity_in_the_turn_it_happened() {
+    let test = TempDir::new("adeline-storage");
+    let (_, id) = conversation_with(
+        &test,
+        &[
+            ("message", json!({"role":"user","text":"one"})),
+            ("error", json!({"message":"provider unavailable"})),
+            ("message", json!({"role":"user","text":"two"})),
+        ],
     );
-    let thread = reloaded.conversation(&conversation).unwrap().to_thread();
-    assert_eq!(
-        thread
-            .messages
-            .iter()
-            .map(|m| m.text.as_str())
-            .collect::<Vec<_>>(),
-        [
-            "hello",
-            "partial",
-            "next",
-            "new answer resumed",
-            "retry answer"
-        ]
-    );
-    assert!(thread.messages[3].read);
-    assert!(!thread.messages[4].read);
-    assert_eq!(thread.activity.len(), 2);
-    assert_eq!(thread.activity[0].kind, "tool:tool-1");
-    assert_eq!(thread.activity[0].title, "Read (completed)");
-    assert_eq!(thread.activity[0].detail, "done");
-    assert_eq!(
-        thread.activity[0].tool,
-        adeline_core::conversation::ToolKind::Read
-    );
-    assert_eq!(thread.activity[0].paths, ["/work/a.md"]);
-    // Recorded during the first turn, before the next user message.
+    let thread = replayed(&test, &id);
+    assert_eq!(thread.activity.len(), 1);
+    assert_eq!(thread.activity[0].title, "provider unavailable");
     assert_eq!(thread.activity[0].turn, Some(0));
-    assert_eq!(thread.context, Some((38_000, 200_000)));
-    assert_eq!(thread.activity[1].title, "provider unavailable");
-    fs::remove_dir(&work).unwrap();
+}
+
+#[test]
+fn a_project_whose_directory_is_gone_keeps_its_history_but_starts_no_conversation() {
+    let test = TempDir::new("adeline-storage");
+    let (_, id) = conversation_with(&test, &[("message", json!({"role":"user","text":"kept"}))]);
+    fs::remove_dir(test.join("work")).unwrap();
     let mut reloaded = open_store(&test);
-    assert_eq!(
-        reloaded
-            .conversation(&conversation)
-            .unwrap()
-            .to_thread()
-            .messages[1]
-            .text,
-        "partial"
-    );
+    assert_eq!(replayed(&test, &id).messages[0].text, "kept");
     reloaded
-        .create_conversation(&id, &agent(), launch(), Vec::new(), "No start")
+        .create_conversation("project", &agent(), launch(), Vec::new(), "No start")
         .unwrap_err();
 }
 

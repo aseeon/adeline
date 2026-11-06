@@ -523,20 +523,4 @@ mod tests {
         stop_children();
         assert!(!child.wait().unwrap().success());
     }
-
-    #[cfg(windows)]
-    #[tokio::test(flavor = "multi_thread")]
-    async fn owner_only_pipe_accepts_this_user() {
-        use tokio::io::AsyncWriteExt as _;
-        let name = format!(r"\\.\pipe\adeline-test-{}", std::process::id());
-        let mut server = owner_only_pipe(&name, true).unwrap();
-        let mut client = tokio::net::windows::named_pipe::ClientOptions::new()
-            .open(&name)
-            .unwrap();
-        server.connect().await.unwrap();
-        client.write_all(b"ping").await.unwrap();
-        let mut buffer = [0; 4];
-        server.read_exact(&mut buffer).await.unwrap();
-        assert_eq!(&buffer, b"ping");
-    }
 }

@@ -461,7 +461,7 @@ mod tests {
     }
 
     #[test]
-    fn a_doc_too_large_to_read_is_refused_without_reading_it() {
+    fn a_doc_over_the_read_limit_is_refused() {
         let root = TempDir::new("adeline-docs-read");
         let file = std::fs::File::create(root.join("huge.txt")).unwrap();
         file.set_len(READ_LIMIT + 1).unwrap();

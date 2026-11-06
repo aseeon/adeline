@@ -259,18 +259,15 @@ mod tests {
 
     #[test]
     fn profiles_are_found_by_harness_or_reported_identity() {
-        assert_eq!(find("claude-acp", "").unwrap().name, "Claude Code");
-        assert_eq!(find(CUSTOM, "oh-my-pi").unwrap().harness, "omp");
-        assert!(find(CUSTOM, "").is_none());
-        assert!(find("gemini", "gemini-cli").is_none());
-        assert_eq!(instructions("omp", ""), Instructions::Flags);
-        assert_eq!(instructions("codex-acp", ""), Instructions::None);
-        assert!(is_plan_mode(Some(&CLAUDE), "plan"));
-        assert!(!is_plan_mode(None, "plan"));
-        assert!(!mode_description(Some(&CLAUDE), "default", "").is_empty());
+        let harness = |harness, identity| find(harness, identity).map(|profile| profile.harness);
+        assert_eq!(harness("claude-acp", ""), Some("claude-acp"));
+        assert_eq!(harness(CUSTOM, "oh-my-pi"), Some("omp"));
         assert_eq!(
-            mode_description(Some(&CLAUDE), "default", "Theirs"),
-            "Theirs"
+            harness(CUSTOM, "@agentclientprotocol/claude-agent-acp"),
+            Some("claude-acp")
         );
+        assert_eq!(harness(CUSTOM, "Codex-ACP"), Some("codex-acp"));
+        assert_eq!(harness(CUSTOM, ""), None);
+        assert_eq!(harness("gemini", "gemini-cli"), None);
     }
 }

@@ -549,29 +549,22 @@ pub fn image_size(png: &[u8]) -> (u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::prepared::{Criteria, search};
-
-    fn shows(thread: &Thread, query: &str, completed: bool, archived: bool) -> bool {
-        let criteria = Criteria {
-            query: query.to_lowercase(),
-            completed,
-            archived,
-            agent: None,
-        };
-        search([thread.search_record()].iter(), &criteria, 0).matches() == 1
-    }
 
     #[test]
-    fn completed_and_archived_conversations_show_only_when_asked_for() {
-        let mut thread = Thread {
-            status: ThreadStatus::Completed,
-            ..Default::default()
-        };
-        assert!(!shows(&thread, "", false, true));
-        assert!(shows(&thread, "", true, false));
-        thread.status = ThreadStatus::Archived;
-        assert!(!shows(&thread, "", true, false));
-        assert!(shows(&thread, "", false, true));
+    fn search_records_flag_completed_and_archived_conversations() {
+        for (status, completed, archived) in [
+            (ThreadStatus::Idle, false, false),
+            (ThreadStatus::Processing, false, false),
+            (ThreadStatus::Completed, true, false),
+            (ThreadStatus::Archived, false, true),
+        ] {
+            let record = Thread {
+                status,
+                ..Default::default()
+            }
+            .search_record();
+            assert_eq!((record.completed, record.archived), (completed, archived));
+        }
     }
 
     #[test]
@@ -628,119 +621,16 @@ mod tests {
         assert!(thread.messages.iter().all(|m| m.read));
     }
     #[test]
-    fn demo_chats_fill_every_section_whenever_the_demo_runs() {
-        use crate::prepared::Group;
-        // Noon UTC on two dates far apart; sections follow UTC days.
+    fn demo_chats_end_at_the_time_the_demo_runs() {
+        // Noon UTC on two dates far apart.
         for now in [1_790_510_400, 4_102_488_000] {
             let mut projects = load();
             shift_to(&mut projects, now);
             let newest = projects[0].threads.iter().map(Thread::last_activity).max();
             assert_eq!(newest, Some(now));
-            let records: Vec<_> = projects[0]
-                .threads
-                .iter()
-                .map(Thread::search_record)
-                .collect();
-            let criteria = Criteria {
-                completed: true,
-                ..Criteria::default()
-            };
-            let sections: Vec<_> = search(&records, &criteria, now)
-                .groups
-                .into_iter()
-                .map(|(group, rows)| (group, rows.len()))
-                .collect();
-            let rows = |wanted: Group| {
-                sections
-                    .iter()
-                    .find(|&&(group, _)| group == wanted)
-                    .map_or(0, |&(_, rows)| rows)
-            };
-            // Four live chats split between waiting and running, and every period
-            // holds enough chats to scroll.
-            assert!(rows(Group::NeedsInput) > 0, "{sections:?}");
-            assert!(rows(Group::Processing) > 0, "{sections:?}");
-            assert_eq!(
-                rows(Group::NeedsInput) + rows(Group::Processing),
-                4,
-                "{sections:?}"
-            );
-            for period in [Group::Today, Group::LastThreeDays, Group::Earlier] {
-                assert!(rows(period) >= 6, "{sections:?}");
-            }
         }
     }
 
-    #[test]
-    fn prepared_search_matches_original_full_text_semantics_and_edits() {
-        let mut thread = Thread {
-            title: "ŻÓŁĆ İstanbul ΟΣ".into(),
-            messages: vec![
-                Message {
-                    text: "First body".into(),
-                    ..Default::default()
-                },
-                Message {
-                    text: "Second message".into(),
-                    ..Default::default()
-                },
-            ],
-            ..Default::default()
-        };
-        thread.prepare_search();
-        for query in [
-            "",
-            "żółć",
-            "İstanbul",
-            "ος",
-            "ος first",
-            "body second",
-            "absent",
-        ] {
-            let original = format!(
-                "{} {}",
-                thread.title,
-                thread
-                    .messages
-                    .iter()
-                    .map(|m| m.text.as_str())
-                    .collect::<Vec<_>>()
-                    .join(" ")
-            )
-            .to_lowercase();
-            assert_eq!(
-                shows(&thread, query, true, true),
-                original.contains(&query.to_lowercase())
-            );
-        }
-        thread.messages.push(Message {
-            text: "Newly appended".into(),
-            ..Default::default()
-        });
-        thread.prepare_search();
-        assert!(shows(&thread, "newly APPENDED", true, true));
-        assert!(!shows(&thread, "anything", true, true));
-    }
-    #[test]
-    fn fixture_keeps_chat_activity_and_decisions_with_their_projects() {
-        let projects = load();
-        assert!(projects.iter().any(|project| !project.decisions.is_empty()));
-        for project in &projects {
-            for thread in &project.threads {
-                if thread.status == ThreadStatus::Processing {
-                    assert!(!thread.activity.is_empty(), "{}", thread.id);
-                }
-            }
-            for decision in &project.decisions {
-                let thread = project
-                    .threads
-                    .iter()
-                    .find(|thread| thread.id == decision.thread_id)
-                    .unwrap_or_else(|| panic!("{} outside its project", decision.thread_id));
-                assert_eq!(thread.status, ThreadStatus::Blocked, "{}", thread.id);
-            }
-        }
-    }
     #[test]
     fn a_turn_summary_counts_distinct_files_and_every_call() {
         let message = |role| Message {

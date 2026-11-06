@@ -779,5 +779,7 @@ mod project_tab_tests {
         assert_eq!(close_project_tab(&mut open, 1, 0), Some(1));
         assert_eq!(close_project_tab(&mut open, 1, 1), Some(2));
         assert_eq!(close_project_tab(&mut open, 2, 2), None);
+        let mut open = [true, true, true];
+        assert_eq!(close_project_tab(&mut open, 2, 2), Some(0));
     }
 }

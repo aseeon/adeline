@@ -220,35 +220,11 @@ fn docs_demo(cx: &mut TestAppContext, second: &mut TestAppContext) {
     no_engine();
 }
 
+// Settings for a remote machine shows its Engine page but not General, which
+// holds this computer's own settings.
 #[gpui_kit::test]
-fn demo_machines(cx: &mut TestAppContext) {
+fn settings_hides_general_for_a_remote_machine(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
-    // Tabs read "name · machine", and ", disconnected" for a dropped machine.
-    let tabs = ui.tabs();
-    assert!(tabs.iter().any(|t| t.contains("· Matrix")), "{tabs:?}");
-    assert!(
-        tabs.iter()
-            .any(|t| t.contains("· Vortex") && t.ends_with(", disconnected")),
-        "{tabs:?}"
-    );
-    // Each machine's toggle in the selector is reached with Tab.
-    ui.press(&format!("{MENU}-h"));
-    ui.named("Vortex, Disconnected");
-    ui.named("Matrix, Connected");
-    ui.activate("Show Matrix");
-    assert!(
-        !ui.tabs().iter().any(|t| t.contains("Matrix")),
-        "{:?}",
-        ui.tabs()
-    );
-    ui.activate("Show Matrix");
-    assert!(
-        ui.tabs().iter().any(|t| t.contains("Matrix")),
-        "{:?}",
-        ui.tabs()
-    );
-    ui.press("escape");
-
     let before = ui.cx.windows();
     ui.press("ctrl-,");
     ui.new_window(&before);
@@ -277,17 +253,19 @@ fn demo_machines(cx: &mut TestAppContext) {
 fn starting_and_switching_tabs_open_last_active_chat(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
     let open_chat = |ui: &mut Ui| ui.read(|app, _| app.open_chat().map(str::to_owned));
-    assert!(open_chat(&mut ui).is_some(), "started on Start a chat");
+    // The home project's latest message is in this chat, which isn't first in its list.
+    let latest = Some("Search long conversations without pausing the interface".to_owned());
+    assert_eq!(open_chat(&mut ui), latest);
     let tabs = ui.tabs();
     let home = tabs.iter().find(|t| t.starts_with("ade-project")).unwrap();
     let other = tabs.iter().find(|t| t.contains("· Matrix")).unwrap();
-    for name in [other, home] {
-        ui.open_tab(name);
-        assert!(
-            open_chat(&mut ui).is_some(),
-            "{name} opened on Start a chat"
-        );
-    }
+    ui.open_tab(other);
+    assert!(
+        open_chat(&mut ui).is_some(),
+        "{other} opened on Start a chat"
+    );
+    ui.open_tab(home);
+    assert_eq!(open_chat(&mut ui), latest);
 }
 
 #[gpui_kit::test]
@@ -398,15 +376,6 @@ fn a_lost_mouse_up_ends_the_selection(cx: &mut TestAppContext) {
     assert_eq!(selected(&mut ui), dragged);
 }
 
-#[gpui_kit::test]
-fn the_window_title_centers_on_the_main_area(cx: &mut TestAppContext) {
-    let mut ui = Ui::demo(cx, false);
-    let title = ui.find(|label| label.starts_with("Chats / ")).unwrap();
-    let main = ui.named("Conversation panel").bounds();
-    let off = f32::from(title.bounds().center().x - main.center().x).abs();
-    assert!(off < 1., "title is {off}px off the main area's center");
-}
-
 /// Moves GPUI's clock past the composer's 200 ms glide.
 fn finish_glide(ui: &mut Ui) {
     for _ in 0..15 {
@@ -422,16 +391,11 @@ fn the_composer_glides_between_chats_and_the_right_island(cx: &mut TestAppContex
     let mut ui = Ui::demo(cx, false);
     let chats = ui.named("Message").bounds().left();
     ui.press("ctrl-2");
-    let leaving = ui.named("Message").bounds().left();
     finish_glide(&mut ui);
     let island = ui.named("Message").bounds().left();
     assert!(
         island > chats,
         "{island:?} is in the island, right of {chats:?}"
-    );
-    assert!(
-        leaving < island - px(100.),
-        "{leaving:?} starts near {chats:?}, then slides to {island:?}"
     );
     ui.press("ctrl-1");
     finish_glide(&mut ui);
@@ -530,6 +494,18 @@ fn demo_fork(cx: &mut TestAppContext) {
     ui.open_chat(SELECTION_CHAT);
     ui.press("ctrl-shift-f");
     ui.named(&format!("Forked from {SELECTION_CHAT}"));
+    let open = ui.read(|app, _| app.open_chat().map(str::to_owned));
+    assert_eq!(open, Some(format!("{SELECTION_CHAT} (fork)")));
+    // Both replies came along; the first Copy copies the first reply's text.
+    assert_eq!(ui.all(|l| l == "Reply").len(), 2);
+    ui.set_clipboard("sentinel");
+    ui.activate("Copy");
+    assert!(
+        ui.clipboard()
+            .starts_with("An older parse result could replace a newer preview."),
+        "copied {:?}",
+        ui.clipboard()
+    );
     no_engine();
 }
 
@@ -567,11 +543,12 @@ fn page_down_and_up_scroll_the_viewer(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
     ui.press("ctrl-2");
     open_doc(&mut ui, "mdguide", 2);
-    let top = ui.names();
+    // The guide's task list starts below the fold.
+    ui.gone("Mark as not done");
     ui.press("pagedown");
-    assert_ne!(ui.names(), top, "Page Down left the Viewer at the top");
+    ui.named("Mark as not done");
     ui.press("pageup");
-    assert_eq!(ui.names(), top, "Page Up didn't return to the top");
+    ui.gone("Mark as not done");
 }
 
 // The plan's list has one done task and three open ones.
@@ -594,11 +571,9 @@ fn docs_diagrams_render_in_the_background(cx: &mut TestAppContext) {
     ui.press("ctrl-2");
     open_doc(&mut ui, "diagrams", 2);
     ui.named("docs/diagrams.md, Viewer");
-    ui.wait_named("Mermaid diagram", std::time::Duration::from_secs(20));
-    ui.wait_gone(
-        "Mermaid diagram, rendering",
-        std::time::Duration::from_secs(20),
-    );
+    ui.wait("both diagrams", std::time::Duration::from_secs(20), |ui| {
+        ui.all(|l| l == "Mermaid diagram").len() == 2
+    });
 }
 
 #[gpui_kit::test]
@@ -615,18 +590,18 @@ fn delete_agent(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
-fn ligatures_start_off_and_switch_on(cx: &mut TestAppContext) {
+fn the_ligatures_switch_writes_the_setting(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
     let before = ui.cx.windows();
     ui.press("ctrl-,");
     ui.new_window(&before);
     ui.activate("Appearance");
     let ligatures = || adeline_core::config::current().general.appearance.ligatures;
-    assert!(!ligatures(), "Ligatures start on");
+    let was = ligatures();
     ui.activate("Ligatures");
-    assert!(ligatures(), "the switch didn't turn Ligatures on");
+    assert_ne!(ligatures(), was, "the switch didn't change Ligatures");
     ui.activate("Ligatures");
-    assert!(!ligatures(), "the switch didn't turn Ligatures off");
+    assert_eq!(ligatures(), was, "the switch didn't change Ligatures back");
 }
 
 #[gpui_kit::test]

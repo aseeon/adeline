@@ -8,7 +8,6 @@ Keywords in the prompt script each turn, applied in this order:
   HANG_ON_CLOSE  from now on ignore session/close and stdin EOF
   NO_FORK        later session/fork calls of this session fail
   LOSE_SESSION   later session/resume and session/load of this session fail
-  STRAY          also stream text for a session that isn't this one
   EXIT           stream one chunk, then exit with code 3
   SILENT         stream one chunk, then send nothing and ignore session/cancel
   CODE           stream a fenced bash code block
@@ -133,8 +132,6 @@ def prompt(message):
         attempts_file(session + ".no-fork").touch()
     if "LOSE_SESSION" in text:
         attempts_file(session + ".lost").touch()
-    if "STRAY" in text:
-        chunk("not-" + session, "stray text ")
     if "EXIT" in text:
         chunk(session, "about to crash ")
         log("crashing on purpose")

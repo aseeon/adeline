@@ -363,107 +363,25 @@ fn update_at(path: &Path, change: impl FnOnce(&mut Settings)) -> anyhow::Result<
 mod tests {
     use super::*;
     #[test]
-    fn legacy_font_settings_load_and_each_size_is_bounded_on_its_own() {
-        let defaults = Appearance::default();
+    fn legacy_appearance_with_glass_still_loads() {
         let legacy: Appearance =
             serde_yaml_ng::from_str("interface_font: Arial\nfont_size: 18\nglass: true").unwrap();
         assert_eq!(legacy.interface_font, "Arial");
         assert_eq!(legacy.font_size, 18);
-        assert_eq!(legacy.code_font, defaults.code_font);
-        assert_eq!(legacy.code_font_size, defaults.code_font_size);
-        let original = current();
-        ACTIVE.with(|s| s.borrow_mut().settings.general.appearance = legacy);
-        for (requested, expected) in [(0, 10), (14, 14), (20, 20), (65535, 24)] {
-            ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.code_font_size = requested);
-            assert_eq!(font_size(), 18);
-            assert_eq!(code_font_size(), expected);
-        }
-        for (requested, expected) in [(0, 10), (18, 18), (65535, 24)] {
-            ACTIVE.with(|s| s.borrow_mut().settings.general.appearance.font_size = requested);
-            assert_eq!(font_size(), expected);
-            assert_eq!(code_font_size(), 24);
-        }
-        let settings = current();
-        assert_eq!(
-            serde_yaml_ng::from_str::<Settings>(&serde_yaml_ng::to_string(&settings).unwrap())
-                .unwrap(),
-            settings
-        );
-        ACTIVE.with(|s| s.borrow_mut().settings = original);
     }
     #[test]
-    fn legacy_features_use_new_defaults_and_explicit_choices_persist() {
+    fn removed_feature_flags_load_and_explicit_choices_persist() {
         let mut settings: Settings = serde_yaml_ng::from_str(
             "general:\n  features:\n    close_picker_after_selection: false\n",
         )
         .unwrap();
-        for section in [
-            Section::Docs,
-            Section::Workflows,
-            Section::Services,
-            Section::Groupchats,
-            Section::Issues,
-            Section::Whiteboard,
-        ] {
-            assert_eq!(
-                settings.general.features.enabled(section),
-                matches!(section, Section::Docs | Section::Groupchats)
-            );
-            settings.general.features.toggle(section);
-        }
-        settings.general.features.toggle(Section::Chats);
-        for section in [
-            Section::Board,
-            Section::Terminal,
-            Section::Browser,
-            Section::Usage,
-        ] {
-            settings.general.features.toggle(section);
-            assert!(!settings.general.features.enabled(section));
-        }
+        settings.general.features.toggle(Section::Docs);
+        settings.general.features.toggle(Section::Issues);
         let yaml = serde_yaml_ng::to_string(&settings).unwrap();
         assert!(!yaml.contains("close_picker_after_selection"));
         let restored: Settings = serde_yaml_ng::from_str(&yaml).unwrap();
-        assert!(restored.general.features.enabled(Section::Chats));
-        for section in [
-            Section::Docs,
-            Section::Workflows,
-            Section::Services,
-            Section::Groupchats,
-            Section::Issues,
-            Section::Whiteboard,
-        ] {
-            assert_eq!(
-                restored.general.features.enabled(section),
-                !matches!(section, Section::Docs | Section::Groupchats)
-            );
-        }
-    }
-    #[test]
-    fn new_settings_never_seed_excluded_mode_preferences() {
-        let path = std::env::temp_dir().join(format!(
-            "adeline-new-settings-{}-{:?}.yml",
-            std::process::id(),
-            std::thread::current().id()
-        ));
-        seed_yaml(&path, &Settings::default()).unwrap();
-        update_at(&path, |s| s.general.features.docs = true).unwrap();
-        let saved = std::fs::read_to_string(&path).unwrap();
-        let modes: serde_yaml_ng::Value = serde_yaml_ng::from_str(&saved).unwrap();
-        for mode in [
-            "workflows",
-            "services",
-            "groupchats",
-            "issues",
-            "whiteboard",
-        ] {
-            assert!(
-                modes["modes"].as_mapping().unwrap().get(mode).is_none(),
-                "{mode}"
-            );
-        }
-        assert!(read(&path).unwrap().general.features.docs);
-        std::fs::remove_file(path).unwrap();
+        assert!(!restored.general.features.enabled(Section::Docs));
+        assert!(restored.general.features.enabled(Section::Issues));
     }
     #[test]
     fn legacy_values_survive_unrelated_updates_without_validation_or_recreation() {

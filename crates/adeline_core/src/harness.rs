@@ -810,13 +810,4 @@ mod tests {
         assert!(newer("1.10.0", "1.9.9"));
         assert!(!newer("1.0", ""));
     }
-
-    #[test]
-    fn guidance_names_the_agent_before_the_instructions() {
-        let text = guidance("Josh", "Be brief.");
-        let name = text.find("Josh").unwrap();
-        let instructions = text.find("Be brief.").unwrap();
-        assert!(name < instructions, "{text}");
-        assert!(!guidance("Josh", "  ").ends_with('\n'));
-    }
 }

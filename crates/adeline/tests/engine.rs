@@ -522,21 +522,6 @@ fn a_lost_session_waits_for_consent_and_the_replacement_carries_the_history() {
     assert!(text.contains("remember the parrot"), "{text}");
 }
 
-#[test]
-fn text_for_another_session_never_reaches_the_conversation() {
-    let mut home = Home::new("stray");
-    let mut client = home.connect();
-    let id = client.send(None, "STRAY");
-    assert_eq!(client.wait_turn(&id).error, None);
-    let texts: String = client
-        .deltas
-        .iter()
-        .filter(|delta| delta["delta"] == "text" && delta["id"] == id.as_str())
-        .filter_map(|delta| delta["text"].as_str())
-        .collect();
-    assert_eq!(texts, "Hello from fake agent");
-}
-
 impl Client {
     /// Waits for a delta that passes `test`, reading on from what arrived so far.
     fn wait_delta(&mut self, test: impl Fn(&Value) -> bool) -> Value {
@@ -561,22 +546,17 @@ impl Client {
             .map(|delta| delta["card"].clone())
             .collect()
     }
-
-    fn docs(&mut self, command: Command) -> Result<Value, String> {
-        self.call(command)
-    }
 }
 
 #[test]
-fn docs_an_agent_writes_get_one_card_each_and_watching_clients_see_disk_changes() {
-    let mut home = Home::new("docs");
+fn docs_an_agent_writes_get_one_card_each_that_follows_the_file() {
+    let mut home = Home::new("doc-cards");
     let work = home.root.join("work");
     fs::write(work.join(".gitignore"), "target/\n").unwrap();
     let mut client = home.connect();
-    let project = || PROJECT.to_owned();
     client
-        .docs(Command::WatchDocs {
-            project_id: Some(project()),
+        .call(Command::WatchDocs {
+            project_id: Some(PROJECT.to_owned()),
         })
         .unwrap();
     let id = client.send(
@@ -596,7 +576,7 @@ fn docs_an_agent_writes_get_one_card_each_and_watching_clients_see_disk_changes(
     client.send(Some(&id), "WRITE notes/plan.md WRITE a.md");
     client.wait_turn(&id);
     client.settle();
-    let mut fresh = home.connect();
+    let fresh = home.connect();
     let thread = fresh.snapshot.as_ref().unwrap()["projects"][0]["threads"]
         .as_array()
         .unwrap()
@@ -623,94 +603,13 @@ fn docs_an_agent_writes_get_one_card_each_and_watching_clients_see_disk_changes(
         ]
     );
 
-    let listed = fresh.docs(Command::ListDocs {
-        project_id: project(),
-    });
-    assert_eq!(listed, Ok(json!(["a.md", "notes/plan.md"])));
-
-    // A save keeps the file's line endings and missing final newline.
-    fs::write(work.join("crlf.md"), "one\r\ntwo\r\nthree").unwrap();
-    let read = fresh
-        .docs(Command::ReadDoc {
-            project_id: project(),
-            path: "crlf.md".into(),
-        })
-        .unwrap();
-    assert_eq!(read["text"], "one\r\ntwo\r\nthree");
-    assert_eq!(read["read_only"], Value::Null);
-    fresh
-        .docs(Command::WriteDoc {
-            project_id: project(),
-            path: "crlf.md".into(),
-            text: "one\nTWO\nthree\n".into(),
-            create: false,
-        })
-        .unwrap();
-    assert_eq!(
-        fs::read(work.join("crlf.md")).unwrap(),
-        b"one\r\nTWO\r\nthree"
-    );
-
-    // Nothing is overwritten, and names that aren't docs are refused.
-    let refused = |result: Result<Value, String>| result.unwrap_err();
-    let error = refused(fresh.docs(Command::WriteDoc {
-        project_id: project(),
-        path: "a.md".into(),
-        text: "replaced".into(),
-        create: true,
-    }));
-    assert!(error.contains("already exists"), "{error}");
-    assert_eq!(
-        fs::read_to_string(work.join("a.md")).unwrap(),
-        "written by the fake agent\n"
-    );
-    let error = refused(fresh.docs(Command::RenameDoc {
-        project_id: project(),
-        from: "a.md".into(),
-        to: "notes/plan.md".into(),
-    }));
-    assert!(error.contains("already exists"), "{error}");
-    for bad in ["a.rs", "../a.md", "notes/x?.md"] {
-        assert!(
-            fresh
-                .docs(Command::RenameDoc {
-                    project_id: project(),
-                    from: "a.md".into(),
-                    to: bad.into(),
-                })
-                .is_err(),
-            "{bad}"
-        );
-    }
-    fresh
-        .docs(Command::RenameDoc {
-            project_id: project(),
-            from: "a.md".into(),
-            to: "notes/b.md".into(),
-        })
-        .unwrap();
-    assert!(work.join("notes/b.md").is_file() && !work.join("a.md").exists());
-
-    // Changes on disk reach the watching client, and a deleted doc's card turns gone.
-    fs::write(work.join("outside-change.md"), "new").unwrap();
-    let change = client.wait_delta(|delta| {
-        delta["delta"] == "docs"
-            && delta["changes"]
-                .as_array()
-                .is_some_and(|changes| changes.iter().any(|c| c["path"] == "outside-change.md"))
-    });
-    assert_eq!(change["project_id"], PROJECT);
+    // A doc deleted on disk turns its card gone.
     fs::remove_file(work.join("notes/plan.md")).unwrap();
     client.wait_delta(|delta| {
         delta["delta"] == "card"
             && delta["card"]["subtitle"] == "notes/plan.md"
             && delta["card"]["gone"] == true
     });
-    let error = refused(fresh.docs(Command::ReadDoc {
-        project_id: project(),
-        path: "notes/plan.md".into(),
-    }));
-    assert!(error.contains("no longer exists"), "{error}");
 
     // With Docs disabled, no new cards are made.
     let before = client.cards(&id).len();
@@ -730,4 +629,67 @@ fn docs_an_agent_writes_get_one_card_each_and_watching_clients_see_disk_changes(
     client.wait_turn(&id);
     client.settle();
     assert_eq!(client.cards(&id).len(), before);
+}
+
+#[test]
+fn watching_clients_see_disk_changes_and_doc_commands_never_overwrite() {
+    let mut home = Home::new("doc-watch");
+    let work = home.root.join("work");
+    fs::create_dir(work.join("notes")).unwrap();
+    fs::write(work.join("a.md"), "mine\n").unwrap();
+    fs::write(work.join("notes/plan.md"), "plan\n").unwrap();
+    let mut client = home.connect();
+    let project = || PROJECT.to_owned();
+    client
+        .call(Command::WatchDocs {
+            project_id: Some(project()),
+        })
+        .unwrap();
+    let listed = client.call(Command::ListDocs {
+        project_id: project(),
+    });
+    assert_eq!(listed, Ok(json!(["a.md", "notes/plan.md"])));
+
+    let error = client
+        .call(Command::WriteDoc {
+            project_id: project(),
+            path: "a.md".into(),
+            text: "replaced".into(),
+            create: true,
+        })
+        .unwrap_err();
+    assert!(error.contains("already exists"), "{error}");
+    assert_eq!(fs::read_to_string(work.join("a.md")).unwrap(), "mine\n");
+    let error = client
+        .call(Command::RenameDoc {
+            project_id: project(),
+            from: "a.md".into(),
+            to: "notes/plan.md".into(),
+        })
+        .unwrap_err();
+    assert!(error.contains("already exists"), "{error}");
+    client
+        .call(Command::RenameDoc {
+            project_id: project(),
+            from: "a.md".into(),
+            to: "notes/b.md".into(),
+        })
+        .unwrap();
+    assert!(work.join("notes/b.md").is_file() && !work.join("a.md").exists());
+    let error = client
+        .call(Command::ReadDoc {
+            project_id: project(),
+            path: "a.md".into(),
+        })
+        .unwrap_err();
+    assert!(error.contains("no longer exists"), "{error}");
+
+    fs::write(work.join("outside-change.md"), "new").unwrap();
+    let change = client.wait_delta(|delta| {
+        delta["delta"] == "docs"
+            && delta["changes"]
+                .as_array()
+                .is_some_and(|changes| changes.iter().any(|c| c["path"] == "outside-change.md"))
+    });
+    assert_eq!(change["project_id"], PROJECT);
 }

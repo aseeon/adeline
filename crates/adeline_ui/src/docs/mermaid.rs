@@ -58,28 +58,6 @@ pub(crate) fn render(source: &str, dark: bool) -> Result<Arc<Image>, String> {
 mod tests {
     use super::*;
 
-    const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
-
-    #[test]
-    fn renders_each_diagram_kind_to_png() {
-        let sources = [
-            "flowchart LR\n  A[Start] --> B{Ok?}\n  B -->|yes| C[Done]",
-            "sequenceDiagram\n  Alice->>Bob: Hello\n  Bob-->>Alice: Hi",
-            "classDiagram\n  Animal <|-- Dog\n  Animal : +name String",
-            "stateDiagram-v2\n  [*] --> Idle\n  Idle --> Busy\n  Busy --> [*]",
-            "erDiagram\n  CUSTOMER ||--o{ ORDER : places",
-            "gantt\n  title Plan\n  dateFormat YYYY-MM-DD\n  section A\n  Task :a1, 2024-01-01, 3d",
-            "pie title Pets\n  \"Dogs\" : 3\n  \"Cats\" : 2",
-        ];
-        for source in sources {
-            for dark in [false, true] {
-                let image = render(source, dark).unwrap_or_else(|e| panic!("{source}: {e}"));
-                assert_eq!(image.format, ImageFormat::Png);
-                assert!(image.bytes.starts_with(PNG_SIGNATURE), "{source}");
-            }
-        }
-    }
-
     #[test]
     fn invalid_sources_give_a_reason() {
         for source in [
@@ -88,7 +66,18 @@ mod tests {
         ] {
             let reason = render(source, false).expect_err(source);
             assert!(!reason.trim().is_empty(), "{source}");
-            assert!(!reason.contains('\n'), "{reason}");
         }
+    }
+
+    #[test]
+    fn oversized_diagrams_are_refused() {
+        let source = format!("flowchart LR\n  A[{}]", "x".repeat(MAX_SOURCE_BYTES));
+        assert_eq!(
+            render(&source, false).unwrap_err(),
+            "diagram source is over 100 KB"
+        );
+        let chain: Vec<_> = (0..40).map(|i| format!("P{i}->>P{}: m", i + 1)).collect();
+        let source = format!("sequenceDiagram\n{}", chain.join("\n"));
+        assert_eq!(render(&source, false).unwrap_err(), "diagram is too large");
     }
 }

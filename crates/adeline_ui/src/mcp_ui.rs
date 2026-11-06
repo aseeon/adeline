@@ -382,5 +382,9 @@ mod tests {
             parse_pairs("Authorization: Bearer x", ':', "header").unwrap()[0].1,
             "Bearer x"
         );
+        assert_eq!(
+            parse_pairs("Referer: https://a.example:8080/x", ':', "header").unwrap(),
+            [("Referer".to_owned(), "https://a.example:8080/x".to_owned())]
+        );
     }
 }

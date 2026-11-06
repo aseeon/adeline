@@ -1293,12 +1293,17 @@ mod tests {
     }
 
     #[test]
-    fn offsets_round_trip_through_items() {
+    fn offsets_round_trip_through_items_and_clamp_to_real_rows() {
         let layout = layout();
         for y in [0., 31., 32., 500., 1200.] {
             let offset = layout.offset_at(px(y));
             assert_eq!(layout.scroll_offset(offset), px(y));
         }
+        let above = layout.offset_at(px(-10.));
+        assert_eq!((above.item_ix, above.offset_in_item), (0, px(0.)));
+        let below = layout.offset_at(px(5000.));
+        assert_eq!(below.item_ix, layout.tops.len() - 2);
+        assert_eq!(layout.scroll_offset(below), px(5000.));
     }
 
     #[test]
