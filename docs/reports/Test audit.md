@@ -168,3 +168,13 @@ Tests click "Main menu" (`edit_an_agent_opens_the_open_chats_agent`) and the tas
   - `copy_code_block` stays live, because demo mode shows replies as plain text.
   - No input found reaches mermaid's "diagram is empty" branch.
   - adeline_core's tokio dependency lacks `rt-multi-thread`, so `cargo test -p adeline_core` on its own doesn't build. Workspace builds work.
+
+## Follow-up (v0.3.9)
+
+- The checks above that couldn't fail now fail when the behavior they guard breaks. Each was confirmed by breaking the code and reverting.
+- `demo_conversation`, `docs_demo` and `right_island_resizes_in_every_mode` are split into one test per flow. The browse half of `upgrade_and_browse` is now `browse_remote_folders`, which CI runs.
+- The theme seeding test no longer counts bundled themes and survives a rerun. The harness tests clean up their temp folders. `selected_chat_row_shows` no longer depends on the demo's time labels.
+- Alt+S / Cmd+Shift+S opens the main menu. Task checkboxes were already reachable with Tab and Space.
+- Toasts carry their message as an accessibility label, and `open_folder_name_taken` checks the text.
+- Demo replies render as markdown, so `copy_code_block` is now a demo test.
+- Mermaid's unreachable "diagram is empty" branches are gone. adeline_core builds on its own.

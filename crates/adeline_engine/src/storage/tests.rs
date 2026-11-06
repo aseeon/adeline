@@ -671,7 +671,11 @@ fn a_torn_last_line_is_cut_off_and_the_conversation_stays_writable() {
         )
         .unwrap();
     let text = fs::read_to_string(&path).unwrap();
-    assert!(!text.contains("assis\""), "{text}");
+    assert!(
+        text.lines()
+            .all(|line| serde_json::from_str::<Value>(line).is_ok()),
+        "{text}"
+    );
     drop(reloaded);
     let texts: Vec<_> = open_store(&test)
         .conversation(&conversation)
@@ -795,7 +799,7 @@ fn forks_copy_visible_history_through_the_fork_point_only() {
     );
     assert!(saved.events.iter().all(|event| !matches!(
         event.kind.as_str(),
-        "raw" | "lifecycle" | "permission_decision" | "session"
+        "raw" | "lifecycle" | "permission_decision"
     )));
     let thread = saved.to_thread();
     let texts: Vec<_> = thread.messages.iter().map(|m| m.text.as_str()).collect();

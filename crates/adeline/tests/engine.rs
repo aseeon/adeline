@@ -424,7 +424,6 @@ fn a_reconnect_gets_only_the_deltas_it_missed_in_order() {
     let mut back = home.connect_from(Some(left_at.clone()));
     assert!(back.resumed && back.snapshot.is_none());
     watcher.wait_live(&id, |live| !live.processing);
-    back.wait_live(&id, |live| !live.processing);
     watcher.settle();
     back.settle();
     let since = usize::try_from(left_at.seq).unwrap()
@@ -434,15 +433,20 @@ fn a_reconnect_gets_only_the_deltas_it_missed_in_order() {
     let text = back
         .deltas
         .iter()
-        .position(|delta| delta["delta"] == "text");
-    let turn_end = back.deltas.iter().rposition(|delta| {
-        delta["delta"] == "live"
-            && delta["id"] == id.as_str()
-            && delta["live"]["processing"] == false
-    });
+        .position(|delta| delta["delta"] == "text")
+        .expect("the missed text");
+    let turn_end = back
+        .deltas
+        .iter()
+        .rposition(|delta| {
+            delta["delta"] == "live"
+                && delta["id"] == id.as_str()
+                && delta["live"]["processing"] == false
+        })
+        .expect("the missed turn end");
     assert!(
-        text < turn_end && turn_end < Some(shared),
-        "{text:?} {turn_end:?} {shared}"
+        text < turn_end && turn_end < shared,
+        "{text} {turn_end} {shared}"
     );
     assert_eq!(
         back.deltas[..shared],

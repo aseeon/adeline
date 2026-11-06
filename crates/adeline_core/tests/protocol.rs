@@ -35,12 +35,14 @@ fn variants<T: DeserializeOwned + std::fmt::Debug>(tag: &str) -> Vec<String> {
         .unwrap_err()
         .to_string();
     // "unknown variant `?`, expected `a` or `b`" or "…expected one of `a`, `b`, `c`"
-    error
+    let names: Vec<String> = error
         .split('`')
         .skip(3)
         .step_by(2)
         .map(Into::into)
-        .collect()
+        .collect();
+    assert!(!names.is_empty(), "no variants in: {error}");
+    names
 }
 
 #[test]

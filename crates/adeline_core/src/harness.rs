@@ -690,6 +690,7 @@ pub struct Launch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::files::TempDir;
 
     #[test]
     fn registry_entries_become_local_launch_commands() {
@@ -726,7 +727,6 @@ mod tests {
         .unwrap();
         assert_eq!(hostile.len(), 1);
         assert_eq!(hostile[0].executables, ["evil"]);
-        assert!(resolve("Cargo.toml").unwrap().is_absolute());
         parse_registry("not json").unwrap_err();
         let bundled =
             std::str::from_utf8(adeline_assets::embedded("registry.json").unwrap()).unwrap();
@@ -734,9 +734,13 @@ mod tests {
     }
 
     #[test]
+    fn a_command_given_as_a_file_resolves_to_an_absolute_path() {
+        assert!(resolve("Cargo.toml").unwrap().is_absolute());
+    }
+
+    #[test]
     fn guessed_executables_must_come_from_their_package() {
-        let dir = std::env::temp_dir().join(format!("adeline-shims-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
+        let dir = TempDir::new("adeline-shims");
         let vs_code = dir.join("code.cmd");
         fs::write(
             &vs_code,
@@ -763,7 +767,7 @@ mod tests {
 
     #[test]
     fn package_metadata_names_the_executable() {
-        let dir = std::env::temp_dir().join(format!("adeline-npm-{}", std::process::id()));
+        let dir = TempDir::new("adeline-npm");
         let package = dir.join("node_modules/@minimax-ai/code");
         fs::create_dir_all(&package).unwrap();
         fs::write(
@@ -773,7 +777,10 @@ mod tests {
         .unwrap();
         let shim = dir.join(if cfg!(windows) { "mcode.cmd" } else { "mcode" });
         fs::write(&shim, "").unwrap();
-        assert_eq!(from_package("@minimax-ai/code", &[dir]), Some(shim));
+        assert_eq!(
+            from_package("@minimax-ai/code", &[dir.to_path_buf()]),
+            Some(shim)
+        );
         let names = ["gcm".to_owned(), "fast-agent-acp".to_owned()];
         assert_eq!(
             pick(&names, "fast-agent-acp").as_deref(),

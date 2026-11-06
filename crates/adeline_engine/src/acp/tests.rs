@@ -298,15 +298,28 @@ fn error_looking_reply_is_reported_without_retry() {
 fn temporary_failure_obeys_retry_limit_and_preserves_original_until_work() {
     let (mut worker, received, _) = worker();
     worker.active = Some(turn(2));
-    for expected in 1..=2 {
+    for (expected, prompt) in [(1, "original user request"), (2, CONTINUE_TURN)] {
+        if expected == 2 {
+            worker.active.as_mut().unwrap().prompt_request = Some(1);
+            worker.update(
+                serde_json::from_value(json!({"sessionId":"session-1","update":{
+                    "sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"partial"}}}))
+                .unwrap(),
+            );
+            events(&received);
+        }
         worker.fail("Provider timed out".into(), FailureKind::Temporary);
         let active = worker.active.as_ref().unwrap();
         assert_eq!(active.attempt, expected);
-        assert_eq!(text_of(&active.prompt), "original user request");
         assert!(active.retry_at.is_some());
         assert!(
             matches!(events(&received)[..], [EventKind::Retrying { attempt, .. }] if attempt == expected)
         );
+        // Closing keeps the retry from spawning an agent process.
+        worker.closing = true;
+        worker.retry_now();
+        worker.closing = false;
+        assert_eq!(text_of(&worker.active.as_ref().unwrap().prompt), prompt);
     }
     worker.fail("Provider timed out".into(), FailureKind::Temporary);
     assert!(worker.active.is_none());

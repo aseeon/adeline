@@ -16,7 +16,7 @@ gethostname.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true
 serde_yaml_ng.workspace = true
-tokio = { workspace = true, features = ["rt", "fs", "net", "io-util", "io-std", "process", "time", "macros"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "fs", "net", "io-util", "io-std", "process", "time", "macros"] }
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["fmt", "std"] }
 
