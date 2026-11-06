@@ -55,7 +55,7 @@ Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `crates
 
 ## Projects and machines
 
-Registered with both the Ctrl and the Cmd form on every OS, not in the keymap setting. Projects switch with Ctrl alone, since Cmd+Tab is the macOS app switcher. The machines menu follows the option menus: Alt on Windows and Linux, Cmd+Shift on macOS.
+Registered with both the Ctrl and the Cmd form on every OS, not in the keymap setting. Projects switch with Ctrl alone, since Cmd+Tab is the macOS app switcher. The machines menu and the main menu follow the option menus: Alt on Windows and Linux, Cmd+Shift on macOS.
 
 | Shortcut | Action |
 |---|---|
@@ -64,6 +64,7 @@ Registered with both the Ctrl and the Cmd form on every OS, not in the keymap se
 | Ctrl+W / Cmd+W | Close the project |
 | Ctrl+O / Cmd+O | Open a folder as a project (asks for the machine when several are checked) |
 | Alt+H / Cmd+Shift+H | Open the machines menu (with a remote machine saved). In Settings, focus the Machine dropdown, which Enter opens |
+| Alt+S / Cmd+Shift+S | Open the main menu (the settings button on the mode rail) |
 
 The machines menu, the machine choice for a folder and the folder browser list one control per machine or folder, so they get no shortcut of their own: Tab moves to a machine's box, a button or a folder, and Space or Enter presses it.
 
@@ -121,6 +122,8 @@ In the Editor (the toolbar's tools):
 | Ctrl+Z / Cmd+Z, Ctrl+Y / Cmd+Shift+Z | Undo, redo (from GPUI Kit) |
 | Ctrl+F / Cmd+F | Find in the doc (from GPUI Kit) |
 | Ctrl+H / Cmd+H | Find and replace (from GPUI Kit) |
+
+In the Viewer, Tab moves to a task's checkbox, and Space or Enter ticks or clears it.
 
 Doc cards come and go with the replies, so they get no shortcut of their own. Tab moves to a card's Open button or to its "+N more docs" button, and Enter presses it.
 
@@ -227,9 +230,8 @@ Chats:
 - Copy the ACP traffic
 - Select text in a message
 
-Main menu (the settings button on the left rail):
+Main menu (Alt+S / Cmd+Shift+S opens it, then Up / Down and Enter pick):
 
-- Open the main menu. Ctrl+, opens General settings directly
 - Add an agent, edit an agent, stop all agents
 - Project settings, About Adeline
 

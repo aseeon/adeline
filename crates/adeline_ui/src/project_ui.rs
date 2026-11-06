@@ -121,7 +121,7 @@ impl Adeline {
                     app.project_error = Some(error);
                     cx.notify();
                 }
-                Err(error) => window.push_notification(error, cx),
+                Err(error) => window.push_notification(toast(error), cx),
             },
         );
     }
@@ -139,7 +139,10 @@ impl Adeline {
         }
         let id = self.projects[ix].config.id.clone();
         if let Err(error) = ui_state::record_opened(&self.projects[ix].machine, &id, now) {
-            window.push_notification(format!("Couldn't record opening {id}: {error:#}"), cx);
+            window.push_notification(
+                toast(format!("Couldn't record opening {id}: {error:#}")),
+                cx,
+            );
         }
     }
 
@@ -431,7 +434,7 @@ impl Adeline {
                     }
                 }
                 Ok(Ok(None)) => {}
-                _ => window.push_notification("Could not open the folder picker.", cx),
+                _ => window.push_notification(toast("Could not open the folder picker."), cx),
             });
         })
         .detach();

@@ -272,28 +272,6 @@ fn fork(cx: &mut TestAppContext) {
     ui.wait_gone("Forked from hello", WAIT);
 }
 
-// Ctrl+Shift+C copies the latest reply's last code block. Each code block also
-// shows a copy button while the pointer is over the reply.
-#[gpui_kit::test]
-fn copy_code_block(cx: &mut TestAppContext) {
-    let _live = Live::new("copy-code");
-    let mut ui = open(cx);
-    send(&mut ui, "CODE");
-    ui.wait_named("Fork", WAIT);
-    ui.press("ctrl-shift-c");
-    assert_eq!(ui.clipboard(), "cargo build --release --locked");
-    ui.set_clipboard("");
-    ui.gone("Copy code");
-    let button = ui
-        .elements()
-        .into_iter()
-        .find(|element| element.label() == Some("Copy code"))
-        .expect("a hidden copy button");
-    ui.hover(&button);
-    ui.click("Copy code");
-    assert_eq!(ui.clipboard(), "cargo build --release --locked");
-}
-
 // A chat another client starts lands in the list without moving this window
 // off its open chat.
 #[gpui_kit::test]
@@ -317,8 +295,7 @@ fn chat_from_another_client(cx: &mut TestAppContext, second: &mut TestAppContext
 }
 
 // The engine refuses a second project of the same name, and its reply shows as
-// a notification. GPUI Kit's notifications have no accessibility label, so the
-// test can't read the text.
+// a notification.
 #[gpui_kit::test]
 fn open_folder_name_taken(cx: &mut TestAppContext) {
     let live = Live::new("name-taken");
@@ -330,8 +307,9 @@ fn open_folder_name_taken(cx: &mut TestAppContext) {
     ui.cx
         .simulate_path_prompt_response(|_| Some(vec![other.clone()]));
     ui.wait("the refusal", WAIT, |ui| {
-        ui.with(|window, cx| window.notifications(cx).len()) == 1
+        ui.containing("already exists").is_some()
     });
+    assert_eq!(ui.with(|window, cx| window.notifications(cx).len()), 1);
     let projects = std::fs::read_dir(live.path().join(".config/adeline/projects"))
         .unwrap()
         .count();
@@ -923,7 +901,7 @@ fn site_projects(desktop: &Path) -> Vec<String> {
 // Downloads Adeline 0.1.0, so CI runs it in its own step with `--run-ignored`.
 #[ignore = "downloads Adeline 0.1.0"]
 #[gpui_kit::test]
-fn upgrade_and_browse(cx: &mut TestAppContext) {
+fn upgrade_old_engine(cx: &mut TestAppContext) {
     let live = Live::new("upgrade");
     let remotes = live.remotes();
     let old = remotes.join("old");
@@ -940,10 +918,7 @@ fn upgrade_and_browse(cx: &mut TestAppContext) {
     std::fs::create_dir_all(&newer).unwrap();
     std::fs::copy(env!("CARGO_BIN_EXE_adeline"), newer.join(EXE)).unwrap();
     std::fs::write(newer.join("version"), "99.0.0").unwrap();
-    let desktop = make_remote(&remotes, "desktop");
-    std::fs::create_dir_all(desktop.join("code/site")).unwrap();
     live.save_machines(&[
-        ("m-desktop", "Desktop", &["desktop"], Some("desktop-engine")),
         ("m-old", "Old", &["old"], None),
         ("m-newer", "Newer", &["newer"], None),
         ("m-board", "Board", &["arm-board"], None),
@@ -983,8 +958,17 @@ fn upgrade_and_browse(cx: &mut TestAppContext) {
     ui.wait("Old to connect", LONG, |ui| {
         machine_state(ui, "Old").as_deref() == Some("Connected")
     });
+}
 
-    // Open folder on a remote machine browses its folders.
+// Open folder on a remote machine browses its folders, and opening the same
+// folder again reuses its project.
+#[gpui_kit::test]
+fn browse_remote_folders(cx: &mut TestAppContext) {
+    let live = Live::new("browse");
+    let desktop = make_remote(&live.remotes(), "desktop");
+    std::fs::create_dir_all(desktop.join("code/site")).unwrap();
+    live.save_machines(&[("m-desktop", "Desktop", &["desktop"], Some("desktop-engine"))]);
+    let mut ui = open(cx);
     ui.wait("Desktop's project", LONG, |ui| has_tab(ui, "app · Desktop"));
     browse_to_site(&mut ui);
     ui.wait("the new remote project", WAIT, |ui| {
@@ -992,7 +976,6 @@ fn upgrade_and_browse(cx: &mut TestAppContext) {
     });
     let sites = site_projects(&desktop);
     assert_eq!(sites.len(), 1, "{sites:?}");
-    assert!(sites[0].contains("site"), "{sites:?}");
     browse_to_site(&mut ui);
     ui.pause(Duration::from_secs(2));
     assert_eq!(

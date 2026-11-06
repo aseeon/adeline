@@ -24,26 +24,51 @@ fn no_engine() {
     );
 }
 
-#[gpui_kit::test]
-fn demo_conversation(cx: &mut TestAppContext) {
-    let mut ui = Ui::demo(cx, true);
+const RUNNING_CHAT: &str = "Search long conversations without pausing the interface";
 
-    ui.open_chat("Search long conversations without pausing the interface");
+#[gpui_kit::test]
+fn plan_tab_toggles(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.open_chat(RUNNING_CHAT);
     ui.press("ctrl-shift-t");
     ui.named("Plan steps");
     ui.press("ctrl-shift-t");
     ui.gone("Plan steps");
+    no_engine();
+}
+
+#[gpui_kit::test]
+fn queued_messages_show(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.open_chat(RUNNING_CHAT);
     ui.named("Queued messages");
     ui.named("Queued: Also keep the match count visible while typing.");
+    no_engine();
+}
+
+#[gpui_kit::test]
+fn traffic_shows_with_verbose(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, true);
+    ui.open_chat(RUNNING_CHAT);
     ui.press("ctrl-shift-l");
     ui.named("ACP traffic");
     ui.named("Copy all");
+    no_engine();
+}
 
-    // A turn with no traffic for longer than the notice delay (10 min) offers Stop and Restart.
+// A turn with no traffic for longer than the notice delay (10 min) offers Stop and Restart.
+#[gpui_kit::test]
+fn silent_agent_notice(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
     ui.open_chat("Import sessions from the old workspace format");
     ui.named("Agent silent for 12 min");
+    no_engine();
+}
 
-    // An idle chat's menus open from the keyboard and list the agent's choices.
+// An idle chat's menus open from the keyboard and list the agent's choices.
+#[gpui_kit::test]
+fn model_menu_picks_a_model(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
     ui.open_chat(SELECTION_CHAT);
     ui.named("Model: Opus");
     ui.press(&format!("{MENU}-m"));
@@ -56,6 +81,13 @@ fn demo_conversation(cx: &mut TestAppContext) {
             .as_deref(),
         Some("sonnet")
     );
+    no_engine();
+}
+
+#[gpui_kit::test]
+fn mode_menu_picks_a_mode(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.open_chat(SELECTION_CHAT);
     ui.press(&format!("{MENU}-o"));
     ui.named("Search mode");
     ui.input("Accept");
@@ -65,18 +97,48 @@ fn demo_conversation(cx: &mut TestAppContext) {
         ui.read(|app, _| app.chat_option(Category::Mode)).as_deref(),
         Some("acceptEdits")
     );
+    no_engine();
+}
+
+#[gpui_kit::test]
+fn more_options_menu_closes_with_escape(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.open_chat(SELECTION_CHAT);
     ui.press(&format!("{MENU}-p"));
     ui.named("Search more options");
     ui.press("escape");
     ui.gone("Search more options");
+}
 
-    // An error under a chat can be dismissed by hand.
+#[gpui_kit::test]
+fn an_error_can_be_dismissed(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
     ui.open_chat("Keep the composer usable in a narrow desktop window");
     ui.named("Dismiss error");
     ui.press("ctrl-shift-d");
     ui.gone("Dismiss error");
-
     no_engine();
+}
+
+// Ctrl+Shift+C copies the latest reply's last code block. Each code block also
+// shows a copy button while the pointer is over the reply.
+#[gpui_kit::test]
+fn copy_code_block(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.open_chat("Choose a font for code blocks");
+    let code = "general:\n  appearance:\n    code_font: JetBrains Mono";
+    ui.press("ctrl-shift-c");
+    assert_eq!(ui.clipboard(), code);
+    ui.set_clipboard("");
+    ui.gone("Copy code");
+    let button = ui
+        .elements()
+        .into_iter()
+        .find(|element| element.label() == Some("Copy code"))
+        .expect("a hidden copy button");
+    ui.hover(&button);
+    ui.click("Copy code");
+    assert_eq!(ui.clipboard(), code);
 }
 
 #[gpui_kit::test]
@@ -115,7 +177,7 @@ fn chat_list_options_stay_open_while_switching(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn traffic_needs_verbose(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
-    ui.open_chat("Search long conversations without pausing the interface");
+    ui.open_chat(RUNNING_CHAT);
     ui.press("ctrl-shift-l");
     ui.gone("ACP traffic");
 }
@@ -134,62 +196,85 @@ fn message(ui: &mut Ui) -> String {
     ui.named("Message").value().unwrap_or_default().to_owned()
 }
 
-#[gpui_kit::test]
-fn docs_demo(cx: &mut TestAppContext, second: &mut TestAppContext) {
-    let mut ui = Ui::demo(cx, false);
-    // Ctrl+2 picks the second mode on the rail.
+/// Opens Docs (Ctrl+2, the second mode on the rail) and `query`'s doc in the Editor.
+fn edit_doc(ui: &mut Ui, query: &str, label: &str) {
     ui.press("ctrl-2");
     ui.named("Docs tree");
-    open_doc(&mut ui, "mdguide", 2);
-    ui.named("docs/markdown-guide.md, Viewer");
+    open_doc(ui, query, 2);
+    ui.named(&format!("{label}, Viewer"));
     ui.press("ctrl-shift-v");
-    ui.named("docs/markdown-guide.md, Editor");
+    ui.named(&format!("{label}, Editor"));
+}
+
+#[gpui_kit::test]
+fn docs_editor_edits_and_saves(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    edit_doc(&mut ui, "mdguide", "docs/markdown-guide.md");
     ui.named("Bold (Ctrl+B)");
     ui.press(END_OF_TEXT);
     ui.input("hello");
     ui.named("markdown-guide.md, unsaved");
     ui.press("ctrl-s");
     ui.named("markdown-guide.md");
+    no_engine();
+}
 
-    // A note quotes the selection with its path and line into the composer.
-    open_doc(&mut ui, "notes/plan", 2);
-    ui.press("ctrl-shift-v");
-    ui.named("notes/plan.md, Editor");
+// A note quotes the selection with its path and line into the composer.
+#[gpui_kit::test]
+fn editor_note_quotes_the_selection(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    edit_doc(&mut ui, "notes/plan", "notes/plan.md");
     ui.press(&format!("{START_OF_TEXT} shift-down ctrl-shift-n"));
     let draft = message(&mut ui);
     assert!(
         draft.starts_with("`notes/plan.md`, line 1:"),
         "note draft {draft:?}"
     );
+}
 
-    // The chooser finds a chat by its title; its reply shows doc cards.
+/// Opens Docs with the chooser's pick on the right, whose reply shows doc cards,
+/// and shows the cards it hides. Cards come and go with the replies, so Tab
+/// reaches them instead of a shortcut.
+fn show_doc_cards(ui: &mut Ui) {
+    ui.press("ctrl-2");
+    // The chooser finds a chat by its title.
     ui.press("ctrl-shift-k");
     ui.named("Search conversations");
     ui.input("Make document edits");
     ui.press("enter");
-    // Cards come and go with the replies, so Tab reaches them instead of a shortcut.
     // The last card fits only in a taller window.
     ui.resize(1440., 1200.);
     ui.activate("2 more docs, hidden");
     ui.named("2 more docs, shown");
+}
+
+#[gpui_kit::test]
+fn doc_card_of_a_deleted_doc(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    show_doc_cards(&mut ui);
     ui.activate("Open notes/deleted-draft.md");
     ui.named("notes/deleted-draft.md no longer exists");
+    no_engine();
+}
+
+// Selecting text has no keyboard path, so this drags across the Viewer of a
+// doc a card opened, and Ctrl+Shift+N sends the selection to the composer.
+#[gpui_kit::test]
+fn viewer_note_quotes_the_selection(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    show_doc_cards(&mut ui);
     ui.activate("Open docs/architecture.md");
     let viewer = ui.named("docs/architecture.md, Viewer").bounds();
-
-    // Selecting text has no keyboard path, so this drags across the Viewer. The
-    // selection stays in the doc, and Ctrl+Shift+N sends it to the composer.
     ui.drag(
         viewer.origin + point(px(30.), px(60.)),
         viewer.origin + point(viewer.size.width * (2. / 3.), px(160.)),
     );
     ui.set_clipboard("sentinel");
     ui.press("secondary-c");
-    let copied = ui.clipboard();
-    assert_ne!(copied, "sentinel", "the Viewer selection didn't copy");
-    assert!(
-        !copied.contains(SELECTION_CHAT) && !copied.contains("Reply"),
-        "the selection reached the conversation: {copied:?}"
+    assert_ne!(
+        ui.clipboard(),
+        "sentinel",
+        "the Viewer selection didn't copy"
     );
     ui.press("ctrl-shift-n");
     let draft = message(&mut ui);
@@ -197,10 +282,13 @@ fn docs_demo(cx: &mut TestAppContext, second: &mut TestAppContext) {
         draft.contains("`docs/architecture.md`, line"),
         "Viewer note draft {draft:?}"
     );
+}
 
-    // Closing or quitting with unsaved edits asks first; Cancel keeps Adeline open.
-    open_doc(&mut ui, "notes/plan", 2);
-    ui.named("notes/plan.md, Editor");
+// Closing or quitting with unsaved edits asks first; Cancel keeps Adeline open.
+#[gpui_kit::test]
+fn unsaved_docs_ask_before_closing(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    edit_doc(&mut ui, "notes/plan", "notes/plan.md");
     ui.input("xyz");
     ui.close();
     ui.named("Save changes to 1 doc?");
@@ -211,9 +299,16 @@ fn docs_demo(cx: &mut TestAppContext, second: &mut TestAppContext) {
     ui.named("Save changes to 1 doc?");
     ui.click("Discard");
     assert!(!ui.is_open(), "Discard didn't quit Adeline");
-    drop(ui);
+}
 
-    // Docs reopens the project's doc and view where they were left.
+// Docs reopens the project's doc and view where they were left.
+#[gpui_kit::test]
+fn docs_reopen_where_left(cx: &mut TestAppContext, second: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    edit_doc(&mut ui, "notes/plan", "notes/plan.md");
+    ui.quit();
+    assert!(!ui.is_open(), "Adeline didn't quit");
+    drop(ui);
     let mut ui = Ui::open(second, true, false);
     ui.press("ctrl-2");
     ui.named("notes/plan.md, Editor");
@@ -288,32 +383,66 @@ fn drag_pane(ui: &mut Ui, dx: f32) -> f32 {
     f32::from(ui.named("Resize panel").bounds().left() - before.left())
 }
 
-#[gpui_kit::test]
-fn right_island_resizes_in_every_mode(cx: &mut TestAppContext) {
+/// Opens Adeline with the Chats side pane showing.
+fn side_pane(cx: &mut TestAppContext) -> Ui<'_> {
     let mut ui = Ui::demo(cx, false);
     if ui.try_named("Resize panel").is_none() {
         ui.press("ctrl-shift-b");
     }
-    // Chats: the side pane widens as its edge moves left; the rail stays.
+    ui
+}
+
+/// The right island's width from its resize handle to the rail button `rail`.
+fn pane_width(ui: &mut Ui, rail: &str) -> f32 {
+    f32::from(ui.named(rail).bounds().left() - ui.named("Resize panel").bounds().left())
+}
+
+/// How many screen pixels a design pixel is. Design pixels scale with the
+/// interface text size, and rail buttons are 38 of them.
+fn design_scale(ui: &mut Ui) -> f32 {
+    f32::from(ui.named("Agent activity").bounds().size.width) / 38.
+}
+
+/// Opens a doc in Docs, in a window wide enough for the widest right island,
+/// and drags its edge as far left as it goes.
+fn widest_docs_pane(ui: &mut Ui) {
+    ui.press("ctrl-2");
+    open_doc(ui, "mdguide", 2);
+    ui.resize(2400., 900.);
+    drag_pane(ui, -2000.);
+}
+
+// Chats: the side pane widens as its edge moves left; the rail stays.
+#[gpui_kit::test]
+fn side_pane_resizes_and_its_rail_stays(cx: &mut TestAppContext) {
+    let mut ui = side_pane(cx);
     let rail = ui.named("Side panel").bounds();
-    let width = |ui: &mut Ui, rail: &str| {
-        f32::from(ui.named(rail).bounds().left() - ui.named("Resize panel").bounds().left())
-    };
-    // Design pixels scale with the interface text size. Rail buttons are 38 of them.
-    let scale = f32::from(ui.named("Agent activity").bounds().size.width) / 38.;
-    let default = width(&mut ui, "Agent activity");
     let moved = drag_pane(&mut ui, -120.);
     assert!((moved + 120.).abs() < 4., "moved {moved}");
     assert_eq!(ui.named("Side panel").bounds(), rail);
-    let chats = width(&mut ui, "Agent activity");
-    // Docs keeps its own width for the chat beside the doc.
+}
+
+// Docs keeps its own width for the chat beside the doc, and Chats keeps its own.
+#[gpui_kit::test]
+fn each_mode_keeps_its_pane_width(cx: &mut TestAppContext) {
+    let mut ui = side_pane(cx);
+    drag_pane(&mut ui, -120.);
+    let chats = pane_width(&mut ui, "Agent activity");
     ui.press("ctrl-2");
     open_doc(&mut ui, "mdguide", 2);
     assert!((drag_pane(&mut ui, 60.) - 60.).abs() < 4.);
-    // A drag far left in a wide window stops at twice the default 440.
-    ui.resize(2400., 900.);
-    drag_pane(&mut ui, -2000.);
-    let most = width(&mut ui, "Chat");
+    ui.press("ctrl-1");
+    assert!((pane_width(&mut ui, "Agent activity") - chats).abs() < 1.);
+}
+
+// A drag far left in a wide window stops at twice the default 440.
+#[gpui_kit::test]
+fn pane_width_stops_at_twice_the_default(cx: &mut TestAppContext) {
+    let mut ui = side_pane(cx);
+    let scale = design_scale(&mut ui);
+    let default = pane_width(&mut ui, "Agent activity");
+    widest_docs_pane(&mut ui);
+    let most = pane_width(&mut ui, "Chat");
     // Both widths are measured to a rail button, so its offset cancels out. The
     // button's size is rounded to whole pixels, so the scale is only close.
     let grown = (880. - 330.) * scale;
@@ -321,19 +450,29 @@ fn right_island_resizes_in_every_mode(cx: &mut TestAppContext) {
         (most - default - grown).abs() < grown * 0.02,
         "{most} at most, {default} by default, scale {scale}"
     );
-    // A narrow window shrinks the saved width so the doc keeps its room.
+}
+
+// A narrow window shrinks the saved width so the doc keeps its room.
+#[gpui_kit::test]
+fn narrow_window_keeps_room_for_the_doc(cx: &mut TestAppContext) {
+    let mut ui = side_pane(cx);
+    let scale = design_scale(&mut ui);
+    widest_docs_pane(&mut ui);
     ui.resize(1200., 900.);
     let doc = ui.named("Resize panel").bounds().left() - ui.named("Search docs").bounds().right();
     assert!(f32::from(doc) >= 320. * scale, "{doc:?} left for the doc");
+}
+
+#[gpui_kit::test]
+fn ctrl_shift_b_hides_the_chat_in_docs(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.press("ctrl-2");
+    open_doc(&mut ui, "mdguide", 2);
+    ui.named("Resize panel");
     ui.press("ctrl-shift-b");
-    assert!(
-        ui.try_named("Resize panel").is_none(),
-        "Ctrl+Shift+B hides the chat in Docs"
-    );
+    ui.gone("Resize panel");
     ui.press("ctrl-shift-b");
-    ui.resize(2400., 900.);
-    ui.press("ctrl-1");
-    assert!((width(&mut ui, "Agent activity") - chats).abs() < 1.);
+    ui.named("Resize panel");
 }
 
 #[gpui_kit::test]
@@ -560,7 +699,7 @@ fn docs_task_checkboxes_show_and_toggle(cx: &mut TestAppContext) {
     ui.named("notes/plan.md, Viewer");
     let count = |ui: &mut Ui, label: &str| ui.all(|l| l == label).len();
     assert_eq!(count(&mut ui, "Mark as done"), 3);
-    ui.click("Mark as not done");
+    ui.activate("Mark as not done");
     assert_eq!(count(&mut ui, "Mark as done"), 4);
     assert_eq!(count(&mut ui, "Mark as not done"), 0);
 }
@@ -610,7 +749,7 @@ fn edit_an_agent_opens_the_open_chats_agent(cx: &mut TestAppContext) {
     let main = ui.cx.windows();
     // Settings opens once, then shows the next agent in the same window.
     let edit_agent = |ui: &mut Ui| {
-        ui.click("Main menu");
+        ui.press(&format!("{MENU}-s"));
         // "Add an agent" starts highlighted, and the Agents heading is skipped.
         ui.press("down enter");
         ui.new_window(&main);

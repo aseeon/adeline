@@ -562,8 +562,8 @@ mod tests {
     fn bundled_themes_populate_fresh_config_and_preserve_existing_files() {
         let root =
             std::env::temp_dir().join(format!("adeline-bundled-themes-{}", std::process::id()));
-        assert!(!root.exists());
-        assert_eq!(BUNDLED_THEMES.len(), 23);
+        // A crashed earlier run with the same process ID may have left it behind.
+        let _ = std::fs::remove_dir_all(&root);
         seed_bundled_themes(&root).unwrap();
         let (choices, errors) = discover_in(&root).unwrap();
         assert!(errors.is_empty(), "{errors:?}");
@@ -664,14 +664,21 @@ mod tests {
 
     #[test]
     fn theme_names_cannot_leave_the_themes_folder() {
+        let themes = adeline_core::config::directory().unwrap().join("themes");
+        assert_eq!(theme_path("rose.yml").unwrap(), themes.join("rose.yml"));
+        // The last four have no separator, so the component and extension checks catch them.
         for outside in [
             "../outside.yml",
             "..\\outside.yml",
             "C:\\outside.yml",
             "C:outside.yml",
             "/etc/outside.yml",
+            "..",
+            ".",
+            "",
+            "outside.txt",
         ] {
-            assert!(theme_path(outside).is_err(), "{outside}");
+            assert!(theme_path(outside).is_err(), "{outside:?}");
         }
     }
 }

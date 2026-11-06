@@ -70,7 +70,7 @@ impl Adeline {
             }
             if matches!(action, Action::AgentMenu) && !self.demo_mode && self.selected.is_some() {
                 window.push_notification(
-                    "This conversation's agent and execution settings are fixed.",
+                    toast("This conversation's agent and execution settings are fixed."),
                     cx,
                 );
                 return;
@@ -243,7 +243,7 @@ impl Adeline {
                 let checked = !machines::is_checked(&machine);
                 match machines::set_checked(&machine, checked) {
                     Ok(()) => client::sync(cx),
-                    Err(error) => window.push_notification(format!("{error:#}"), cx),
+                    Err(error) => window.push_notification(toast(format!("{error:#}")), cx),
                 }
             }
             Action::MachineRetry(machine) => client::retry(&machine, cx),
@@ -347,7 +347,7 @@ impl Adeline {
                 if let Err(error) =
                     config::update(|settings| settings.modes.chats.submit_on_enter = submit)
                 {
-                    window.push_notification(format!("{error:#}"), cx);
+                    window.push_notification(toast(format!("{error:#}")), cx);
                 }
                 let submit = config::current().modes.chats.submit_on_enter;
                 self.composer
@@ -358,7 +358,7 @@ impl Adeline {
                 if let Err(error) = config::update(|settings| {
                     settings.modes.chats.hide_tool_calls = !settings.modes.chats.hide_tool_calls;
                 }) {
-                    window.push_notification(format!("{error:#}"), cx);
+                    window.push_notification(toast(format!("{error:#}")), cx);
                 }
                 self.resync_transcript(cx);
             }
@@ -393,7 +393,7 @@ impl Adeline {
                 if let Err(error) = config::update(|settings| {
                     settings.modes.chats.show_thinking = !settings.modes.chats.show_thinking;
                 }) {
-                    window.push_notification(format!("{error:#}"), cx);
+                    window.push_notification(toast(format!("{error:#}")), cx);
                 }
                 self.resync_transcript(cx);
             }
@@ -466,7 +466,10 @@ impl Adeline {
                 if let Err(error) =
                     config::update(|settings| settings.general.features.toggle(section))
                 {
-                    window.push_notification(format!("Could not save settings: {error:#}"), cx);
+                    window.push_notification(
+                        toast(format!("Could not save settings: {error:#}")),
+                        cx,
+                    );
                 }
                 if !config::current().general.features.enabled(self.section) {
                     self.docs_leave(window, cx);
@@ -576,7 +579,7 @@ impl Adeline {
                             }
                         }
                         Ok(Ok(None)) => {}
-                        _ => window.push_notification("Could not open the file picker.", cx),
+                        _ => window.push_notification(toast("Could not open the file picker."), cx),
                     });
                 })
                 .detach();
@@ -602,7 +605,7 @@ impl Adeline {
                 | Action::TodoList
         ) && let Err(error) = self.save_settings(&changed)
         {
-            window.push_notification(format!("Could not save settings: {error:#}"), cx);
+            window.push_notification(toast(format!("Could not save settings: {error:#}")), cx);
         }
         self.sync_regions(&changed, cx);
         if self.modal.is_some() && previous_modal.is_none() {

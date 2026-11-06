@@ -43,6 +43,7 @@ use gpui_kit::component::{
     ActiveTheme, Icon, Root, Selectable, Sizable, TitleBar, WindowExt,
     button::{Button, ButtonVariants},
     input::{Input, InputEvent, InputState, TextareaState},
+    notification,
 };
 use gpui_kit::{prelude::*, *};
 use std::borrow::Cow;
@@ -260,6 +261,7 @@ actions!(
         CloseProjectTab,
         OpenFolder,
         MachinesMenu,
+        MainMenu,
         FocusMessage,
         DismissErrors,
         ForkChat,
@@ -751,7 +753,7 @@ impl Adeline {
         let value = value.to_owned();
         cx.defer(move |cx| {
             let _ = cx.update_window(handle.into(), |_, window, cx| {
-                window.push_notification(value.clone(), cx);
+                window.push_notification(toast(value.clone()), cx);
             });
         });
     }
@@ -875,6 +877,9 @@ impl Render for Adeline {
                 if !machines::remotes().is_empty() {
                     app.act(Action::Machines, window, cx);
                 }
+            }))
+            .on_action(cx.listener(|app, _: &MainMenu, window, cx| {
+                app.act(Action::AppMenu, window, cx);
             }))
             .on_action(cx.listener(|app, _: &FocusMessage, window, cx| {
                 window.focus(&app.composer.focus_handle(cx), cx);
@@ -1069,7 +1074,6 @@ pub fn start(
     adeline.expect("Adeline view")
 }
 
-// A new project's tab color, by its place in the bar.
 // ponytail: only ``` fences, add ~~~ if agents start using them.
 fn last_code_block(text: &str) -> Option<String> {
     let mut block = None;
@@ -1087,6 +1091,23 @@ fn last_code_block(text: &str) -> Option<String> {
     block
 }
 
+// The Kit's toast draws its message as bare text, which assistive technology
+// can't name, so every toast carries its message as its label.
+fn toast(message: impl Into<SharedString>) -> notification::Notification {
+    let message = message.into();
+    notification::Notification::new().content(move |_, _, _| {
+        div()
+            .id("toast")
+            .test_support()
+            .role(Role::Status)
+            .aria_label(message.clone())
+            .text_sm()
+            .child(message.clone())
+            .into_any_element()
+    })
+}
+
+// A new project's tab color, by its place in the bar.
 fn default_tint(ix: usize) -> usize {
     [0, 2, 3][ix.min(2)]
 }
@@ -1147,7 +1168,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-tab", NextProject, None),
         KeyBinding::new("ctrl-shift-tab", PreviousProject, None),
     ]);
-    // The option menus and the machines menu. Ctrl+Shift+M, E and O are global
+    // The option menus, the machines menu and the main menu. Ctrl+Shift+M, E and O are global
     // hotkeys of common Windows tools (AMD Adrenalin among them), so Windows and
     // Linux use Alt.
     let menu = |letter: &str| {
@@ -1163,6 +1184,7 @@ fn bind_keys(cx: &mut App) {
         KeyBinding::new(&menu("o"), ModeMenu, None),
         KeyBinding::new(&menu("p"), MoreMenu, None),
         KeyBinding::new(&menu("h"), MachinesMenu, None),
+        KeyBinding::new(&menu("s"), MainMenu, None),
     ]);
     bindings.extend(docs::key_bindings());
     cx.bind_keys(bindings);

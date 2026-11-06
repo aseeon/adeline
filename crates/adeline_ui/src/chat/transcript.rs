@@ -52,8 +52,8 @@ impl Adeline {
     ) -> AnyElement {
         let thread = &self.workspace().threads[index];
         let message = &thread.messages[i];
-        let reply = (message.role != MessageRole::User && !self.demo_mode)
-            .then(|| reply_text(&thread.id, i, message, window, cx));
+        let user = message.role == MessageRole::User;
+        let reply = (!user).then(|| reply_text(&thread.id, i, message, window, cx));
         let panel = if self.section == Section::Docs {
             panes::DOCS_CHAT
         } else {
@@ -61,7 +61,6 @@ impl Adeline {
         };
         let selectable = panes::selectable_in(panel, cx);
         let theme = cx.theme();
-        let user = message.role == MessageRole::User;
         // A reply that so far only thought shows as the Thinking row instead.
         let thinking = config::with(|s| s.modes.chats.show_thinking);
         if !user && message.text.is_empty() && (message.thought.is_empty() || !thinking) {
@@ -82,7 +81,7 @@ impl Adeline {
             .gap(dp(10.))
             .text_size(dp(theme::T_PROSE))
             .line_height(leading);
-        if user || self.demo_mode {
+        if user {
             for (n, paragraph) in message.text.split("\n\n").enumerate() {
                 let quote = unquote(paragraph);
                 let text = quote.clone().unwrap_or_else(|| paragraph.to_owned());
@@ -109,7 +108,7 @@ impl Adeline {
             // default fill is nearly the background and hides code spans. Links
             // take `chart_2` through the theme's link color.
             body = body.child(
-                TextView::new(&reply.expect("a reply outside demo mode"))
+                TextView::new(&reply.expect("a reply"))
                     .selectable(selectable)
                     .style(
                         TextViewStyle::default()
@@ -649,9 +648,6 @@ impl Transcript {
     }
 }
 
-/// A message bubble lit from above: a faint top-to-bottom gradient and a 1px
-/// highlight along the top edge. Light themes light it with the background,
-/// since their foreground is dark.
 /// The text of a paragraph quoted with `>` on every line, without the markers.
 fn unquote(paragraph: &str) -> Option<String> {
     let lines = paragraph

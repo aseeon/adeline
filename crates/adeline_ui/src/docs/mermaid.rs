@@ -35,16 +35,17 @@ pub(crate) fn render(source: &str, dark: bool) -> Result<Arc<Image>, String> {
         },
     )
     .map_err(|e| format!("invalid SVG: {e}"))?;
+    // `to_int_size` is at least 1x1, so scaling it up can't empty it.
     let size = tree
         .size()
         .to_int_size()
         .scale_by(SCALE)
-        .ok_or("diagram is empty")?;
+        .expect("a size of at least 1x1 scaled by 2");
     if u64::from(size.width()) * u64::from(size.height()) > MAX_PIXELS {
         return Err("diagram is too large".into());
     }
     let mut pixmap =
-        tiny_skia::Pixmap::new(size.width(), size.height()).ok_or("diagram is empty")?;
+        tiny_skia::Pixmap::new(size.width(), size.height()).expect("a pixmap within MAX_PIXELS");
     resvg::render(
         &tree,
         tiny_skia::Transform::from_scale(SCALE, SCALE),

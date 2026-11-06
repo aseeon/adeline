@@ -2102,7 +2102,7 @@
           },
           {
             "role": "assistant",
-            "text": "Code blocks follow the code font setting, independent of the interface font.",
+            "text": "Code blocks follow the code font setting, independent of the interface font. In `settings.yml`:\n\n```yaml\ngeneral:\n  appearance:\n    code_font: JetBrains Mono\n```",
             "read": true,
             "createdAt": "2026-08-16T12:00:00Z"
           }

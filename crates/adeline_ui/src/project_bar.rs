@@ -10,7 +10,6 @@
 use super::*;
 use adeline_core::conversation::ThreadStatus;
 use gpui_kit::component::menu::{ContextMenuExt as _, PopupMenu, PopupMenuItem};
-use gpui_kit::component::notification::Notification;
 use gpui_kit::component::popover::Popover;
 use panes::dp;
 use std::time::Duration;
@@ -153,10 +152,7 @@ impl Adeline {
                 panes::rail_button(
                     "app-menu",
                     "Main menu",
-                    format!(
-                        "Settings and more ({})",
-                        conversation_ui::shortcut("Ctrl+,")
-                    ),
+                    format!("Settings and more ({})", conversation_ui::shortcut("Alt+S")),
                     Icon::default().path("settings.svg"),
                     false,
                     cx,

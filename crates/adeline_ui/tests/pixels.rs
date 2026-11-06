@@ -12,7 +12,7 @@ mod pixels;
 mod support;
 
 use adeline_ui::control;
-use gpui_kit::base::test_support::ElementSnapshot;
+use gpui_kit::base::test_support::{ElementSnapshot, snapshots};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::platform::{current_headless_renderer, current_platform};
 use gpui_kit::{AnyWindowHandle, HeadlessAppContext};
@@ -100,6 +100,23 @@ impl Headless {
         }
     }
 
+    /// The chat list row of the chat titled `title`, whatever its counts and times.
+    fn chat_row(&mut self, title: &str) -> ElementSnapshot {
+        let prefix = format!("{title}, ");
+        self.cx
+            .update_window(self.window, |_, window, _| {
+                snapshots(window).into_iter().find(|element| {
+                    element.visible()
+                        && element.role() == Some(gpui_kit::Role::ListBoxOption)
+                        && element
+                            .label()
+                            .is_some_and(|label| label.starts_with(&prefix))
+                })
+            })
+            .expect("open window")
+            .unwrap_or_else(|| panic!("no chat row for {title:?}"))
+    }
+
     fn find(&mut self, label: &str) -> ElementSnapshot {
         self.cx
             .update_window(self.window, |_, window, _| control::find(window, label))
@@ -170,12 +187,8 @@ fn selected_chat_row_shows() {
         return;
     };
     let frame = ui.frame();
-    let selected = ui.find(
-        "Search long conversations without pausing the interface, Claude Code, 2 messages, updated now, running",
-    );
-    let other = ui.find(
-        "Import sessions from the old workspace format, Claude Code, 2 messages, updated 3m, running",
-    );
+    let selected = ui.chat_row("Search long conversations without pausing the interface");
+    let other = ui.chat_row("Import sessions from the old workspace format");
     frame.check(selected.selected() == Some(true), || {
         "The open chat's row isn't selected".to_owned()
     });

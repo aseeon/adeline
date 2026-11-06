@@ -385,7 +385,7 @@ pub(super) fn open_agent(
 
 fn notify_failure(owner: WindowHandle<Root>, message: String, cx: &mut App) {
     let _ = cx.update_window(owner.into(), |_, window, cx| {
-        window.push_notification(message, cx);
+        window.push_notification(toast(message), cx);
     });
 }
 

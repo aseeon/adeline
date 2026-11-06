@@ -1072,7 +1072,7 @@ impl Adeline {
         let Some(range) = range.filter(|r| {
             r.end <= text.len() && text.is_char_boundary(r.start) && text.is_char_boundary(r.end)
         }) else {
-            window.push_notification("Select some text in the doc first.", cx);
+            window.push_notification(toast("Select some text in the doc first."), cx);
             return;
         };
         let draft = note(&path, &text, range);
@@ -1163,7 +1163,7 @@ impl Adeline {
         };
         let (target, anchor) = url.split_once('#').unwrap_or((url, ""));
         let Some(path) = adeline_docs::join(&from, target) else {
-            window.push_notification(format!("{url} is outside the project."), cx);
+            window.push_notification(toast(format!("{url} is outside the project.")), cx);
             return;
         };
         if adeline_docs::has_doc_extension(&path) {
@@ -1179,7 +1179,7 @@ impl Adeline {
             cx.open_with_system(&self.workspace().config.directory.join(path));
         } else {
             cx.write_to_clipboard(ClipboardItem::new_string(path.to_owned()));
-            window.push_notification(format!("Copied the path of {path}"), cx);
+            window.push_notification(toast(format!("Copied the path of {path}")), cx);
         }
     }
 
@@ -1290,7 +1290,7 @@ impl Adeline {
                     app.docs_open(path, window, cx);
                     window.focus(&app.docs.editor.focus_handle(cx), cx);
                 }
-                Err(error) => window.push_notification(error, cx),
+                Err(error) => window.push_notification(toast(error), cx),
             },
         );
     }
@@ -1347,7 +1347,7 @@ impl Adeline {
                     }
                     app.docs_refresh_rows(cx);
                 }
-                Err(error) => window.push_notification(error, cx),
+                Err(error) => window.push_notification(toast(error), cx),
             },
         );
     }
@@ -1385,7 +1385,7 @@ impl Adeline {
                     }
                     app.docs_refresh_rows(cx);
                 }
-                Err(error) => window.push_notification(error, cx),
+                Err(error) => window.push_notification(toast(error), cx),
             },
         );
     }
@@ -1581,7 +1581,7 @@ impl Adeline {
             }
         });
         if let Err(error) = result {
-            window.push_notification(format!("Could not save settings: {error:#}"), cx);
+            window.push_notification(toast(format!("Could not save settings: {error:#}")), cx);
         }
         if matches!(act, Act::Gitignore) {
             let machines: Vec<String> = client::connections(cx)

@@ -455,9 +455,8 @@ impl Adeline {
         let owner = cx.weak_entity();
         let undo_id = id.to_owned();
         window.push_notification(
-            Notification::new()
+            toast(format!("Deleted \"{}\"", self.projects[ix].config.name))
                 .id1::<PendingRemoval>(SharedString::from(id.to_owned()))
-                .message(format!("Deleted \"{}\"", self.projects[ix].config.name))
                 // Clear of the projects menu, which opens at the top right.
                 .placement(Anchor::BottomRight)
                 .action(move |_, _, _| {
