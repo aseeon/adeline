@@ -56,46 +56,10 @@ impl Adeline {
             .accessibility_label(format!("Order: {sort_label}. Change order"))
             .tooltip("Change order")
             .on_click(owner_action(owner, Action::ToggleProjectSort));
-        let now = recency::now();
         let overflows = listed.len() as f32 > MENU_ROWS;
-        let list = div()
-            .id("project-menu-list")
-            .role(Role::ListBox)
-            .aria_label("Projects")
-            .max_h(rems(MENU_ROW_REM * MENU_ROWS))
-            .overflow_y_scroll()
-            .track_scroll(&self.project_list_scroll)
-            .px_1()
-            .pt_1()
-            .pb_2()
-            .when(overflows, |list| list.pb(rems(1.25)))
-            .children(listed.iter().map(|&ix| self.menu_row(ix, now, owner, cx)))
-            .when(listed.is_empty(), |list| {
-                list.child(
-                    div()
-                        .px_2()
-                        .py_3()
-                        .text_size(dp(theme::T_UI))
-                        .text_color(theme.muted_foreground)
-                        .child(if query.is_empty() {
-                            "No projects yet".to_owned()
-                        } else {
-                            format!("No projects match \"{query}\"")
-                        }),
-                )
-            });
+        let list = self.menu_list(&listed, &query, overflows, owner, cx);
         let key_owner = owner.clone();
         let delete_owner = owner.clone();
-        let footer_button =
-            |id: &'static str, icon: &'static str, label: &'static str, action: Action| {
-                Button::new(id)
-                    .ghost()
-                    .small()
-                    .flex_1()
-                    .icon(Icon::default().path(icon))
-                    .label(label)
-                    .on_click(owner_action(owner, action))
-            };
         col()
             .w(dp(580.))
             .capture_action(move |_: &input::Delete, window, cx| {
@@ -138,26 +102,46 @@ impl Adeline {
                         )),
                 )
             }))
-            .child(
-                row()
-                    .gap_1()
-                    .p_1()
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .child(footer_button(
-                        "menu-new-project",
-                        "plus.svg",
-                        "New project",
-                        Action::AddProject,
-                    ))
-                    .child(footer_button(
-                        "menu-open-folder",
-                        "folder.svg",
-                        "Open folder",
-                        Action::OpenFolder,
-                    )),
-            )
+            .child(menu_footer(owner, cx))
             .into_any_element()
+    }
+
+    fn menu_list(
+        &self,
+        listed: &[usize],
+        query: &str,
+        overflows: bool,
+        owner: &WeakEntity<Self>,
+        cx: &App,
+    ) -> impl IntoElement {
+        let theme = cx.theme();
+        let now = recency::now();
+        div()
+            .id("project-menu-list")
+            .role(Role::ListBox)
+            .aria_label("Projects")
+            .max_h(rems(MENU_ROW_REM * MENU_ROWS))
+            .overflow_y_scroll()
+            .track_scroll(&self.project_list_scroll)
+            .px_1()
+            .pt_1()
+            .pb_2()
+            .when(overflows, |list| list.pb(rems(1.25)))
+            .children(listed.iter().map(|&ix| self.menu_row(ix, now, owner, cx)))
+            .when(listed.is_empty(), |list| {
+                list.child(
+                    div()
+                        .px_2()
+                        .py_3()
+                        .text_size(dp(theme::T_UI))
+                        .text_color(theme.muted_foreground)
+                        .child(if query.is_empty() {
+                            "No projects yet".to_owned()
+                        } else {
+                            format!("No projects match \"{query}\"")
+                        }),
+                )
+            })
     }
 
     fn menu_row(&self, ix: usize, now: i64, owner: &WeakEntity<Self>, cx: &App) -> AnyElement {
@@ -171,44 +155,8 @@ impl Adeline {
         let group = SharedString::from(format!("project-row-{id}"));
         let (fill, letter) =
             theme::project_mark(theme::project_tint(self.project_tints[ix]), false, theme);
-        let status = if open {
-            div()
-                .px_1()
-                .rounded(theme.radius)
-                .border_1()
-                .border_color(theme.border)
-                .child("Open")
-                .into_any_element()
-        } else {
-            div()
-                .child(
-                    project
-                        .config
-                        .opened_at
-                        .map(|at| recency::label(at, now))
-                        .unwrap_or_default(),
-                )
-                .into_any_element()
-        };
-        let (kind, icon, verb, tooltip, row_action) = if open {
-            (
-                "close",
-                "close.svg",
-                "Close",
-                "Close tab",
-                Action::CloseProject(ix),
-            )
-        } else {
-            let remove = Action::RemoveClosedProject(id.clone());
-            ("delete", "trash.svg", "Delete", "Delete project", remove)
-        };
-        let action = Button::new(SharedString::from(format!("menu-{kind}-{id}")))
-            .ghost()
-            .xsmall()
-            .icon(Icon::default().path(icon))
-            .accessibility_label(format!("{verb} {}", project.config.name))
-            .tooltip(tooltip)
-            .on_click(owner_action(owner, row_action));
+        let status = row_status(project, open, now, cx);
+        let action = row_button(ix, project, open, owner);
         let select_owner = owner.clone();
         let menu_owner = owner.clone();
         let menu_id = id.clone();
@@ -486,6 +434,82 @@ const UNDO_WINDOW: Duration = Duration::from_secs(6);
 const MENU_ROW_REM: f32 = 2.5;
 
 const MENU_ROWS: f32 = 5.5;
+
+fn row_status(project: &Workspace, open: bool, now: i64, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    if open {
+        div()
+            .px_1()
+            .rounded(theme.radius)
+            .border_1()
+            .border_color(theme.border)
+            .child("Open")
+            .into_any_element()
+    } else {
+        div()
+            .child(
+                project
+                    .config
+                    .opened_at
+                    .map(|at| recency::label(at, now))
+                    .unwrap_or_default(),
+            )
+            .into_any_element()
+    }
+}
+
+fn row_button(ix: usize, project: &Workspace, open: bool, owner: &WeakEntity<Adeline>) -> Button {
+    let id = &project.key();
+    let (kind, icon, verb, tooltip, row_action) = if open {
+        (
+            "close",
+            "close.svg",
+            "Close",
+            "Close tab",
+            Action::CloseProject(ix),
+        )
+    } else {
+        let remove = Action::RemoveClosedProject(id.clone());
+        ("delete", "trash.svg", "Delete", "Delete project", remove)
+    };
+    Button::new(SharedString::from(format!("menu-{kind}-{id}")))
+        .ghost()
+        .xsmall()
+        .icon(Icon::default().path(icon))
+        .accessibility_label(format!("{verb} {}", project.config.name))
+        .tooltip(tooltip)
+        .on_click(owner_action(owner, row_action))
+}
+
+fn menu_footer(owner: &WeakEntity<Adeline>, cx: &App) -> Div {
+    let footer_button =
+        |id: &'static str, icon: &'static str, label: &'static str, action: Action| {
+            Button::new(id)
+                .ghost()
+                .small()
+                .flex_1()
+                .icon(Icon::default().path(icon))
+                .label(label)
+                .on_click(owner_action(owner, action))
+        };
+    row()
+        .gap_1()
+        .p_1()
+        .border_t_1()
+        .border_color(cx.theme().border)
+        .child(footer_button(
+            "menu-new-project",
+            "plus.svg",
+            "New project",
+            Action::AddProject,
+        ))
+        .child(footer_button(
+            "menu-open-folder",
+            "folder.svg",
+            "Open folder",
+            Action::OpenFolder,
+        ))
+}
 
 fn menu_row_text(project: &Workspace, machine: Option<String>, offline: bool, cx: &App) -> Div {
     let theme = cx.theme();

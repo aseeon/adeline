@@ -279,6 +279,26 @@ impl AgentForm {
             }))
     }
 
+    fn confirm_buttons(target: Target, cx: &Context<Self>) -> Div {
+        row()
+            .gap_2()
+            .justify_end()
+            .child(Self::close_button("install-cancel", "Cancel", cx))
+            .child(
+                Button::new("install-confirm")
+                    .small()
+                    .primary()
+                    .label(if matches!(target, Target::Node) {
+                        "Install Node.js"
+                    } else {
+                        "Install"
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.run_install(target.clone(), cx);
+                    })),
+            )
+    }
+
     fn install_area(&self, install: &Install, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
         let output = |lines: &[String]| {
@@ -314,42 +334,21 @@ impl AgentForm {
                 )
                 .child(Self::close_button("install-close", "Close", cx).ghost())
                 .into_any_element(),
-            Install::Confirm(target, steps) => {
-                let target = target.clone();
-                col()
-                    .gap_2()
-                    .p_3()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .child(div().text_sm().child(match machine {
-                        Some(machine) => format!("Adeline will run this on {machine}:"),
-                        None => "Adeline will run this:".to_owned(),
-                    }))
-                    .child(output(
-                        &steps.iter().map(Planned::display).collect::<Vec<_>>(),
-                    ))
-                    .child(
-                        row()
-                            .gap_2()
-                            .justify_end()
-                            .child(Self::close_button("install-cancel", "Cancel", cx))
-                            .child(
-                                Button::new("install-confirm")
-                                    .small()
-                                    .primary()
-                                    .label(if matches!(target, Target::Node) {
-                                        "Install Node.js"
-                                    } else {
-                                        "Install"
-                                    })
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.run_install(target.clone(), cx);
-                                    })),
-                            ),
-                    )
-                    .into_any_element()
-            }
+            Install::Confirm(target, steps) => col()
+                .gap_2()
+                .p_3()
+                .rounded_md()
+                .border_1()
+                .border_color(theme.border)
+                .child(div().text_sm().child(match machine {
+                    Some(machine) => format!("Adeline will run this on {machine}:"),
+                    None => "Adeline will run this:".to_owned(),
+                }))
+                .child(output(
+                    &steps.iter().map(Planned::display).collect::<Vec<_>>(),
+                ))
+                .child(Self::confirm_buttons(target.clone(), cx))
+                .into_any_element(),
             Install::Running(lines) => col()
                 .gap_2()
                 .child(spinner("Installing"))

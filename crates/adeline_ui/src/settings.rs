@@ -655,6 +655,68 @@ fn machine_labels() -> Vec<String> {
     labels
 }
 
+fn string_picker(
+    items: Vec<String>,
+    selected: &String,
+    searchable: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<SelectState<SearchableVec<String>>> {
+    cx.new(|cx| {
+        let mut picker =
+            SelectState::new(SearchableVec::new(items), None, window, cx).searchable(searchable);
+        picker.set_selected_value(selected, window, cx);
+        picker
+    })
+}
+
+fn thinking_picker(
+    window: &mut Window,
+    cx: &mut App,
+) -> Entity<SelectState<SearchableVec<String>>> {
+    let thinking = config::current().modes.chats.thinking_animation;
+    let labels = config::ThinkingAnimation::ALL.map(|choice| choice.label().to_owned());
+    string_picker(
+        labels.to_vec(),
+        &thinking.label().to_owned(),
+        false,
+        window,
+        cx,
+    )
+}
+
+fn font_size_inputs(window: &mut Window, cx: &mut App) -> [Entity<InputState>; 2] {
+    std::array::from_fn(|which| {
+        text_input(
+            &selected_font_size(which).to_string(),
+            if which == 0 { "15" } else { "14" },
+            window,
+            cx,
+        )
+    })
+}
+
+fn theme_picker(
+    window: &mut Window,
+    cx: &mut App,
+) -> (
+    Entity<SelectState<SearchableVec<theme::ThemeChoice>>>,
+    Option<String>,
+) {
+    let (choices, mut notices) =
+        theme::discover().unwrap_or_else(|error| (Vec::new(), vec![format!("{error:#}")]));
+    let picker = cx.new(|cx| {
+        let mut picker =
+            SelectState::new(SearchableVec::new(choices), None, window, cx).searchable(true);
+        picker.set_selected_value(&config::current().general.appearance.theme, window, cx);
+        picker
+    });
+    if let Some(message) = theme::load_error() {
+        notices.insert(0, message);
+    }
+    (picker, (!notices.is_empty()).then(|| notices.join("\n")))
+}
+
 fn engine_settings_of(machine: &str, cx: &App) -> protocol::EngineSettings {
     client::get(machine, cx)
         .map(|c| c.settings.clone())
@@ -674,12 +736,13 @@ impl SettingsWindow {
             .read_with(cx, |app, _| app.demo_mode)
             .unwrap_or(false);
         client::focus(&machine, cx);
-        let machine_picker = cx.new(|cx| {
-            let mut picker =
-                SelectState::new(SearchableVec::new(machine_labels()), None, window, cx);
-            picker.set_selected_value(&machines::name(&machine), window, cx);
-            picker
-        });
+        let machine_picker = string_picker(
+            machine_labels(),
+            &machines::name(&machine),
+            false,
+            window,
+            cx,
+        );
         let machine_name = cx.new(|cx| InputState::new(window, cx).placeholder("Name"));
         let machine_destination = cx.new(|cx| {
             InputState::new(window, cx).placeholder("user@host, user@host:port or a Host alias")
@@ -687,14 +750,7 @@ impl SettingsWindow {
         let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search settings"));
         let focus = cx.focus_handle().tab_stop(true);
         fonts::refresh(cx);
-        let font_sizes = std::array::from_fn(|which| {
-            text_input(
-                &selected_font_size(which).to_string(),
-                if which == 0 { "15" } else { "14" },
-                window,
-                cx,
-            )
-        });
+        let font_sizes = font_size_inputs(window, cx);
         let retry_limit = text_input(
             &engine_settings_of(&machine, cx).retry_limit.to_string(),
             "5",
@@ -711,37 +767,13 @@ impl SettingsWindow {
             window,
             cx,
         );
-        let thinking = config::current().modes.chats.thinking_animation;
-        let thinking_picker = cx.new(|cx| {
-            let labels = config::ThinkingAnimation::ALL.map(|choice| choice.label().to_owned());
-            let mut picker =
-                SelectState::new(SearchableVec::new(labels.to_vec()), None, window, cx);
-            picker.set_selected_value(&thinking.label().to_owned(), window, cx);
-            picker
-        });
-        let (theme_choices, errors) =
-            theme::discover().unwrap_or_else(|error| (Vec::new(), vec![format!("{error:#}")]));
-        let theme_picker = cx.new(|cx| {
-            let mut picker = SelectState::new(SearchableVec::new(theme_choices), None, window, cx)
-                .searchable(true);
-            picker.set_selected_value(&config::current().general.appearance.theme, window, cx);
-            picker
-        });
+        let thinking_picker = thinking_picker(window, cx);
+        let (theme_picker, theme_status) = theme_picker(window, cx);
         let font_pickers = std::array::from_fn(|which| {
             let (names, saved) = font_choices(which);
-            cx.new(|cx| {
-                let mut picker =
-                    SelectState::new(SearchableVec::new(names), None, window, cx).searchable(true);
-                picker.set_selected_value(&saved, window, cx);
-                picker
-            })
+            string_picker(names, &saved, true, window, cx)
         });
-        let mut subscriptions = Vec::new();
-        for (which, size_input) in font_sizes.iter().enumerate() {
-            subscriptions.push(cx.subscribe(size_input, move |this, input, event, cx| {
-                this.font_size_changed(which, &input, event, cx);
-            }));
-        }
+        let mut subscriptions = Self::font_subscriptions(&font_sizes, &font_pickers, window, cx);
         subscriptions.extend([
             cx.subscribe(&retry_limit, Self::retry_limit_changed),
             cx.subscribe(&silence_minutes, Self::silence_changed),
@@ -749,36 +781,10 @@ impl SettingsWindow {
             cx.subscribe(&thinking_picker, Self::thinking_chosen),
             cx.subscribe_in(&query, window, Self::query_changed),
             cx.subscribe_in(&theme_picker, window, Self::theme_chosen),
-        ]);
-        for (which, picker) in font_pickers.iter().enumerate() {
-            subscriptions.push(cx.subscribe_in(
-                picker,
-                window,
-                move |this, _, event, window, cx| {
-                    this.font_chosen(which, event, window, cx);
-                },
-            ));
-        }
-        subscriptions.push(
             cx.observe_window_activation(window, |this, window, cx| this.sync_agent(window, cx)),
-        );
-        let view = cx.entity();
-        window.on_window_should_close(cx, move |window, cx| {
-            view.update(cx, |view, cx| {
-                if view.agent_dirty(cx) {
-                    view.leave(AfterAgent::CloseSettings, window, cx);
-                    false
-                } else {
-                    true
-                }
-            })
-        });
+        ]);
+        Self::guard_close(window, cx);
         window.focus(&query.read(cx).focus_handle(cx), cx);
-        let mut notices = errors;
-        if let Some(message) = theme::load_error() {
-            notices.insert(0, message);
-        }
-        let theme_status = (!notices.is_empty()).then(|| notices.join("\n"));
         Self {
             owner,
             machine,
@@ -817,6 +823,44 @@ impl SettingsWindow {
             focus,
             _subscriptions: subscriptions,
         }
+    }
+
+    fn font_subscriptions(
+        font_sizes: &[Entity<InputState>; 2],
+        font_pickers: &[Entity<SelectState<SearchableVec<String>>>; 2],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Subscription> {
+        let mut subscriptions = Vec::new();
+        for (which, size_input) in font_sizes.iter().enumerate() {
+            subscriptions.push(cx.subscribe(size_input, move |this, input, event, cx| {
+                this.font_size_changed(which, &input, event, cx);
+            }));
+        }
+        for (which, picker) in font_pickers.iter().enumerate() {
+            subscriptions.push(cx.subscribe_in(
+                picker,
+                window,
+                move |this, _, event, window, cx| {
+                    this.font_chosen(which, event, window, cx);
+                },
+            ));
+        }
+        subscriptions
+    }
+
+    fn guard_close(window: &mut Window, cx: &mut Context<Self>) {
+        let view = cx.entity();
+        window.on_window_should_close(cx, move |window, cx| {
+            view.update(cx, |view, cx| {
+                if view.agent_dirty(cx) {
+                    view.leave(AfterAgent::CloseSettings, window, cx);
+                    false
+                } else {
+                    true
+                }
+            })
+        });
     }
 
     fn font_size_changed(
@@ -1474,15 +1518,16 @@ impl SettingsWindow {
     }
 }
 
-impl Render for SettingsWindow {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let query = self.query.read(cx).value().to_lowercase();
-        let searching = !query.trim().is_empty();
-        let remote = self.machine != machines::LOCAL;
-        let navigation = self.navigation(&query, searching, remote, window, cx);
-        let sidebar_width = window.rem_size() * 15.;
-        let sidebar = div()
-            .w(sidebar_width)
+impl SettingsWindow {
+    fn sidebar(
+        &self,
+        navigation: impl IntoElement,
+        width: Pixels,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
+        div()
+            .w(width)
             .h_full()
             .flex_shrink_0()
             .flex()
@@ -1517,7 +1562,18 @@ impl Render for SettingsWindow {
                             .accessibility_label("Machine")
                             .menu_width(rems(15.)),
                     ),
-            );
+            )
+    }
+}
+
+impl Render for SettingsWindow {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let query = self.query.read(cx).value().to_lowercase();
+        let searching = !query.trim().is_empty();
+        let remote = self.machine != machines::LOCAL;
+        let navigation = self.navigation(&query, searching, remote, window, cx);
+        let sidebar_width = window.rem_size() * 15.;
+        let sidebar = self.sidebar(navigation, sidebar_width, window, cx);
         let crumbs = self.crumbs(searching, remote, cx);
         let pages = self.pages(&query, searching, remote, cx);
         let found = !pages.is_empty();

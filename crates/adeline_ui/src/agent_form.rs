@@ -291,24 +291,12 @@ impl AgentForm {
             ),
             cx.observe_global_in::<Harnesses>(window, Self::harnesses_changed),
         ];
-        for picker in [&effort, &mode] {
-            subscriptions.push(cx.subscribe(picker, |this, _, _: &SelectEvent<_>, cx| {
-                this.status = None;
-                cx.notify();
-            }));
-        }
-        for text in [&name, &model_text, &effort_text, &command] {
-            subscriptions.push(cx.subscribe(text, |this, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.status = None;
-                    cx.notify();
-                }
-            }));
-        }
-        subscriptions.push(cx.subscribe(&instructions, |this, _, _: &InputEvent, cx| {
-            this.status = None;
-            cx.notify();
-        }));
+        subscriptions.extend(Self::edit_subscriptions(
+            [&effort, &mode],
+            [&name, &model_text, &effort_text, &command],
+            &instructions,
+            cx,
+        ));
         let mut form = Self {
             machine,
             id,
@@ -337,6 +325,34 @@ impl AgentForm {
         };
         form.start_probe(window, cx);
         form
+    }
+
+    fn edit_subscriptions(
+        pickers: [&Entity<ChoicePicker>; 2],
+        texts: [&Entity<InputState>; 4],
+        instructions: &Entity<TextareaState>,
+        cx: &mut Context<Self>,
+    ) -> Vec<Subscription> {
+        let mut subscriptions = Vec::new();
+        for picker in pickers {
+            subscriptions.push(cx.subscribe(picker, |this, _, _: &SelectEvent<_>, cx| {
+                this.status = None;
+                cx.notify();
+            }));
+        }
+        for text in texts {
+            subscriptions.push(cx.subscribe(text, |this, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    this.status = None;
+                    cx.notify();
+                }
+            }));
+        }
+        subscriptions.push(cx.subscribe(instructions, |this, _, _: &InputEvent, cx| {
+            this.status = None;
+            cx.notify();
+        }));
+        subscriptions
     }
 
     fn harnesses_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {

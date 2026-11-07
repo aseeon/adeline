@@ -145,6 +145,51 @@ impl SettingsWindow {
         page
     }
 
+    fn machine_header(
+        &self,
+        ix: usize,
+        machine: &machines::Machine,
+        editing: bool,
+        cx: &Context<Self>,
+    ) -> Div {
+        let id = &machine.id;
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .px_4()
+            .py_3()
+            .child(
+                div()
+                    .flex_1()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(machine.name.clone()),
+            )
+            .when(!editing && !self.demo, |row| {
+                let id = id.clone();
+                row.child(
+                    Button::new(("machine-edit", ix))
+                        .small()
+                        .label("Edit")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.set_editing(Some(id.clone()), window, cx);
+                        })),
+                )
+            })
+            .when(!self.demo, |row| {
+                let id = id.clone();
+                row.child(
+                    Button::new(("machine-remove", ix))
+                        .small()
+                        .danger()
+                        .label("Remove")
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.confirm_remove(id.clone(), window, cx);
+                        })),
+                )
+            })
+    }
+
     fn machine_card(
         &self,
         ix: usize,
@@ -154,43 +199,7 @@ impl SettingsWindow {
         let theme = cx.theme();
         let editing = self.editing.as_deref() == Some(machine.id.as_str());
         let id = machine.id.clone();
-        let mut rows = vec![
-            div()
-                .flex()
-                .items_center()
-                .gap_2()
-                .px_4()
-                .py_3()
-                .child(
-                    div()
-                        .flex_1()
-                        .font_weight(FontWeight::MEDIUM)
-                        .child(machine.name.clone()),
-                )
-                .when(!editing && !self.demo, |row| {
-                    let id = id.clone();
-                    row.child(
-                        Button::new(("machine-edit", ix))
-                            .small()
-                            .label("Edit")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.set_editing(Some(id.clone()), window, cx);
-                            })),
-                    )
-                })
-                .when(!self.demo, |row| {
-                    let id = id.clone();
-                    row.child(
-                        Button::new(("machine-remove", ix))
-                            .small()
-                            .danger()
-                            .label("Remove")
-                            .on_click(cx.listener(move |this, _, window, cx| {
-                                this.confirm_remove(id.clone(), window, cx);
-                            })),
-                    )
-                }),
-        ];
+        let mut rows = vec![self.machine_header(ix, machine, editing, cx)];
         let count = machine.destinations.len();
         for (at, destination) in machine.destinations.iter().enumerate() {
             let button = |name: &'static str,
