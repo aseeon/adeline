@@ -155,6 +155,27 @@ impl Engine {
         self.stop(id);
     }
 
+    pub(super) fn send_queued_now(&mut self, id: &str, queued: u64) -> Result<Value, String> {
+        let (text, files) = self.take_queued_parts(id, queued)?;
+        self.send_now(id, text, files);
+        self.send_live(id);
+        Ok(Value::Null)
+    }
+
+    pub(super) fn steered(&mut self, id: &str, delivered: bool) {
+        if let Some((text, files)) = self.steering.remove(id) {
+            if delivered {
+                self.live_mut(id).assistant = None;
+                self.user_message(id, text, files);
+            } else {
+                self.queue(id, text, files, true);
+                if !self.live.get(id).is_some_and(|live| live.processing) {
+                    self.send_queue(id);
+                }
+            }
+        }
+    }
+
     pub(super) fn user_message(
         &mut self,
         id: &str,

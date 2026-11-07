@@ -757,80 +757,21 @@ impl Engine {
         request: u64,
         command: Command,
     ) -> Option<Result<Value, String>> {
-        let conversation = |engine: &Self, id: &str| {
-            engine
-                .locate(id)
-                .map(|_| ())
-                .ok_or_else(|| "This conversation no longer exists.".to_owned())
-        };
         Some(match command {
-            Command::Send {
-                project_id,
-                conversation_id,
-                agent_id,
-                prompt,
-                attachments,
-                now,
-            } => self
-                .send(
-                    &project_id,
-                    conversation_id,
-                    agent_id.as_deref(),
-                    &prompt,
-                    attachments,
-                    now,
-                )
-                .map(Value::String),
-            Command::TakeQueued { id, queued } => {
-                conversation(self, &id).and_then(|()| self.take_queued(&id, queued))
-            }
-            Command::SendQueuedNow { id, queued } => conversation(self, &id).and_then(|()| {
-                let (text, files) = self.take_queued_parts(&id, queued)?;
-                self.send_now(&id, text, files);
-                self.send_live(&id);
-                Ok(Value::Null)
-            }),
-            Command::Stop { id } => conversation(self, &id).map(|()| {
-                self.stop(&id);
-                Value::Null
-            }),
-            Command::ForceStop { id } => conversation(self, &id).map(|()| {
-                self.force_stop(&id);
-                Value::Null
-            }),
-            Command::Retry { id } => conversation(self, &id).and_then(|()| self.retry(&id)),
-            Command::Restart { id } => conversation(self, &id).map(|()| {
-                self.restart(&id);
-                Value::Null
-            }),
-            Command::RetryStorage { id } => {
-                conversation(self, &id).and_then(|()| self.retry_storage(&id))
-            }
-            Command::ReplaceSession { id } => {
-                conversation(self, &id).and_then(|()| self.replace_session(&id))
-            }
-            Command::Fork { id, message } => {
-                conversation(self, &id).and_then(|()| self.fork(&id, message))
-            }
-            Command::SetOption {
-                id,
-                category,
-                option,
-                value,
-            } => conversation(self, &id)
-                .and_then(|()| self.set_option(&id, category, &option, value)),
-            Command::AnswerPermission {
-                id,
-                request_id,
-                option_id,
-            } => conversation(self, &id)
-                .and_then(|()| self.answer_permission(&id, request_id, &option_id)),
-            Command::SetStatus { id, status } => {
-                conversation(self, &id).and_then(|()| self.set_status(&id, status))
-            }
-            Command::MarkRead { id, through } => {
-                conversation(self, &id).map(|()| self.mark_read(&id, through))
-            }
+            command @ (Command::Send { .. }
+            | Command::TakeQueued { .. }
+            | Command::SendQueuedNow { .. }
+            | Command::Stop { .. }
+            | Command::ForceStop { .. }
+            | Command::Retry { .. }
+            | Command::Restart { .. }
+            | Command::RetryStorage { .. }
+            | Command::ReplaceSession { .. }
+            | Command::Fork { .. }
+            | Command::SetOption { .. }
+            | Command::AnswerPermission { .. }
+            | Command::SetStatus { .. }
+            | Command::MarkRead { .. }) => self.conversation_command(command),
             Command::SaveProject {
                 original,
                 name,
@@ -840,15 +781,11 @@ impl Engine {
                 return self.begin_delete_project(client, request, &id);
             }
             Command::CancelDeleteProject { id } => {
-                for (client, request) in self.deleting.remove(&id).unwrap_or_default() {
-                    self.reply(client, request, Err("Deletion cancelled.".into()));
-                }
+                self.cancel_delete_project(&id);
                 Ok(Value::Null)
             }
             Command::ForceProject { id } => {
-                for conversation in self.project_conversations(&id) {
-                    self.force_stop(&conversation);
-                }
+                self.force_project(&id);
                 Ok(Value::Null)
             }
             Command::SaveAgent {
@@ -856,23 +793,13 @@ impl Engine {
                 definition,
                 expected,
                 overwrite,
-            } => {
-                let saved = block_in_place(|| {
-                    self.agents.save(
-                        original.as_deref(),
-                        definition,
-                        expected.as_ref(),
-                        overwrite,
-                    )
-                });
-                self.agents_changed();
-                saved.map(Value::String).map_err(|e| format!("{e:#}"))
-            }
-            Command::DeleteAgent { id } => {
-                let deleted = block_in_place(|| self.agents.delete(&id));
-                self.agents_changed();
-                deleted.map(|()| Value::Null).map_err(|e| format!("{e:#}"))
-            }
+            } => self.save_agent(
+                original.as_deref(),
+                definition,
+                expected.as_ref(),
+                overwrite,
+            ),
+            Command::DeleteAgent { id } => self.delete_agent(&id),
             Command::RefreshHarnesses { fetch } => {
                 self.detect_harnesses(fetch);
                 Ok(Value::Null)
@@ -916,13 +843,7 @@ impl Engine {
                 return None;
             }
             Command::Shutdown => {
-                tracing::event!(
-                    name: "engine.stop.requested",
-                    tracing::Level::INFO,
-                    client.id = client,
-                    "Client {{client.id}} asked the engine to stop"
-                );
-                self.begin_stop_all(Some((client, request)), true);
+                self.shutdown_requested(client, request);
                 return None;
             }
         })
@@ -1027,6 +948,16 @@ impl Engine {
             );
             self.begin_stop_all(None, true);
         }
+    }
+
+    fn shutdown_requested(&mut self, client: u64, request: u64) {
+        tracing::event!(
+            name: "engine.stop.requested",
+            tracing::Level::INFO,
+            client.id = client,
+            "Client {{client.id}} asked the engine to stop"
+        );
+        self.begin_stop_all(Some((client, request)), true);
     }
 
     fn begin_stop_all(&mut self, waiter: Option<(u64, u64)>, exit: bool) {

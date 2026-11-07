@@ -105,6 +105,36 @@ impl Engine {
         }
     }
 
+    pub(super) fn cancel_delete_project(&mut self, id: &str) {
+        for (client, request) in self.deleting.remove(id).unwrap_or_default() {
+            self.reply(client, request, Err("Deletion cancelled.".into()));
+        }
+    }
+
+    pub(super) fn force_project(&mut self, id: &str) {
+        for conversation in self.project_conversations(id) {
+            self.force_stop(&conversation);
+        }
+    }
+
+    pub(super) fn save_agent(
+        &mut self,
+        original: Option<&str>,
+        definition: agents::AgentDefinition,
+        expected: Option<&agents::AgentDefinition>,
+        overwrite: bool,
+    ) -> Result<Value, String> {
+        let saved = block_in_place(|| self.agents.save(original, definition, expected, overwrite));
+        self.agents_changed();
+        saved.map(Value::String).map_err(|e| format!("{e:#}"))
+    }
+
+    pub(super) fn delete_agent(&mut self, id: &str) -> Result<Value, String> {
+        let deleted = block_in_place(|| self.agents.delete(id));
+        self.agents_changed();
+        deleted.map(|()| Value::Null).map_err(|e| format!("{e:#}"))
+    }
+
     pub(super) fn agents_changed(&mut self) {
         self.broadcast(Delta::Agents {
             entries: self.agents.entries.clone(),

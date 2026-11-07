@@ -3,6 +3,82 @@
 use super::*;
 
 impl Engine {
+    pub(super) fn conversation_command(&mut self, command: Command) -> Result<Value, String> {
+        let conversation = |engine: &Self, id: &str| {
+            engine
+                .locate(id)
+                .map(|_| ())
+                .ok_or_else(|| "This conversation no longer exists.".to_owned())
+        };
+        match command {
+            Command::Send {
+                project_id,
+                conversation_id,
+                agent_id,
+                prompt,
+                attachments,
+                now,
+            } => self
+                .send(
+                    &project_id,
+                    conversation_id,
+                    agent_id.as_deref(),
+                    &prompt,
+                    attachments,
+                    now,
+                )
+                .map(Value::String),
+            Command::TakeQueued { id, queued } => {
+                conversation(self, &id).and_then(|()| self.take_queued(&id, queued))
+            }
+            Command::SendQueuedNow { id, queued } => {
+                conversation(self, &id).and_then(|()| self.send_queued_now(&id, queued))
+            }
+            Command::Stop { id } => conversation(self, &id).map(|()| {
+                self.stop(&id);
+                Value::Null
+            }),
+            Command::ForceStop { id } => conversation(self, &id).map(|()| {
+                self.force_stop(&id);
+                Value::Null
+            }),
+            Command::Retry { id } => conversation(self, &id).and_then(|()| self.retry(&id)),
+            Command::Restart { id } => conversation(self, &id).map(|()| {
+                self.restart(&id);
+                Value::Null
+            }),
+            Command::RetryStorage { id } => {
+                conversation(self, &id).and_then(|()| self.retry_storage(&id))
+            }
+            Command::ReplaceSession { id } => {
+                conversation(self, &id).and_then(|()| self.replace_session(&id))
+            }
+            Command::Fork { id, message } => {
+                conversation(self, &id).and_then(|()| self.fork(&id, message))
+            }
+            Command::SetOption {
+                id,
+                category,
+                option,
+                value,
+            } => conversation(self, &id)
+                .and_then(|()| self.set_option(&id, category, &option, value)),
+            Command::AnswerPermission {
+                id,
+                request_id,
+                option_id,
+            } => conversation(self, &id)
+                .and_then(|()| self.answer_permission(&id, request_id, &option_id)),
+            Command::SetStatus { id, status } => {
+                conversation(self, &id).and_then(|()| self.set_status(&id, status))
+            }
+            Command::MarkRead { id, through } => {
+                conversation(self, &id).map(|()| self.mark_read(&id, through))
+            }
+            _ => unreachable!("conversation_command only gets conversation commands"),
+        }
+    }
+
     pub(super) fn thread_from_store(&self, id: &str) -> Option<(String, Thread)> {
         self.store.projects.iter().find_map(|p| {
             p.conversations

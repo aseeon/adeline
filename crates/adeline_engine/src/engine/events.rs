@@ -3,6 +3,7 @@ use super::{Engine, PERMISSION_STOPPED, end_turn};
 use crate::{acp, storage};
 use adeline_core::{
     conversation::{PermissionOption, StopReason, ThreadStatus},
+    data::ToolReport,
     protocol::{Delta, EngineMessage, PendingPermission},
 };
 use serde_json::json;
@@ -47,22 +48,7 @@ impl Engine {
             acp::EventKind::Session {
                 session_id,
                 replaced,
-            } => {
-                let saved = self.conversation_settings(&id).is_some_and(|mut settings| {
-                    if replaced && let Some(old) = settings.session_id.take() {
-                        settings.previous_session_ids.push(old);
-                    }
-                    settings.session_id = Some(session_id.clone());
-                    self.save_conversation_settings(&id, settings)
-                });
-                if saved {
-                    self.record_visible(
-                        &id,
-                        "lifecycle",
-                        json!({"event":"session_ready","session_id":session_id,"replacement":replaced}),
-                    );
-                }
-            }
+            } => self.session_ready(&id, &session_id, replaced),
             acp::EventKind::Agent { features, .. } => {
                 self.live_mut(&id).features = features.clone();
                 self.save_session_state(&id, |settings| settings.features = features);
@@ -75,28 +61,88 @@ impl Engine {
                 }
             }
             acp::EventKind::Commands(commands) => {
-                self.live
-                    .entry(id.clone())
-                    .or_default()
-                    .commands
-                    .clone_from(&commands);
+                self.live_mut(&id).commands.clone_from(&commands);
                 self.save_session_state(&id, |settings| settings.commands = commands);
             }
             acp::EventKind::Todo(todo) => {
-                self.live
-                    .entry(id.clone())
-                    .or_default()
-                    .todo
-                    .clone_from(&todo);
+                self.live_mut(&id).todo.clone_from(&todo);
                 self.save_session_state(&id, |settings| settings.todo = todo);
             }
+            kind @ (acp::EventKind::Title(_)
+            | acp::EventKind::Text { .. }
+            | acp::EventKind::Thought { .. }
+            | acp::EventKind::Tool { .. }
+            | acp::EventKind::Usage { .. }
+            | acp::EventKind::OpenUrl(_)) => {
+                self.agent_output(id, kind);
+                return;
+            }
+            acp::EventKind::Permission { .. }
+            | acp::EventKind::Retrying { .. }
+            | acp::EventKind::ReplacementRequired(_)
+                if closing =>
+            {
+                return;
+            }
+            acp::EventKind::Permission {
+                request_id,
+                title,
+                options,
+            } => self.permission_requested(&id, request_id, title, options),
+            acp::EventKind::Steered { delivered } => self.steered(&id, delivered),
+            acp::EventKind::SkippedServers(names) => self.skipped_servers(&id, names),
+            acp::EventKind::Auth(_) => {}
+            acp::EventKind::Crashed(stderr) => self.live_mut(&id).stderr = stderr,
+            acp::EventKind::Retrying {
+                attempt,
+                limit,
+                error,
+            } => self.retrying(&id, attempt, limit, &error),
+            acp::EventKind::Error { message, kind } => {
+                self.turn_failed(&id, message, kind, closing);
+            }
+            acp::EventKind::Finished { stop_reason } => {
+                self.turn_finished(&id, stop_reason, closing);
+            }
+            acp::EventKind::Stopped => self.turn_stopped(&id, closing),
+            acp::EventKind::ShutdownStuck => self.shutdown_stuck(&id),
+            acp::EventKind::ShutdownComplete => {
+                self.shutdown_complete(&id);
+                return;
+            }
+            acp::EventKind::TextCopy => self.text_copy(&id),
+            acp::EventKind::ReplacementRequired(error) => self.replacement_required(&id, &error),
+        }
+        self.send_live(&id);
+        let processing = self.live.get(&id).is_some_and(|l| l.processing);
+        if was_processing && !processing && self.subscribers() == 0 && !self.daemon() {
+            self.shutdown_conversation(&id);
+            self.send_live(&id);
+        }
+    }
+
+    fn session_ready(&mut self, id: &str, session_id: &str, replaced: bool) {
+        let saved = self.conversation_settings(id).is_some_and(|mut settings| {
+            if replaced && let Some(old) = settings.session_id.take() {
+                settings.previous_session_ids.push(old);
+            }
+            settings.session_id = Some(session_id.to_owned());
+            self.save_conversation_settings(id, settings)
+        });
+        if saved {
+            self.record_visible(
+                id,
+                "lifecycle",
+                json!({"event":"session_ready","session_id":session_id,"replacement":replaced}),
+            );
+        }
+    }
+
+    fn agent_output(&mut self, id: String, kind: acp::EventKind) {
+        match kind {
             acp::EventKind::Title(title) => {
                 self.save_session_state(&id, |settings| title.clone_into(&mut settings.title));
-                self.broadcast(Delta::Title {
-                    id: id.clone(),
-                    title,
-                });
-                return;
+                self.broadcast(Delta::Title { id, title });
             }
             acp::EventKind::Text { message, text } => {
                 self.queue_visible(
@@ -110,7 +156,6 @@ impl Engine {
                     message,
                     at: adeline_core::recency::now_ms(),
                 });
-                return;
             }
             acp::EventKind::Thought { message, text } => {
                 self.queue_visible(&id, "thought_chunk", json!({"text":text,"message":message}));
@@ -120,7 +165,6 @@ impl Engine {
                     message,
                     at: adeline_core::recency::now_ms(),
                 });
-                return;
             }
             acp::EventKind::Tool {
                 id: tool_id,
@@ -130,7 +174,7 @@ impl Engine {
                 kind,
                 paths,
             } => {
-                let report = adeline_core::data::ToolReport {
+                let report = ToolReport {
                     id: tool_id,
                     title,
                     status,
@@ -149,116 +193,63 @@ impl Engine {
                     at: adeline_core::recency::now_ms(),
                 });
                 self.tool_cards(&id, &report);
-                return;
             }
             acp::EventKind::Usage { used, size } => {
                 self.queue_visible(&id, "usage", json!({"used":used,"size":size}));
                 self.broadcast(Delta::Usage { id, used, size });
-                return;
-            }
-            acp::EventKind::Permission {
-                request_id,
-                title,
-                options,
-            } => {
-                if closing {
-                    return;
-                }
-                self.permission_requested(&id, request_id, title, options);
-            }
-            acp::EventKind::Steered { delivered } => {
-                if let Some((text, files)) = self.steering.remove(&id) {
-                    if delivered {
-                        self.live_mut(&id).assistant = None;
-                        self.user_message(&id, text, files);
-                    } else {
-                        self.queue(&id, text, files, true);
-                        if !self.live.get(&id).is_some_and(|live| live.processing) {
-                            self.send_queue(&id);
-                        }
-                    }
-                }
-            }
-            acp::EventKind::SkippedServers(names) => {
-                let agent = self
-                    .live
-                    .get(&id)
-                    .and_then(|live| live.execution.as_ref())
-                    .map_or_else(|| "This agent".to_owned(), |e| e.name.clone());
-                for name in names {
-                    let message = format!("Skipped {name}: {agent} doesn't support HTTP servers.");
-                    self.record_visible(&id, "note", json!({"message":message}));
-                }
-                self.broadcast_thread(&id);
             }
             acp::EventKind::OpenUrl(url) => {
                 self.broadcast_message(&EngineMessage::Delta(Delta::OpenUrl { url }));
-                return;
             }
-            acp::EventKind::Auth(_) => {}
-            acp::EventKind::Crashed(stderr) => {
-                self.live_mut(&id).stderr = stderr;
-            }
-            acp::EventKind::Retrying {
-                attempt,
-                limit,
-                error,
-            } => {
-                if closing {
-                    return;
-                }
-                if self.record_visible(
-                    &id,
-                    "error",
-                    json!({"message":error,"attempt":attempt,"limit":limit}),
-                ) {
-                    self.live_mut(&id).progress =
-                        Some(format!("Retry {attempt} of {limit}: {error}"));
-                }
-            }
-            acp::EventKind::Error { message, kind } => {
-                self.turn_failed(&id, message, kind, closing);
-            }
-            acp::EventKind::Finished { stop_reason } => {
-                self.turn_finished(&id, stop_reason, closing);
-            }
-            acp::EventKind::Stopped => self.turn_stopped(&id, closing),
-            acp::EventKind::ShutdownStuck => {
-                let live = self.live_mut(&id);
-                live.shutdown_stuck = true;
-                live.error =
-                    Some("Agent shutdown is stuck. Force Stop terminates this process.".into());
-            }
-            acp::EventKind::ShutdownComplete => {
-                self.shutdown_complete(&id);
-                return;
-            }
-            acp::EventKind::TextCopy => {
-                self.text_copy_pending.insert(id.clone());
-                if self.record_visible(&id, "fork_text_copy", json!({})) {
-                    self.broadcast_thread(&id);
-                }
-            }
-            acp::EventKind::ReplacementRequired(error) => {
-                if closing {
-                    return;
-                }
-                if self.record_visible(&id, "error", json!({"message":error,"restoration":false})) {
-                    let live = self.live_mut(&id);
-                    live.replacement = true;
-                    live.processing = false;
-                    live.error = Some(format!(
-                        "{error} Start a new session using saved messages only if you want to continue."
-                    ));
-                    self.set_runtime_status(&id, ThreadStatus::Blocked);
-                }
-            }
+            _ => unreachable!("agent_output only gets streamed agent output"),
         }
-        self.send_live(&id);
-        let processing = self.live.get(&id).is_some_and(|l| l.processing);
-        if was_processing && !processing && self.subscribers() == 0 && !self.daemon() {
-            self.shutdown_conversation(&id);
-            self.send_live(&id);
+    }
+
+    fn shutdown_stuck(&mut self, id: &str) {
+        let live = self.live_mut(id);
+        live.shutdown_stuck = true;
+        live.error = Some("Agent shutdown is stuck. Force Stop terminates this process.".into());
+    }
+
+    fn text_copy(&mut self, id: &str) {
+        self.text_copy_pending.insert(id.to_owned());
+        if self.record_visible(id, "fork_text_copy", json!({})) {
+            self.broadcast_thread(id);
+        }
+    }
+
+    fn skipped_servers(&mut self, id: &str, names: Vec<String>) {
+        let agent = self
+            .live
+            .get(id)
+            .and_then(|live| live.execution.as_ref())
+            .map_or_else(|| "This agent".to_owned(), |e| e.name.clone());
+        for name in names {
+            let message = format!("Skipped {name}: {agent} doesn't support HTTP servers.");
+            self.record_visible(id, "note", json!({"message":message}));
+        }
+        self.broadcast_thread(id);
+    }
+
+    fn retrying(&mut self, id: &str, attempt: u32, limit: u32, error: &str) {
+        if self.record_visible(
+            id,
+            "error",
+            json!({"message":error,"attempt":attempt,"limit":limit}),
+        ) {
+            self.live_mut(id).progress = Some(format!("Retry {attempt} of {limit}: {error}"));
+        }
+    }
+
+    fn replacement_required(&mut self, id: &str, error: &str) {
+        if self.record_visible(id, "error", json!({"message":error,"restoration":false})) {
+            let live = self.live_mut(id);
+            live.replacement = true;
+            live.processing = false;
+            live.error = Some(format!(
+                "{error} Start a new session using saved messages only if you want to continue."
+            ));
+            self.set_runtime_status(id, ThreadStatus::Blocked);
         }
     }
 
