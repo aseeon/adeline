@@ -1592,19 +1592,44 @@ impl Adeline {
         }
     }
 
+    fn docs_open_and_focus(&mut self, path: String, window: &mut Window, cx: &mut Context<Self>) {
+        let editor = self.docs_current().and_then(|p| p.files.get(&path)).map_or(
+            config::with(|s| s.modes.docs.open_in == DocView::Editor),
+            |doc| doc.editor,
+        );
+        self.docs_open(path, window, cx);
+        if editor {
+            window.focus(&self.docs.editor.focus_handle(cx), cx);
+        }
+        self.docs_record(cx);
+    }
+
+    fn docs_close_open(&mut self, cx: &mut Context<Self>) {
+        let key = self.docs_key();
+        if let Some(project) = self.docs.projects.get_mut(&key)
+            && let Some(path) = project.open.take()
+        {
+            project.files.remove(&path);
+            project.failed = None;
+        }
+        self.docs.shown = None;
+        self.docs_record(cx);
+    }
+
+    fn docs_pick_chat(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu = None;
+        self.docs_select_chat(id, window, cx);
+        let chat = self.current_id();
+        if let Some(project) = self.docs.projects.get_mut(&self.workspace().key()) {
+            project.chat = chat;
+        }
+        self.docs_record(cx);
+        window.focus(&self.composer.focus_handle(cx), cx);
+    }
+
     pub(super) fn docs_act(&mut self, act: Act, window: &mut Window, cx: &mut Context<Self>) {
         match act {
-            Act::Open(path) => {
-                let editor = self.docs_current().and_then(|p| p.files.get(&path)).map_or(
-                    config::with(|s| s.modes.docs.open_in == DocView::Editor),
-                    |doc| doc.editor,
-                );
-                self.docs_open(path, window, cx);
-                if editor {
-                    window.focus(&self.docs.editor.focus_handle(cx), cx);
-                }
-                self.docs_record(cx);
-            }
+            Act::Open(path) => self.docs_open_and_focus(path, window, cx),
             Act::Folder(path) => {
                 let project = self.docs_project();
                 project.cursor = Some(path.clone());
@@ -1667,31 +1692,12 @@ impl Adeline {
             Act::Note => self.docs_note(None, window, cx),
             Act::KeepMine => self.docs_resolve(true, window, cx),
             Act::TakeTheirs => self.docs_resolve(false, window, cx),
-            Act::CloseDoc => {
-                let key = self.docs_key();
-                if let Some(project) = self.docs.projects.get_mut(&key)
-                    && let Some(path) = project.open.take()
-                {
-                    project.files.remove(&path);
-                    project.failed = None;
-                }
-                self.docs.shown = None;
-                self.docs_record(cx);
-            }
+            Act::CloseDoc => self.docs_close_open(cx),
             Act::LeftPanel | Act::ChatPanel | Act::Gitignore | Act::OpenIn => {
                 self.docs_setting(&act, window, cx);
             }
             Act::Chooser => self.open_commands("chats", window, cx),
-            Act::Chat(id) => {
-                self.menu = None;
-                self.docs_select_chat(id, window, cx);
-                let chat = self.current_id();
-                if let Some(project) = self.docs.projects.get_mut(&self.workspace().key()) {
-                    project.chat = chat;
-                }
-                self.docs_record(cx);
-                window.focus(&self.composer.focus_handle(cx), cx);
-            }
+            Act::Chat(id) => self.docs_pick_chat(id, window, cx),
             Act::More(key) => {
                 toggle_member(&mut self.docs.more, key);
                 self.transcript.update(cx, chat::Transcript::refresh_all);

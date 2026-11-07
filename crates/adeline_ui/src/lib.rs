@@ -548,48 +548,22 @@ impl Adeline {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let mut loaded_machines = std::collections::HashSet::new();
-        if snapshot.is_some() {
-            loaded_machines.insert(machines::LOCAL.to_owned());
-        }
+        let local_loaded = snapshot.is_some();
         let mut snapshot = snapshot.unwrap_or_default();
         let (projects, catalogs) = Self::initial_projects(demo_mode, &mut snapshot);
-        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats"));
+        if demo_mode {
+            snapshot.live = demo_live();
+        }
         let composer = cx.new(|cx| {
             TextareaState::new(window, cx)
                 .auto_grow(1, 12)
                 .submit_on_enter(config::current().modes.chats.submit_on_enter)
                 .placeholder("Ask your agent to do anything")
         });
-        let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Project name"));
-        let project_search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search projects"));
         let owner = cx.weak_entity();
-        let chat_list = cx.new(|cx| chat::ChatList::new(owner.clone(), cx));
         let composer_height = std::rc::Rc::new(std::cell::Cell::new(px(0.)));
-        let transcript = cx.new(|cx| {
-            chat::Transcript::new(owner.clone(), std::rc::Rc::clone(&composer_height), cx)
-        });
-        let composer_region = cx.new(|cx| chat::Composer::new(owner.clone(), &composer, cx));
-        let header_region = cx.new(|_| chat::Header(owner.clone()));
-        let side_panel = cx.new(|_| conversation_ui::SidePanel(owner.clone()));
-        let chat_header = cx.new(|_| views::ChatHeader(owner.clone()));
-        let docs = docs::Docs::new(window, cx);
-        let mut subscriptions =
-            Self::input_subscriptions(&query, &project_search, &composer, &docs, window, cx);
-        subscriptions.push(cx.observe_self(Self::notify_cached_views));
-        subscriptions.push(cx.on_focus_lost(window, |app, window, cx| {
-            if app.has_open_project() && app.section == Section::Chats {
-                window.focus(&app.composer.focus_handle(cx), cx);
-            } else {
-                window.focus(&app.focus, cx);
-            }
-        }));
-        let mut app = Self {
-            main_window: window
-                .window_handle()
-                .downcast::<Root>()
-                .expect("Kit root window"),
+        Self {
+            main_window: kit_root(window),
             empty_workspace: Workspace::default(),
             open_projects: vec![true; projects.len()],
             project_tints: (0..projects.len()).map(default_tint).collect(),
@@ -597,7 +571,7 @@ impl Adeline {
             verbose,
             catalogs,
             empty_catalog: agents::AgentCatalog::remote(),
-            loaded_machines,
+            loaded_machines: std::collections::HashSet::new(),
             project_machine: machines::LOCAL.into(),
             browser: None,
             browser_return: None,
@@ -605,11 +579,7 @@ impl Adeline {
             prompt_input: cx.new(|cx| InputState::new(window, cx).masked(true)),
             selected_agent: None,
             runtime: runtime_ui::Runtime {
-                conversations: if demo_mode {
-                    demo_live()
-                } else {
-                    snapshot.live
-                },
+                conversations: snapshot.live,
                 ..Default::default()
             },
             project_directory_input: cx
@@ -617,7 +587,7 @@ impl Adeline {
             project_error: None,
             delete_project: None,
             rename_project: None,
-            project_search,
+            project_search: cx.new(|cx| InputState::new(window, cx).placeholder("Search projects")),
             project_sort: project_bar::ProjectSort::default(),
             project_highlight: None,
             project_list_scroll: ScrollHandle::new(),
@@ -629,15 +599,19 @@ impl Adeline {
             selected: None,
             agent_filter: None,
             chat_search_open: false,
+            transcript: cx.new(|cx| {
+                chat::Transcript::new(owner.clone(), std::rc::Rc::clone(&composer_height), cx)
+            }),
             composer_height,
             show_completed: true,
             show_archived: false,
             side_panel_open: false,
             panes: ui_state::panes(),
             activity: activity::ActivityPanel::default(),
-            query,
+            query: cx.new(|cx| InputState::new(window, cx).placeholder("Search chats")),
+            composer_region: cx.new(|cx| chat::Composer::new(owner.clone(), &composer, cx)),
             composer,
-            name_input,
+            name_input: cx.new(|cx| InputState::new(window, cx).placeholder("Project name")),
             modal: None,
             menu: None,
             command_popup: None,
@@ -657,26 +631,57 @@ impl Adeline {
             left_panel_open: true,
             selected_tint: 3,
             focus: cx.focus_handle(),
-            _subscriptions: subscriptions,
-            chat_list,
-            transcript,
-            composer_region,
+            _subscriptions: Vec::new(),
+            chat_list: cx.new(|cx| chat::ChatList::new(owner.clone(), cx)),
             composer_glide: std::rc::Rc::default(),
-            header_region,
-            side_panel,
-            chat_header,
-            docs,
+            header_region: cx.new(|_| chat::Header(owner.clone())),
+            side_panel: cx.new(|_| conversation_ui::SidePanel(owner.clone())),
+            chat_header: cx.new(|_| views::ChatHeader(owner.clone())),
+            docs: docs::Docs::new(window, cx),
+        }
+        .setup(local_loaded, &snapshot.errors, window, cx)
+    }
+
+    fn setup(
+        mut self,
+        local_loaded: bool,
+        errors: &[String],
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        if local_loaded {
+            self.loaded_machines.insert(machines::LOCAL.to_owned());
+        }
+        let mut subscriptions = Self::input_subscriptions(
+            &self.query,
+            &self.project_search,
+            &self.composer,
+            &self.docs,
+            window,
+            cx,
+        );
+        subscriptions.push(cx.observe_self(Self::notify_cached_views));
+        subscriptions.push(cx.on_focus_lost(window, |app, window, cx| {
+            if app.has_open_project() && app.section == Section::Chats {
+                window.focus(&app.composer.focus_handle(cx), cx);
+            } else {
+                window.focus(&app.focus, cx);
+            }
+        }));
+        let mut app = Self {
+            _subscriptions: subscriptions,
+            ..self
         };
         app.load_settings();
-        if demo_mode || app.agent_catalog().entries.len() == 1 {
+        if app.demo_mode || app.agent_catalog().entries.len() == 1 {
             app.selected_agent = app
                 .agent_catalog()
                 .entries
                 .first()
                 .map(|entry| entry.id.clone());
         }
-        if !snapshot.errors.is_empty() {
-            app.notify_toast(&snapshot.errors.join("\n"), cx);
+        if !errors.is_empty() {
+            app.notify_toast(&errors.join("\n"), cx);
         }
         if let Some(error) = theme::load_error() {
             app.notify_toast(&error, cx);
@@ -847,41 +852,13 @@ impl Adeline {
             )
             .into_any_element()
     }
-}
-impl Render for Adeline {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let body = if let Some(screen) = self.engine_screen(cx) {
-            screen
-        } else if !self.has_open_project() {
-            self.no_project_body(cx)
-        } else if self.section == Section::Chats {
-            self.chats(window, cx)
-        } else if self.section == Section::Docs {
-            self.docs_load_images(cx);
-            self.docs_card(cx)
-        } else {
-            div().size_full().into_any_element()
-        };
-        col()
-            .relative()
-            .size_full()
-            .bg(theme::islands(cx).bg)
-            .font_family(cx.theme().font_family.clone())
-            .text_color(cx.theme().foreground)
-            .track_focus(&self.focus)
-            .key_context("Adeline")
+
+    fn bind_actions(&self, content: Div, cx: &Context<Self>) -> Div {
+        content
             .on_action(act_on::<Cancel>(Action::Close, cx))
             .on_action(act_on::<OpenSettings>(Action::AppSettings, cx))
             .on_action(act_on::<NewThread>(Action::NewChat, cx))
-            .on_action(cx.listener(|app, _: &Search, window, cx| {
-                if app.has_open_project() && app.section == Section::Docs {
-                    window.focus(&app.docs.search.focus_handle(cx), cx);
-                } else if app.has_open_project() && app.section == Section::Chats {
-                    app.focus_chat_search(window, cx);
-                } else {
-                    app.act(Action::Projects, window, cx);
-                }
-            }))
+            .on_action(cx.listener(Self::on_search))
             .on_action(act_on::<SendMessage>(Action::Send, cx))
             .on_action(act_on::<SendNow>(Action::SendNow, cx))
             .on_action(act_on::<StopTurn>(Action::Stop, cx))
@@ -915,17 +892,9 @@ impl Render for Adeline {
             .on_action(cx.listener(|app, _: &PreviousProject, window, cx| {
                 app.step_project(false, window, cx);
             }))
-            .on_action(cx.listener(|app, _: &CloseProjectTab, window, cx| {
-                if app.has_open_project() {
-                    app.act(Action::CloseProject(app.project), window, cx);
-                }
-            }))
+            .on_action(cx.listener(Self::on_close_project_tab))
             .on_action(act_on::<OpenFolder>(Action::OpenFolder, cx))
-            .on_action(cx.listener(|app, _: &MachinesMenu, window, cx| {
-                if !machines::remotes().is_empty() {
-                    app.act(Action::Machines, window, cx);
-                }
-            }))
+            .on_action(cx.listener(Self::on_machines_menu))
             .on_action(act_on::<MainMenu>(Action::AppMenu, cx))
             .on_action(cx.listener(|app, _: &FocusMessage, window, cx| {
                 window.focus(&app.composer.focus_handle(cx), cx);
@@ -933,67 +902,151 @@ impl Render for Adeline {
             .on_action(
                 cx.listener(|app, _: &DismissErrors, window, cx| app.dismiss_errors(window, cx)),
             )
-            .on_action(cx.listener(|app, _: &ForkChat, window, cx| {
-                let thread = app.selected.map(|ix| &app.workspace().threads[ix]);
-                if let Some(reply) =
-                    thread.and_then(|t| (0..t.messages.len()).rfind(|&i| t.ends_turn(i)))
-                {
-                    app.act(Action::Fork(reply), window, cx);
-                }
-            }))
-            .on_action(cx.listener(|app, _: &CopyCode, _, cx| {
-                let thread = app.selected.map(|ix| &app.workspace().threads[ix]);
-                let code = thread.and_then(|t| {
-                    t.messages
-                        .iter()
-                        .rev()
-                        .find(|m| m.role != conversation::MessageRole::User)
-                        .and_then(|m| last_code_block(&m.text))
-                });
-                if let Some(code) = code {
-                    cx.write_to_clipboard(ClipboardItem::new_string(code));
-                }
-            }))
-            .on_action(cx.listener(|app, _: &ForkSource, window, cx| {
-                let threads = &app.workspace().threads;
-                let source = app
-                    .selected
-                    .and_then(|ix| threads[ix].fork.as_ref())
-                    .and_then(|fork| threads.iter().position(|t| t.id == fork.id));
-                if let Some(ix) = source {
-                    app.act(Action::Chat(ix), window, cx);
-                }
-            }))
-            .on_action(cx.listener(|app, _: &ToggleChatList, window, cx| {
-                let action = if app.section == Section::Docs {
-                    Action::Docs(docs::Act::LeftPanel)
-                } else {
-                    Action::ToggleLeftPanel
-                };
-                app.act(action, window, cx);
-            }))
-            .on_action(cx.listener(|app, _: &ToggleSidePane, window, cx| {
-                let action = if app.section == Section::Docs {
-                    Action::Docs(docs::Act::ChatPanel)
-                } else {
-                    Action::ToggleSidePanel
-                };
-                app.act(action, window, cx);
-            }))
-            .on_action(cx.listener(|app, _: &ProjectPalette, window, cx| {
-                if app.has_open_project() && app.section == Section::Docs {
-                    window.focus(&app.docs.search.focus_handle(cx), cx);
-                } else {
-                    app.act(Action::Projects, window, cx);
-                }
-            }))
+            .on_action(cx.listener(Self::on_fork_chat))
+            .on_action(cx.listener(Self::on_copy_code))
+            .on_action(cx.listener(Self::on_fork_source))
+            .on_action(cx.listener(Self::on_toggle_chat_list))
+            .on_action(cx.listener(Self::on_toggle_side_pane))
+            .on_action(cx.listener(Self::on_project_palette))
             .on_action(cx.listener(|_, _: &NextFocus, window, cx| window.focus_next(cx)))
             .on_action(cx.listener(|_, _: &PreviousFocus, window, cx| window.focus_prev(cx)))
-            .on_action(cx.listener(|app, action: &docs::SwitchMode, window, cx| {
-                if let Some(section) = project_bar::rail_sections().get(action.index) {
-                    app.act(Action::Section(*section), window, cx);
-                }
-            }))
+            .on_action(cx.listener(Self::on_switch_mode))
+    }
+
+    fn on_search(&mut self, _: &Search, window: &mut Window, cx: &mut Context<Self>) {
+        if self.has_open_project() && self.section == Section::Docs {
+            window.focus(&self.docs.search.focus_handle(cx), cx);
+        } else if self.has_open_project() && self.section == Section::Chats {
+            self.focus_chat_search(window, cx);
+        } else {
+            self.act(Action::Projects, window, cx);
+        }
+    }
+
+    fn on_close_project_tab(
+        &mut self,
+        _: &CloseProjectTab,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.has_open_project() {
+            self.act(Action::CloseProject(self.project), window, cx);
+        }
+    }
+
+    fn on_machines_menu(&mut self, _: &MachinesMenu, window: &mut Window, cx: &mut Context<Self>) {
+        if !machines::remotes().is_empty() {
+            self.act(Action::Machines, window, cx);
+        }
+    }
+
+    fn on_fork_chat(&mut self, _: &ForkChat, window: &mut Window, cx: &mut Context<Self>) {
+        let thread = self.selected.map(|ix| &self.workspace().threads[ix]);
+        if let Some(reply) = thread.and_then(|t| (0..t.messages.len()).rfind(|&i| t.ends_turn(i))) {
+            self.act(Action::Fork(reply), window, cx);
+        }
+    }
+
+    fn on_copy_code(&mut self, _: &CopyCode, _: &mut Window, cx: &mut Context<Self>) {
+        let thread = self.selected.map(|ix| &self.workspace().threads[ix]);
+        let code = thread.and_then(|t| {
+            t.messages
+                .iter()
+                .rev()
+                .find(|m| m.role != conversation::MessageRole::User)
+                .and_then(|m| last_code_block(&m.text))
+        });
+        if let Some(code) = code {
+            cx.write_to_clipboard(ClipboardItem::new_string(code));
+        }
+    }
+
+    fn on_fork_source(&mut self, _: &ForkSource, window: &mut Window, cx: &mut Context<Self>) {
+        let threads = &self.workspace().threads;
+        let source = self
+            .selected
+            .and_then(|ix| threads[ix].fork.as_ref())
+            .and_then(|fork| threads.iter().position(|t| t.id == fork.id));
+        if let Some(ix) = source {
+            self.act(Action::Chat(ix), window, cx);
+        }
+    }
+
+    fn on_toggle_chat_list(
+        &mut self,
+        _: &ToggleChatList,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let action = if self.section == Section::Docs {
+            Action::Docs(docs::Act::LeftPanel)
+        } else {
+            Action::ToggleLeftPanel
+        };
+        self.act(action, window, cx);
+    }
+
+    fn on_toggle_side_pane(
+        &mut self,
+        _: &ToggleSidePane,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let action = if self.section == Section::Docs {
+            Action::Docs(docs::Act::ChatPanel)
+        } else {
+            Action::ToggleSidePanel
+        };
+        self.act(action, window, cx);
+    }
+
+    fn on_project_palette(
+        &mut self,
+        _: &ProjectPalette,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.has_open_project() && self.section == Section::Docs {
+            window.focus(&self.docs.search.focus_handle(cx), cx);
+        } else {
+            self.act(Action::Projects, window, cx);
+        }
+    }
+
+    fn on_switch_mode(
+        &mut self,
+        action: &docs::SwitchMode,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(section) = project_bar::rail_sections().get(action.index) {
+            self.act(Action::Section(*section), window, cx);
+        }
+    }
+}
+impl Render for Adeline {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let body = if let Some(screen) = self.engine_screen(cx) {
+            screen
+        } else if !self.has_open_project() {
+            self.no_project_body(cx)
+        } else if self.section == Section::Chats {
+            self.chats(window, cx)
+        } else if self.section == Section::Docs {
+            self.docs_load_images(cx);
+            self.docs_card(cx)
+        } else {
+            div().size_full().into_any_element()
+        };
+        let content = col()
+            .relative()
+            .size_full()
+            .bg(theme::islands(cx).bg)
+            .font_family(cx.theme().font_family.clone())
+            .text_color(cx.theme().foreground)
+            .track_focus(&self.focus)
+            .key_context("Adeline");
+        self.bind_actions(content, cx)
             .when(
                 self.section == Section::Docs && self.has_open_project(),
                 |content| self.docs_actions(content, cx),
@@ -1135,6 +1188,13 @@ fn muted(text: impl IntoElement, cx: &App) -> Div {
         .text_sm()
         .text_color(cx.theme().muted_foreground)
         .child(text)
+}
+
+fn kit_root(window: &Window) -> WindowHandle<Root> {
+    window
+        .window_handle()
+        .downcast::<Root>()
+        .expect("Kit root window")
 }
 
 fn toast_err(result: Result<()>, window: &mut Window, cx: &mut App) {

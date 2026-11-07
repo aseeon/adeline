@@ -951,43 +951,7 @@ impl Adeline {
                     .danger(),
                 ],
             ),
-            _ => {
-                let unsaved = self.docs.unsaved();
-                let names: Vec<String> = unsaved.iter().map(|(_, path)| path.clone()).collect();
-                let leaving = if self.docs.then == Some(After::Quit) {
-                    "before Adeline quits"
-                } else {
-                    "before the project closes"
-                };
-                (
-                    format!(
-                        "Save changes to {} doc{}?",
-                        names.len(),
-                        if names.len() == 1 { "" } else { "s" }
-                    ),
-                    col()
-                        .gap_1()
-                        .child(
-                            div()
-                                .text_color(theme.muted_foreground)
-                                .child(format!("These docs have unsaved edits {leaving}:")),
-                        )
-                        .children(names.into_iter().map(|name| {
-                            div()
-                                .font_family(theme.mono_font_family.clone())
-                                .text_xs()
-                                .child(name)
-                        }))
-                        .into_any_element(),
-                    vec![
-                        self.button("doc-unsaved-cancel", "Cancel", Action::Close, cx),
-                        self.button("doc-unsaved-discard", "Discard", Action::Docs(Act::Discard), cx)
-                            .danger(),
-                        self.button("doc-unsaved-save", "Save all", Action::Docs(Act::SaveAll), cx)
-                            .primary(),
-                    ],
-                )
-            }
+            _ => self.docs_unsaved_dialog(cx),
         };
         views::dialog_content(title.clone())
             .gap_3()
@@ -996,6 +960,55 @@ impl Adeline {
             .child(body)
             .child(footer().children(buttons))
             .into_any_element()
+    }
+
+    fn docs_unsaved_dialog(&self, cx: &Context<Self>) -> (String, AnyElement, Vec<Button>) {
+        let theme = cx.theme();
+        let unsaved = self.docs.unsaved();
+        let names: Vec<String> = unsaved.iter().map(|(_, path)| path.clone()).collect();
+        let leaving = if self.docs.then == Some(After::Quit) {
+            "before Adeline quits"
+        } else {
+            "before the project closes"
+        };
+        (
+            format!(
+                "Save changes to {} doc{}?",
+                names.len(),
+                if names.len() == 1 { "" } else { "s" }
+            ),
+            col()
+                .gap_1()
+                .child(
+                    div()
+                        .text_color(theme.muted_foreground)
+                        .child(format!("These docs have unsaved edits {leaving}:")),
+                )
+                .children(names.into_iter().map(|name| {
+                    div()
+                        .font_family(theme.mono_font_family.clone())
+                        .text_xs()
+                        .child(name)
+                }))
+                .into_any_element(),
+            vec![
+                self.button("doc-unsaved-cancel", "Cancel", Action::Close, cx),
+                self.button(
+                    "doc-unsaved-discard",
+                    "Discard",
+                    Action::Docs(Act::Discard),
+                    cx,
+                )
+                .danger(),
+                self.button(
+                    "doc-unsaved-save",
+                    "Save all",
+                    Action::Docs(Act::SaveAll),
+                    cx,
+                )
+                .primary(),
+            ],
+        )
     }
 
     fn chat_chooser_entries(

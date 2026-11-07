@@ -47,6 +47,60 @@ pub(super) fn last_name(path: &str) -> String {
 }
 
 impl Adeline {
+    pub(super) fn begin_add_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        clear_input(&self.name_input, window, cx);
+        clear_input(&self.project_directory_input, window, cx);
+        self.project_error = None;
+        self.project_machine = self.current_machine();
+        self.modal = Some("add-project");
+    }
+
+    pub(super) fn begin_project_settings(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.name_input.update(cx, |state, cx| {
+            state.set_value(self.workspace().config.name.clone(), window, cx);
+        });
+        self.project_directory_input.update(cx, |state, cx| {
+            state.set_value(
+                self.workspace()
+                    .config
+                    .directory
+                    .to_string_lossy()
+                    .into_owned(),
+                window,
+                cx,
+            );
+        });
+        self.selected_tint = self.project_tints[self.project];
+        self.project_error = None;
+        self.project_machine = self.workspace().machine.clone();
+        self.modal = Some("settings");
+    }
+
+    pub(super) fn begin_project_rename(
+        &mut self,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.menu = None;
+        self.name_input.update(cx, |state, cx| {
+            state.set_value(self.projects[ix].config.name.clone(), window, cx);
+        });
+        self.rename_project = Some(self.projects[ix].key());
+        self.project_error = None;
+        self.modal = Some("rename-project");
+    }
+
+    pub(super) fn choose_folder_to_open(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.menu = None;
+        let checked = machines::checked();
+        if let [machine] = checked.as_slice() {
+            self.browse_folder_to_open(machine.clone(), window, cx);
+        } else {
+            self.modal = Some("folder-machine");
+        }
+    }
+
     pub(super) fn create_project(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.name_input.read(cx).value().trim().to_owned();
         let directory = self
