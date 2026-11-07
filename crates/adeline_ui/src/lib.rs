@@ -227,6 +227,84 @@ impl Action {
             _ => None,
         }
     }
+
+    fn open_menu(menu: &str) -> Self {
+        match menu {
+            "agents" => Self::Agents,
+            "agent" => Self::AgentMenu,
+            "mode-settings" => Self::ModeSettings,
+            "files" => Self::InsertFiles,
+            _ => Self::AppMenu,
+        }
+    }
+
+    fn keeps_menu_open(&self) -> bool {
+        matches!(
+            self,
+            Self::ShowCompleted
+                | Self::ShowArchived
+                | Self::HideToolCalls
+                | Self::ShowThinking
+                | Self::SubmitOnEnter
+                | Self::Docs(_)
+        )
+    }
+
+    fn works_without_project(&self) -> bool {
+        matches!(
+            self,
+            Self::Project(_)
+                | Self::AddProject
+                | Self::SaveProject
+                | Self::AddAgent
+                | Self::Agents
+                | Self::Agent(_)
+                | Self::AgentMenu
+                | Self::Projects
+                | Self::Machines
+                | Self::Machine(_)
+                | Self::MachineRetry(_)
+                | Self::ManageMachines
+                | Self::MachineUpgrade(_)
+                | Self::ConfirmUpgrade
+                | Self::AnswerPrompt(_)
+                | Self::FolderMachine(_)
+                | Self::ProjectMachine(_)
+                | Self::BrowseTo(_)
+                | Self::BrowsePick(_)
+                | Self::AppMenu
+                | Self::AppSettings
+                | Self::AgentSettings
+                | Self::EditAgent
+                | Self::About
+                | Self::QuitApp
+                | Self::Close
+                | Self::StopAll
+                | Self::QuitStopAll
+                | Self::FinishInBackground
+                | Self::StartEngine
+                | Self::EngineRetry
+                | Self::EngineWait
+                | Self::EngineStopOld
+                | Self::HideToolCalls
+                | Self::SubmitOnEnter
+                | Self::ToggleMode(_)
+                | Self::RemoveClosedProject(_)
+                | Self::UndoProjectRemoval(_)
+                | Self::RenameProject(_)
+                | Self::SaveRename
+                | Self::ToggleProjectSort
+                | Self::OpenFolder
+                | Self::Docs(
+                    docs::Act::SaveAll
+                        | docs::Act::Discard
+                        | docs::Act::Gitignore
+                        | docs::Act::LeftPanel
+                        | docs::Act::ChatPanel
+                        | docs::Act::OpenIn
+                )
+        )
+    }
 }
 actions!(
     adeline,
@@ -342,86 +420,74 @@ impl std::fmt::Debug for Adeline {
     }
 }
 impl Adeline {
-    fn new(
+    fn initial_projects(
         demo_mode: bool,
-        verbose: bool,
-        snapshot: Option<protocol::Snapshot>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let mut loaded_machines = std::collections::HashSet::new();
-        if snapshot.is_some() {
-            loaded_machines.insert(machines::LOCAL.to_owned());
-        }
-        let snapshot = snapshot.unwrap_or_default();
+        snapshot: &mut protocol::Snapshot,
+    ) -> (
+        Vec<Workspace>,
+        std::collections::HashMap<String, agents::AgentCatalog>,
+    ) {
         let checked = machines::checked();
         let mut catalogs = std::collections::HashMap::new();
-        let projects = if demo_mode {
+        if demo_mode {
             let mut projects = load();
             projects.retain(|project| checked.contains(&project.machine));
             for machine in &checked {
                 catalogs.insert(machine.clone(), agents::AgentCatalog::new(true));
             }
-            projects
+            (projects, catalogs)
         } else {
-            let mut projects = snapshot.projects;
+            let mut projects = std::mem::take(&mut snapshot.projects);
             for project in &mut projects {
                 project.machine = machines::LOCAL.into();
             }
             ui_state::apply(machines::LOCAL, &mut projects);
             let mut catalog = agents::AgentCatalog::remote();
-            catalog.entries = snapshot.agents;
-            catalog.errors = snapshot.agent_errors;
+            catalog.entries = std::mem::take(&mut snapshot.agents);
+            catalog.errors = std::mem::take(&mut snapshot.agent_errors);
             catalogs.insert(machines::LOCAL.to_owned(), catalog);
-            projects
-        };
-        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats"));
-        let composer = cx.new(|cx| {
-            TextareaState::new(window, cx)
-                .auto_grow(1, 12)
-                .submit_on_enter(config::current().modes.chats.submit_on_enter)
-                .placeholder("Ask your agent to do anything")
-        });
-        let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Project name"));
-        let project_search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search projects"));
-        let mut subscriptions =
-            vec![
-                cx.subscribe_in(
-                    &query,
-                    window,
-                    |app, _, event: &InputEvent, window, cx| match event {
-                        InputEvent::Change => app.search_sidebar(cx),
-                        InputEvent::Focus | InputEvent::Blur => {
-                            if matches!(event, InputEvent::Blur)
-                                && app.query.read(cx).value().is_empty()
-                            {
-                                app.chat_search_open = false;
-                            }
-                            app.chat_list.update(cx, |_, cx| cx.notify());
-                        }
-                        InputEvent::PressEnter { .. } => {
-                            if let Some(ix) = app.chat_list.read(cx).first_result() {
-                                app.act(Action::Chat(ix), window, cx);
-                            }
-                        }
-                    },
-                ),
-            ];
-        subscriptions.push(
-            cx.subscribe(
-                &project_search,
-                |app, _, event: &InputEvent, cx| match event {
-                    InputEvent::Change => app.search_projects(cx),
-                    InputEvent::Focus | InputEvent::Blur => {
-                        app.header_region.update(cx, |_, cx| cx.notify());
+            (projects, catalogs)
+        }
+    }
+
+    fn input_subscriptions(
+        query: &Entity<InputState>,
+        project_search: &Entity<InputState>,
+        composer: &Entity<TextareaState>,
+        docs: &docs::Docs,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Vec<Subscription> {
+        let mut subscriptions = vec![cx.subscribe_in(
+            query,
+            window,
+            |app, _, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => app.search_sidebar(cx),
+                InputEvent::Focus | InputEvent::Blur => {
+                    if matches!(event, InputEvent::Blur) && app.query.read(cx).value().is_empty() {
+                        app.chat_search_open = false;
                     }
-                    InputEvent::PressEnter { .. } => {}
-                },
-            ),
-        );
+                    app.chat_list.update(cx, |_, cx| cx.notify());
+                }
+                InputEvent::PressEnter { .. } => {
+                    if let Some(ix) = app.chat_list.read(cx).first_result() {
+                        app.act(Action::Chat(ix), window, cx);
+                    }
+                }
+            },
+        )];
+        subscriptions.push(cx.subscribe(
+            project_search,
+            |app, _, event: &InputEvent, cx| match event {
+                InputEvent::Change => app.search_projects(cx),
+                InputEvent::Focus | InputEvent::Blur => {
+                    app.header_region.update(cx, |_, cx| cx.notify());
+                }
+                InputEvent::PressEnter { .. } => {}
+            },
+        ));
         subscriptions.push(cx.subscribe_in(
-            &composer,
+            composer,
             window,
             |app, _, event: &InputEvent, window, cx| {
                 if matches!(
@@ -436,25 +502,6 @@ impl Adeline {
                 }
             },
         ));
-        let owner = cx.weak_entity();
-        let chat_list = cx.new(|cx| chat::ChatList::new(owner.clone(), cx));
-        let composer_height = std::rc::Rc::new(std::cell::Cell::new(px(0.)));
-        let transcript = cx.new(|cx| {
-            chat::Transcript::new(owner.clone(), std::rc::Rc::clone(&composer_height), cx)
-        });
-        let composer_region = cx.new(|cx| chat::Composer::new(owner.clone(), &composer, cx));
-        let header_region = cx.new(|_| chat::Header(owner.clone()));
-        let side_panel = cx.new(|_| conversation_ui::SidePanel(owner.clone()));
-        let chat_header = cx.new(|_| views::ChatHeader(owner.clone()));
-        subscriptions.push(cx.observe_self(Self::notify_cached_views));
-        subscriptions.push(cx.on_focus_lost(window, |app, window, cx| {
-            if app.has_open_project() && app.section == Section::Chats {
-                window.focus(&app.composer.focus_handle(cx), cx);
-            } else {
-                window.focus(&app.focus, cx);
-            }
-        }));
-        let docs = docs::Docs::new(window, cx);
         subscriptions.push(
             cx.subscribe(&docs.editor, |app, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -469,6 +516,75 @@ impl Adeline {
                 }
             }),
         );
+        subscriptions
+    }
+
+    fn spawn_quiet_refresh(cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_secs(15))
+                    .await;
+                let alive = this.update(cx, |app, cx| {
+                    if app
+                        .current_live()
+                        .is_some_and(|live| live.quiet_since.is_some())
+                    {
+                        app.transcript.update(cx, chat::Transcript::invalidate);
+                    }
+                });
+                if alive.is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn new(
+        demo_mode: bool,
+        verbose: bool,
+        snapshot: Option<protocol::Snapshot>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let mut loaded_machines = std::collections::HashSet::new();
+        if snapshot.is_some() {
+            loaded_machines.insert(machines::LOCAL.to_owned());
+        }
+        let mut snapshot = snapshot.unwrap_or_default();
+        let (projects, catalogs) = Self::initial_projects(demo_mode, &mut snapshot);
+        let query = cx.new(|cx| InputState::new(window, cx).placeholder("Search chats"));
+        let composer = cx.new(|cx| {
+            TextareaState::new(window, cx)
+                .auto_grow(1, 12)
+                .submit_on_enter(config::current().modes.chats.submit_on_enter)
+                .placeholder("Ask your agent to do anything")
+        });
+        let name_input = cx.new(|cx| InputState::new(window, cx).placeholder("Project name"));
+        let project_search =
+            cx.new(|cx| InputState::new(window, cx).placeholder("Search projects"));
+        let owner = cx.weak_entity();
+        let chat_list = cx.new(|cx| chat::ChatList::new(owner.clone(), cx));
+        let composer_height = std::rc::Rc::new(std::cell::Cell::new(px(0.)));
+        let transcript = cx.new(|cx| {
+            chat::Transcript::new(owner.clone(), std::rc::Rc::clone(&composer_height), cx)
+        });
+        let composer_region = cx.new(|cx| chat::Composer::new(owner.clone(), &composer, cx));
+        let header_region = cx.new(|_| chat::Header(owner.clone()));
+        let side_panel = cx.new(|_| conversation_ui::SidePanel(owner.clone()));
+        let chat_header = cx.new(|_| views::ChatHeader(owner.clone()));
+        let docs = docs::Docs::new(window, cx);
+        let mut subscriptions =
+            Self::input_subscriptions(&query, &project_search, &composer, &docs, window, cx);
+        subscriptions.push(cx.observe_self(Self::notify_cached_views));
+        subscriptions.push(cx.on_focus_lost(window, |app, window, cx| {
+            if app.has_open_project() && app.section == Section::Chats {
+                window.focus(&app.composer.focus_handle(cx), cx);
+            } else {
+                window.focus(&app.focus, cx);
+            }
+        }));
         let mut app = Self {
             main_window: window
                 .window_handle()
@@ -569,25 +685,7 @@ impl Adeline {
         app.transcript
             .update(cx, |view, cx| view.sync(&app, false, cx));
         app.defer_with_window(cx, |app, window, cx| app.open_last_active_chat(window, cx));
-        cx.spawn(async move |this, cx| {
-            loop {
-                cx.background_executor()
-                    .timer(std::time::Duration::from_secs(15))
-                    .await;
-                let alive = this.update(cx, |app, cx| {
-                    if app
-                        .current_live()
-                        .is_some_and(|live| live.quiet_since.is_some())
-                    {
-                        app.transcript.update(cx, chat::Transcript::invalidate);
-                    }
-                });
-                if alive.is_err() {
-                    break;
-                }
-            }
-        })
-        .detach();
+        Self::spawn_quiet_refresh(cx);
         app
     }
     fn current_machine(&self) -> String {
@@ -733,26 +831,29 @@ impl Adeline {
             });
         });
     }
+    fn no_project_body(&self, cx: &Context<Self>) -> AnyElement {
+        col()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_4()
+            .p_6()
+            .child(div().text_lg().child("Open a project to start a chat"))
+            .child(
+                row()
+                    .gap_2()
+                    .child(self.button("empty-create", "New project…", Action::AddProject, cx))
+                    .child(self.button("empty-open", "Open project…", Action::Projects, cx)),
+            )
+            .into_any_element()
+    }
 }
 impl Render for Adeline {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = if let Some(screen) = self.engine_screen(cx) {
             screen
         } else if !self.has_open_project() {
-            col()
-                .size_full()
-                .items_center()
-                .justify_center()
-                .gap_4()
-                .p_6()
-                .child(div().text_lg().child("Open a project to start a chat"))
-                .child(
-                    row()
-                        .gap_2()
-                        .child(self.button("empty-create", "New project…", Action::AddProject, cx))
-                        .child(self.button("empty-open", "Open project…", Action::Projects, cx)),
-                )
-                .into_any_element()
+            self.no_project_body(cx)
         } else if self.section == Section::Chats {
             self.chats(window, cx)
         } else if self.section == Section::Docs {

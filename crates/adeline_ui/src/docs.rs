@@ -1569,6 +1569,29 @@ impl Adeline {
         cx.refresh_windows();
     }
 
+    fn docs_target(&self, path: Option<String>) -> Option<String> {
+        path.or_else(|| self.docs_current().and_then(|p| p.cursor.clone()))
+            .filter(|path| adeline_docs::has_doc_extension(path))
+    }
+
+    fn docs_new_folder(&self) -> String {
+        let Some(project) = self.docs_current() else {
+            return String::new();
+        };
+        let Some(cursor) = &project.cursor else {
+            return String::new();
+        };
+        if project.rows.iter().any(|r| r.folder && &r.path == cursor) {
+            return format!("{cursor}/");
+        }
+        let parent = adeline_docs::parent(cursor);
+        if parent.is_empty() {
+            String::new()
+        } else {
+            format!("{parent}/")
+        }
+    }
+
     pub(super) fn docs_act(&mut self, act: Act, window: &mut Window, cx: &mut Context<Self>) {
         match act {
             Act::Open(path) => {
@@ -1599,25 +1622,7 @@ impl Adeline {
                 }
             }
             Act::New => {
-                let folder = self
-                    .docs_current()
-                    .and_then(|p| p.cursor.clone())
-                    .map(|cursor| {
-                        let is_folder = self
-                            .docs_current()
-                            .is_some_and(|p| p.rows.iter().any(|r| r.folder && r.path == cursor));
-                        if is_folder {
-                            format!("{cursor}/")
-                        } else {
-                            let parent = adeline_docs::parent(&cursor);
-                            if parent.is_empty() {
-                                String::new()
-                            } else {
-                                format!("{parent}/")
-                            }
-                        }
-                    })
-                    .unwrap_or_default();
+                let folder = self.docs_new_folder();
                 self.docs.path_input.update(cx, |state, cx| {
                     state.set_value(folder, window, cx);
                 });
@@ -1625,14 +1630,9 @@ impl Adeline {
             }
             Act::Create => self.docs_create(cx),
             Act::Rename(path) => {
-                let Some(path) =
-                    path.or_else(|| self.docs_current().and_then(|p| p.cursor.clone()))
-                else {
+                let Some(path) = self.docs_target(path) else {
                     return;
                 };
-                if !adeline_docs::has_doc_extension(&path) {
-                    return;
-                }
                 self.docs.path_input.update(cx, |state, cx| {
                     state.set_value(adeline_docs::file_name(&path).to_owned(), window, cx);
                 });
@@ -1641,14 +1641,9 @@ impl Adeline {
             }
             Act::ConfirmRename => self.docs_rename(cx),
             Act::Delete(path) => {
-                let Some(path) =
-                    path.or_else(|| self.docs_current().and_then(|p| p.cursor.clone()))
-                else {
+                let Some(path) = self.docs_target(path) else {
                     return;
                 };
-                if !adeline_docs::has_doc_extension(&path) {
-                    return;
-                }
                 self.docs.target = Some(path);
                 self.modal = Some("doc-delete");
             }

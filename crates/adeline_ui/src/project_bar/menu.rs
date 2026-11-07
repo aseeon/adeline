@@ -86,27 +86,26 @@ impl Adeline {
             });
         let key_owner = owner.clone();
         let delete_owner = owner.clone();
+        let footer_button =
+            |id: &'static str, icon: &'static str, label: &'static str, action: Action| {
+                Button::new(id)
+                    .ghost()
+                    .small()
+                    .flex_1()
+                    .icon(Icon::default().path(icon))
+                    .label(label)
+                    .on_click(owner_action(owner, action))
+            };
         col()
             .w(dp(580.))
             .capture_action(move |_: &input::Delete, window, cx| {
-                let handled = delete_owner
-                    .update(cx, |app, cx| app.menu_key("delete", window, cx))
-                    .unwrap_or(false);
-                if handled {
-                    cx.stop_propagation();
-                }
+                menu_key_handler(&delete_owner, "delete", window, cx);
             })
             .capture_key_down(move |event, window, cx| {
                 if event.keystroke.modifiers.modified() {
                     return;
                 }
-                let key = event.keystroke.key.clone();
-                let handled = key_owner
-                    .update(cx, |app, cx| app.menu_key(&key, window, cx))
-                    .unwrap_or(false);
-                if handled {
-                    cx.stop_propagation();
-                }
+                menu_key_handler(&key_owner, &event.keystroke.key, window, cx);
             })
             .child(
                 div().p_1().child(search_field(
@@ -145,24 +144,18 @@ impl Adeline {
                     .p_1()
                     .border_t_1()
                     .border_color(theme.border)
-                    .child(
-                        Button::new("menu-new-project")
-                            .ghost()
-                            .small()
-                            .flex_1()
-                            .icon(Icon::default().path("plus.svg"))
-                            .label("New project")
-                            .on_click(owner_action(owner, Action::AddProject)),
-                    )
-                    .child(
-                        Button::new("menu-open-folder")
-                            .ghost()
-                            .small()
-                            .flex_1()
-                            .icon(Icon::default().path("folder.svg"))
-                            .label("Open folder")
-                            .on_click(owner_action(owner, Action::OpenFolder)),
-                    ),
+                    .child(footer_button(
+                        "menu-new-project",
+                        "plus.svg",
+                        "New project",
+                        Action::AddProject,
+                    ))
+                    .child(footer_button(
+                        "menu-open-folder",
+                        "folder.svg",
+                        "Open folder",
+                        Action::OpenFolder,
+                    )),
             )
             .into_any_element()
     }
@@ -197,23 +190,25 @@ impl Adeline {
                 )
                 .into_any_element()
         };
-        let action = if open {
-            Button::new(SharedString::from(format!("menu-close-{id}")))
-                .ghost()
-                .xsmall()
-                .icon(Icon::default().path("close.svg"))
-                .accessibility_label(format!("Close {}", project.config.name))
-                .tooltip("Close tab")
-                .on_click(owner_action(owner, Action::CloseProject(ix)))
+        let (kind, icon, verb, tooltip, row_action) = if open {
+            (
+                "close",
+                "close.svg",
+                "Close",
+                "Close tab",
+                Action::CloseProject(ix),
+            )
         } else {
-            Button::new(SharedString::from(format!("menu-delete-{id}")))
-                .ghost()
-                .xsmall()
-                .icon(Icon::default().path("trash.svg"))
-                .accessibility_label(format!("Delete {}", project.config.name))
-                .tooltip("Delete project")
-                .on_click(owner_action(owner, Action::RemoveClosedProject(id.clone())))
+            let remove = Action::RemoveClosedProject(id.clone());
+            ("delete", "trash.svg", "Delete", "Delete project", remove)
         };
+        let action = Button::new(SharedString::from(format!("menu-{kind}-{id}")))
+            .ghost()
+            .xsmall()
+            .icon(Icon::default().path(icon))
+            .accessibility_label(format!("{verb} {}", project.config.name))
+            .tooltip(tooltip)
+            .on_click(owner_action(owner, row_action));
         let select_owner = owner.clone();
         let menu_owner = owner.clone();
         let menu_id = id.clone();
@@ -241,39 +236,7 @@ impl Adeline {
                 });
             })
             .child(letter_mark(&project.config.name, fill, letter, dp(24.)))
-            .child(
-                col()
-                    .flex_1()
-                    .min_w_0()
-                    .child(
-                        row()
-                            .gap_2()
-                            .min_w_0()
-                            .text_size(dp(theme::T_UI))
-                            .child(div().truncate().child(project.config.name.clone()))
-                            .children(machine.map(|machine| {
-                                div()
-                                    .flex_shrink_0()
-                                    .text_size(dp(theme::T_CAPTION))
-                                    .text_color(theme.muted_foreground)
-                                    .child(if offline {
-                                        format!("{machine} · disconnected")
-                                    } else {
-                                        machine
-                                    })
-                            })),
-                    )
-                    .when(!project.config.directory.as_os_str().is_empty(), |text| {
-                        text.child(
-                            div()
-                                .text_size(dp(theme::T_CAPTION))
-                                .font_family(theme.mono_font_family.clone())
-                                .text_color(theme.muted_foreground)
-                                .truncate()
-                                .child(project.config.directory.display().to_string()),
-                        )
-                    }),
-            )
+            .child(menu_row_text(project, machine, offline, cx))
             .child(
                 div()
                     .relative()
@@ -523,3 +486,47 @@ const UNDO_WINDOW: Duration = Duration::from_secs(6);
 const MENU_ROW_REM: f32 = 2.5;
 
 const MENU_ROWS: f32 = 5.5;
+
+fn menu_row_text(project: &Workspace, machine: Option<String>, offline: bool, cx: &App) -> Div {
+    let theme = cx.theme();
+    col()
+        .flex_1()
+        .min_w_0()
+        .child(
+            row()
+                .gap_2()
+                .min_w_0()
+                .text_size(dp(theme::T_UI))
+                .child(div().truncate().child(project.config.name.clone()))
+                .children(machine.map(|machine| {
+                    div()
+                        .flex_shrink_0()
+                        .text_size(dp(theme::T_CAPTION))
+                        .text_color(theme.muted_foreground)
+                        .child(if offline {
+                            format!("{machine} · disconnected")
+                        } else {
+                            machine
+                        })
+                })),
+        )
+        .when(!project.config.directory.as_os_str().is_empty(), |text| {
+            text.child(
+                div()
+                    .text_size(dp(theme::T_CAPTION))
+                    .font_family(theme.mono_font_family.clone())
+                    .text_color(theme.muted_foreground)
+                    .truncate()
+                    .child(project.config.directory.display().to_string()),
+            )
+        })
+}
+
+fn menu_key_handler(owner: &WeakEntity<Adeline>, key: &str, window: &mut Window, cx: &mut App) {
+    let handled = owner
+        .update(cx, |app, cx| app.menu_key(key, window, cx))
+        .unwrap_or(false);
+    if handled {
+        cx.stop_propagation();
+    }
+}

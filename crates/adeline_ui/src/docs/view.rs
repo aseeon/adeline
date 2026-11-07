@@ -542,7 +542,6 @@ impl Adeline {
 
     fn docs_main(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let isl = theme::islands(cx);
         let project = self.docs_current();
         let failed = project.and_then(|p| p.failed.clone());
         let centered = |child: AnyElement| {
@@ -611,10 +610,24 @@ impl Adeline {
             );
         }
         let path = path.to_owned();
-        let markdown = adeline_docs::is_markdown(&path);
         let offline = self.docs_offline(cx);
         let locked = doc.read_only.is_some() || offline;
-        let content = if !doc.editor && markdown {
+        col()
+            .id("doc-panel")
+            .role(Role::Main)
+            .aria_label(path.clone())
+            .size_full()
+            .child(self.docs_toolbar(&path, doc, locked, cx))
+            .children(self.docs_banners(doc, offline, cx))
+            .child(self.docs_content(&path, doc, locked, cx))
+            .children(self.docs_note_button(cx))
+            .into_any_element()
+    }
+
+    fn docs_content(&self, path: &str, doc: &Doc, locked: bool, cx: &Context<Self>) -> AnyElement {
+        let isl = theme::islands(cx);
+        let markdown = adeline_docs::is_markdown(path);
+        if !doc.editor && markdown {
             let owner = cx.weak_entity();
             div()
                 .id("doc-viewer")
@@ -648,7 +661,7 @@ impl Adeline {
                     viewer::markdown(
                         &self.docs.viewer,
                         &self.docs_key(),
-                        &path,
+                        path,
                         &self.docs.images,
                         panes::selectable_in(panes::DOCS_MAIN, cx),
                     )
@@ -689,39 +702,33 @@ impl Adeline {
                         }),
                 )
                 .into_any_element()
-        };
-        let note =
-            self.docs.note_at.clone().map(|(at, range)| {
-                deferred(
+        }
+    }
+
+    fn docs_note_button(&self, cx: &Context<Self>) -> Option<Deferred> {
+        self.docs.note_at.clone().map(|(at, range)| {
+            deferred(
                 anchored()
                     .position(at + point(px(8.), px(8.)))
                     .snap_to_window_with_margin(px(8.))
                     .child(
                         div().occlude().child(
-                        Button::new("doc-note-selection")
-                            .small()
-                            .primary()
-                            .icon(Icon::default().path("note-pencil.svg"))
-                            .label("Note on selection")
-                            .tooltip("Send a note about the selection to the chat (Ctrl+Shift+N)")
-                            .on_click(cx.listener(move |app, _, window, cx| {
-                                app.docs_note(Some(range.clone()), window, cx);
-                            })),
+                            Button::new("doc-note-selection")
+                                .small()
+                                .primary()
+                                .icon(Icon::default().path("note-pencil.svg"))
+                                .label("Note on selection")
+                                .tooltip(
+                                    "Send a note about the selection to the chat (Ctrl+Shift+N)",
+                                )
+                                .on_click(cx.listener(move |app, _, window, cx| {
+                                    app.docs_note(Some(range.clone()), window, cx);
+                                })),
                         ),
                     ),
             )
             .with_priority(1)
-            });
-        col()
-            .id("doc-panel")
-            .role(Role::Main)
-            .aria_label(path.clone())
-            .size_full()
-            .child(self.docs_toolbar(&path, doc, locked, cx))
-            .children(self.docs_banners(doc, offline, cx))
-            .child(content)
-            .children(note)
-            .into_any_element()
+        })
     }
 
     fn docs_toolbar(&self, path: &str, doc: &Doc, locked: bool, cx: &Context<Self>) -> AnyElement {
@@ -991,15 +998,12 @@ impl Adeline {
             .into_any_element()
     }
 
-    pub(crate) fn chat_chooser(&self, title: &str, cx: &Context<Self>) -> AnyElement {
-        let owner = cx.weak_entity();
-        let content_owner = owner.clone();
-        let state = self
-            .command_popup
-            .clone()
-            .filter(|_| self.menu == Some("chats"));
+    fn chat_chooser_entries(
+        &self,
+        state: Option<&Entity<component::command::CommandState>>,
+        cx: &App,
+    ) -> Vec<(String, String, Option<String>)> {
         let query = state
-            .as_ref()
             .map(|state| state.read(cx).query(cx).to_lowercase())
             .unwrap_or_default();
         let threads = &self.workspace().threads;
@@ -1024,6 +1028,17 @@ impl Adeline {
                 Some(thread.id.clone()),
             )
         }));
+        entries
+    }
+
+    pub(crate) fn chat_chooser(&self, title: &str, cx: &Context<Self>) -> AnyElement {
+        let owner = cx.weak_entity();
+        let content_owner = owner.clone();
+        let state = self
+            .command_popup
+            .clone()
+            .filter(|_| self.menu == Some("chats"));
+        let entries = self.chat_chooser_entries(state.as_ref(), cx);
         let isl = theme::islands(cx);
         let trigger = Button::new("chat-chooser")
             .ghost()

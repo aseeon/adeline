@@ -12,6 +12,72 @@ type MenuGroup = (Option<&'static str>, Vec<(String, Action)>);
 const MENU_ITEM: f32 = 0.925;
 const MENU_HEADING: f32 = 0.8;
 
+fn menu_item(
+    label: &str,
+    action: &Action,
+    toggles: &[(&'static str, &'static str, bool, Action)],
+    owner: &WeakEntity<Adeline>,
+) -> CommandItem {
+    let item = CommandItem::new().label(label.to_owned());
+    if matches!(action, Action::AppSettings | Action::ConfigureModeSettings) {
+        let label = label.to_owned();
+        return item.child(move |_, cx| {
+            row()
+                .w_full()
+                .gap_3()
+                .text_size(rems(MENU_ITEM))
+                .child(div().flex_1().child(label.clone()))
+                .child(
+                    div()
+                        .text_xs()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(conversation_ui::shortcut("Ctrl+,")),
+                )
+        });
+    }
+    let Some((label, _, checked, action)) = toggles.iter().find(|(name, _, _, _)| *name == label)
+    else {
+        let label = label.to_owned();
+        return item.child(move |_, _| div().text_size(rems(MENU_ITEM)).child(label.clone()));
+    };
+    let (label, checked) = (*label, *checked);
+    let action = action.clone();
+    let owner = owner.clone();
+    item.child(move |_, cx| {
+        let owner = owner.clone();
+        let action = action.clone();
+        row()
+            .w_full()
+            .gap_3()
+            .text_size(rems(MENU_ITEM))
+            .child(div().flex_1().child(label))
+            .child(
+                Switch::new(label)
+                    .small()
+                    .color(cx.theme().info)
+                    .checked(checked)
+                    .accessibility_label(label)
+                    .on_change(move |_, window, cx| {
+                        cx.stop_propagation();
+                        let _ = owner.update(cx, |app, cx| {
+                            app.act(action.clone(), window, cx);
+                        });
+                    }),
+            )
+    })
+}
+
+fn surface_fade(surface: Hsla, angle: f32) -> Div {
+    div()
+        .absolute()
+        .h(rems(chat::HEADER_FADE))
+        .bg(linear_gradient(
+            angle,
+            linear_color_stop(surface.opacity(0.9), 0.),
+            linear_color_stop(surface.alpha(0.), 1.),
+        ))
+}
+
 fn searchable(menu: &str) -> bool {
     !matches!(menu, "app" | "files" | "mode-settings")
 }
@@ -85,17 +151,10 @@ impl Adeline {
         } else {
             px(0.)
         };
-        let fade = div()
-            .absolute()
+        let fade = surface_fade(surface, 180.)
             .top(header_height)
             .left_0()
-            .right(scrollbar)
-            .h(rems(chat::HEADER_FADE))
-            .bg(linear_gradient(
-                180.,
-                linear_color_stop(surface.opacity(0.9), 0.),
-                linear_color_stop(surface.alpha(0.), 1.),
-            ));
+            .right(scrollbar);
         div()
             .id("conversation-panel")
             .test_support()
@@ -118,19 +177,7 @@ impl Adeline {
                     .when(self.section != Section::Chats, |region| {
                         region.rounded_bl(panes::dp(14.)).pb(panes::dp(18.))
                     })
-                    .child(
-                        div()
-                            .absolute()
-                            .bottom_full()
-                            .left_0()
-                            .right_0()
-                            .h(rems(chat::HEADER_FADE))
-                            .bg(linear_gradient(
-                                0.,
-                                linear_color_stop(surface.opacity(0.9), 0.),
-                                linear_color_stop(surface.alpha(0.), 1.),
-                            )),
-                    )
+                    .child(surface_fade(surface, 0.).bottom_full().left_0().right_0())
                     .when(
                         thread.is_some() && !self.transcript.read(cx).following(),
                         |region| {
@@ -288,14 +335,7 @@ impl Adeline {
             .on_open_change(move |open, window, cx| {
                 let _ = owner.update(cx, |app, cx| {
                     if *open {
-                        let action = match menu {
-                            "agents" => Action::Agents,
-                            "agent" => Action::AgentMenu,
-                            "mode-settings" => Action::ModeSettings,
-                            "files" => Action::InsertFiles,
-                            _ => Action::AppMenu,
-                        };
-                        app.act(action, window, cx);
+                        app.act(Action::open_menu(menu), window, cx);
                     } else if app.menu == Some(menu) {
                         app.menu = None;
                         app.refocus_after_menu(window, cx);
@@ -324,59 +364,6 @@ impl Adeline {
                         )
                     })
                     .when_some(state.as_ref(), |column, state| {
-                        let item = |label: &String, action: &Action| {
-                            let item = CommandItem::new().label(label.clone());
-                            if matches!(action, Action::AppSettings | Action::ConfigureModeSettings)
-                            {
-                                let label = label.clone();
-                                return item.child(move |_, cx| {
-                                    row()
-                                        .w_full()
-                                        .gap_3()
-                                        .text_size(rems(MENU_ITEM))
-                                        .child(div().flex_1().child(label.clone()))
-                                        .child(
-                                            div()
-                                                .text_xs()
-                                                .text_color(cx.theme().muted_foreground)
-                                                .child(conversation_ui::shortcut("Ctrl+,")),
-                                        )
-                                });
-                            }
-                            let Some((label, _, checked, action)) =
-                                toggles.iter().find(|(name, _, _, _)| *name == label)
-                            else {
-                                let label = label.clone();
-                                return item.child(move |_, _| {
-                                    div().text_size(rems(MENU_ITEM)).child(label.clone())
-                                });
-                            };
-                            let (label, checked) = (*label, *checked);
-                            let action = action.clone();
-                            let owner = owner.clone();
-                            item.child(move |_, cx| {
-                                let owner = owner.clone();
-                                let action = action.clone();
-                                row()
-                                    .w_full()
-                                    .gap_3()
-                                    .text_size(rems(MENU_ITEM))
-                                    .child(div().flex_1().child(label))
-                                    .child(
-                                        Switch::new(label)
-                                            .small()
-                                            .color(cx.theme().info)
-                                            .checked(checked)
-                                            .accessibility_label(label)
-                                            .on_change(move |_, window, cx| {
-                                                cx.stop_propagation();
-                                                let _ = owner.update(cx, |app, cx| {
-                                                    app.act(action.clone(), window, cx);
-                                                });
-                                            }),
-                                    )
-                            })
-                        };
                         let command = Command::new(state)
                             .bordered(false)
                             .searchable(searchable(menu))
@@ -393,7 +380,9 @@ impl Adeline {
                                     )
                                 });
                                 let items = CommandGroup::new().items(heading.into_iter().chain(
-                                    group.iter().map(|(label, action)| item(label, action)),
+                                    group.iter().map(|(label, action)| {
+                                        menu_item(label, action, &toggles, &owner)
+                                    }),
                                 ));
                                 if ix > 0 { command.separator() } else { command }.group(items)
                             },
@@ -404,15 +393,7 @@ impl Adeline {
                                     group.get(path.row.checked_sub(usize::from(heading.is_some()))?)
                                 })
                             {
-                                if !matches!(
-                                    action,
-                                    Action::ShowCompleted
-                                        | Action::ShowArchived
-                                        | Action::HideToolCalls
-                                        | Action::ShowThinking
-                                        | Action::SubmitOnEnter
-                                        | Action::Docs(_)
-                                ) {
+                                if !action.keeps_menu_open() {
                                     popover.update(cx, |state, cx| state.dismiss(window, cx));
                                 }
                                 let _ = owner.update(cx, |app, cx| {

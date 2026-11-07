@@ -53,124 +53,138 @@ fn failing(state: &client::State) -> bool {
 fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
     let theme = cx.theme();
     let checked = machines::checked();
-    let mut list = col()
+    col()
         .id("machine-list")
         .test_support()
         .role(Role::List)
         .aria_label("Machines")
         .w(rems(24.))
         .p_1()
-        .gap_1();
-    for (ix, machine) in machines::all().into_iter().enumerate() {
-        let name = machines::name(&machine);
-        let on = checked.contains(&machine);
-        let state = client::state(&machine, cx).cloned();
-        let status = match &state {
-            Some(state) => state.label().to_owned(),
-            None if on => "Connecting…".to_owned(),
-            None => "Not checked".to_owned(),
-        };
-        let detail = state.as_ref().and_then(client::State::detail);
-        let action = match &state {
-            Some(client::State::UpgradeNeeded { .. }) => {
-                Some(("Upgrade", Action::MachineUpgrade(machine.clone())))
-            }
-            Some(state)
-                if failing(state)
-                    && !matches!(
-                        state,
-                        client::State::Waiting | client::State::Unsupported(_)
-                    ) =>
-            {
-                Some(("Retry", Action::MachineRetry(machine.clone())))
-            }
-            _ => None,
-        };
-        let toggle_owner = owner.clone();
-        let toggle = machine.clone();
-        let failed = state
-            .as_ref()
-            .is_some_and(|s| failing(s) && !matches!(s, client::State::Waiting));
-        list = list.child(
-            col()
-                .id(("machine-row", ix))
-                .test_support()
-                .role(Role::ListItem)
-                .aria_label(format!("{name}, {status}"))
-                .px_2()
-                .py_1p5()
-                .gap_1()
-                .rounded(theme.radius)
-                .hover(|style| style.bg(theme.accent))
+        .gap_1()
+        .children(
+            machines::all()
+                .into_iter()
+                .enumerate()
+                .map(|(ix, machine)| {
+                    let on = checked.contains(&machine);
+                    machine_row(ix, machine, on, owner, cx)
+                }),
+        )
+        .child(
+            div()
+                .border_t_1()
+                .border_color(theme.border)
+                .pt_1()
+                .child(on_confirm(
+                    Button::new("manage-machines")
+                        .ghost()
+                        .small()
+                        .w_full()
+                        .icon(Icon::default().path("settings.svg"))
+                        .label("Manage machines")
+                        .on_click(owner_action(owner, Action::ManageMachines)),
+                    owner,
+                    Action::ManageMachines,
+                )),
+        )
+        .into_any_element()
+}
+
+fn machine_row(
+    ix: usize,
+    machine: String,
+    on: bool,
+    owner: &WeakEntity<Adeline>,
+    cx: &App,
+) -> impl IntoElement {
+    let theme = cx.theme();
+    let name = machines::name(&machine);
+    let state = client::state(&machine, cx).cloned();
+    let status = match &state {
+        Some(state) => state.label().to_owned(),
+        None if on => "Connecting…".to_owned(),
+        None => "Not checked".to_owned(),
+    };
+    let detail = state.as_ref().and_then(client::State::detail);
+    let action = match &state {
+        Some(client::State::UpgradeNeeded { .. }) => {
+            Some(("Upgrade", Action::MachineUpgrade(machine.clone())))
+        }
+        Some(state)
+            if failing(state)
+                && !matches!(
+                    state,
+                    client::State::Waiting | client::State::Unsupported(_)
+                ) =>
+        {
+            Some(("Retry", Action::MachineRetry(machine.clone())))
+        }
+        _ => None,
+    };
+    let toggle_owner = owner.clone();
+    let toggle = machine.clone();
+    let failed = state
+        .as_ref()
+        .is_some_and(|s| failing(s) && !matches!(s, client::State::Waiting));
+    col()
+        .id(("machine-row", ix))
+        .test_support()
+        .role(Role::ListItem)
+        .aria_label(format!("{name}, {status}"))
+        .px_2()
+        .py_1p5()
+        .gap_1()
+        .rounded(theme.radius)
+        .hover(|style| style.bg(theme.accent))
+        .child(
+            row()
+                .gap_2()
+                .child(on_confirm(
+                    Checkbox::new(("machine-check", ix))
+                        .checked(on)
+                        .label(name.clone())
+                        .accessibility_label(format!("Show {name}"))
+                        .on_click(move |_, window, cx| {
+                            let _ = toggle_owner.update(cx, |app, cx| {
+                                app.act(Action::Machine(toggle.clone()), window, cx);
+                            });
+                        }),
+                    owner,
+                    Action::Machine(machine),
+                ))
+                .child(div().flex_1())
                 .child(
-                    row()
-                        .gap_2()
-                        .child(on_confirm(
-                            Checkbox::new(("machine-check", ix))
-                                .checked(on)
-                                .label(name.clone())
-                                .accessibility_label(format!("Show {name}"))
-                                .on_click(move |_, window, cx| {
-                                    let _ = toggle_owner.update(cx, |app, cx| {
-                                        app.act(Action::Machine(toggle.clone()), window, cx);
-                                    });
-                                }),
-                            owner,
-                            Action::Machine(machine.clone()),
-                        ))
-                        .child(div().flex_1())
-                        .child(
-                            div()
-                                .text_size(dp(theme::T_CAPTION))
-                                .text_color(if failed {
-                                    theme.danger
-                                } else {
-                                    theme.muted_foreground
-                                })
-                                .child(status),
-                        )
-                        .children(action.map(|(label, action)| {
-                            on_confirm(
-                                Button::new(("machine-action", ix))
-                                    .xsmall()
-                                    .label(label)
-                                    .on_click(owner_action(owner, action.clone())),
-                                owner,
-                                action,
-                            )
-                        })),
-                )
-                .children(detail.filter(|_| on).map(|detail| {
                     div()
-                        .id(("machine-detail", ix))
-                        .test_support()
-                        .role(Role::Status)
-                        .aria_label(detail.clone())
-                        .pl(rems(1.75))
                         .text_size(dp(theme::T_CAPTION))
-                        .text_color(theme.muted_foreground)
-                        .child(detail)
+                        .text_color(if failed {
+                            theme.danger
+                        } else {
+                            theme.muted_foreground
+                        })
+                        .child(status),
+                )
+                .children(action.map(|(label, action)| {
+                    on_confirm(
+                        Button::new(("machine-action", ix))
+                            .xsmall()
+                            .label(label)
+                            .on_click(owner_action(owner, action.clone())),
+                        owner,
+                        action,
+                    )
                 })),
-        );
-    }
-    list.child(
-        div()
-            .border_t_1()
-            .border_color(theme.border)
-            .pt_1()
-            .child(on_confirm(
-                Button::new("manage-machines")
-                    .ghost()
-                    .small()
-                    .w_full()
-                    .icon(Icon::default().path("settings.svg"))
-                    .label("Manage machines")
-                    .on_click(owner_action(owner, Action::ManageMachines)),
-                owner,
-                Action::ManageMachines,
-            )),
-    )
-    .into_any_element()
+        )
+        .children(detail.filter(|_| on).map(|detail| {
+            div()
+                .id(("machine-detail", ix))
+                .test_support()
+                .role(Role::Status)
+                .aria_label(detail.clone())
+                .pl(rems(1.75))
+                .text_size(dp(theme::T_CAPTION))
+                .text_color(theme.muted_foreground)
+                .child(detail)
+        }))
 }
 
 fn on_confirm(control: impl IntoElement, owner: &WeakEntity<Adeline>, action: Action) -> Div {

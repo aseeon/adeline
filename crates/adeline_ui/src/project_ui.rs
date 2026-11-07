@@ -572,7 +572,7 @@ impl Adeline {
             );
         };
         let folder = listing.path.to_string_lossy().into_owned();
-        let mut rows = col()
+        let rows = col()
             .id("browser-entries")
             .role(Role::List)
             .aria_label("Folder contents")
@@ -581,52 +581,23 @@ impl Adeline {
             .border_1()
             .border_color(theme.border)
             .rounded(theme.radius)
-            .p_1();
-        for (ix, entry) in listing.entries.iter().enumerate() {
-            let pickable = entry.directory || browser.picks_files();
-            if !pickable && !matches!(browser.purpose, BrowserPurpose::Attach { .. }) {
-                continue;
-            }
-            let action = if entry.directory {
-                Some(Action::BrowseTo(join_remote(&folder, &entry.name).into()))
-            } else if browser.picks_files() {
-                Some(Action::BrowsePick(Some(entry.name.clone())))
-            } else {
-                None
-            };
-            let label = if entry.directory {
-                format!("{}/", entry.name)
-            } else {
-                entry.name.clone()
-            };
-            let row = Button::new(("browser-entry", ix))
-                .ghost()
-                .small()
-                .w_full()
-                .icon(Icon::default().path(if entry.directory {
-                    "folder.svg"
-                } else {
-                    "file.svg"
-                }))
-                .accessibility_label(label.clone())
-                .child(div().w_full().truncate().text_left().child(label));
-            let row = match action {
-                Some(action) => row.on_click(cx.listener(move |app, _, window, cx| {
-                    app.act(action.clone(), window, cx);
-                })),
-                None => row.disabled(true),
-            };
-            rows = rows.child(row);
-        }
-        if listing.entries.is_empty() {
-            rows = rows.child(
-                div()
-                    .p_2()
-                    .text_sm()
-                    .text_color(theme.muted_foreground)
-                    .child("This folder is empty."),
-            );
-        }
+            .p_1()
+            .children(
+                listing
+                    .entries
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(ix, entry)| browser_entry(browser, &folder, ix, entry, cx)),
+            )
+            .when(listing.entries.is_empty(), |rows| {
+                rows.child(
+                    div()
+                        .p_2()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child("This folder is empty."),
+                )
+            });
         let choose_folder = !browser.picks_files();
         content
             .child(
@@ -747,10 +718,60 @@ impl Adeline {
             )
     }
 
+    fn project_form(&self, content: Div, error: Option<Div>, cx: &Context<Self>) -> Div {
+        use gpui_kit::component::form::{Field, Form};
+        let footer = views::dialog_footer;
+        let creating = self.modal == Some("add-project");
+        let unfinished = self
+            .workspace()
+            .threads
+            .iter()
+            .any(|thread| !thread.status.closed());
+        content
+            .child(views::dialog_title(if creating { "New project" } else { "Project settings" }))
+            .when(creating && machines::checked().len() > 1, |column| column.child(
+                col().gap_2().child("Machine").child(self.machine_choice(
+                    "project-machine",
+                    Some(&self.project_machine),
+                    Action::ProjectMachine,
+                    cx,
+                ))))
+            .when(!self.demo_mode, |column| column.child(self.folder_zone(cx)))
+            .when(!creating && unfinished && !self.demo_mode, |column| column.child(muted(
+                "Complete or archive active conversations before changing the folder. Existing conversations keep their saved folder.", cx)))
+            .child(Form::new().child(Field::new().label("Name").child(Input::new(&self.name_input).aria_label("Project name"))))
+            .when(!creating && self.demo_mode, |column| column.child(col().gap_2().child("Project color")
+                .child(row().gap_2().flex_wrap().children(theme::project_colors().into_iter().enumerate().map(|(ix, color)| {
+                    self.button(("project-color", ix), format!("Color {}", ix + 1), Action::Tint(ix), cx)
+                        .selected(self.selected_tint == ix)
+                        .child(div().size_2().rounded_full().bg(rgb(color)))
+                })))))
+            .children(error)
+            .child(footer()
+                .when(!creating && !self.demo_mode, |row| row.child(self.button("delete-project", "Delete project…", Action::DeleteProject, cx).danger()))
+                .child(div().flex_1())
+                .child(self.button("cancel-project", "Cancel", Action::Close, cx))
+                .child(self.button("save-project", if creating { "Create" } else { "Save" }, if creating { Action::SaveProject } else { Action::SaveSettings }, cx).primary()))
+    }
+
+    fn delete_project_body(&self, content: Div, error: Option<Div>, cx: &Context<Self>) -> Div {
+        let footer = views::dialog_footer;
+        let stopping = self.modal == Some("delete-project-shutdown");
+        let deleting = self.project_index(self.delete_project.as_deref());
+        let stopped = deleting.is_some_and(|ix| self.project_agents_stopped(ix));
+        let name = deleting.map_or("project", |ix| self.projects[ix].config.name.as_str());
+        content.child(views::dialog_title(if stopping && !stopped { format!("Stopping agents for {name}") } else { format!("Delete \"{name}\"?") }))
+            .child(muted(if stopping && !stopped { "Waiting for agents to stop. Saved conversations remain until they stop. Force stop is available if shutdown stalls." } else { "This deletes the project's saved conversations. The working directory and its files will be kept." }, cx))
+            .children(error)
+            .child(footer()
+                .child(self.button("cancel-delete", "Cancel deletion", Action::Close, cx))
+                .when(stopping && self.project_error.is_some(), |row| row.child(self.button("retry-delete", "Try again", Action::ConfirmDeleteProject, cx)))
+                .when(stopping && !stopped, |row| row.child(self.button("force-delete", "Force stop", Action::ForceDeleteProject, cx).danger()))
+                .when(!stopping, |row| row.child(self.button("confirm-delete", "Delete", Action::ConfirmDeleteProject, cx).danger())))
+    }
+
     pub(super) fn project_modal(&self, cx: &Context<Self>) -> AnyElement {
         use gpui_kit::component::form::{Field, Form};
-        let muted = cx.theme().muted_foreground;
-        let note = move |text: &'static str| div().text_color(muted).child(text);
         let error = self
             .project_error
             .clone()
@@ -783,37 +804,7 @@ impl Adeline {
                     )));
             }
             Some("add-project" | "settings") => {
-                let creating = self.modal == Some("add-project");
-                let unfinished = self
-                    .workspace()
-                    .threads
-                    .iter()
-                    .any(|thread| !thread.status.closed());
-                content = content
-                    .child(views::dialog_title(if creating { "New project" } else { "Project settings" }))
-                    .when(creating && machines::checked().len() > 1, |column| column.child(
-                        col().gap_2().child("Machine").child(self.machine_choice(
-                            "project-machine",
-                            Some(&self.project_machine),
-                            Action::ProjectMachine,
-                            cx,
-                        ))))
-                    .when(!self.demo_mode, |column| column.child(self.folder_zone(cx)))
-                    .when(!creating && unfinished && !self.demo_mode, |column| column.child(note(
-                        "Complete or archive active conversations before changing the folder. Existing conversations keep their saved folder.")))
-                    .child(Form::new().child(Field::new().label("Name").child(Input::new(&self.name_input).aria_label("Project name"))))
-                    .when(!creating && self.demo_mode, |column| column.child(col().gap_2().child("Project color")
-                        .child(row().gap_2().flex_wrap().children(theme::project_colors().into_iter().enumerate().map(|(ix, color)| {
-                            self.button(("project-color", ix), format!("Color {}", ix + 1), Action::Tint(ix), cx)
-                                .selected(self.selected_tint == ix)
-                                .child(div().size_2().rounded_full().bg(rgb(color)))
-                        })))))
-                    .children(error)
-                    .child(footer()
-                        .when(!creating && !self.demo_mode, |row| row.child(self.button("delete-project", "Delete project…", Action::DeleteProject, cx).danger()))
-                        .child(div().flex_1())
-                        .child(self.button("cancel-project", "Cancel", Action::Close, cx))
-                        .child(self.button("save-project", if creating { "Create" } else { "Save" }, if creating { Action::SaveProject } else { Action::SaveSettings }, cx).primary()));
+                content = self.project_form(content, error, cx);
             }
             Some("rename-project") => {
                 content = content
@@ -836,18 +827,7 @@ impl Adeline {
                     );
             }
             Some("delete-project" | "delete-project-shutdown") => {
-                let stopping = self.modal == Some("delete-project-shutdown");
-                let deleting = self.project_index(self.delete_project.as_deref());
-                let stopped = deleting.is_some_and(|ix| self.project_agents_stopped(ix));
-                let name = deleting.map_or("project", |ix| self.projects[ix].config.name.as_str());
-                content = content.child(views::dialog_title(if stopping && !stopped { format!("Stopping agents for {name}") } else { format!("Delete \"{name}\"?") }))
-                    .child(note(if stopping && !stopped { "Waiting for agents to stop. Saved conversations remain until they stop. Force stop is available if shutdown stalls." } else { "This deletes the project's saved conversations. The working directory and its files will be kept." }))
-                    .children(error)
-                    .child(footer()
-                        .child(self.button("cancel-delete", "Cancel deletion", Action::Close, cx))
-                        .when(stopping && self.project_error.is_some(), |row| row.child(self.button("retry-delete", "Try again", Action::ConfirmDeleteProject, cx)))
-                        .when(stopping && !stopped, |row| row.child(self.button("force-delete", "Force stop", Action::ForceDeleteProject, cx).danger()))
-                        .when(!stopping, |row| row.child(self.button("confirm-delete", "Delete", Action::ConfirmDeleteProject, cx).danger())));
+                content = self.delete_project_body(content, error, cx);
             }
             _ => {}
         }
@@ -858,4 +838,46 @@ impl Adeline {
             None => content.into_any_element(),
         }
     }
+}
+
+fn browser_entry(
+    browser: &Browser,
+    folder: &str,
+    ix: usize,
+    entry: &protocol::Entry,
+    cx: &Context<Adeline>,
+) -> Option<Button> {
+    let pickable = entry.directory || browser.picks_files();
+    if !pickable && !matches!(browser.purpose, BrowserPurpose::Attach { .. }) {
+        return None;
+    }
+    let action = if entry.directory {
+        Some(Action::BrowseTo(join_remote(folder, &entry.name).into()))
+    } else if browser.picks_files() {
+        Some(Action::BrowsePick(Some(entry.name.clone())))
+    } else {
+        None
+    };
+    let label = if entry.directory {
+        format!("{}/", entry.name)
+    } else {
+        entry.name.clone()
+    };
+    let row = Button::new(("browser-entry", ix))
+        .ghost()
+        .small()
+        .w_full()
+        .icon(Icon::default().path(if entry.directory {
+            "folder.svg"
+        } else {
+            "file.svg"
+        }))
+        .accessibility_label(label.clone())
+        .child(div().w_full().truncate().text_left().child(label));
+    Some(match action {
+        Some(action) => row.on_click(cx.listener(move |app, _, window, cx| {
+            app.act(action.clone(), window, cx);
+        })),
+        None => row.disabled(true),
+    })
 }

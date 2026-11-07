@@ -6,62 +6,72 @@ use adeline_core::conversation::{MessageRole, ThreadStatus};
 use std::fmt::Write as _;
 
 impl Adeline {
+    fn switch_project(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let docs = self.section == Section::Docs;
+        let same = self.project == ix && self.open_projects[ix];
+        let switched = self.project != ix;
+        if !same {
+            self.docs_leave(window, cx);
+        }
+        self.open_projects[ix] = true;
+        if self.project != ix {
+            self.selected = None;
+            self.agent_filter = None;
+            clear_input(&self.query, window, cx);
+            if self.projects[ix].machine != self.current_machine() {
+                self.project = ix;
+                self.agents_changed(None, None, false, cx);
+            }
+        }
+        self.project = ix;
+        if !(docs && same) {
+            self.section = Section::Chats;
+        }
+        window.set_window_title(&format!("{} · Adeline", self.workspace().config.name));
+        self.record_project_opened(ix, window, cx);
+        if docs && !same {
+            self.docs_enter(None, window, cx);
+        }
+        if switched {
+            self.open_last_active_chat(window, cx);
+        }
+    }
+
+    fn pick_attachment(&mut self, directory: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let selection = cx.prompt_for_paths(PathPromptOptions {
+            files: !directory,
+            directories: directory,
+            multiple: false,
+            prompt: Some(
+                if directory {
+                    "Add a directory"
+                } else {
+                    "Add a file"
+                }
+                .into(),
+            ),
+        });
+        cx.spawn_in(window, async move |this, cx| {
+            let result = selection.await;
+            let _ = this.update_in(cx, |app, window, cx| match result {
+                Ok(Ok(Some(paths))) => {
+                    for path in paths {
+                        if directory {
+                            app.attach_path(&path.display().to_string(), window, cx);
+                        } else {
+                            app.attach_local(path, cx);
+                        }
+                    }
+                }
+                Ok(Ok(None)) => {}
+                _ => window.push_notification(toast("Could not open the file picker."), cx),
+            });
+        })
+        .detach();
+    }
+
     pub(super) fn act(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
-        if !self.has_open_project()
-            && !matches!(
-                action,
-                Action::Project(_)
-                    | Action::AddProject
-                    | Action::SaveProject
-                    | Action::AddAgent
-                    | Action::Agents
-                    | Action::Agent(_)
-                    | Action::AgentMenu
-                    | Action::Projects
-                    | Action::Machines
-                    | Action::Machine(_)
-                    | Action::MachineRetry(_)
-                    | Action::ManageMachines
-                    | Action::MachineUpgrade(_)
-                    | Action::ConfirmUpgrade
-                    | Action::AnswerPrompt(_)
-                    | Action::FolderMachine(_)
-                    | Action::ProjectMachine(_)
-                    | Action::BrowseTo(_)
-                    | Action::BrowsePick(_)
-                    | Action::AppMenu
-                    | Action::AppSettings
-                    | Action::AgentSettings
-                    | Action::EditAgent
-                    | Action::About
-                    | Action::QuitApp
-                    | Action::Close
-                    | Action::StopAll
-                    | Action::QuitStopAll
-                    | Action::FinishInBackground
-                    | Action::StartEngine
-                    | Action::EngineRetry
-                    | Action::EngineWait
-                    | Action::EngineStopOld
-                    | Action::HideToolCalls
-                    | Action::SubmitOnEnter
-                    | Action::ToggleMode(_)
-                    | Action::RemoveClosedProject(_)
-                    | Action::UndoProjectRemoval(_)
-                    | Action::RenameProject(_)
-                    | Action::SaveRename
-                    | Action::ToggleProjectSort
-                    | Action::OpenFolder
-                    | Action::Docs(
-                        docs::Act::SaveAll
-                            | docs::Act::Discard
-                            | docs::Act::Gitignore
-                            | docs::Act::LeftPanel
-                            | docs::Act::ChatPanel
-                            | docs::Act::OpenIn
-                    )
-            )
-        {
+        if !self.has_open_project() && !action.works_without_project() {
             return;
         }
         if let Some(menu) = action.menu_target() {
@@ -178,36 +188,7 @@ impl Adeline {
                 self.modal = None;
                 window.close_dialog(cx);
             }
-            Action::Project(ix) => {
-                let docs = self.section == Section::Docs;
-                let same = self.project == ix && self.open_projects[ix];
-                let switched = self.project != ix;
-                if !same {
-                    self.docs_leave(window, cx);
-                }
-                self.open_projects[ix] = true;
-                if self.project != ix {
-                    self.selected = None;
-                    self.agent_filter = None;
-                    clear_input(&self.query, window, cx);
-                    if self.projects[ix].machine != self.current_machine() {
-                        self.project = ix;
-                        self.agents_changed(None, None, false, cx);
-                    }
-                }
-                self.project = ix;
-                if !(docs && same) {
-                    self.section = Section::Chats;
-                }
-                window.set_window_title(&format!("{} · Adeline", self.workspace().config.name));
-                self.record_project_opened(ix, window, cx);
-                if docs && !same {
-                    self.docs_enter(None, window, cx);
-                }
-                if switched {
-                    self.open_last_active_chat(window, cx);
-                }
-            }
+            Action::Project(ix) => self.switch_project(ix, window, cx),
             Action::RemoveClosedProject(id) => self.remove_closed_project(&id, window, cx),
             Action::UndoProjectRemoval(id) => self.undo_project_removal(&id, window, cx),
             Action::ToggleProjectSort => {
@@ -536,37 +517,7 @@ impl Adeline {
                 self.open_browser(project_ui::BrowserPurpose::Attach { directory }, cx);
             }
             Action::AddFile | Action::AttachFile | Action::AddDirectory => {
-                let directory = matches!(action, Action::AddDirectory);
-                let selection = cx.prompt_for_paths(PathPromptOptions {
-                    files: !directory,
-                    directories: directory,
-                    multiple: false,
-                    prompt: Some(
-                        if directory {
-                            "Add a directory"
-                        } else {
-                            "Add a file"
-                        }
-                        .into(),
-                    ),
-                });
-                cx.spawn_in(window, async move |this, cx| {
-                    let result = selection.await;
-                    let _ = this.update_in(cx, |app, window, cx| match result {
-                        Ok(Ok(Some(paths))) => {
-                            for path in paths {
-                                if directory {
-                                    app.attach_path(&path.display().to_string(), window, cx);
-                                } else {
-                                    app.attach_local(path, cx);
-                                }
-                            }
-                        }
-                        Ok(Ok(None)) => {}
-                        _ => window.push_notification(toast("Could not open the file picker."), cx),
-                    });
-                })
-                .detach();
+                self.pick_attachment(matches!(action, Action::AddDirectory), window, cx);
             }
             Action::Tint(ix) => self.selected_tint = ix,
             Action::Docs(act) => self.docs_act(act, window, cx),
