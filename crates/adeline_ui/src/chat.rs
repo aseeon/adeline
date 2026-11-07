@@ -96,8 +96,6 @@ impl Render for Header {
 impl Adeline {
     pub(super) fn sync_regions(&self, action: &Action, cx: &mut Context<Self>) {
         use super::Action::*;
-        // Data mutations notify their dependents explicitly. Opening overlays,
-        // changing focus and changing unrelated sections do not invalidate them.
         match action {
             Project(_) => self.sync_sidebar(cx),
             Section(config::Section::Chats)
@@ -195,11 +193,9 @@ pub(super) fn option_menu_name(category: conversation::Category) -> &'static str
     }
 }
 
-// The right island's header in other modes, as on the side pane.
 pub(super) const PANE_HEADER: f32 = 46.;
 pub(super) const HEADER_FADE: f32 = 1.75;
 
-// In rems, for the composer's fit: the 760 px column.
 pub(super) const CHAT_COLUMN: f32 = 47.5;
 
 pub(super) const ANIMATION_FPS: f32 = 30.;
@@ -229,7 +225,6 @@ pub(super) fn thinking_label(progress: Option<String>) -> AnyElement {
     match config::with(|s| s.modes.chats.thinking_animation) {
         config::ThinkingAnimation::Words if progress.is_none() => {
             let line = size * 1.5;
-            // One word shows at a time; each holds, then rolls up to the next.
             base.h(line)
                 .overflow_hidden()
                 .child(
@@ -268,8 +263,6 @@ pub(super) fn thinking_label(progress: Option<String>) -> AnyElement {
                             .with_max_fps(ANIMATION_FPS),
                         move |dots, delta| {
                             dots.children((0..3).map(|i| {
-                                // Each dot rises and brightens in its own
-                                // part of the cycle, a beat after the last.
                                 let phase = (delta - i as f32 * 0.125).rem_euclid(1.);
                                 let lift = if phase < 0.6 {
                                     (phase / 0.6 * std::f32::consts::PI).sin()
@@ -304,8 +297,6 @@ pub(super) fn thinking_label(progress: Option<String>) -> AnyElement {
                             let frame = (1..frames)
                                 .filter(|&i| delta * frames as f32 >= i as f32)
                                 .count();
-                            // Bits 0-2 are the left column top to bottom, 3-5
-                            // the right. The bundled fonts have no braille glyphs.
                             let mask = BRAILLE_FRAMES[frame];
                             cell.children((0..2).map(|column| {
                                 col().gap(dot * 0.6).children((0..3).map(move |dot_row| {
@@ -319,8 +310,6 @@ pub(super) fn thinking_label(progress: Option<String>) -> AnyElement {
                 .child(base.child(progress.unwrap_or_else(|| "Thinking…".into())))
                 .into_any_element()
         }
-        // Accent paints into the text from the left, then starts over. A
-        // label in Words mode gets this too, so it still shows work going on.
         config::ThinkingAnimation::Fill | config::ThinkingAnimation::Words => {
             let label: SharedString = progress.unwrap_or_else(|| "Thinking…".into()).into();
             base.relative()
@@ -348,13 +337,11 @@ pub(super) fn thinking_label(progress: Option<String>) -> AnyElement {
     }
 }
 
-// The chat's column: 28 side padding in Chats, 14 in the right island of other modes.
 pub(super) fn chat_column(section: Section) -> Div {
     let pad = if section == Section::Chats { 28. } else { 14. };
     div().w_full().max_w(dp(760.)).mx_auto().px(dp(pad))
 }
 
-/// What the chat sits on: the window in Chats, the right island elsewhere.
 pub(super) fn chat_surface(section: Section, cx: &App) -> Hsla {
     let isl = theme::islands(cx);
     if section == Section::Chats {

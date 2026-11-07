@@ -9,7 +9,6 @@ impl Worker {
     }
 
     fn selection_steps(&self) -> Vec<(Category, String, String)> {
-        // Model first: some agents (Codex) offer effort only once a model is set.
         let selections = &self.config.selections;
         let mut steps = vec![
             (Category::Model, String::new(), selections.model.clone()),
@@ -29,7 +28,6 @@ impl Worker {
         let steps = self.selection_steps();
         while let Some((category, id, mut value)) = steps.get(self.config_step).cloned() {
             self.config_step += 1;
-            // A probe sets the current model, so efforts that depend on it show.
             if self.probing && category == Category::Model && value.is_empty() {
                 value = adeline_core::conversation::option(&self.options, Category::Model)
                     .map(SessionOption::current)
@@ -87,11 +85,10 @@ impl Worker {
                 value,
             ))
         };
-        if option.id == MODE_OPTION {
-            // `session/set_mode` answers without the new state.
-            if let Some(modes) = &mut self.modes {
-                modes.current_mode_id = wire::SessionModeId::new(value.to_owned());
-            }
+        if option.id == MODE_OPTION
+            && let Some(modes) = &mut self.modes
+        {
+            modes.current_mode_id = wire::SessionModeId::new(value.to_owned());
         }
         self.request(outgoing, request);
     }
@@ -131,7 +128,6 @@ impl Worker {
 
     pub(super) fn switch(&mut self, category: Category, id: &str, value: &str) {
         self.config.selections.set(category, id, value);
-        // Without a ready, idle session the next setup applies the new value.
         if !self.configured || self.active.is_some() || self.link.is_none() {
             return;
         }
@@ -167,7 +163,6 @@ fn translate_options(
                 _ => Category::Other,
             },
         };
-        // Each of the composer's own menus shows one option.
         if category != Category::Other && options.iter().any(|o| o.category == category) {
             category = Category::Other;
         }

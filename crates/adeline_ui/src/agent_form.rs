@@ -276,7 +276,6 @@ impl AgentForm {
             ),
             cx.subscribe_in(&model, window, |this, _, _: &SelectEvent<_>, window, cx| {
                 this.status = None;
-                // The effort list depends on the model.
                 this.start_probe(window, cx);
             }),
             cx.subscribe(&effort, |this, _, _: &SelectEvent<_>, cx| {
@@ -304,7 +303,6 @@ impl AgentForm {
                         picker.set_selected_value(&selected.into(), window, cx);
                     }
                 });
-                // Detection may have just found the selected harness.
                 if matches!(this.probing, Probing::Idle) {
                     this.start_probe(window, cx);
                 }
@@ -628,7 +626,6 @@ impl AgentForm {
     fn instructions_field(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let text = self.instructions.read(cx).value().to_string();
         let focus = self.instructions.read(cx).focus_handle(cx);
-        // Markdown until focused; clicking it switches to the raw text.
         if focus.is_focused(window) || text.trim().is_empty() {
             return Textarea::new(&self.instructions)
                 .aria_label("System instructions")

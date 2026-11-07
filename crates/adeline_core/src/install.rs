@@ -12,7 +12,6 @@ use tokio::io::AsyncBufReadExt as _;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Target {
-    // Also its update.
     Agent { harness: String },
     Node,
 }
@@ -97,7 +96,6 @@ pub async fn run(
             .with_context(|| format!("{} was not found on this machine.", step.program))?;
         let mut command = std::process::Command::new(&program);
         command.args(&step.arguments);
-        // npm's shims need `node` from the same folder on PATH.
         if let Some(folder) = program.parent() {
             command.env("PATH", with_path(folder));
         }
@@ -158,8 +156,6 @@ pub fn open_terminal(
     let mut terminal = if cfg!(windows) {
         let mut terminal = std::process::Command::new("cmd");
         terminal.args(["/C", "start", "Adeline login", "cmd", "/S", "/K"]);
-        // Raw, as Rust would escape quotes as \", which cmd doesn't read. `/S`
-        // strips exactly the outer quotes, so quoted arguments inside survive.
         #[cfg(windows)]
         std::os::windows::process::CommandExt::raw_arg(&mut terminal, format!("\"{line}\""));
         terminal
@@ -202,7 +198,6 @@ fn quote(text: &str) -> Result<String> {
     {
         Ok(text.to_owned())
     } else if cfg!(windows) {
-        // cmd can't escape a quote inside quotes, and the rest would run as commands.
         if text.contains(['"', '&', '|', '<', '>', '^', '%']) {
             bail!("Cannot pass {text} to cmd. Run the login yourself.");
         }

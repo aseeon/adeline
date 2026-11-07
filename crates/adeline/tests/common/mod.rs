@@ -16,10 +16,7 @@ use std::{
 
 pub const PROJECT: &str = "demo";
 
-/// Creates the home `adeline-<name>-<pid>` in the temporary folder, with the
-/// project `demo`.
 pub fn home(name: &str) -> PathBuf {
-    // macOS limits a socket path to 104 bytes, and its temporary folder is long.
     #[cfg(unix)]
     let temp = PathBuf::from("/tmp");
     #[cfg(not(unix))]
@@ -30,7 +27,6 @@ pub fn home(name: &str) -> PathBuf {
     root
 }
 
-/// Gives `root` the fake agent and a project named `project` in `root/work`.
 pub fn populate(root: &Path, project: &str) {
     let config = root.join(".config").join("adeline");
     let work = root.join("work");
@@ -41,7 +37,6 @@ pub fn populate(root: &Path, project: &str) {
         .join("../../scripts/engine-check/fake_agent.py")
         .canonicalize()
         .unwrap();
-    // JSON strings are valid YAML, quoting and all.
     fs::write(
         agent.join("agent.yml"),
         format!(
@@ -83,7 +78,6 @@ pub fn python() -> String {
     panic!("The engine tests need Python 3 on PATH.");
 }
 
-/// Runs the binary with `home` as its home.
 pub fn adeline(home: &Path, args: &[&str]) -> Output {
     Command::new(env!("CARGO_BIN_EXE_adeline"))
         .args(args)
@@ -93,7 +87,6 @@ pub fn adeline(home: &Path, args: &[&str]) -> Output {
         .unwrap()
 }
 
-/// A line of `adeline engine status`, such as "PID", or None while no engine runs.
 pub fn engine_status(home: &Path, field: &str) -> Option<String> {
     let output = adeline(home, &["engine", "status"]);
     if !output.status.success() {
@@ -108,7 +101,6 @@ pub fn engine_pid(home: &Path) -> Option<u32> {
     engine_status(home, "PID").and_then(|pid| pid.parse().ok())
 }
 
-/// The saved events of a conversation in `project`.
 pub fn transcript(home: &Path, project: &str, conversation: &str) -> String {
     fs::read_to_string(
         home.join(".config/adeline/projects")
@@ -134,7 +126,6 @@ pub fn conversations(home: &Path, project: &str) -> Vec<String> {
     .unwrap_or_default()
 }
 
-/// The PE subsystem of a Windows program: 2 for a GUI program, 3 for a console one.
 pub fn windows_subsystem(exe: &Path) -> u16 {
     let data = fs::read(exe).unwrap();
     let pe = u32::from_le_bytes(data[0x3C..0x40].try_into().unwrap()) as usize;

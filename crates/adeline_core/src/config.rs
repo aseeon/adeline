@@ -36,7 +36,6 @@ pub struct General {
     pub keymap: Keymap,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-// Not `deny_unknown_fields`: old files carry flags that no longer exist.
 #[serde(default)]
 pub struct Features {
     pub docs: bool,
@@ -68,7 +67,6 @@ impl Features {
             Section::Groupchats => self.groupchats,
             Section::Issues => self.issues,
             Section::Whiteboard => self.whiteboard,
-            // Hidden until they are built.
             Section::Board | Section::Terminal | Section::Browser | Section::Usage => false,
         }
     }
@@ -90,7 +88,6 @@ impl Features {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-// Not `deny_unknown_fields`: 0.3.6 files carry `glass`.
 #[serde(default)]
 pub struct Appearance {
     pub theme: String,
@@ -174,7 +171,6 @@ pub struct Modes {
     whiteboard: Option<serde_yaml_ng::Value>,
 }
 
-// Option's ordinary deserializer treats an explicit YAML null as absent.
 fn legacy_value<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Option<serde_yaml_ng::Value>, D::Error> {
@@ -193,12 +189,10 @@ pub struct Chats {
     pub show_agent_activity: bool,
     pub hide_tool_calls: bool,
     pub submit_on_enter: bool,
-    // Moved to the engine's settings. Kept so older files round-trip.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     retry_limit: Option<usize>,
     pub thinking_animation: ThinkingAnimation,
     pub show_thinking: bool,
-    // 0 turns it off.
     pub silence_notice_minutes: u32,
 }
 impl Default for Chats {
@@ -218,7 +212,6 @@ impl Default for Chats {
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
-// Not `deny_unknown_fields`: files from before 0.2.0 carry draft Docs keys.
 #[serde(default)]
 pub struct Docs {
     pub respect_gitignore: bool,
@@ -346,7 +339,6 @@ pub fn update(change: impl FnOnce(&mut Settings)) -> anyhow::Result<()> {
     update_at(&directory()?.join("settings.yml"), change)
 }
 fn update_at(path: &Path, change: impl FnOnce(&mut Settings)) -> anyhow::Result<()> {
-    // Re-read to preserve hand edits and refuse to overwrite malformed files.
     let mut settings = read(path)?;
     change(&mut settings);
     write_yaml(path, &settings)?;

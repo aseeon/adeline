@@ -52,7 +52,6 @@ impl AgentForm {
                         Some(Install::Running(lines)) => lines,
                         _ => Vec::new(),
                     };
-                    // Success: the engine checks again, and the harness list follows.
                     form.install = result
                         .err()
                         .map(|error| Install::Failed(failed_target.clone(), lines, error));

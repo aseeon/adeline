@@ -41,7 +41,6 @@ pub struct SearchRecord {
     pub processing: bool,
     pub unread: bool,
     pub agent: Arc<str>,
-    // Seconds since the epoch, 0 when unknown.
     pub activity: i64,
 }
 
@@ -127,7 +126,6 @@ pub fn search<'a>(
         if !agent_matches {
             continue;
         }
-        // A chat without a readable time was just created on this machine.
         let activity = if record.activity == 0 {
             now
         } else {
@@ -190,7 +188,6 @@ pub fn rail(
         .groups
         .into_iter()
         .flat_map(|(_, rows)| rows)
-        // The list pins the open chat above the rail.
         .filter(|&row| Some(row) != selected)
         .collect()
 }
@@ -311,7 +308,6 @@ mod tests {
                 (Group::Archived, vec!["put-away"]),
             ]
         );
-        // Each finished section can be hidden on its own; archived is by default.
         let shown = |criteria: &Criteria| -> Vec<Group> {
             search(&records, criteria, NOW)
                 .groups
@@ -368,7 +364,6 @@ mod tests {
             ids(rail(&catalog, false, false, None, NOW)),
             ["waiting", "today", "older"]
         );
-        // The open chat is pinned above the rail, so the rail leaves it out.
         assert_eq!(
             ids(rail(&catalog, false, false, Some(1), NOW)),
             ["waiting", "older"]
@@ -402,7 +397,6 @@ mod tests {
         let outcome = search(&records, &wanted, 0);
         assert_eq!(outcome.agents, [("claude".into(), 1), ("codex".into(), 2)]);
         assert_eq!(visible(&outcome), [0, 1, 3]);
-        // The agent menu ignores the agent itself.
         wanted.agent = Some("claude".into());
         let outcome = search(&records, &wanted, 0);
         assert_eq!(outcome.agents.len(), 2);

@@ -1,8 +1,6 @@
 //! The docs tree: the docs and the folders that hold them, folders first and
 //! each level sorted alphabetically, and its fuzzy search by path.
 
-// Rust guideline compliant 2026-10-09
-
 use nucleo_matcher::{
     Config, Matcher,
     pattern::{CaseMatching, Normalization, Pattern},
@@ -15,7 +13,6 @@ struct Folder {
     files: Vec<String>,
 }
 
-/// One visible line of the tree: a folder or a doc, by its project path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     pub path: String,
@@ -83,7 +80,6 @@ impl Tree {
         &self.paths
     }
 
-    /// The visible rows, with the folders in `expanded` open.
     pub fn rows(&self, expanded: &HashSet<String>) -> Vec<Row> {
         let mut rows = Vec::new();
         self.root
@@ -91,7 +87,6 @@ impl Tree {
         rows
     }
 
-    /// The docs whose path fuzzily matches `query`, with every folder that holds one open.
     pub fn search(&self, query: &str) -> Vec<Row> {
         let pattern = Pattern::parse(query, CaseMatching::Ignore, Normalization::Smart);
         let mut matcher = Matcher::new(Config::DEFAULT.match_paths());
@@ -105,7 +100,6 @@ impl Tree {
         rows
     }
 
-    /// Every folder that holds a doc, sorted.
     pub fn folders(&self) -> Vec<String> {
         let mut folders: Vec<String> = self
             .paths
@@ -202,7 +196,6 @@ mod tests {
         for query in ["n", "no", "not", "note", "note-9", "area4/note-99"] {
             assert!(!tree.search(query).is_empty());
         }
-        // Six keystrokes, well under a frame each on any machine that runs tests.
         assert!(started.elapsed() < std::time::Duration::from_secs(2));
     }
 }

@@ -1,3 +1,6 @@
+//! Tests of the ACP worker against a scripted agent: forks, options, retries,
+//! permissions and logins.
+
 use super::*;
 use adeline_core::conversation::Selections;
 use std::sync::Mutex;
@@ -20,7 +23,6 @@ fn config() -> ExecutionConfig {
 
 type Sent = Arc<Mutex<Vec<Outgoing>>>;
 
-/// A worker with a ready session whose requests land in `Sent`.
 fn worker() -> (Worker, async_channel::Receiver<Event>, Sent) {
     let (events, received) = async_channel::unbounded();
     let (sender, receiver) = mpsc::unbounded_channel();
@@ -141,7 +143,6 @@ fn effort_offered_only_after_the_model_is_set_is_still_applied() {
     let (mut worker, received, sent) = worker();
     worker.configured = false;
     worker.config.selections.model = "gpt-6-astra".into();
-    // Codex: the model is already current and effort is not offered yet.
     worker.raw_options = options(json!([{"id":"model","name":"Model","category":"model",
         "type":"select","currentValue":"gpt-6-astra","options":[{"value":"gpt-6-astra","name":"A"}]}]));
     worker.refresh_options();
@@ -315,7 +316,6 @@ fn temporary_failure_obeys_retry_limit_and_preserves_original_until_work() {
         assert!(
             matches!(events(&received)[..], [EventKind::Retrying { attempt, .. }] if attempt == expected)
         );
-        // Closing keeps the retry from spawning an agent process.
         worker.closing = true;
         worker.retry_now();
         worker.closing = false;
@@ -564,17 +564,12 @@ fn files_are_embedded_or_linked_and_images_need_support() {
         ..Attachment::default()
     };
     worker.content(&[Part::File(empty)]).unwrap();
-    // The linked copy goes when the worker does.
     let copies = worker.attachments.get().unwrap().path().to_owned();
     assert_eq!(std::fs::read_dir(&copies).unwrap().count(), 1);
     drop(worker);
     assert!(!copies.exists());
 }
 
-// Through the SDK: a scripted agent on the other end of line channels.
-
-/// A worker connected to a fake agent: lines the worker writes arrive on the
-/// returned receiver, and lines sent on the returned sender reach the worker.
 fn connected() -> (
     Worker,
     async_channel::Receiver<Event>,
@@ -600,7 +595,6 @@ fn connected() -> (
     (worker, received, from_worker, to_worker)
 }
 
-/// The next request the worker sent, as (id, method).
 async fn next_request(lines: &mut UnboundedReceiver<String>) -> (Value, Value) {
     loop {
         let line = tokio::time::timeout(Duration::from_secs(10), lines.recv())
@@ -810,7 +804,6 @@ async fn an_agent_that_exits_before_the_handshake_fails_the_turn() {
 async fn dropping_the_driver_stops_its_agent() {
     let mut config = config();
     config.harness = "Other".into();
-    // Reads until its input closes, like an agent.
     #[cfg(windows)]
     let (command, arguments) = ("cmd.exe", ["/C", "more > nul"]);
     #[cfg(not(windows))]

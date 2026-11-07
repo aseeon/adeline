@@ -58,7 +58,6 @@ pub struct ProbeError {
     pub message: String,
     #[serde(default)]
     pub auth: Vec<AuthMethod>,
-    // The agent speaks another ACP version; retrying won't help.
     #[serde(default)]
     pub version: bool,
 }
@@ -117,7 +116,6 @@ pub enum EngineMessage {
     reason = "messages are moved once, to or from the wire"
 )]
 pub enum Command {
-    // During a turn the message is queued, or with `now` sent at once.
     Send {
         project_id: String,
         conversation_id: Option<String>,
@@ -142,7 +140,6 @@ pub enum Command {
     ForceStop {
         id: String,
     },
-    // Kills the agent's process and continues the turn in a new one.
     Restart {
         id: String,
     },
@@ -242,7 +239,6 @@ pub enum Command {
         project_id: String,
         path: String,
     },
-    // `create` refuses to replace an existing file.
     WriteDoc {
         project_id: String,
         path: String,
@@ -280,7 +276,6 @@ pub struct EngineSettings {
     pub docs: DocsSettings,
 }
 
-// The UI's Docs settings that decide which files get cards.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DocsSettings {
@@ -301,14 +296,12 @@ impl Default for DocsSettings {
 pub struct DocFile {
     pub text: String,
     pub modified: u64,
-    // Why the file opens read-only, if it does.
     pub read_only: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DocChange {
     pub path: String,
-    // `None` when the doc is gone.
     pub modified: Option<u64>,
 }
 
@@ -530,7 +523,6 @@ fn locate<'a>(projects: &'a mut [Workspace], id: &str) -> Option<&'a mut Thread>
     reason = "every caller keeps its live states in a default HashMap"
 )]
 pub fn apply(projects: &mut [Workspace], live: &mut HashMap<String, Live>, delta: &Delta) -> bool {
-    // Returns whether the delta changed a conversation.
     match delta {
         Delta::Live { id, live: state } => {
             live.insert(id.clone(), state.clone());
@@ -666,7 +658,6 @@ mod tests {
                 at: 0,
             },
         ] {
-            // Deltas travel as JSON lines.
             let line = serde_json::to_string(&EngineMessage::Delta(delta)).unwrap();
             let EngineMessage::Delta(delta) = serde_json::from_str(&line).unwrap() else {
                 panic!("not a delta");

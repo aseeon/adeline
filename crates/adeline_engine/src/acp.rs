@@ -61,17 +61,11 @@ const MODE_OPTION: &str = "adeline/session-mode";
 pub const CONTINUE_TURN: &str = "Continue the interrupted turn from the saved session. Preserve completed work; do not repeat completed tool actions.";
 
 const STDERR_TAIL: usize = 12;
-// How often the worker checks its child process, deadlines and retries.
 const TICK: Duration = Duration::from_millis(100);
-// Exit reports arriving this soon after a lost connection belong to it.
 const LOST_WINDOW: Duration = Duration::from_millis(100);
-// How long an exiting agent gets to drain its last messages before it's killed.
 const SHUTDOWN_GRACE: Duration = Duration::from_secs(5);
-// Setup requests (initialize, session, options) that take longer count as a hung agent.
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
-// Enough of a reply's start to spot an error the agent wrote as text.
 const OBSERVED_TEXT: usize = 2048;
-// Retry delays grow one second per attempt up to this many seconds.
 const MAX_RETRY_DELAY_SECS: u32 = 5;
 
 #[derive(Debug)]
@@ -225,7 +219,6 @@ pub enum FailureKind {
     Configuration,
     Authentication,
     Denied,
-    // The agent speaks another ACP version.
     Version,
 }
 
@@ -256,7 +249,6 @@ impl Driver {
     }
 }
 
-// The worker keeps a sender of its own, so it can't see the driver go: tell it.
 impl Drop for Driver {
     fn drop(&mut self) {
         let _ = self.sender.send(Input::Command(Command::Shutdown));
@@ -327,7 +319,6 @@ enum Outgoing {
     SetConfig(wire::SetSessionConfigOptionRequest),
     SetMode(wire::SetSessionModeRequest),
     Prompt(wire::PromptRequest),
-    // The steering extension, which the schema has no type for.
     Steer(Value),
     Close(wire::CloseSessionRequest),
     Authenticate(wire::AuthenticateRequest),
@@ -354,7 +345,6 @@ enum Reply {
 enum Link {
     Sdk {
         connection: ConnectionTo<Agent>,
-        // Dropping or firing it ends the connection, which closes stdin.
         _close: oneshot::Sender<()>,
     },
     #[cfg(test)]
@@ -524,11 +514,9 @@ struct Worker {
     pending_context: Option<String>,
     forced: bool,
     replacing: bool,
-    // A fork's source session and history, until its first session is set up.
     fork: Option<(Option<String>, String)>,
     forking: bool,
     probing: bool,
-    // Copies of attachments the agent reads by path, deleted with the worker.
     attachments: std::cell::OnceCell<tempfile::TempDir>,
     #[expect(
         clippy::option_option,
@@ -662,7 +650,6 @@ impl Worker {
     }
 
     fn tick(&mut self) -> bool {
-        // Returns true once the worker is done.
         if let Some(child) = &mut self.child {
             match child.try_wait() {
                 Ok(Some(_)) if self.forced => {
@@ -714,7 +701,6 @@ impl Worker {
                     }
                 }
                 Ok(Some(_)) => {
-                    // Wait for the connection to drain the last messages.
                     self.shutdown_deadline
                         .get_or_insert_with(|| Instant::now() + SHUTDOWN_GRACE);
                 }
@@ -855,7 +841,6 @@ impl Worker {
         if self.child.is_none() && self.link.is_none() && !self.connecting {
             self.start();
         } else if self.link.is_none() {
-            // Initialize follows once the connection is up.
         } else if self.configured {
             if self.probing {
                 self.emit(EventKind::Probed);

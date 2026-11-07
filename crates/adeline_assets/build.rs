@@ -1,3 +1,5 @@
+//! Embeds the assets and bundled themes into the binary, and renders the
+//! titlebar portrait as one PNG per pixel size.
 #![expect(
     clippy::unnecessary_debug_formatting,
     reason = "`{:?}` writes each path as a quoted, escaped Rust string literal for `include_*!`"
@@ -12,7 +14,6 @@ fn main() {
     println!("cargo:rerun-if-changed={ASSETS}");
     let mut source =
         String::from("pub fn embedded(path: &str) -> Option<&'static [u8]> { match path {\n");
-    // One raster per physical pixel size covers Windows scaling from 100% to 500%.
     let svg = fs::read(format!("{ASSETS}/adeline.close.up.svg")).expect("Adeline portrait");
     let tree = resvg::usvg::Tree::from_data(&svg, &resvg::usvg::Options::default())
         .expect("valid Adeline SVG");

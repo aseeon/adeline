@@ -4,7 +4,6 @@ use super::*;
 
 impl Worker {
     pub(super) fn failed(&mut self, request: Request, error: &sdk::Error) {
-        // The connection ended: the process exit reports it, with its status.
         if sdk::is_incoming_transport_closed(error) {
             match request {
                 Request::Setup => self.setup = None,
@@ -16,7 +15,6 @@ impl Worker {
             }
             return;
         }
-        // A failed native fork falls back to a new session with the text copy.
         if request == Request::Setup && self.forking {
             self.setup = None;
             if let Some((session, _)) = &mut self.fork {
@@ -41,7 +39,6 @@ impl Worker {
                     message: format!("The agent did not change the setting: {text}"),
                     kind: FailureKind::Configuration,
                 });
-                // The agent keeps its own value; the menus show it again.
                 self.emit(EventKind::Options(self.options.clone()));
                 return;
             }
@@ -150,7 +147,6 @@ impl Worker {
         }
     }
 
-    // Replies to these will never come; a steered message goes back to the queue.
     pub(super) fn clear_pending(&mut self) {
         if self
             .pending
@@ -206,8 +202,6 @@ fn error_text(error: &sdk::Error) -> String {
     }
 }
 
-// A write to an agent that already exited fails with a broken pipe before its exit is seen.
-// The SDK keeps only the error's text, so the OS error code is read back from it.
 pub(super) fn broken_pipe(error: &sdk::Error) -> bool {
     error
         .data
@@ -237,7 +231,6 @@ fn contains_ascii(text: &str, needle: &str) -> bool {
         .any(|bytes| bytes.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
-// A match starts a word and ends one, or runs into a capital as in `AuthenticationError`.
 fn contains_word(text: &str, needle: &str) -> bool {
     let bytes = text.as_bytes();
     (0..bytes.len().saturating_sub(needle.len() - 1)).any(|start| {
@@ -255,7 +248,6 @@ pub(super) fn classify_error(message: &str, code: Option<i64>) -> FailureKind {
     let code = code
         .and_then(|code| i32::try_from(code).ok())
         .map(ErrorCode::from);
-    // Some agents pass on their provider's HTTP 401.
     if matches!(code, Some(ErrorCode::AuthRequired | ErrorCode::Other(401)))
         || [
             "authentication",

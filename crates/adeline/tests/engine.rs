@@ -26,7 +26,6 @@ use std::{
 
 const WAIT: Duration = Duration::from_secs(20);
 
-/// A temporary home with one project and the fake agent, and the engine running in it.
 struct Home {
     root: PathBuf,
     engine: Option<u32>,
@@ -40,7 +39,6 @@ impl Home {
         }
     }
 
-    /// A new client; the first one starts the engine.
     fn connect(&mut self) -> Client {
         self.connect_from(None)
     }
@@ -105,8 +103,6 @@ impl Home {
             .args(["-KILL", &pid.to_string()])
             .output();
         killed.unwrap();
-        // Windows ends a killed process after taskkill returns, and until then
-        // its pipe still accepts the next client.
         #[cfg(windows)]
         {
             let deadline = Instant::now() + WAIT;
@@ -114,11 +110,9 @@ impl Home {
                 std::thread::sleep(Duration::from_millis(50));
             }
         }
-        // The engine's pipe or socket closes with it.
         std::thread::sleep(Duration::from_millis(500));
     }
 
-    /// What the engine sent the agent with this method, from the saved traffic.
     fn sent(&self, conversation: &str, method: &str) -> Vec<Value> {
         let path = self
             .root
@@ -137,7 +131,6 @@ impl Home {
             .collect()
     }
 
-    /// Waits for the batched transcript to hold `count` requests of this method.
     fn wait_sent(&self, conversation: &str, method: &str, count: usize) -> Vec<Value> {
         let deadline = Instant::now() + WAIT;
         loop {
@@ -171,7 +164,6 @@ fn alive(pid: u32) -> bool {
     String::from_utf8_lossy(&output.stdout).contains(&format!(" {pid} "))
 }
 
-/// One connection to the engine, seeing what a UI sees.
 struct Client {
     bridge: Child,
     input: ChildStdin,
@@ -244,7 +236,6 @@ impl Client {
         self.live.get(conversation).cloned().unwrap_or_default()
     }
 
-    /// Waits until the conversation's live state passes `test`, and returns it.
     fn wait_live(&mut self, conversation: &str, test: impl Fn(&Live) -> bool) -> Live {
         let deadline = Instant::now() + WAIT;
         while !test(&self.live(conversation)) {
@@ -258,13 +249,11 @@ impl Client {
         self.live(conversation)
     }
 
-    /// Waits for a turn to start and end, and returns the final live state.
     fn wait_turn(&mut self, conversation: &str) -> Live {
         self.wait_live(conversation, |live| live.processing);
         self.wait_live(conversation, |live| !live.processing)
     }
 
-    /// Where this client is in the engine's delta stream.
     fn position(&self) -> Resume {
         let snapshot = self.snapshot.as_ref().unwrap();
         Resume {
@@ -273,7 +262,6 @@ impl Client {
         }
     }
 
-    /// Reads whatever arrives in the next moment.
     fn settle(&mut self) {
         while let Ok(message) = self.messages.recv_timeout(Duration::from_millis(500)) {
             self.handle(&message);
@@ -428,7 +416,6 @@ fn a_reconnect_gets_only_the_deltas_it_missed_in_order() {
     back.settle();
     let since = usize::try_from(left_at.seq).unwrap()
         - usize::try_from(watcher.snapshot.as_ref().unwrap()["seq"].as_u64().unwrap()).unwrap();
-    // Either may hold a trailing status update the other hasn't read yet.
     let shared = back.deltas.len().min(watcher.deltas.len() - since);
     let text = back
         .deltas
@@ -527,7 +514,6 @@ fn a_lost_session_waits_for_consent_and_the_replacement_carries_the_history() {
 }
 
 impl Client {
-    /// Waits for a delta that passes `test`, reading on from what arrived so far.
     fn wait_delta(&mut self, test: impl Fn(&Value) -> bool) -> Value {
         let deadline = Instant::now() + WAIT;
         loop {
@@ -576,7 +562,6 @@ fn docs_an_agent_writes_get_one_card_each_that_follows_the_file() {
     assert_eq!(cards[0]["turn"], 0);
     assert!(cards[0]["edited"].as_u64().unwrap() > 0);
 
-    // A later turn updates the card in place; a new doc gets its own.
     client.send(Some(&id), "WRITE notes/plan.md WRITE a.md");
     client.wait_turn(&id);
     client.settle();
@@ -607,7 +592,6 @@ fn docs_an_agent_writes_get_one_card_each_that_follows_the_file() {
         ]
     );
 
-    // A doc deleted on disk turns its card gone.
     fs::remove_file(work.join("notes/plan.md")).unwrap();
     client.wait_delta(|delta| {
         delta["delta"] == "card"
@@ -615,7 +599,6 @@ fn docs_an_agent_writes_get_one_card_each_that_follows_the_file() {
             && delta["card"]["gone"] == true
     });
 
-    // With Docs disabled, no new cards are made.
     let before = client.cards(&id).len();
     client
         .call(Command::SetSettings {

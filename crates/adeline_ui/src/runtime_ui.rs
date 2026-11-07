@@ -12,8 +12,6 @@ use anyhow::Context as _;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
-// The traffic tab keeps at most this many lines, dropping the oldest in batches
-// so the list doesn't shift on every new line.
 mod machine_sync;
 mod screens;
 
@@ -50,7 +48,6 @@ impl Adeline {
         client::request(
             machine,
             command,
-            // `update_window` leaves the Root unleased, so `done` may push notifications.
             Box::new(move |result, cx| {
                 let _ = cx.update_window(handle.into(), |_, window, cx| {
                     let _ = owner.update(cx, |app, cx| done(app, result, window, cx));
@@ -107,7 +104,6 @@ impl Adeline {
 
     pub(super) fn mark_conversation_read(&mut self, cx: &mut Context<Self>) {
         let machine = self.current_machine();
-        // A disconnected remote machine's chats stay as they were last received.
         if self.demo_mode || machine != machines::LOCAL && !client::usable(&machine, cx) {
             return;
         }
@@ -148,7 +144,6 @@ impl Adeline {
         let prompt = self.composer.read(cx).value().trim().to_owned();
         let attachments = self.attachments.clone();
         if prompt.is_empty() && attachments.is_empty() {
-            // Send now with an empty composer sends the queue's first message.
             if now
                 && let Some(id) = self.current_id()
                 && let Some(first) = self
@@ -197,12 +192,10 @@ impl Adeline {
                         .iter()
                         .position(|thread| Some(thread.id.as_str()) == id.as_str());
                 }
-                // The composer keeps anything typed since sending.
                 if app.composer.read(cx).value().trim() == prompt {
                     app.composer
                         .update(cx, |state, cx| state.set_value("", window, cx));
                 }
-                // Files attached since sending stay.
                 app.attachments.retain(|file| !sent.contains(file));
                 app.attachment_error = None;
                 app.refresh_runtime_views(cx);
@@ -548,8 +541,6 @@ impl Adeline {
         false
     }
 
-    // Saving and deleting answer through `done`, always after returning, so a
-    // caller may still be mid-update.
     #[expect(clippy::too_many_arguments, reason = "a save carries the whole form")]
     pub(super) fn save_agent(
         entity: &WeakEntity<Self>,
@@ -657,7 +648,6 @@ impl Adeline {
         if self.runtime.stopping_all {
             return;
         }
-        // Like `request_quit`, leave alone machines other clients still use.
         let machines: Vec<String> = client::connections(cx)
             .iter()
             .filter(|c| c.state == client::State::Connected && c.status.clients <= 1)
@@ -797,7 +787,6 @@ impl Adeline {
             return;
         }
         if self.modal.is_some() {
-            // Another dialog is open; the prompt waits for it to close.
             return;
         }
         self.open_modal_later("prompt", cx);
@@ -867,7 +856,6 @@ impl Adeline {
             Delta::Notice { message } => {
                 self.notify_toast(&self.about_machine(machine, &message), cx);
             }
-            // A login page the agent wants open, in this computer's browser.
             Delta::OpenUrl { url } => {
                 if url.starts_with("https://") || url.starts_with("http://") {
                     cx.open_url(&url);

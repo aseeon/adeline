@@ -16,8 +16,6 @@ use tracing_subscriber::{
 
 const LOG_CAP: u64 = 1024 * 1024;
 
-// The open `engine.log` and its size. Only the engine holding the
-// single-instance lock writes it, so the size is counted here, not read back.
 #[derive(Default)]
 struct Open {
     file: Option<File>,
@@ -49,7 +47,6 @@ impl io::Write for LogWriter<'_> {
             let _ = std::fs::rename(&path, self.dir.join("engine.1.log"));
         }
         if self.open.file.is_none() {
-            // Without a log file, events are dropped.
             let Ok(file) = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
@@ -84,7 +81,6 @@ impl<'a> MakeWriter<'a> for LogFile {
     }
 }
 
-// One line per event: local time, process, level, event name, message, fields.
 struct Line;
 
 impl<S, N> FormatEvent<S, N> for Line

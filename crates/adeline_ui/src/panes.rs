@@ -15,7 +15,6 @@ const RAIL: f32 = 56.;
 const LIST: f32 = 286.;
 const PANE: f32 = 330.;
 const CHAT_PANE: f32 = 440.;
-// How far the right island's pane can be dragged, and how much it leaves the main area.
 const PANE_MIN: f32 = 260.;
 const MAIN_MIN: f32 = 320.;
 const PANE_HEADER: f32 = 46.;
@@ -36,7 +35,6 @@ impl SideTab {
     }
 }
 
-/// A length in the design's pixels, which scale with the interface text size.
 pub(super) fn dp(pixels: f32) -> Pixels {
     fonts::text_pixels(pixels)
 }
@@ -54,8 +52,6 @@ pub(super) fn island(cx: &App) -> Div {
             BoxShadow::new(px(0.), px(0.), isl.ring)
                 .blur_radius(px(0.))
                 .spread_radius(px(1.)),
-            // Shorter than the design's 0 10 30 at 30%: GPUI doesn't dither, and a
-            // long faint shadow on a dark window shows wide 8-bit bands.
             BoxShadow::new(px(0.), px(3.), hsla(0., 0., 0., 0.35)).blur_radius(px(10.)),
         ])
 }
@@ -83,7 +79,6 @@ pub(super) fn rail(
             .rounded(dp(10.))
             .bg(theme::islands(cx).active);
         match from {
-            // The active background slides over from the tab active before.
             Some(from) if from != to => pill
                 .with_animation(
                     ElementId::Name(format!("{id}-slide-{from}-{to}").into()),
@@ -129,7 +124,6 @@ pub(super) fn rail_button(
         .size(dp(RAIL_BUTTON))
         .p_0()
         .rounded(dp(10.))
-        // A child keeps its size, where `.icon` would take the button's.
         .child(icon.size(dp(18.)))
         .toggled(active)
         .accessibility_label(label.into())
@@ -137,7 +131,6 @@ pub(super) fn rail_button(
         .text_color(if active { isl.fg } else { isl.fg3 })
 }
 
-// A 30 square button with a 16 icon, as in island headers.
 pub(super) fn icon_button(id: impl Into<ElementId>, icon: Icon, cx: &App) -> Button {
     Button::new(id)
         .ghost()
@@ -177,7 +170,6 @@ fn pinned_toggle(
         .into_any_element()
 }
 
-/// Dragged from the right island's left edge to resize its pane.
 pub(super) struct PaneDrag;
 
 struct DragGhost;
@@ -200,7 +192,6 @@ fn resize_handle() -> impl IntoElement {
         .h_full()
         .w(px(6.))
         .cursor_col_resize()
-        // The press belongs to the drag, so it must not also start a text selection.
         .on_mouse_down(MouseButton::Left, |_, _, cx| {
             component::GlobalState::suppress_text_selection(cx);
         })
@@ -223,8 +214,6 @@ impl Adeline {
         }
     }
 
-    /// The header: "Mode / project / item", centered over the main area,
-    /// with the window controls in the corner above the right island.
     pub(super) fn header(&self, window: &Window, cx: &Context<Self>) -> Stateful<Div> {
         let isl = theme::islands(cx);
         let item = match self.section {
@@ -277,8 +266,6 @@ impl Adeline {
             });
         let (left, right) = self.island_widths(window);
         let (left, right) = (dp(PAD * 2. + left), dp(PAD * 2. + right));
-        // Shrink both sides alike where the caption buttons overhang the main area, so the
-        // title stays clear of them and centered on it.
         let clear = (titlebar::caption_buttons_width(window) - right).max(px(0.));
         let title = row()
             .absolute()
@@ -293,8 +280,6 @@ impl Adeline {
             .when(!cfg!(target_os = "macos"), |bar| bar.pl_0())
             .border_b_0()
             .bg(transparent_black());
-        // The title sits over the bar instead of in it, because the bar's content stops at
-        // the caption buttons and would center the title off the main area.
         div()
             .id("window-header")
             .relative()
@@ -407,8 +392,6 @@ impl Adeline {
             }))
     }
 
-    /// The right island's pane width: the side pane in Chats, the chat elsewhere.
-    /// A saved width gives way so the main area keeps `MAIN_MIN` in a narrow window.
     fn pane_width(&self, window: &Window) -> f32 {
         let saved = if self.section == Section::Chats {
             self.panes.side.unwrap_or(PANE)
@@ -423,13 +406,11 @@ impl Adeline {
         row - PAD * 4. - self.left_width() - RAIL - MAIN_MIN
     }
 
-    // The pane's left edge follows the pointer; the rail and the island's right edge stay.
     fn drag_pane(&mut self, event: &DragMoveEvent<PaneDrag>, cx: &mut Context<Self>) {
         let scale = f32::from(dp(1.));
         let row = event.bounds;
         let edge = f32::from(row.right() - event.event.position.x) / scale;
         let room = self.pane_room(f32::from(row.size.width) / scale);
-        // At most twice the mode's default width.
         let most = room.min(
             2. * if self.section == Section::Chats {
                 PANE
@@ -449,7 +430,6 @@ impl Adeline {
         }
     }
 
-    /// Records `active` as the rail's active tab and returns it with the one before.
     pub(super) fn rail_slide(&self, rail: &'static str, active: Option<usize>) -> Slide {
         let mut slides = self.rail_slides.borrow_mut();
         let slide = slides.entry(rail).or_insert((None, active));
@@ -577,7 +557,6 @@ impl Adeline {
         }
     }
 
-    /// The pane header: the open tab's name, 46 tall.
     pub(super) fn pane_header(&self, cx: &App) -> Div {
         let isl = theme::islands(cx);
         row()
@@ -598,9 +577,6 @@ impl Adeline {
     }
 }
 
-// The panels a text selection can start in. Text outside the one a drag
-// started in can't be selected until the button is up: off text, gpui-kit
-// carries a drag into whatever text sits nearest above the pointer, in any panel.
 pub(super) const CHATS_MAIN: &str = "chats-main";
 pub(super) const DOCS_MAIN: &str = "docs-main";
 pub(super) const DOCS_CHAT: &str = "docs-chat";
@@ -610,14 +586,12 @@ struct DragPanel(Option<&'static str>);
 
 impl Global for DragPanel {}
 
-/// Whether text in `panel` can be selected now.
 pub(super) fn selectable_in(panel: &str, cx: &App) -> bool {
     cx.try_global::<DragPanel>()
         .and_then(|drag| drag.0)
         .is_none_or(|started| started == panel)
 }
 
-/// A panel's contents, recording a left-button press in it as the panel a drag started in.
 pub(super) fn panel_area(
     id: &'static str,
     content: impl IntoElement,
@@ -640,8 +614,6 @@ pub(super) fn panel_area(
                     set_drag_panel(None, &up, cx);
                 }
             });
-            // Windows keeps the mouse up when a press starts a window resize, and a drop
-            // stops it, so a move with no button held also ends the drag.
             window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
                 if phase.capture() && event.pressed_button.is_none() {
                     base::TextSelection::end(window, cx);
@@ -660,15 +632,12 @@ fn set_drag_panel(panel: Option<&'static str>, owner: &WeakEntity<Adeline>, cx: 
         return;
     }
     cx.set_global(DragPanel(panel));
-    // The transcript's rows are cached; they redraw only when told.
     let _ = owner.update(cx, |app, cx| {
         app.transcript.update(cx, chat::Transcript::refresh_all);
         cx.notify();
     });
 }
 
-// A glide moves its child from where it last drew to its new place when that
-// place changes, as the composer does between the main area and the right island.
 const GLIDE: Duration = Duration::from_millis(200);
 
 #[derive(Default)]
@@ -738,7 +707,6 @@ impl Element for Glide {
             state.place = Some(self.place);
         }
         state.origin = Some(bounds.origin);
-        // The executor's clock, which tests move by hand.
         let now = cx.background_executor().now();
         let progress = state
             .from
@@ -746,7 +714,6 @@ impl Element for Glide {
         let child = self.child.as_mut().expect("prepainted once");
         match (state.from, progress) {
             (Some((offset, _)), Some(t)) if t < 1. => {
-                // Deferred and unclipped, so it crosses the islands' edges on its way.
                 let shift = offset * (1. - ease_out_quint()(t));
                 let child = self.child.take().expect("prepainted once");
                 window.defer_draw(child, window.element_offset() + shift, 1, None);

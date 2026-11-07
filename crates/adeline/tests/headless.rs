@@ -17,7 +17,6 @@ fn headless_cli() {
     if cfg!(windows) {
         assert_eq!(common::windows_subsystem(exe), 3, "not a console program");
     }
-    // Without a window to open, anything but a role prints the usage.
     for args in [&[][..], &["--demo"], &["frobnicate"]] {
         let output = Command::new(exe).args(args).output().unwrap();
         assert_eq!(output.status.code(), Some(2), "{args:?}");
@@ -31,7 +30,6 @@ fn headless_cli() {
         String::from_utf8_lossy(&version.stdout).trim(),
         format!("{} (headless)", env!("CARGO_PKG_VERSION"))
     );
-    // A short home: macOS limits the engine's socket path to 104 bytes.
     let home = common::home("headless-cli");
     let status = || {
         String::from_utf8_lossy(&common::adeline(&home, &["engine", "status"]).stdout).into_owned()

@@ -21,8 +21,6 @@ use tokio::io::AsyncRead;
 
 pub type Reader = Box<dyn AsyncRead + Send + Unpin>;
 
-// The Adeline binary to run as the engine, askpass helper or remote install.
-// `ADELINE_EXE` names it when this process isn't it, such as in a test.
 pub fn own_exe() -> io::Result<PathBuf> {
     std::env::var_os("ADELINE_EXE").map_or_else(std::env::current_exe, |exe| Ok(exe.into()))
 }
@@ -62,8 +60,6 @@ pub fn contain_children(_dir: &Path) -> anyhow::Result<()> {
     if set == 0 || unsafe { AssignProcessToJobObject(job, GetCurrentProcess()) } == 0 {
         return Err(error("Joining the job object"));
     }
-    // The handle leaks on purpose: the OS closes it when this process dies,
-    // and closing the last handle kills every process left in the job.
     Ok(())
 }
 
@@ -134,10 +130,6 @@ fn stop_groups(file: &Path) {
 
 #[cfg(any(not(windows), test))]
 fn ours<'a>(ps: &str, listed: &'a str) -> Vec<&'a str> {
-    // `listed` has `<pgid> <program>` lines, `ps` `<pid> <pgid> <command>` lines.
-    // An ID isn't handed out again while a group by that ID has members, so a
-    // group without its leader is still ours. A live leader must be the program
-    // that was started: the group may have emptied and its ID gone to a new process.
     let processes: Vec<(&str, &str, &str)> = ps
         .lines()
         .filter_map(|line| {
@@ -168,7 +160,6 @@ fn ours<'a>(ps: &str, listed: &'a str) -> Vec<&'a str> {
     reason = "Runs on the engine's runtime, never on the UI thread"
 )]
 pub fn kill_tree(child: &mut Child) -> io::Result<()> {
-    // The tree includes the `node` behind an npm shim.
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt as _;
@@ -185,13 +176,11 @@ pub fn kill_tree(child: &mut Child) -> io::Result<()> {
     }
     #[cfg(not(windows))]
     {
-        // Agents lead their own process group (`spawn_piped`).
         let _ = Command::new("kill")
             .args(["-KILL", "--", &format!("-{}", child.id())])
             .status();
     }
     match child.kill() {
-        // Already gone counts as killed.
         Err(error) if error.kind() == io::ErrorKind::InvalidInput => Ok(()),
         result => result,
     }
@@ -202,7 +191,6 @@ pub fn kill_tree(child: &mut Child) -> io::Result<()> {
     reason = "Callers run this off the UI thread"
 )]
 pub fn spawn_detached(command: &mut Command) -> io::Result<Child> {
-    // Outlives the caller, outside its console and job.
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -219,9 +207,6 @@ pub fn spawn_detached(command: &mut Command) -> io::Result<Child> {
                 GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
             },
         };
-        // Windows passes every inheritable handle to the child, so our own
-        // stdio (often a caller's capture pipe) would stay open in the engine
-        // and the caller would never see end of output.
         for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
             // SAFETY: GetStdHandle takes no pointers; the handle it returns is
             // only passed back to SetHandleInformation, which ignores bad handles.
@@ -237,7 +222,6 @@ pub fn spawn_detached(command: &mut Command) -> io::Result<Child> {
             .creation_flags(flags | CREATE_BREAKAWAY_FROM_JOB)
             .spawn()
         {
-            // The caller's job forbids breakaway; stay in it rather than fail.
             Err(error) if error.kind() == io::ErrorKind::PermissionDenied => {
                 command.creation_flags(flags).spawn()
             }
@@ -252,7 +236,6 @@ pub fn spawn_detached(command: &mut Command) -> io::Result<Child> {
 }
 
 pub fn attach_parent_console() {
-    // Lets a `windows_subsystem = "windows"` exe print to the terminal that started it.
     #[cfg(windows)]
     {
         use windows_sys::Win32::System::Console::{ATTACH_PARENT_PROCESS, AttachConsole};
@@ -261,8 +244,6 @@ pub fn attach_parent_console() {
     }
 }
 
-// The default named-pipe DACL lets Everyone read, so this one admits only this
-// user and SYSTEM.
 #[cfg(windows)]
 #[expect(
     clippy::cast_possible_truncation,
@@ -281,7 +262,6 @@ pub fn owner_only_pipe(
             SECURITY_ATTRIBUTES,
         },
     };
-    // The user's SID, not OW: an elevated process's objects are owned by Administrators.
     let sddl = format!("D:P(A;;GA;;;{})(A;;GA;;;SY)", current_user_sid()?);
     let sddl: Vec<u16> = sddl.encode_utf16().chain([0]).collect();
     let mut descriptor = std::ptr::null_mut();
@@ -333,7 +313,6 @@ fn current_user_sid() -> io::Result<String> {
     if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
         return Err(io::Error::last_os_error());
     }
-    // u64s keep TOKEN_USER aligned; 512 bytes fit it plus the largest SID.
     let mut buffer = [0u64; 64];
     let mut length = 0;
     // SAFETY: `buffer` is writable for the size passed and `length` is a valid out pointer.
@@ -383,7 +362,6 @@ pub fn spawn_piped(
     command.stdin(Stdio::piped());
     #[cfg(windows)]
     let (mut child, stdout, stderr) = {
-        // Anonymous pipes would need a blocking-pool thread parked on every read.
         let (stdout, client) = overlapped_pipe()?;
         command.stdout(client);
         let stderr = if stderr {
@@ -395,7 +373,6 @@ pub fn spawn_piped(
             None
         };
         let child = command.spawn();
-        // `command` holds the child's pipe ends; drop them so EOF arrives on exit.
         command.stdout(Stdio::null()).stderr(Stdio::null());
         (child?, stdout, stderr)
     };
@@ -443,8 +420,6 @@ fn overlapped_pipe() -> io::Result<(Reader, std::fs::File)> {
         .reject_remote_clients(true)
         .create(&name)?;
     let client = std::fs::OpenOptions::new().write(true).open(&name)?;
-    // mio starts reading only after `connect`. The client is already in, so
-    // the first poll finishes it.
     {
         let connect = std::pin::pin!(server.connect());
         let waker = std::task::Waker::noop();
@@ -510,11 +485,9 @@ mod tests {
 400 claude-agent-acp
 500 gone
 ";
-        // 200 lost its leader but has a member; 300 is a reused ID; 500 is empty.
         assert_eq!(ours(ps, listed), ["100", "200", "400"]);
     }
 
-    // nextest runs each test in its own process, so no other test's agents share the list.
     #[cfg(not(windows))]
     #[tokio::test]
     async fn stop_children_kills_agent_groups() {

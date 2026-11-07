@@ -24,7 +24,6 @@ impl Worker {
                     wire::PermissionOptionKind::AllowOnce => PermissionKind::AllowOnce,
                     wire::PermissionOptionKind::AllowAlways => PermissionKind::AllowAlways,
                     wire::PermissionOptionKind::RejectOnce => PermissionKind::RejectOnce,
-                    // "Reject always" stays hidden.
                     _ => return None,
                 };
                 Some(PermissionOption {

@@ -4,7 +4,6 @@ use super::*;
 
 impl Adeline {
     pub(crate) fn composer_view(&self, width_rems: f32, focused: bool, cx: &Context<Self>) -> Div {
-        // The controls sit in the chat column, inside its side padding.
         let fit = Fit::for_width(width_rems.min(CHAT_COLUMN) - 4.);
         let theme = cx.theme();
         let isl = theme::islands(cx);
@@ -40,7 +39,6 @@ impl Adeline {
         let steering = self
             .current_live()
             .is_some_and(|live| live.features.steering);
-        // A new chat shows its agent's defaults, read-only until it starts.
         let defaults = (bound.is_none())
             .then(|| selected.map(|d| (d.model.clone(), d.effort.clone(), d.mode.clone())))
             .flatten();
@@ -79,7 +77,6 @@ impl Adeline {
         } else {
             format!("Send ({})", conversation_ui::shortcut("Ctrl+Enter"))
         };
-        // Send is a filled square: disabled until there's something to send.
         let send_button = |id: &'static str, icon_path: &str, turn: f32| {
             Button::new(id)
                 .size(dp(30.))
@@ -96,7 +93,6 @@ impl Adeline {
         };
         let up = -std::f32::consts::FRAC_PI_2;
         let send = if no_agents {
-            // Sending needs an agent, so adding one is the main action.
             Button::new("send-chat-message")
                 .small()
                 .primary()
@@ -283,7 +279,6 @@ impl Adeline {
                             .aria_label("Agent selection")
                             .flex_1()
                             .min_w_0()
-                            // Clip rather than draw under the mode button.
                             .overflow_hidden()
                             .gap(dp(2.))
                             .child(
@@ -296,7 +291,6 @@ impl Adeline {
                                                     .path(agent_path)
                                                     .text_color(agent_color),
                                             )
-                                            // Beside another mode, only the glyph fits.
                                             .map(|button| {
                                                 if self.section == Section::Chats {
                                                     button.label(shorten(&agent_name, fit.agent))
@@ -367,8 +361,6 @@ impl Adeline {
         if shown.is_empty() {
             return None;
         }
-        // The running agent knows the current value; a stopped one shows the
-        // choice saved for its next start.
         let current = |option: &conversation::SessionOption| {
             selections
                 .and_then(|selections| selections.get(option))
@@ -411,7 +403,6 @@ impl Adeline {
         if processing {
             return Some(trigger.into_any_element());
         }
-        // The choice lists are built only while the menu is open.
         let currents: Vec<String> = shown.iter().map(current).collect();
         let owner = cx.weak_entity();
         let content_owner = owner.clone();
@@ -563,7 +554,6 @@ fn option_groups(
             }
         }
         if category == Category::Model {
-            // Models group by the agent's groups or provider prefix.
             let OptionKind::Select { choices, .. } = &option.kind else {
                 continue;
             };
@@ -650,8 +640,6 @@ fn execution_setting(
     })
 }
 
-// A composer picker: 28 tall, 13 px, ending in a chevron, with 2 px less
-// padding on the chevron's side.
 fn picker(button: Button, cx: &App) -> Button {
     button
         .ghost()
@@ -663,7 +651,6 @@ fn picker(button: Button, cx: &App) -> Button {
         .dropdown_caret(true)
 }
 
-// The share of the context window in use: an 18 px ring, its value in the tooltip.
 fn context_ring(usage: Option<(u64, u64)>, cx: &App) -> Stateful<Div> {
     let isl = theme::islands(cx);
     let share = match usage {
@@ -719,7 +706,6 @@ impl Composer {
         input: &Entity<TextareaState>,
         cx: &mut Context<Self>,
     ) -> Self {
-        // Focus changes the composer's ring.
         let subscription = cx.subscribe(input, |_, _, event: &InputEvent, cx| {
             if matches!(
                 event,
@@ -738,7 +724,6 @@ impl Composer {
 
 impl Render for Composer {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Unmeasured counts as wide, so the first frame shows full labels.
         let width = if self.width > px(0.) {
             self.width / window.rem_size()
         } else {
@@ -775,7 +760,6 @@ impl Fit {
         } else if rems >= 30. {
             (12, 10, 6, 8)
         } else {
-            // The narrowest window.
             (8, 7, 5, 6)
         };
         Self {

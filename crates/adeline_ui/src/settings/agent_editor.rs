@@ -102,7 +102,6 @@ impl SettingsWindow {
                         view.pending = false;
                         match choice {
                             0 => {
-                                // The engine watches agent files, so the list is current.
                                 if let Some(form) = view.agent_form.clone() {
                                     let form_id = form.read(cx).id.clone();
                                     let definition = view.agent_definition(form_id.as_ref(), cx);

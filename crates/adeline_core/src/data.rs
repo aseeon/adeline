@@ -10,7 +10,6 @@ use std::path::PathBuf;
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Workspace {
-    // Set by the client. An engine leaves it empty.
     pub machine: String,
     pub config: Config,
     pub threads: Vec<Thread>,
@@ -18,7 +17,6 @@ pub struct Workspace {
 }
 impl Workspace {
     pub fn key(&self) -> String {
-        // Project IDs are unique only within one machine.
         format!("{}:{}", self.machine, self.config.id)
     }
 }
@@ -38,7 +36,6 @@ pub struct Thread {
     pub unread_messages: Vec<usize>,
     #[serde(skip)]
     pub search_text: std::sync::Arc<str>,
-    // Streamed reply text is searchable once the turn's status changes.
     #[serde(skip)]
     pub search_stale: bool,
     pub id: String,
@@ -48,7 +45,6 @@ pub struct Thread {
     pub messages: Vec<Message>,
     pub activity: Vec<Activity>,
     pub created_at: String,
-    // Tokens used and the window size.
     pub context: Option<(u64, u64)>,
     pub timing: Timing,
     pub fork: Option<Fork>,
@@ -64,14 +60,11 @@ pub struct Fork {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Timing {
-    // Prompt sent, last answer.
     pub turns: Vec<(u64, u64)>,
     pub streamed_chars: u64,
     pub streamed_ms: u64,
     pub last_text: Option<u64>,
 }
-// A longer gap between pieces of reply text means the agent was doing
-// something other than writing.
 const STREAM_GAP_MS: u64 = 2_000;
 impl Timing {
     pub fn prompt(&mut self, at: u64) {
@@ -109,7 +102,6 @@ impl Timing {
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct Message {
-    // Chunks with another ID start a new message.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub id: String,
     pub role: MessageRole,
@@ -159,7 +151,6 @@ pub struct Activity {
     pub status: ToolStatus,
     pub started: u64,
     pub finished: u64,
-    // Reply bytes written when the call started, which places it in the reply.
     pub after_text: usize,
 }
 impl Activity {
@@ -234,7 +225,6 @@ pub fn demo_live() -> std::collections::HashMap<String, crate::protocol::Live> {
         .into_iter()
         .map(|demo| {
             let mut live = demo.live;
-            // A demo's quiet turn has been silent for the minutes it says.
             if let Some(minutes) = live.quiet_since {
                 live.quiet_since = Some(now.saturating_sub(minutes * 60_000));
             }
@@ -268,7 +258,6 @@ pub fn load() -> Vec<Workspace> {
     let data = fixture();
     let mut projects = vec![data.workspace];
     projects.extend(data.projects.into_iter().map(|p| p.workspace));
-    // One demo project on each demo machine.
     for (project, machine) in projects
         .iter_mut()
         .zip([crate::machines::LOCAL, "matrix", "vortex"])
@@ -290,7 +279,6 @@ pub fn load() -> Vec<Workspace> {
 }
 
 fn shift_to(projects: &mut [Workspace], now: i64) {
-    // A uniform shift keeps the bundled chats' relative ages, and so their sections.
     let newest = projects
         .iter()
         .flat_map(|project| &project.threads)
@@ -358,7 +346,6 @@ impl Thread {
             self.messages.get(index).is_some_and(|m| {
                 m.role == MessageRole::Assistant
                     && message.is_none_or(|id| m.id.is_empty() || m.id == id)
-                    // A thought after reply text starts the next reply.
                     && !(thought && !m.text.is_empty() && message.is_none())
             })
         });
@@ -397,7 +384,6 @@ impl Thread {
         let item = if let Some(index) = self.activity.iter().position(|a| a.kind == key) {
             index
         } else {
-            // The reply so far in this turn, which the call comes after.
             let written = self
                 .messages
                 .last()
@@ -431,7 +417,6 @@ impl Thread {
         self.timing.tool(at);
     }
     pub fn put_card(&mut self, card: crate::card::Card) {
-        // A card keeps the turn that first made it.
         if let Some(existing) = self.cards.iter_mut().find(|c| c.entity == card.entity) {
             let turn = existing.turn;
             *existing = card;
@@ -622,7 +607,6 @@ mod tests {
     }
     #[test]
     fn demo_chats_end_at_the_time_the_demo_runs() {
-        // Noon UTC on two dates far apart.
         for now in [1_790_510_400, 4_102_488_000] {
             let mut projects = load();
             shift_to(&mut projects, now);
@@ -686,7 +670,6 @@ mod tests {
         timing.text(40, 2_000);
         timing.text(40, 2_500);
         timing.tool(3_000);
-        // After a tool call, the first text starts a new stream.
         timing.text(400, 9_000);
         timing.text(40, 9_500);
         timing.prompt(20_000);

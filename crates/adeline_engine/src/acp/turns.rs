@@ -88,7 +88,6 @@ impl Worker {
         Ok(blocks)
     }
 
-    // A private folder of the worker's own, so other users can't read or replace the copies.
     fn linked_path(&self, file: &Attachment) -> anyhow::Result<std::path::PathBuf> {
         if let Some(path) = &file.path {
             return Ok(path.clone());
@@ -105,7 +104,6 @@ impl Worker {
             .attachments
             .get()
             .context("No folder for attachments")?;
-        // A folder per copy, so two attachments with one name both fit.
         let folder = root.path().join(adeline_core::files::unique("file"));
         let name = Path::new(&file.name)
             .file_name()
@@ -175,7 +173,6 @@ impl Worker {
                 .as_ref()
                 .is_some_and(|turn| !turn.cancelled && turn.prompt_request.is_some());
         match notification.update {
-            // Session state counts between turns too.
             wire::SessionUpdate::UsageUpdate(usage) => {
                 if self.setup.is_none() {
                     self.emit(EventKind::Usage {
@@ -263,7 +260,6 @@ impl Worker {
                     });
                 }
             }
-            // Tool calls outside a turn are background work the agent reports.
             wire::SessionUpdate::ToolCall(call) if self.setup.is_none() => {
                 let update = wire::ToolCallUpdate::new(
                     call.tool_call_id,
@@ -280,7 +276,6 @@ impl Worker {
             wire::SessionUpdate::ToolCallUpdate(update) if self.setup.is_none() => {
                 self.tool(update, in_turn);
             }
-            // Replay, user echoes and notices stay in the raw traffic.
             _ => {}
         }
         if ends_turn && in_turn {
@@ -294,7 +289,6 @@ impl Worker {
         }
         let id = update.tool_call_id.0.to_string();
         let fields = update.fields;
-        // Updates may omit fields they don't change.
         let entry = self.tools.entry(id.clone()).or_default();
         if let Some(title) = fields.title {
             entry.title = title;
@@ -359,7 +353,6 @@ impl Worker {
         let Some(turn) = &mut self.active else {
             return;
         };
-        // A late answer to a turn a profile signal already ended.
         if turn.prompt_request != Some(id) {
             return;
         }
@@ -394,7 +387,6 @@ impl Worker {
                 .active
                 .as_ref()
                 .map_or(String::new(), |turn| turn.observed_text.clone());
-            // The model can write this text too, so report it without retrying.
             if let Some(turn) = &mut self.active {
                 turn.retries = turn.attempt;
             }
@@ -473,7 +465,6 @@ pub(super) fn tool_detail(
 }
 
 fn attachment_bytes(file: &Attachment) -> anyhow::Result<Vec<u8>> {
-    // An empty file has no data and no path.
     if file.path.is_none() && file.size == 0 {
         return Ok(Vec::new());
     }

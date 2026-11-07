@@ -2,15 +2,10 @@
 //! UTF-16 or not UTF-8 opens read-only, and a save keeps the file's line endings and
 //! its trailing newline, or lack of one.
 
-// Rust guideline compliant 2026-10-09
-
-/// Larger files open read-only.
 pub const MAX_EDITABLE: usize = 10 * 1024 * 1024;
 
-// Git's heuristic: a NUL byte near the start means binary.
 const BINARY_PROBE: usize = 8000;
 
-/// The text of a file, and why it's read-only, if it is.
 pub fn decode(bytes: Vec<u8>) -> (String, Option<&'static str>) {
     let unit: Option<fn([u8; 2]) -> u16> = match bytes.get(..2) {
         Some([0xFF, 0xFE]) => Some(u16::from_le_bytes),
@@ -49,7 +44,6 @@ pub fn decode(bytes: Vec<u8>) -> (String, Option<&'static str>) {
     }
 }
 
-/// `text` with the line endings and trailing newline of `original`, the file's text on disk.
 pub fn conform(text: &str, original: &str) -> String {
     let crlf = original
         .find('\n')
@@ -75,7 +69,6 @@ mod tests {
 
     #[test]
     fn saving_keeps_line_endings_and_the_final_newline_as_they_were() {
-        // An editor shows LF lines, whatever the file holds.
         let original = "one\r\ntwo\r\nthree";
         let saved = conform("one\nTWO\nthree", original);
         assert_eq!(saved, "one\r\nTWO\r\nthree");

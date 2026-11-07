@@ -52,7 +52,6 @@ async fn request(command: Command) -> anyhow::Result<(Value, ipc::Reader)> {
     }
     while let Ok(Some(line)) = reader.next_line().await {
         if let Ok(EngineMessage::Reply { id: 1, result }) = serde_json::from_str(&line) {
-            // Keep the writer open until the reader is done with it.
             drop(writer);
             return result
                 .map(|value| (value, reader))
@@ -134,7 +133,6 @@ async fn cli_stop() -> i32 {
             println!("  {name}");
         }
     }
-    // The engine holds its lock until the process has exited.
     let exited = tokio::time::timeout(Duration::from_secs(30), async {
         while let Ok(Some(_)) = reader.next_line().await {}
         let lock = ipc::engine_dir().ok().and_then(|dir| {

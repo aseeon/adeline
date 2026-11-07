@@ -29,7 +29,6 @@ impl Engine {
         if prompt.is_empty() && attachments.is_empty() {
             return Err("Enter a message to send.".into());
         }
-        // Files picked on this machine are read here, so their size is known here.
         let attachments: Vec<Attachment> = attachments
             .into_iter()
             .map(|mut file| {
@@ -59,7 +58,6 @@ impl Engine {
             if live.replacement {
                 return Err("Start a replacement session before sending.".into());
             }
-            // The composer is never blocked by a running turn.
             if live.processing {
                 if now {
                     self.send_now(&id, prompt, attachments);
@@ -152,7 +150,6 @@ impl Engine {
                 return;
             }
         }
-        // The message goes first, then the cancel settles and the queue is sent.
         self.queue(id, text, files, true);
         self.send_after_stop.insert(id.to_owned());
         self.stop(id);
@@ -280,7 +277,6 @@ impl Engine {
             parts.push(acp::Part::Text(prompt));
         }
         parts.extend(attachments.into_iter().map(acp::Part::File));
-        // The worker numbers turns; a prompt it rejects keeps the old number.
         let Some(slot) = self.drivers.get_mut(id) else {
             return;
         };
@@ -359,7 +355,6 @@ impl Engine {
         }
         let live = self.live.entry(id.to_owned()).or_default();
         if live.shutting_down && !live.shutdown_stuck {
-            // An agent closed in the background; the turn starts once it has exited.
             live.processing = true;
             live.progress = Some("Restarting the agent…".into());
             self.restart_prompt.insert(id.to_owned(), prompt);
@@ -424,7 +419,6 @@ impl Engine {
         } else {
             None
         };
-        // The cancelled turn settles by itself; with no agent there is nothing to wait for.
         if !self.drivers.contains_key(id) {
             let live = self.live.entry(id.to_owned()).or_default();
             live.processing = false;

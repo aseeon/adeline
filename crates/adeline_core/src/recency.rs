@@ -24,11 +24,9 @@ pub fn now_ms() -> u64 {
 }
 
 pub fn parse(stamp: &str) -> Option<i64> {
-    // Stored chats record epoch milliseconds; bundled demo chats use RFC 3339.
     let stamp = stamp.trim();
     if !stamp.is_empty() && stamp.bytes().all(|b| b.is_ascii_digit()) {
         let value: i64 = stamp.parse().ok()?;
-        // Anything past the year 5138 in seconds is really milliseconds.
         return Some(if value > 99_999_999_999 {
             value / 1000
         } else {
@@ -84,7 +82,6 @@ pub fn iso(at: i64) -> String {
 mod tests {
     use super::*;
 
-    // Sunday, 27 September 2026, 12:00 UTC.
     const NOW: i64 = 1_790_510_400;
 
     #[test]
@@ -108,7 +105,6 @@ mod tests {
         assert_eq!(period(midnight - 1, NOW), Period::LastThreeDays);
         assert_eq!(period(midnight - 2 * DAY, NOW), Period::LastThreeDays);
         assert_eq!(period(midnight - 2 * DAY - 1, NOW), Period::Earlier);
-        // A clock ahead of ours still counts as today.
         assert_eq!(period(NOW + 90, NOW), Period::Today);
     }
 

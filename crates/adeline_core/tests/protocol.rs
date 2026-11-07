@@ -29,12 +29,10 @@ fn read_back(sample: &Value) -> Result<Value, serde_json::Error> {
     }
 }
 
-// serde lists every variant when it meets an unknown one.
 fn variants<T: DeserializeOwned + std::fmt::Debug>(tag: &str) -> Vec<String> {
     let error = serde_json::from_value::<T>(json!({ tag: "?" }))
         .unwrap_err()
         .to_string();
-    // "unknown variant `?`, expected `a` or `b`" or "…expected one of `a`, `b`, `c`"
     let names: Vec<String> = error
         .split('`')
         .skip(3)

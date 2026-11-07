@@ -233,7 +233,6 @@ impl StoredConversation {
                         fork.text_copy = true;
                     }
                 }
-                // A fork's copy of a lifecycle event that started a new reply.
                 "reply_break" => current_assistant = None,
                 "lifecycle" if starts_reply(event) => {
                     current_assistant = None;
@@ -522,7 +521,6 @@ impl ProjectStore {
                 }
             }
         }
-        // Editing a project keeps when it was last opened.
         let opened_at = original
             .and_then(|old| self.projects.iter().find(|p| p.id == old))
             .and_then(|project| project.opened_at);
@@ -576,7 +574,6 @@ impl ProjectStore {
     }
 
     pub fn delete_project(&mut self, id: &str) -> Result<()> {
-        // Callers stop every live agent in the project first.
         checked_id(id)?;
         let root = self.root.as_ref().map_err(|e| anyhow!("{e}"))?;
         let project = self.project(id)?;
@@ -642,7 +639,6 @@ impl ProjectStore {
         safe_directory(&root.join(project_id))?;
         safe_directory(&base)?;
         outside_project_storage(&project.directory, root)?;
-        // A new conversation always starts with the definition's defaults.
         let settings = ConversationSettings {
             version: VERSION,
             agent_id,
@@ -819,7 +815,6 @@ impl ProjectStore {
     }
 
     pub fn flush_due(&mut self) -> Vec<(String, String)> {
-        // Returns the conversations that failed, with their errors.
         let due = adeline_core::recency::now_ms().saturating_sub(FLUSH_INTERVAL_MS);
         let ids: Vec<String> = self
             .projects
@@ -837,7 +832,6 @@ impl ProjectStore {
             .collect()
     }
 
-    // Saved traffic isn't kept in memory, so this reads it from the transcript.
     pub fn traffic(&self, conversation_id: &str, limit: usize) -> Vec<Value> {
         let Ok(root) = &self.root else {
             return Vec::new();
@@ -851,7 +845,6 @@ impl ProjectStore {
             return Vec::new();
         };
         let path = conversation_dir(root, &project.id, conversation_id).join("transcript.jsonl");
-        // ponytail: reads the whole transcript; read backwards from the end if that gets slow.
         let bytes = safe_conversation_path(&path)
             .and_then(|()| ensure_regular_file(&path))
             .and_then(|()| Ok(fs::read(&path)?))
@@ -919,7 +912,6 @@ impl ProjectStore {
         busy: &std::collections::HashSet<String>,
         deleting: &std::collections::HashSet<String>,
     ) -> Reconciled {
-        // Conversations in `busy` and projects in `deleting` are the engine's own business.
         let mut changes = Reconciled {
             errors: fresh
                 .errors
@@ -970,7 +962,6 @@ impl ProjectStore {
                         changes.conversations.push(conversation.id.clone());
                         project.conversations.push(conversation);
                     }
-                    // Unsaved history stays in memory until storage is retried.
                     Some(existing)
                         if existing.unsaved_events.is_empty()
                             && existing.pending_settings.is_none()

@@ -2,8 +2,6 @@
 //! project's docs and reading its images, reporting doc changes on disk to
 //! the clients watching a project, and the cards for docs an agent writes.
 
-// Rust guideline compliant 2026-10-09
-
 use super::{Engine, Input};
 use adeline_core::{
     card::{Card, EntityRef},
@@ -19,11 +17,8 @@ use std::{
 };
 use tokio::task::block_in_place;
 
-// Images the Viewer shows; larger ones stay links.
 const IMAGE_LIMIT: u64 = 20 * 1024 * 1024;
 const IMAGE_EXTENSIONS: [&str; 7] = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "svg"];
-// Larger docs don't open at all: reading one would hold up every client, as
-// all commands share one task. Docs above `MAX_EDITABLE` open read-only.
 const READ_LIMIT: u64 = 50 * 1024 * 1024;
 
 fn modified(path: &Path) -> Option<u64> {
@@ -53,7 +48,6 @@ fn check_new(root: &Path, path: &str) -> Result<PathBuf, String> {
     Ok(full)
 }
 
-// A pipe or device could block the engine's one task forever, so only files are read.
 fn file_size(full: &Path, path: &str) -> Result<u64, String> {
     let metadata = std::fs::metadata(full).map_err(|e| io_error(path, &e))?;
     if !metadata.is_file() {
@@ -80,7 +74,6 @@ fn read(root: &Path, path: &str) -> Result<DocFile, String> {
 }
 
 fn write(root: &Path, path: &str, text: &str, create: bool) -> Result<u64, String> {
-    // A doc deleted on disk while open is saved back as a new file.
     if create || !adeline_docs::resolve(root, path)?.exists() {
         let full = check_new(root, path)?;
         if let Some(folder) = full.parent() {
@@ -89,7 +82,6 @@ fn write(root: &Path, path: &str, text: &str, create: bool) -> Result<u64, Strin
         adeline_core::files::write_new(&full, text.as_bytes()).map_err(|e| format!("{e:#}"))?;
         return Ok(modified(&full).unwrap_or_default());
     }
-    // The link's target, so a doc that is a link inside the project stays one.
     let full = adeline_docs::resolve(root, path)?
         .canonicalize()
         .map_err(|e| io_error(path, &e))?;
@@ -101,8 +93,6 @@ fn write(root: &Path, path: &str, text: &str, create: bool) -> Result<u64, Strin
         return Err(format!("{path} is read-only, so it can't be saved."));
     }
     let text = adeline_docs::conform(text, &String::from_utf8_lossy(&original));
-    // A new file renamed over the old one, so a full disk or a crash leaves
-    // the old text whole.
     let temp = full.with_extension(adeline_core::files::unique("tmp"));
     adeline_core::files::write_new(&temp, text.as_bytes()).map_err(|e| format!("{e:#}"))?;
     let saved =
@@ -208,7 +198,6 @@ impl Engine {
         }
     }
 
-    // Watches the folders of the projects some client watches.
     pub(super) fn watch_docs(&mut self) {
         use notify::Watcher as _;
         let wanted: HashSet<PathBuf> = self
@@ -270,7 +259,6 @@ impl Engine {
             let Ok(root) = self.project_root(&project_id) else {
                 continue;
             };
-            // macOS reports events under the folder's real path.
             let real = root.canonicalize().unwrap_or_else(|_| root.clone());
             let mut changes: Vec<DocChange> = Vec::new();
             let mut relist = false;
@@ -301,7 +289,6 @@ impl Engine {
                     || !adeline_docs::file_name(&relative).contains('.')
                     || adeline_docs::file_name(&relative) == ".gitignore"
                 {
-                    // A folder appeared, went or was renamed, or the ignore rules changed.
                     relist = true;
                 }
             }
@@ -323,7 +310,6 @@ impl Engine {
         self.docs_due = Some(Instant::now() + super::WATCH_SETTLE);
     }
 
-    // Marks the project's cards for `path` gone, or back with a new edit time.
     fn doc_cards(&mut self, project_id: &str, path: &str, modified: Option<u64>) {
         let entity = EntityRef::doc(path);
         let updates: Vec<(String, Card)> = self
@@ -354,7 +340,6 @@ impl Engine {
         });
     }
 
-    // A finished edit of a doc inside the project gets a card in the turn's reply.
     pub(super) fn tool_cards(&mut self, id: &str, report: &ToolReport) {
         if !self.settings.docs.enabled
             || report.status != ToolStatus::Completed

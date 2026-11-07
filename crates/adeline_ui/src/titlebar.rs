@@ -6,14 +6,11 @@
 use super::*;
 use gpui_kit::component::GlobalState;
 
-// 4px of headroom over the 32px project tabs.
 pub(super) const MAIN_HEIGHT: Pixels = px(36.);
 
-// Set by `--hidden` (control builds): every window stays off screen for `adeline ui`.
 pub(super) struct Hidden;
 impl Global for Hidden {}
 
-// A hidden window keeps the platform's default placement until it shows.
 pub(super) fn size_hidden(window: &mut Window, bounds: Bounds<Pixels>, cx: &App) {
     if cx.has_global::<Hidden>() {
         window.resize(bounds.size);
@@ -28,19 +25,14 @@ pub(super) fn main_window_options(cx: &App) -> WindowOptions {
         titlebar: Some(TitlebarOptions {
             title: Some("Adeline".into()),
             appears_transparent: true,
-            // Centre the traffic lights on the project tabs, which fill the bar's bottom 32px.
             traffic_light_position: Some(point(px(9.), px(12.))),
         }),
-        // Linux asks the window manager to drop its frame; Kit keeps the frame and hides its own
-        // caption buttons when the session can't draw client-side decorations.
         window_decorations: cfg!(target_os = "linux").then_some(WindowDecorations::Client),
         ..TitleBar::window_options()
     }
 }
 
 pub(super) fn without_text_selection(bar: impl IntoElement) -> Div {
-    // Windows keeps the mouse-up for its window-move loop, so a selection begun on the bar would
-    // trail the pointer across the window.
     div()
         .on_mouse_down(MouseButton::Left, |_, _, cx| {
             GlobalState::suppress_text_selection(cx);
@@ -48,7 +40,6 @@ pub(super) fn without_text_selection(bar: impl IntoElement) -> Div {
         .child(bar)
 }
 
-// Mirrors which caption buttons Kit's `WindowControls` draws at the bar's right end.
 pub(super) fn caption_buttons_width(window: &Window) -> Pixels {
     let drawn = !cfg!(target_os = "macos")
         && (!cfg!(target_os = "linux")
@@ -61,7 +52,6 @@ pub(super) fn caption_buttons_width(window: &Window) -> Pixels {
     component::TITLE_BAR_HEIGHT * f32::from(count)
 }
 
-// Match the raster to the monitor's physical pixels instead of shrinking a large PNG.
 fn portrait_asset(scale_factor: f32) -> String {
     let physical_size = 24. * scale_factor;
     let size = (24_u16..=120)

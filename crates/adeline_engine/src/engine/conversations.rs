@@ -70,7 +70,6 @@ impl Engine {
     }
 
     pub(super) fn drop_undelivered_fork_session(&mut self, id: &str) {
-        // Retry then starts a fresh session and sends the copied history again.
         let Some(mut settings) = self.conversation_settings(id) else {
             return;
         };
@@ -132,7 +131,6 @@ impl Engine {
     }
 
     pub(super) fn fork_history(&self, id: &str) -> Option<(Option<String>, String)> {
-        // The source's session only when a native fork would give exactly the copied history.
         let settings = self.conversation_settings(id)?;
         if settings.session_id.is_some() {
             return None;

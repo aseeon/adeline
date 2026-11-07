@@ -48,7 +48,6 @@ enum Request {
     },
 }
 
-/// The visible elements labelled exactly `label`.
 pub fn visible(window: &Window, label: &str) -> Vec<ElementSnapshot> {
     snapshots(window)
         .into_iter()
@@ -56,8 +55,6 @@ pub fn visible(window: &Window, label: &str) -> Vec<ElementSnapshot> {
         .collect()
 }
 
-/// The one visible element labelled `label`. No match, or several, is an error
-/// that names the candidates.
 pub fn find(window: &Window, label: &str) -> Result<ElementSnapshot> {
     let mut found = visible(window, label);
     match found.len() {
@@ -113,7 +110,6 @@ pub fn click(window: &mut Window, cx: &mut App, position: Point<Pixels>) {
     );
 }
 
-/// Presses keys in GPUI's syntax, several separated by spaces: `ctrl-n escape`.
 pub fn press(window: &mut Window, cx: &mut App, keys: &str) -> Result<()> {
     for key in keys.split_whitespace() {
         let keystroke =
@@ -134,7 +130,6 @@ pub fn type_text(window: &mut Window, cx: &mut App, text: &str) {
     }
 }
 
-/// The part of a frame captured at `scale` that `bounds` covers, cut to the frame.
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -152,7 +147,6 @@ pub fn crop(frame: &RgbaImage, bounds: Bounds<Pixels>, scale: f32) -> Option<Rgb
         .then(|| image::imageops::crop_imm(frame, left, top, right - left, bottom - top).to_image())
 }
 
-/// The window's last frame at device pixel size, or the part showing `element`.
 pub fn capture(window: &Window, element: Option<&str>) -> Result<RgbaImage> {
     if cfg!(target_os = "linux") {
         bail!("The official GPUI release can't capture a Linux window yet");
@@ -173,7 +167,6 @@ fn tree(window: &Window) -> Value {
         .iter()
         .map(|element| {
             let bounds = element.bounds();
-            // `focused` panics on an element whose focus binding was missed.
             let focused =
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| element.focused()))
                     .ok()
@@ -201,7 +194,6 @@ fn tree(window: &Window) -> Value {
     json!(elements)
 }
 
-/// Opens this UI's control endpoint, removed again when the app quits.
 pub fn serve(demo: bool, cx: &mut App) -> Result<()> {
     let listener = client::runtime().block_on(async { ipc::Listener::bind_control() })?;
     let (requests, inbox) = async_channel::unbounded();
@@ -254,8 +246,6 @@ async fn accept(
     }
 }
 
-/// Waits until the window has drawn a frame, or `FRAME_TIMEOUT` for a window
-/// the platform doesn't draw, such as a minimized one.
 async fn next_frame(window: AnyWindowHandle, cx: &mut AsyncApp) -> Result<()> {
     if cx.update(|cx| cx.has_global::<crate::titlebar::Hidden>()) {
         return cx.update_window(window, |_, window, cx| window.draw(cx).clear(cx));
@@ -279,8 +269,6 @@ async fn next_frame(window: AnyWindowHandle, cx: &mut AsyncApp) -> Result<()> {
 }
 
 async fn handle(request: Request, demo: bool, cx: &mut AsyncApp) -> Result<Value> {
-    // Hidden windows never become active, so the newest one stands in for the front window.
-    // ponytail: newest by slot order, track opens if windows ever close out of order.
     let window = cx
         .update(|cx| {
             if cx.has_global::<crate::titlebar::Hidden>() {
@@ -349,7 +337,6 @@ async fn handle(request: Request, demo: bool, cx: &mut AsyncApp) -> Result<Value
     }
 }
 
-/// `adeline ui <command>`: prints one JSON reply and returns the exit code.
 pub fn cli(args: &[String]) -> i32 {
     platform::attach_parent_console();
     match run_cli(args.to_vec()) {
@@ -431,7 +418,6 @@ async fn ask(pid: u32, request: &Request) -> std::io::Result<Value> {
     serde_json::from_str(&line).map_err(std::io::Error::other)
 }
 
-// The control UIs that answer, by process ID. Sockets left by UIs that died are removed.
 async fn running() -> Result<Vec<(u32, Value)>> {
     let mut found = Vec::new();
     for pid in ipc::control_pids()? {

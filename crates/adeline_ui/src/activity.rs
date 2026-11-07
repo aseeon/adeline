@@ -96,7 +96,6 @@ fn timeline(thread: &Thread) -> Vec<Entry<'_>> {
             push_reply(&mut entries, thread, reply, 0, usize::MAX);
         }
     }
-    // Calls from before turns were recorded go last, where the running work is.
     entries.extend(
         thread
             .activity
@@ -189,12 +188,10 @@ struct Detail {
     copy: Option<(&'static str, String)>,
 }
 
-// Built only for an expanded row, since rows redraw on every streamed chunk.
 type LazyDetail<'a> = Box<dyn FnOnce() -> Detail + 'a>;
 
 pub(super) fn jump_to_latest(id: &'static str, cx: &Context<Adeline>) -> impl IntoElement {
     let theme = cx.theme();
-    // Clicks stop here rather than reaching the row beneath.
     div().occlude().child(
         Button::new(id)
             .icon(Icon::default().path("caret-double-down.svg"))
@@ -234,8 +231,6 @@ impl Adeline {
         };
         let entries = timeline(thread);
         let following = self.transcript.read(cx).following();
-        // The list sticks to its end while the chat does: on new rows, another
-        // chat, or the chat returning to its end.
         {
             let mut synced = self.activity.synced.borrow_mut();
             let current = (thread.id.clone(), entries.len(), following);
@@ -256,7 +251,6 @@ impl Adeline {
             col()
                 .w_full()
                 .pl(dp(8.))
-                // Room for the scrollbar, so it never covers a row.
                 .pr(theme::SCROLLBAR_TRACK)
                 .pb_2()
                 .children(
@@ -446,7 +440,6 @@ impl Adeline {
                 let call = &thread.activity[ix];
                 let error = call.kind == "error";
                 let failed = error || call.status == conversation::ToolStatus::Failed;
-                // A turn's steps show under its last reply once the turn ends.
                 let closing = call.turn.and_then(|prompt| {
                     (prompt + 1..thread.messages.len())
                         .take_while(|&i| thread.messages[i].role != MessageRole::User)
@@ -516,7 +509,6 @@ impl Adeline {
             .w_full()
             .selected(expanded)
             .accessibility_label(first_line(&label).to_owned())
-            // An expanded row grows to show its whole label.
             .when(expanded, |button| button.h_auto().py_1())
             .child(
                 row()
@@ -680,7 +672,6 @@ impl Adeline {
             self.activity.hovered = Some(row.to_owned());
             Some(message)
         } else if self.activity.hovered.as_deref() == Some(row) {
-            // Moving between rows enters the next before leaving the last.
             self.activity.hovered = None;
             None
         } else {

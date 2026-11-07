@@ -22,7 +22,6 @@ fn seed_bundled_themes(directory: &Path) -> Result<()> {
             .validate()
             .with_context(|| format!("Bundled theme {name}"))?;
         let path = directory.join(name);
-        // Bundled files from before the 12-color format no longer load.
         if std::fs::read_to_string(&path).is_ok_and(|text| text.contains("sidebar_ring:")) {
             std::fs::write(&path, contents)?;
         }
@@ -252,7 +251,6 @@ pub fn apply(cx: &mut App) {
         };
         let (bg, fg, muted_text) = (c("background"), c("main_text"), c("muted_text"));
         let (island, raised) = (c("background_dark"), c("background_light"));
-        // Menus and code blocks lift toward the ink: lighter in dark themes, darker in light ones.
         let toward_ink = if dark { 1. } else { -1. };
         let surface = lift(bg, 0.025 * toward_ink);
         let line = ink.alpha(0.09);
@@ -266,7 +264,6 @@ pub fn apply(cx: &mut App) {
         };
         theme.background = bg;
         theme.foreground = fg;
-        // Code in the Docs Editor follows the theme's brightness and background.
         let mut highlight_theme = if dark {
             HighlightTheme::default_dark()
         } else {
@@ -283,7 +280,6 @@ pub fn apply(cx: &mut App) {
         theme.status_bar = island;
         theme.status_bar_border = line;
         theme.window_border = line;
-        // Dim with black: a foreground scrim turns milky in dark themes.
         theme.overlay = gpui_kit::black().alpha(0.5);
         theme.group_box_foreground = fg;
         theme.popover = surface;
@@ -298,8 +294,6 @@ pub fn apply(cx: &mut App) {
         theme.secondary_active = hover;
         theme.muted = lift(bg, 0.035 * toward_ink);
         theme.muted_foreground = muted_text;
-        // The kit highlights menu, list and command rows with `accent`: a quiet
-        // wash of the text over the popover, as in the projects menu.
         theme.accent = fg.mix_oklab(surface, 0.08);
         theme.accent_foreground = fg;
         theme.danger = c("fail");
@@ -310,7 +304,6 @@ pub fn apply(cx: &mut App) {
         theme.input = ink.alpha(0.12);
         theme.ring = fg.mix_oklab(muted_text, 0.5);
         theme.caret = fg;
-        // Text paints over the selection fill, so it must stay see-through.
         theme.selection = highlight.alpha(0.3);
         [
             theme.chart_1,
@@ -349,13 +342,11 @@ pub fn apply(cx: &mut App) {
         theme.table_active = hover;
         theme.table_row_border = line;
         theme.tab_bar = island;
-        // The track behind segmented tabs; the selected tab sits on the background.
         theme.tab_bar_segmented = hover;
         theme.tab = raised;
         theme.tab_active = hover;
         theme.tab_active_foreground = fg;
         theme.tab_foreground = fg;
-        // An off track of ink at a fixed opacity shows on every surface.
         theme.switch = ink.alpha(if dark { 0.16 } else { 0.14 });
         theme.switch_thumb = gpui_kit::white();
         theme.drag_border = theme.ring;
@@ -388,9 +379,6 @@ pub fn apply(cx: &mut App) {
     cx.refresh_windows();
 }
 
-// The Islands surfaces (docs/design/DESIGN.md): the theme's dark background
-// for islands, its light background for bubbles and the composer, and cards
-// lifted from the window. Overlays are `ink` at fixed opacities.
 #[derive(Clone, Copy)]
 pub struct Islands {
     pub island: Hsla,
@@ -456,7 +444,6 @@ pub fn islands(cx: &App) -> &Islands {
     cx.global::<Islands>()
 }
 
-// Moves a color's OKLab lightness by `delta`, toward white or black.
 fn lift(color: Hsla, delta: f32) -> Hsla {
     let rgb = color.to_rgb();
     let linear = |c: f32| {
@@ -481,7 +468,6 @@ fn lift(color: Hsla, delta: f32) -> Hsla {
     }
 }
 
-// The Islands type scale, in pixels at a 14 px interface size.
 pub const T_MICRO: f32 = 11.;
 pub const T_CAPTION: f32 = 12.;
 pub const T_UI: f32 = 13.;
@@ -490,13 +476,9 @@ pub const T_PROSE: f32 = 15.;
 pub const T_TITLE: f32 = 17.;
 pub const T_DOC: f32 = 24.;
 
-// Panels that float over a scrolling view stop this far from its right edge
-// so the bar stays visible.
 pub const SCROLLBAR_TRACK: gpui_kit::Pixels = px(10.);
 
 fn style_scrollbars(cx: &mut App) {
-    // No track: only a narrow bar in the border color, the same at rest, under
-    // the pointer and while dragged. Kit's scroll-to-reveal timing stays.
     use gpui_kit::base::{
         ScrollbarStyles, ScrollbarTheme, ScrollbarThumbStyle, ScrollbarTrackStyle,
     };
@@ -521,7 +503,6 @@ fn style_scrollbars(cx: &mut App) {
         );
 }
 
-// Project marks cycle through the accents in the order the old chart colors had.
 const PROJECT_TOKENS: [&str; 5] = [
     "attention",
     "warning",
@@ -542,8 +523,6 @@ pub fn project_mark(tint: Hsla, active: bool, theme: &KitTheme) -> (Hsla, Hsla) 
         };
         (tint, letter)
     } else {
-        // Palettes include near-black tints, so the letter leans on the
-        // foreground to stay legible whatever the tint.
         (
             tint.mix_oklab(theme.title_bar, 0.4),
             tint.mix_oklab(theme.foreground, 0.35),
@@ -562,7 +541,6 @@ mod tests {
     fn bundled_themes_populate_fresh_config_and_preserve_existing_files() {
         let root =
             std::env::temp_dir().join(format!("adeline-bundled-themes-{}", std::process::id()));
-        // A crashed earlier run with the same process ID may have left it behind.
         let _ = std::fs::remove_dir_all(&root);
         seed_bundled_themes(&root).unwrap();
         let (choices, errors) = discover_in(&root).unwrap();
@@ -571,7 +549,6 @@ mod tests {
         for &(name, contents) in BUNDLED_THEMES {
             assert_eq!(std::fs::read_to_string(root.join(name)).unwrap(), contents);
         }
-        // Preserve even malformed user edits; startup must never replace them.
         std::fs::write(root.join("rose.yml"), "user-edited theme").unwrap();
         let missing = BUNDLED_THEMES
             .iter()
@@ -666,7 +643,6 @@ mod tests {
     fn theme_names_cannot_leave_the_themes_folder() {
         let themes = adeline_core::config::directory().unwrap().join("themes");
         assert_eq!(theme_path("rose.yml").unwrap(), themes.join("rose.yml"));
-        // The last four have no separator, so the component and extension checks catch them.
         for outside in [
             "../outside.yml",
             "..\\outside.yml",

@@ -6,8 +6,6 @@
 //! Renderers run outside the app's entities, so clicks reach `Adeline` as
 //! actions carrying the byte offsets of the doc's source they act on.
 
-// Rust guideline compliant 2026-10-09
-
 use super::{NoteRange, OpenLink, ToggleTask};
 use gpui_kit::base::text::{
     InlineElement, InlineRenderContext, MarkdownExtensions, MarkdownNode, MarkdownParseContext,
@@ -25,10 +23,8 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-// A project's key (`Workspace::key()`) and a path in it.
 type ImageKey = (String, String);
 
-/// Project images by project and path: loaded, or `None` when they can't be read.
 #[derive(Clone, Default)]
 pub(crate) struct Images {
     loaded: Arc<Mutex<HashMap<ImageKey, Option<Arc<Image>>>>>,
@@ -49,14 +45,12 @@ impl Images {
         }
     }
 
-    /// Drops an image so the Viewer reads it again; whether it was there.
     pub(crate) fn forget(&self, key: &ImageKey) -> bool {
         self.loaded
             .lock()
             .is_ok_and(|mut loaded| loaded.remove(key).is_some())
     }
 
-    // An image not asked for yet is wanted for the next frame.
     fn get(&self, key: ImageKey) -> Option<Arc<Image>> {
         let found = self.loaded.lock().ok()?.get(&key).cloned();
         if found.is_none()
@@ -95,11 +89,8 @@ struct Alert {
 
 #[derive(Clone)]
 struct Item {
-    // `None` for an item that isn't a task.
     checked: Option<bool>,
-    // Where a task's `[ ]` or `[x]` sits in the doc's source, else where the item starts.
     at: usize,
-    // The bullet or number of an item that isn't a task.
     marker: SharedString,
     body: SharedString,
 }
@@ -144,7 +135,6 @@ fn alert(node: &mdast::Node, parse: &MarkdownParseContext<'_>) -> Option<Markdow
     )
 }
 
-// The Kit's lists draw only their own items, so a list holding a task becomes one node.
 fn tasks(node: &mdast::Node, parse: &MarkdownParseContext<'_>) -> Option<MarkdownNode> {
     let mdast::Node::List(list) = node else {
         return None;
@@ -191,7 +181,6 @@ fn tasks(node: &mdast::Node, parse: &MarkdownParseContext<'_>) -> Option<Markdow
     Some(MarkdownNode::new("tasks", Tasks(items)).text(text))
 }
 
-// The text after the `]` at `close`, with later lines dedented to where it starts.
 fn task_body(source: &str, close: usize) -> String {
     let first = source[close + 1..].trim_start_matches([' ', '\t']);
     let indent = close + 2;
@@ -229,7 +218,6 @@ fn link_handler(url: &SharedString, _: &ClickEvent, window: &mut Window, cx: &mu
     window.dispatch_action(Box::new(OpenLink { url: url.clone() }), cx);
 }
 
-// The doc a view shows, which its images are relative to.
 #[derive(Clone)]
 struct Source {
     images: Images,
@@ -386,11 +374,9 @@ fn render_item(item: Item, source: &Source, cx: &App) -> AnyElement {
 
 type Rendered = Result<Arc<Image>, String>;
 
-// Diagrams by source and dark theme; `None` while one renders.
 static DIAGRAMS: LazyLock<Mutex<HashMap<(SharedString, bool), Option<Rendered>>>> =
     LazyLock::new(Mutex::default);
 
-// The diagram, or `None` while it renders in the background, after which every window redraws.
 fn rendered(source: &SharedString, dark: bool, cx: &mut App) -> Option<Rendered> {
     let key = (source.clone(), dark);
     let mut diagrams = DIAGRAMS.lock().ok()?;
@@ -553,7 +539,6 @@ impl MarkdownPlugin for RemoteImage {
     }
 }
 
-/// The Viewer for the Markdown doc at `path` of project `project`, whose text `state` holds.
 pub(crate) fn markdown(
     state: &Entity<TextViewState>,
     project: &str,
@@ -584,7 +569,6 @@ mod tests {
             task_body("- [ ] Ship it\n      and test it", 4),
             "Ship it\nand test it"
         );
-        // Wide whitespace stays in the text instead of being cut through.
         assert_eq!(
             task_body("- [x] a\n \u{3000}\u{3000}b", 4),
             "a\n\u{3000}\u{3000}b"

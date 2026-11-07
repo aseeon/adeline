@@ -20,7 +20,6 @@ use support::{MENU, Ui};
 
 const WAIT: Duration = Duration::from_secs(30);
 
-/// A home with the fake agent where the UI starts its engine; stops it on drop.
 struct Live(PathBuf);
 
 impl Live {
@@ -36,8 +35,6 @@ impl Live {
         &self.0
     }
 
-    /// Remote machines through `fake_ssh.py`: each destination is a home in
-    /// `remotes/` with its own engine.
     fn remotes(&self) -> PathBuf {
         let root = self.0.join("remotes");
         std::fs::create_dir_all(&root).unwrap();
@@ -57,7 +54,6 @@ impl Live {
         std::fs::read_to_string(self.0.join(".config/adeline/machines.yml")).unwrap_or_default()
     }
 
-    /// Saves `machines.yml` with (id, name, destinations, engine) entries, all checked.
     fn save_machines(&self, machines: &[(&str, &str, &[&str], Option<&str>)]) {
         let mut text = String::from("machines:\n");
         for (id, name, destinations, engine) in machines {
@@ -94,7 +90,6 @@ impl Drop for Live {
 
 fn open(cx: &mut TestAppContext) -> Ui<'_> {
     let mut ui = Ui::open(cx, false, false);
-    // With remote machines, tabs name their machine: "demo · <this computer>".
     let local = format!("{} · ", common::PROJECT);
     ui.wait("the demo tab", WAIT, |ui| {
         ui.tabs()
@@ -113,8 +108,6 @@ fn send(ui: &mut Ui, prompt: &str) {
     ui.press("enter");
 }
 
-// The engine counts the turn before its update reaches the UI, and the UI's
-// Stop button shows once it has.
 fn wait_processing(ui: &mut Ui, home: &Path) {
     ui.wait("a processing turn", WAIT, |ui| {
         active(home) > 0 && ui.try_named("Stop").is_some()
@@ -143,7 +136,6 @@ fn quit_background(cx: &mut TestAppContext, second: &mut TestAppContext) {
     ui.click("Finish in background");
     assert!(!ui.is_open(), "Finish in background didn't quit");
     let pid = common::engine_pid(live.path()).expect("the engine stopped with the UI");
-    // The turn finishes with no window open.
     let conversation = common::conversations(live.path(), common::PROJECT)
         .pop()
         .unwrap();
@@ -165,7 +157,6 @@ fn quit_idle(cx: &mut TestAppContext) {
     let mut ui = open(cx);
     ui.quit();
     assert!(!ui.is_open(), "quitting with nothing running asked first");
-    // Started from Explorer, a console program would open a console window too.
     if cfg!(windows) {
         let exe = Path::new(env!("CARGO_BIN_EXE_adeline"));
         assert_eq!(common::windows_subsystem(exe), 2, "not a GUI program");
@@ -184,8 +175,6 @@ fn quit_stop_all(cx: &mut TestAppContext) {
     ui.wait("the agents to stop", WAIT, |_| active(live.path()) == 0);
 }
 
-// With another client on the engine there is nothing for Stop all to stop, so
-// Adeline quits at once and the other client's agent keeps working.
 #[gpui_kit::test]
 fn quit_stop_all_shared(cx: &mut TestAppContext, second: &mut TestAppContext) {
     let live = Live::new("quit-stop-all-shared");
@@ -211,11 +200,9 @@ fn settings_engine(cx: &mut TestAppContext) {
     let before = ui.cx.windows();
     ui.press("ctrl-,");
     ui.new_window(&before);
-    // The search reaches every settings page.
     ui.input("engine");
     ui.named("Keep conversation engine running");
     ui.named("Automatic retry limit");
-    // The live status pushes Stop engine below the default window height.
     ui.resize(960., 900.);
     ui.click("Stop engine");
     ui.wait("the engine to stop", WAIT, |_| {
@@ -237,7 +224,6 @@ fn settings_engine(cx: &mut TestAppContext) {
 #[gpui_kit::test]
 fn unavailable(cx: &mut TestAppContext) {
     let live = Live::new("unavailable");
-    // A file where the engine's folder belongs stops it from starting.
     let engine_dir = live.path().join(".config/adeline/engine");
     std::fs::write(&engine_dir, "not a folder").unwrap();
     let mut ui = Ui::open(cx, false, false);
@@ -267,13 +253,10 @@ fn fork(cx: &mut TestAppContext) {
         ui.all(|l| l == "Fork").len() == 2
     });
     ui.named("Forked from hello");
-    // Ctrl+Shift+G goes back to the chat the fork came from.
     ui.press("ctrl-shift-g");
     ui.wait_gone("Forked from hello", WAIT);
 }
 
-// A chat another client starts lands in the list without moving this window
-// off its open chat.
 #[gpui_kit::test]
 fn chat_from_another_client(cx: &mut TestAppContext, second: &mut TestAppContext) {
     let _live = Live::new("chat-elsewhere");
@@ -281,7 +264,6 @@ fn chat_from_another_client(cx: &mut TestAppContext, second: &mut TestAppContext
     send(&mut ui, "hello");
     ui.wait_named("Fork", WAIT);
     let mut other = open(second);
-    // The second window starts on "hello", the last active chat.
     other.wait("hello opened", WAIT, |ui| {
         ui.read(|app, _| app.open_chat() == Some("hello"))
     });
@@ -294,8 +276,6 @@ fn chat_from_another_client(cx: &mut TestAppContext, second: &mut TestAppContext
     assert_eq!(open.as_deref(), Some("hello"));
 }
 
-// The engine refuses a second project of the same name, and its reply shows as
-// a notification.
 #[gpui_kit::test]
 fn open_folder_name_taken(cx: &mut TestAppContext) {
     let live = Live::new("name-taken");
@@ -317,8 +297,6 @@ fn open_folder_name_taken(cx: &mut TestAppContext) {
     assert_eq!(ui.tabs().len(), 1, "{:?}", ui.tabs());
 }
 
-// A project deleted and made again from a moved folder of the same name gets
-// the same ID, and lists the new folder's docs.
 #[gpui_kit::test]
 fn docs_after_project_recreated(cx: &mut TestAppContext) {
     let live = Live::new("recreate");
@@ -331,7 +309,6 @@ fn docs_after_project_recreated(cx: &mut TestAppContext) {
     ui.wait_named("old.md", WAIT);
 
     ui.press("ctrl-w ctrl-f down delete");
-    // Past the undo window (6 s), which ticking reaches only slowly on a busy runner.
     ui.cx.executor().advance_clock(Duration::from_secs(7));
     let definition = live
         .path()
@@ -356,7 +333,6 @@ fn doc_text(ui: &mut Ui, label: &str) -> Option<String> {
         .and_then(|doc| doc.value().map(str::to_owned))
 }
 
-// Docs reads what changed on disk while it was closed, when no watcher saw it.
 #[gpui_kit::test]
 fn docs_refresh_after_leaving(cx: &mut TestAppContext) {
     let live = Live::new("docs-refresh");
@@ -376,7 +352,6 @@ fn docs_refresh_after_leaving(cx: &mut TestAppContext) {
 
     ui.press("ctrl-1");
     ui.wait_gone("Docs tree", WAIT);
-    // Time for the engine to drop the watcher once no client watches.
     ui.pause(Duration::from_secs(1));
     std::fs::write(&doc, "two\n").unwrap();
     std::fs::write(live.path().join("work/b.md"), "# B\n").unwrap();
@@ -386,7 +361,6 @@ fn docs_refresh_after_leaving(cx: &mut TestAppContext) {
     });
 }
 
-// Saving waits for a choice when the doc changed on disk under unsaved edits.
 #[gpui_kit::test]
 fn docs_conflict_blocks_save(cx: &mut TestAppContext) {
     let live = Live::new("docs-conflict");
@@ -425,7 +399,6 @@ const EXE: &str = if cfg!(windows) {
     "adeline"
 };
 
-/// Gives a remote home the fake agent, the project `app` and a known engine identity.
 fn make_remote(remotes: &Path, host: &str) -> PathBuf {
     let home = remotes.join(host);
     common::populate(&home, "app");
@@ -438,8 +411,6 @@ fn make_remote(remotes: &Path, host: &str) -> PathBuf {
     home
 }
 
-/// Installs `exe` as this version of Adeline in a remote home, as an earlier
-/// connection would have; returns its bin folder.
 fn install(home: &Path, exe: &[u8]) -> PathBuf {
     let bin = home.join(".adeline/bin");
     std::fs::create_dir_all(&bin).unwrap();
@@ -454,15 +425,12 @@ fn install(home: &Path, exe: &[u8]) -> PathBuf {
     bin
 }
 
-/// Kills the running `adeline bridge` sessions, as a dropped network would.
 fn drop_bridges(remotes: &Path) {
     for record in std::fs::read_dir(remotes.join("bridges"))
         .into_iter()
         .flatten()
     {
         let record = record.unwrap().path();
-        // The bridge runs under the session's cmd.exe. Killing its tree would kill
-        // the engine it started too.
         #[cfg(windows)]
         {
             let shell = std::fs::read_to_string(&record).unwrap_or_default();
@@ -486,7 +454,6 @@ fn drop_bridges(remotes: &Path) {
             let ssh = record.file_name().unwrap().to_string_lossy().into_owned();
             let group = std::fs::read_to_string(&record).unwrap_or_default();
             std::process::Command::new("kill")
-                // Without `--`, Linux's kill reads the negative group as an option.
                 .args(["-KILL", "--", &format!("-{}", group.trim()), &ssh])
                 .output()
                 .unwrap();
@@ -506,7 +473,6 @@ fn type_into(ui: &mut Ui, label: &str, text: &str) {
     ui.input(text);
 }
 
-/// Each machine's row in the machine selector, such as "Desktop, Connected".
 fn machine_rows(ui: &mut Ui) -> Vec<String> {
     ui.press(&format!("{MENU}-h"));
     let rows = ui
@@ -526,8 +492,6 @@ fn machine_state(ui: &mut Ui, name: &str) -> Option<String> {
         .find_map(|row| row.strip_prefix(&format!("{name}, ")).map(str::to_owned))
 }
 
-/// Waits up to `LONG`, and on a timeout names what the machines menu shows and
-/// the saved machines, which the window's names leave out.
 fn wait_remote(ui: &mut Ui, live: &Live, what: &str, mut done: impl FnMut(&mut Ui) -> bool) {
     let deadline = Instant::now() + LONG;
     ui.wait(what, LONG + LONG, |ui| {
@@ -572,7 +536,6 @@ fn add_machine(cx: &mut TestAppContext) {
         "the selector shows with no remote machine"
     );
     settings(&mut ui);
-    // The machine dropdown lists this computer, then "Add machine".
     ui.press(&format!("{MENU}-h enter down enter"));
     type_into(&mut ui, "Machine name", "Desktop");
     type_into(&mut ui, "Destination", "me@desktop");
@@ -627,7 +590,6 @@ fn drop_and_reconnect(cx: &mut TestAppContext, second: &mut TestAppContext) {
         common::transcript(&desktop, "app", &conversation).contains("turn_finished")
     });
     ui.wait("the remote turn to end", WAIT, |_| active(&desktop) == 0);
-    // Unchecking a machine disconnects it.
     ui.press(&format!("{MENU}-h"));
     ui.activate("Show Desktop");
     ui.press("escape");
@@ -654,7 +616,6 @@ fn drop_and_reconnect(cx: &mut TestAppContext, second: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn ssh_failures(cx: &mut TestAppContext) {
-    // SSH prompts, refusals and failure states.
     let live = Live::new("ssh-failures");
     let remotes = live.remotes();
     std::fs::write(remotes.join("pw-locked.alias"), "locked").unwrap();
@@ -704,7 +665,6 @@ fn ssh_failures(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn ssh_host_keys(cx: &mut TestAppContext) {
-    // Host keys, another engine at a destination, and an engine saved twice.
     let live = Live::new("ssh-host-keys");
     let remotes = live.remotes();
     for (alias, host) in [
@@ -715,8 +675,6 @@ fn ssh_host_keys(cx: &mut TestAppContext) {
         std::fs::write(remotes.join(format!("{alias}.alias")), host).unwrap();
     }
     let desktop = make_remote(&remotes, "desktop");
-    // Desktop and Twin reach this one home. Both connect at once, so without an
-    // earlier install there both would install into it at the same time.
     install(
         &desktop,
         &std::fs::read(env!("CARGO_BIN_EXE_adeline")).unwrap(),
@@ -740,7 +698,6 @@ fn ssh_host_keys(cx: &mut TestAppContext) {
     });
     ui.press(&format!("{MENU}-h"));
     assert!(ui.containing("Host key verification failed").is_some());
-    // Retry sits in the selector, under the refused machine.
     ui.click("Retry");
     ui.wait_named("Trust Fresh?", LONG);
     ui.click("Accept");
@@ -765,7 +722,6 @@ fn ssh_host_keys(cx: &mut TestAppContext) {
 
 #[gpui_kit::test]
 fn install_twice_at_once(cx: &mut TestAppContext) {
-    // Desktop and Twin reach one home with no Adeline, so both install into it at once.
     let live = Live::new("install-twice");
     let remotes = live.remotes();
     std::fs::write(remotes.join("twin.alias"), "desktop").unwrap();
@@ -840,7 +796,6 @@ fn headless_remote(cx: &mut TestAppContext) {
     );
 }
 
-/// Adeline 0.1.0 for this OS from its release, cached in the temporary folder.
 fn old_adeline() -> PathBuf {
     let os = std::env::consts::OS;
     let arch = match std::env::consts::ARCH {
@@ -853,7 +808,6 @@ fn old_adeline() -> PathBuf {
         let url = format!(
             "https://github.com/aseeon/adeline/releases/download/v0.1.0/adeline-{os}-{arch}.zip"
         );
-        // Python is already needed for the fake agent, and unzips the same everywhere.
         let fetched = std::process::Command::new(common::python())
             .args([
                 "-c",
@@ -877,7 +831,6 @@ fn old_adeline() -> PathBuf {
 }
 
 fn browse_to_site(ui: &mut Ui) {
-    // The machine choice and the folder rows are lists, reached with Tab.
     ui.press("ctrl-o");
     ui.wait_named("Open a folder on which machine?", WAIT);
     ui.activate("Desktop");
@@ -898,7 +851,6 @@ fn site_projects(desktop: &Path) -> Vec<String> {
         .collect()
 }
 
-// Downloads Adeline 0.1.0, so CI runs it in its own step with `--run-ignored`.
 #[ignore = "downloads Adeline 0.1.0"]
 #[gpui_kit::test]
 fn upgrade_old_engine(cx: &mut TestAppContext) {
@@ -913,7 +865,6 @@ fn upgrade_old_engine(cx: &mut TestAppContext) {
         .output()
         .unwrap();
     assert!(started.status.success(), "{started:?}");
-    // A newer Adeline that speaks this client's protocol is used as it is.
     let newer = remotes.join("newer/.adeline/bin");
     std::fs::create_dir_all(&newer).unwrap();
     std::fs::copy(env!("CARGO_BIN_EXE_adeline"), newer.join(EXE)).unwrap();
@@ -960,8 +911,6 @@ fn upgrade_old_engine(cx: &mut TestAppContext) {
     });
 }
 
-// Open folder on a remote machine browses its folders, and opening the same
-// folder again reuses its project.
 #[gpui_kit::test]
 fn browse_remote_folders(cx: &mut TestAppContext) {
     let live = Live::new("browse");

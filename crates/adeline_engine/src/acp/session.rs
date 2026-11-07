@@ -42,7 +42,6 @@ impl Worker {
                 InstructionsMode::Append => "--append-system-prompt",
                 InstructionsMode::Overwrite => "--system-prompt",
             };
-            // A trailing newline forces OMP's literal-text route, not its single-line file lookup.
             process.arg(format!("{flag}={}\n", self.guidance()));
         }
         #[cfg(target_os = "windows")]
@@ -154,7 +153,6 @@ impl Worker {
                             _close: close.take().expect("connected once"),
                         };
                         let _ = connected_inputs.send(Input::Connected { epoch, link });
-                        // Either the agent closes its output or the worker drops the link.
                         tokio::select! {
                             () = connection.incoming_closed() => {}
                             _ = closed => {}
@@ -181,7 +179,6 @@ impl Worker {
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
             while let Ok(Some(mut line)) = lines.next_line().await {
-                // Keeps a runaway stderr line from flooding the traffic log.
                 line.truncate(line.floor_char_boundary(1024));
                 traffic(Direction::Stderr, &line, TrafficNote::None);
                 if inputs.send(Input::Stderr { epoch, line }).is_err() {
@@ -574,7 +571,6 @@ fn route(dispatch: Dispatch, inputs: &UnboundedSender<Input>, epoch: u64) -> Han
                         .cast::<wire::CreateElicitationResponse>()
                         .respond(wire::CreateElicitationResponse::new(action));
                 }
-                // Adeline offers no `fs/*` or `terminal/*`.
                 method => {
                     let _ = responder
                         .respond_with_error(sdk::Error::method_not_found().data(method.to_owned()));

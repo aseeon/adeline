@@ -28,12 +28,9 @@ pub enum State {
     Starting,
     Connected,
     Mismatch(Status),
-    // For the mismatched engine to exit.
     Waiting,
     Stopped { unexpected: bool },
-    // Retrying won't help until the user acts.
     Unavailable(String),
-    // Retrying.
     Disconnected(String),
     SignInFailed(String),
     UpgradeNeeded { version: String, active: usize },
@@ -90,11 +87,9 @@ pub struct Connection {
     pub machine: String,
     pub state: State,
     pub status: Status,
-    // When `status` arrived, to count uptime from.
     pub status_at: Instant,
     pub settings: EngineSettings,
     pub harnesses: harness::Catalog,
-    // There is data to show while reconnecting.
     pub loaded: bool,
     pub destination: Option<String>,
     sender: Option<mpsc::UnboundedSender<String>>,
@@ -105,11 +100,9 @@ pub struct Connection {
     queued: Vec<(u64, Command)>,
     epoch: u64,
     bye: bool,
-    // As far as this client has it.
     stream: Option<Resume>,
     cancel: Option<tokio::sync::oneshot::Sender<()>>,
     retries: u32,
-    // The user agreed to restart an older remote engine.
     upgrade: bool,
 }
 
@@ -153,7 +146,6 @@ impl Connection {
     }
 }
 
-// Reused by the next `ssh` session of the same connect, forgotten when it ends.
 struct Secret {
     prompt: String,
     answer: String,
@@ -166,7 +158,6 @@ pub struct Connections {
     prompts: VecDeque<askpass::Prompt>,
     askpass: String,
     secrets: HashMap<String, Vec<Secret>>,
-    // The machine whose harnesses are the `Harnesses` global.
     focus: String,
     demo: bool,
 }
@@ -189,7 +180,6 @@ enum Incoming {
 }
 
 pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
-    // Its own small runtime; GPUI keeps its executors.
     static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
         tokio::runtime::Builder::new_multi_thread()
@@ -201,7 +191,6 @@ pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
     })
 }
 
-// Made before the window opens, so the project list shows without delay.
 pub struct Initial {
     reader: ipc::Reader,
     writer: ipc::Writer,
@@ -254,7 +243,6 @@ pub fn connect_existing() -> Option<Initial> {
 }
 
 pub fn init(demo: bool, initial: Option<Initial>, snapshot: Option<&Snapshot>, cx: &mut App) {
-    // `snapshot` was taken out of `initial`.
     let mut connections = Connections {
         list: Vec::new(),
         owner: None,
@@ -268,7 +256,6 @@ pub fn init(demo: bool, initial: Option<Initial>, snapshot: Option<&Snapshot>, c
         let harnesses = cx.global::<Harnesses>().0.clone();
         for machine in machines::checked() {
             let mut connection = Connection::demo(&machine, harnesses.clone());
-            // One demo machine shows what a dropped connection looks like.
             if machine == "vortex" {
                 connection.state = State::Disconnected("Demo machine offline.".into());
             }
@@ -323,7 +310,6 @@ pub fn init(demo: bool, initial: Option<Initial>, snapshot: Option<&Snapshot>, c
             local.state = State::Mismatch(initial.status.clone());
         }
     }
-    // Messages wait in the inbox until the window's entity is set as owner.
     match initial {
         Some(Initial { reader, writer, .. }) => {
             let (incoming, epoch, cancel) = open_inbox(LOCAL, cx);
@@ -365,7 +351,6 @@ pub fn connections(cx: &App) -> &[Connection] {
 }
 
 pub fn sync(cx: &mut App) {
-    // Deferred, so callers may be updating the window.
     cx.defer(sync_now);
 }
 
@@ -524,7 +509,6 @@ async fn run_io(
     mut writer: ipc::Writer,
     incoming: async_channel::Sender<Incoming>,
     cancel: tokio::sync::oneshot::Receiver<()>,
-    // The `ssh` process lives as long as the connection.
     _child: Option<tokio::process::Child>,
 ) {
     let (sender, mut outgoing) = mpsc::unbounded_channel::<String>();
@@ -547,7 +531,6 @@ async fn run_io(
         }
         true
     };
-    // A dropped cancel sender (an unchecked machine) ends the connection too.
     tokio::select! {
         closed = read => if closed {
             let _ = incoming.send(Incoming::Closed).await;
@@ -592,7 +575,6 @@ fn schedule_retry(machine: &str, cx: &mut App) {
         return;
     };
     connection.retries += 1;
-    // Doubles from 2 s, capped at 30 s so a machine that comes back is found soon.
     let delay = Duration::from_secs(1 << connection.retries.min(5)).min(Duration::from_secs(30));
     let epoch = connection.epoch;
     let machine = machine.to_owned();
@@ -778,7 +760,6 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
                 return;
             }
             if !local && !connection.bye {
-                // The engine may still be running: keep what was received, and catch up later.
                 connection.state = State::Disconnected("The connection was lost.".into());
                 let error = format!("{} disconnected.", machines::name(machine));
                 fail_pending(machine, &error, cx);
@@ -872,7 +853,6 @@ fn send_request(machine: &str, command: Command, done: Callback, cx: &mut App) -
         return None;
     };
     if let Some(error) = refusal(connection) {
-        // Callers may be mid-update; their reply comes after it, like any other.
         cx.defer(move |cx| done(Err(error), cx));
         return None;
     }
@@ -964,7 +944,6 @@ pub fn focus(machine: &str, cx: &mut App) {
 
 fn on_prompt(prompt: askpass::Prompt, cx: &mut App) {
     let connections = cx.global_mut::<Connections>();
-    // An earlier session of this connect already had this answer.
     if !prompt.host_key()
         && let Some(secret) = connections
             .secrets
@@ -982,7 +961,6 @@ fn on_prompt(prompt: askpass::Prompt, cx: &mut App) {
 }
 
 pub fn prompt(cx: &App) -> Option<(String, String, bool)> {
-    // Machine, text, and whether it asks about a host key.
     cx.global::<Connections>()
         .prompts
         .front()
@@ -990,7 +968,6 @@ pub fn prompt(cx: &App) -> Option<(String, String, bool)> {
 }
 
 pub fn answer_prompt(answer: Option<String>, cx: &mut App) {
-    // `None` cancels.
     let connections = cx.global_mut::<Connections>();
     let Some(prompt) = connections.prompts.pop_front() else {
         return;

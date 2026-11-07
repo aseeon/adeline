@@ -26,7 +26,6 @@ pub fn unique(prefix: &str) -> String {
 
 pub fn random_id() -> String {
     use std::hash::{BuildHasher as _, Hasher as _};
-    // RandomState's keys are random per process, so no rand crate is needed.
     let half = || {
         let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
         hasher.write_u64(NEXT.fetch_add(1, Ordering::Relaxed));

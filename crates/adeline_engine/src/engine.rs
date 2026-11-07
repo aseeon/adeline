@@ -39,25 +39,14 @@ mod turns;
 
 pub use cli::main;
 
-// Without clients, daemon mode or work, the engine exits after this long, which
-// lets a window that closes and reopens keep its agents.
 const IDLE_EXIT: Duration = Duration::from_secs(60);
-// Enough for a reconnecting client to catch up on a long streamed turn.
 const RECENT_DELTAS: usize = 20_000;
-// Lines queued for a client that stops reading; past this it's dropped and
-// catches up through `Hello.resume` when it reconnects. Room for a full resume.
 const CLIENT_BACKLOG: usize = 2 * RECENT_DELTAS;
-// How long agents get to stop on their own before they're killed.
 const STOP_GRACE: Duration = Duration::from_secs(5);
-// A processing agent silent this long gets a "no output" notice; in ms, like the traffic times.
 const QUIET_AFTER_MS: u64 = 5_000;
-// The engine's housekeeping interval: idle exit, quiet agents, stops and flushes.
 const TICK: Duration = Duration::from_millis(250);
-// File events arrive in bursts; one reload follows after they settle.
 const WATCH_SETTLE: Duration = Duration::from_millis(300);
-// Traffic lines a client gets when it starts watching a conversation.
 const TRAFFIC_BACKLOG: usize = 2000;
-// Blocking work is short file and process calls; this caps threads when many run at once.
 const BLOCKING_THREADS: usize = 64;
 const ALREADY_PROCESSING: &str =
     "This conversation is already processing (sent from another window)";
@@ -68,7 +57,6 @@ fn settings_path() -> anyhow::Result<PathBuf> {
 }
 
 fn load_settings() -> EngineSettings {
-    // The first start copies the retry limit from the UI's settings.
     let defaults = EngineSettings {
         keep_running: false,
         retry_limit: 5,
@@ -166,7 +154,6 @@ struct Client {
 
 impl Client {
     fn send(&self, line: String) {
-        // Stopping the writer ends the connection.
         if let Err(mpsc::error::TrySendError::Full(_)) = self.sender.try_send(line) {
             self.writer.abort();
         }
@@ -219,7 +206,6 @@ struct Engine {
     watched: Vec<PathBuf>,
     watch_due: Option<Instant>,
     _watcher: Option<notify::RecommendedWatcher>,
-    // The project each client watches the docs of.
     docs_watching: HashMap<u64, String>,
     docs_watched: HashSet<PathBuf>,
     docs_watcher: Option<notify::RecommendedWatcher>,
@@ -239,7 +225,6 @@ fn unsaved_history(error: &str) -> String {
 
 fn live_for(conversation: &storage::StoredConversation) -> Live {
     let thread = conversation.to_thread();
-    // A fork's copied prompts belong to its source's turns.
     let copied = conversation
         .settings
         .forked_from
@@ -329,7 +314,6 @@ fn history_text(messages: &[Message]) -> String {
 }
 
 fn disk_icons() -> BTreeMap<String, String> {
-    // Clients can't read these from this machine's disk.
     let mut icons = BTreeMap::new();
     let Ok(root) = config::directory() else {
         return icons;
@@ -748,7 +732,6 @@ impl Engine {
         request: u64,
         command: Command,
     ) -> Option<Result<Value, String>> {
-        // `None` means the reply comes later.
         let conversation = |engine: &Self, id: &str| {
             engine
                 .locate(id)
@@ -989,7 +972,6 @@ impl Engine {
         if self.subscribers() > 0 {
             return;
         }
-        // Nobody can answer a permission now.
         let waiting: Vec<_> = self
             .live
             .iter()
@@ -1018,7 +1000,6 @@ impl Engine {
             self.storage_failure(&id, &error);
             self.send_live(&id);
         }
-        // A running turn with no traffic for a while reads as quiet.
         let now = adeline_core::recency::now_ms();
         let quiet: Vec<String> = self
             .live
@@ -1050,7 +1031,6 @@ impl Engine {
             && Instant::now() >= stop.deadline
         {
             if stop.forced {
-                // Agents that ignore even a kill can't hold the engine forever.
                 tracing::event!(
                     name: "engine.stop.unkillable",
                     tracing::Level::WARN,

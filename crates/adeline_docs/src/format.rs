@@ -6,14 +6,10 @@
 //! Offsets are UTF-8 byte offsets. A selection past the end or off a char
 //! boundary is clamped, so no input panics. `\r\n` counts as one line end.
 
-// Rust guideline compliant 2026-10-09
-
 use std::ops::Range;
 
-/// A toolbar tool.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Format {
-    /// A heading of this level, clamped to 1..=6.
     Heading(u8),
     Bold,
     Italic,
@@ -28,7 +24,6 @@ pub enum Format {
     Table,
 }
 
-/// Replace `range` of the old text with `text`, then select `selection` of the new text.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Edit {
     pub range: Range<usize>,
@@ -36,7 +31,6 @@ pub struct Edit {
     pub selection: Range<usize>,
 }
 
-/// The edit that applies `format` to `selection` of `text`.
 pub fn apply(format: Format, text: &str, selection: Range<usize>) -> Edit {
     let selection = clamp(text, selection);
     match format {
@@ -81,7 +75,6 @@ fn run(bytes: impl Iterator<Item = u8>, byte: u8) -> usize {
 fn inline(text: &str, sel: Range<usize>, marker: &str) -> Edit {
     let m = marker.len();
     let byte = marker.as_bytes()[0];
-    // A run of `*` holds italic when odd: `**` is bold and `***` is both.
     let styled = |run: usize| {
         if marker == "*" {
             run % 2 == 1
@@ -134,8 +127,6 @@ fn link(text: &str, sel: Range<usize>) -> Edit {
     }
 }
 
-/// The lines `sel` touches, without the final line end. A selection that
-/// ends at the start of a line doesn't touch that line.
 fn line_span(text: &str, sel: &Range<usize>) -> Range<usize> {
     let start = text[..sel.start].rfind('\n').map_or(0, |at| at + 1);
     let mut last = sel.end;
@@ -164,7 +155,6 @@ impl Prefix {
     }
 }
 
-/// The line's block prefix, its indent and the length of its marker.
 fn parse(row: &str) -> (Option<Prefix>, usize, usize) {
     let hashes = run(row.bytes(), b'#');
     if let Ok(level @ 1..=6) = u8::try_from(hashes)
@@ -312,7 +302,6 @@ fn table(text: &str, sel: &Range<usize>) -> Edit {
 mod tests {
     use super::*;
 
-    /// The text after the edit, and what it selects.
     fn toolbar(format: Format, text: &str, selection: Range<usize>) -> (String, String) {
         let edit = apply(format, text, selection);
         let mut new = text.to_owned();

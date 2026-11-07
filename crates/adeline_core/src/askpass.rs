@@ -30,7 +30,6 @@ struct Ask {
 }
 
 pub fn serve_askpass(prompts: async_channel::Sender<Prompt>) -> anyhow::Result<String> {
-    // Runs inside the client runtime. Returns the address `ssh` children get.
     #[cfg(windows)]
     {
         let address = format!(
@@ -55,7 +54,6 @@ pub fn serve_askpass(prompts: async_channel::Sender<Prompt>) -> anyhow::Result<S
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt as _;
-        // Owner-only before the socket exists, so no other user can connect first.
         let dir = crate::config::directory()?.join("askpass");
         std::fs::create_dir_all(&dir).with_context(|| dir.display().to_string())?;
         std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
@@ -107,7 +105,6 @@ async fn answer<S: AsyncRead + tokio::io::AsyncWrite + Send + 'static>(
 }
 
 pub fn askpass_main(address: &str, prompt: &str) -> i32 {
-    // `ssh` sends the answer printed here. Exits 1 when the user cancels.
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()

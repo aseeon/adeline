@@ -151,7 +151,6 @@ pub struct TodoStep {
     pub status: StepStatus,
 }
 
-// Earlier versions saved new chats as "active" and running ones as "working".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThreadStatus {
@@ -390,7 +389,6 @@ pub fn read_attachment(path: &std::path::Path) -> anyhow::Result<Attachment> {
     let size = std::fs::metadata(path)
         .with_context(|| path.display().to_string())?
         .len();
-    // Too big to read; `attach` reports it.
     let data = if size > ATTACHMENT_LIMIT {
         String::new()
     } else {

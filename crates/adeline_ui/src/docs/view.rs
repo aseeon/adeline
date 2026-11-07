@@ -2,8 +2,6 @@
 //! doc's toolbar island and banners, the dialogs, the conversation chooser
 //! in the chat header, and the doc cards under a reply.
 
-// Rust guideline compliant 2026-10-09
-
 use super::{Act, After, Doc, viewer};
 use crate::*;
 use adeline_core::card::Card;
@@ -13,9 +11,7 @@ use gpui_kit::component::Disableable as _;
 use gpui_kit::component::command::{Command, CommandItem};
 use gpui_kit::component::input::Editor;
 
-// 68ch of 15 px prose, the design's measure for documents.
 const DOC_WIDTH: f32 = 790.;
-// Cards a reply shows before the rest fold into a list.
 const CARD_LIMIT: usize = 4;
 
 struct Tool {
@@ -134,7 +130,6 @@ fn plain_tools() -> Vec<Tool> {
     ]
 }
 
-// The design's document type: a 24 title, 17 sections, code on the chip fill.
 fn prose(cx: &App) -> TextViewStyle {
     let (title, section, body) = (
         panes::dp(theme::T_DOC),
@@ -171,7 +166,6 @@ fn edited_at(ms: u64) -> String {
 }
 
 impl Adeline {
-    // A 30 square toolbar button with a 15 icon, as in the design's `.fmt`.
     fn docs_button(
         &self,
         id: impl Into<ElementId>,
@@ -196,7 +190,6 @@ impl Adeline {
             }))
     }
 
-    /// The doc in a card between the islands: radius 14, its bottom level with theirs.
     pub(crate) fn docs_card(&self, cx: &mut Context<Self>) -> AnyElement {
         let isl = theme::islands(cx);
         div()
@@ -218,7 +211,6 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// The left island's list in Docs: the project switcher, a header, search and the tree.
     pub(crate) fn docs_sidebar(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let isl = theme::islands(cx);
         let search_focused = self
@@ -265,7 +257,6 @@ impl Adeline {
                         app.act(Action::Docs(Act::New), window, cx);
                     })),
             );
-        // Framed like the chat search: focus shows as the stronger ring.
         let search = row()
             .id("docs-search-field")
             .w_full()
@@ -410,7 +401,6 @@ impl Adeline {
         if dirty {
             label.push_str(", unsaved");
         }
-        // Folders lead with a chevron. Files keep its width, so names line up.
         let chevron = if row_data.folder {
             let chevron = Icon::default()
                 .path("chevron.svg")
@@ -569,7 +559,6 @@ impl Adeline {
                 .into_any_element()
         };
         if let Some((path, error)) = failed {
-            // The engine's error names the path already.
             let message = if error.contains("no longer exists") {
                 format!("{path} no longer exists")
             } else {
@@ -708,7 +697,6 @@ impl Adeline {
                     .position(at + point(px(8.), px(8.)))
                     .snap_to_window_with_margin(px(8.))
                     .child(
-                        // Occluded, so pressing it doesn't count as a press on the doc.
                         div().occlude().child(
                         Button::new("doc-note-selection")
                             .small()
@@ -736,7 +724,6 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// The card's toolbar: 44 tall, the tools, then whether the doc is saved.
     fn docs_toolbar(&self, path: &str, doc: &Doc, locked: bool, cx: &Context<Self>) -> AnyElement {
         let isl = theme::islands(cx);
         let markdown = adeline_docs::is_markdown(path);
@@ -768,7 +755,6 @@ impl Adeline {
             .gap(px(2.))
             .border_b_1()
             .border_color(isl.line)
-            // In a narrow card the tools clip, and the doc's state and actions stay.
             .child(
                 row()
                     .flex_1()
@@ -1009,7 +995,6 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// The chat header's title in Docs: a button opening the project's conversations.
     pub(crate) fn chat_chooser(&self, title: &str, cx: &Context<Self>) -> AnyElement {
         let owner = cx.weak_entity();
         let content_owner = owner.clone();
@@ -1258,7 +1243,6 @@ impl Adeline {
             .into_any_element()
     }
 
-    /// The cards of the turn that reply `i` ends: the 4 latest, then a "+N more docs" list.
     pub(crate) fn turn_cards(&self, thread: &Thread, i: usize, cx: &Context<Self>) -> Option<Div> {
         let turn = thread.turn_of(i);
         let mut cards: Vec<&Card> = thread.cards.iter().filter(|c| c.turn == turn).collect();

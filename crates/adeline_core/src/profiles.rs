@@ -6,12 +6,8 @@ pub const CUSTOM: &str = "custom";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Instructions {
-    // No verified mechanism, so the agent form hides the field.
     None,
-    // `--append-system-prompt=` or `--system-prompt=` on the command line (OMP).
     Flags,
-    // `_meta.systemPrompt` on session setup: a string replaces the default
-    // prompt, `{append}` adds to it (claude-agent-acp).
     SessionMeta,
 }
 
@@ -26,7 +22,6 @@ pub struct Install {
     pub windows: &'static [Step],
     pub unix: &'static [Step],
     pub needs_node: bool,
-    // Its installed version is compared with the registry.
     pub package: Option<&'static str>,
 }
 
@@ -42,23 +37,15 @@ impl Install {
 
 #[derive(Clone, Copy, Debug)]
 pub struct Profile {
-    // The registry ID, or `omp` for the built-in OMP entry.
     pub harness: &'static str,
-    // Used in sentences like "Claude Code needs Node.js."
     pub name: &'static str,
     pub command: &'static str,
     pub arguments: &'static [&'static str],
     pub install: Install,
     pub instructions: Instructions,
-    // Hidden from every mode choice.
     pub plan_modes: &'static [&'static str],
-    // For modes whose own description is missing or unclear.
     pub mode_notes: &'static [(&'static str, &'static str)],
-    // `_meta` keys that, set to `true` on a session update, end the running
-    // turn without a prompt response.
     pub turn_end: &'static [&'static str],
-    // Whether Send now may steer the running turn when the agent advertises
-    // steering. Off for adapters that start a detached turn instead.
     pub steering: bool,
 }
 
@@ -138,7 +125,6 @@ pub const CODEX: Profile = Profile {
         ),
     ],
     turn_end: &[],
-    // codex-acp answers steering at a turn's end with a detached new turn.
     steering: false,
 };
 
@@ -148,7 +134,6 @@ pub const PI: Profile = Profile {
     command: "pi-acp",
     arguments: &[],
     install: Install {
-        // pi-acp drives the `pi` CLI, which is installed in the same offer.
         windows: &[
             npm(&["install", "-g", "@earendil-works/pi-coding-agent"]),
             npm(&["install", "-g", "pi-acp"]),
@@ -221,7 +206,6 @@ pub const OMP: Profile = Profile {
 pub const ALL: [Profile; 5] = [CLAUDE, CODEX, PI, OPENCODE, OMP];
 
 pub fn find(harness: &str, identity: &str) -> Option<&'static Profile> {
-    // A Custom agent matches by its handshake name, so a hand-configured OMP is still OMP.
     let identity = identity.to_lowercase();
     ALL.iter().find(|profile| {
         profile.harness == harness

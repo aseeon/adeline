@@ -6,13 +6,10 @@
 //! A route is `adeline://<mode>/<path>`, relative to the chat's project. A
 //! chat holds one card per route, so a later change updates the card in place.
 
-// Rust guideline compliant 2026-10-09
-
 use serde::{Deserialize, Serialize};
 
 const SCHEME: &str = "adeline://";
 
-/// An `adeline://<mode>/<path>` route.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct EntityRef(String);
@@ -53,11 +50,8 @@ pub struct Card {
     pub entity: EntityRef,
     pub title: String,
     pub subtitle: String,
-    // The user message that started the turn the card belongs to.
     pub turn: Option<usize>,
-    // Epoch milliseconds of the entity's last change.
     pub edited: u64,
-    // The engine noticed the entity is gone.
     pub gone: bool,
 }
 

@@ -22,9 +22,7 @@ pub const LOCAL: &str = "local";
 pub struct Machine {
     pub id: String,
     pub name: String,
-    // Tried in this order on every connect.
     pub destinations: Vec<String>,
-    // The engine it was first connected to.
     pub engine: Option<String>,
 }
 
@@ -97,7 +95,6 @@ fn with<T>(change: impl FnOnce(&mut Store) -> T) -> T {
             |path| load(&path),
         )
     });
-    // At least one machine stays checked, and only known ones count.
     let known: Vec<String> = store.machines.iter().map(|m| m.id.clone()).collect();
     store.checked.retain(|id| id == LOCAL || known.contains(id));
     if store.checked.is_empty() {
@@ -106,7 +103,6 @@ fn with<T>(change: impl FnOnce(&mut Store) -> T) -> T {
     change(store)
 }
 
-// Changes a copy, so a failed save leaves the machines as they were.
 fn update<T>(change: impl FnOnce(&mut Store) -> anyhow::Result<T>) -> anyhow::Result<T> {
     with(|store| {
         let mut changed = store.clone();
@@ -147,7 +143,6 @@ pub fn name(id: &str) -> String {
         if demo() {
             return "Nexus".into();
         }
-        // macOS reports names like "Mac.local"; the label wants just "Mac".
         let host = gethostname::gethostname().to_string_lossy().into_owned();
         return match host.split('.').next() {
             Some(host) if !host.is_empty() => host.into(),

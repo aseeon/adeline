@@ -34,7 +34,6 @@ pub(super) fn valid_working_directory(directory: &Path) -> Result<()> {
 pub(super) fn is_link(metadata: &fs::Metadata) -> bool {
     use std::os::windows::fs::MetadataExt;
     const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
-    // Junctions are reparse points too, but FileType::is_symlink can miss them.
     metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
 }
 

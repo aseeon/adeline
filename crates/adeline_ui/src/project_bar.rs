@@ -26,8 +26,6 @@ pub(super) enum ProjectSort {
 
 pub(super) struct PendingRemoval {
     id: String,
-    // Matches the timer that commits this removal, so an undone removal's
-    // timer finds nothing to do.
     generation: u64,
 }
 
@@ -45,7 +43,6 @@ const RAIL: [(Section, &str, &str); 11] = [
     (Section::Whiteboard, "Whiteboard", "whiteboard.svg"),
 ];
 
-/// The modes the rail shows, in its order; Ctrl+1 to Ctrl+9 pick them.
 pub(super) fn rail_sections() -> Vec<Section> {
     let features = config::current().general.features;
     RAIL.iter()
@@ -69,7 +66,6 @@ pub(super) fn mode_name(section: Section) -> &'static str {
 }
 
 impl Adeline {
-    /// Switches to the next or previous open project, wrapping at the ends.
     pub(super) fn step_project(
         &mut self,
         forward: bool,
@@ -172,8 +168,6 @@ impl Adeline {
         )
     }
 
-    /// The projects and machines menus, hanging from the top center of the
-    /// window where the design's palette opens.
     pub(super) fn menu_overlays(&self, cx: &Context<Self>) -> Div {
         div()
             .absolute()
@@ -185,7 +179,6 @@ impl Adeline {
             })
     }
 
-    /// The card for the open project, then the other open projects.
     pub(super) fn project_switcher(&self, cx: &Context<Self>) -> Div {
         let isl = theme::islands(cx);
         let others: Vec<usize> = (0..self.projects.len())
@@ -400,8 +393,6 @@ fn owner_action(
     }
 }
 
-// The menu outlives the render that built it, so items find the project by key
-// when clicked: the projects may have shifted since.
 fn project_actions(
     menu: PopupMenu,
     owner: &WeakEntity<Adeline>,
@@ -433,7 +424,6 @@ fn project_actions(
 }
 
 fn letter_mark(name: &str, fill: Hsla, letter: Hsla, size: Pixels) -> Div {
-    // Up to two initials, one per word of the name.
     let initials: String = name
         .split(|c: char| !c.is_alphanumeric())
         .filter_map(|word| word.chars().next())

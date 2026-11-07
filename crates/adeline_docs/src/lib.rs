@@ -4,8 +4,6 @@
 //!
 //! A doc's path is relative to the project root, with `/` separators.
 
-// Rust guideline compliant 2026-10-09
-
 mod files;
 mod format;
 mod text;

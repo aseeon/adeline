@@ -40,14 +40,11 @@ pub fn log_path() -> String {
     )
 }
 
-// 64-bit FNV-1a: stable across Rust versions, unlike `DefaultHasher`, so every
-// Adeline version finds the same pipe.
 #[cfg(windows)]
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 #[cfg(windows)]
 const FNV_PRIME: u64 = 0x0100_0000_01b3;
 
-// One pipe per configuration folder, which is one per OS user.
 #[cfg(windows)]
 fn folder_hash() -> Result<u64> {
     let folder = crate::config::directory()?;
@@ -82,15 +79,12 @@ fn control_prefix() -> Result<PathBuf> {
     }
 }
 
-/// Where the control UI with process ID `pid` listens.
 pub fn control_address(pid: u32) -> Result<PathBuf> {
     let mut address = control_prefix()?.into_os_string();
     address.push(pid.to_string());
     Ok(address.into())
 }
 
-/// The process IDs of control UIs with an endpoint, including ones that died
-/// and left a socket behind.
 pub fn control_pids() -> Result<Vec<u32>> {
     let prefix = control_prefix()?;
     let (Some(dir), Some(start)) = (prefix.parent(), prefix.file_name()) else {
@@ -141,7 +135,6 @@ pub async fn connect_to(address: &std::path::Path) -> io::Result<(Reader, Writer
     {
         match tokio::net::UnixStream::connect(address).await {
             Ok(stream) => Ok(split(stream)),
-            // A socket left by a killed engine refuses connections.
             Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => {
                 Err(io::Error::new(io::ErrorKind::NotFound, error))
             }
@@ -169,11 +162,9 @@ pub struct Listener {
 
 impl Listener {
     pub fn bind() -> Result<Self> {
-        // Callers hold the engine lock, so no other engine listens.
         Self::bind_at(&engine_address()?).context("Cannot listen for clients")
     }
 
-    /// Listens as this process's control UI. Must run inside a tokio runtime.
     pub fn bind_control() -> Result<Self> {
         std::fs::create_dir_all(engine_dir()?)?;
         Self::bind_at(&control_address(std::process::id())?)
@@ -191,13 +182,10 @@ impl Listener {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt as _;
-            // The parent holds settings and transcripts, so it is the user's alone too.
             for dir in [crate::config::directory()?, engine_dir()?] {
                 std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
                     .with_context(|| dir.display().to_string())?;
             }
-            // A socket left by a crashed process. The engine lock, or the
-            // process ID in the name, proves it's stale.
             let _ = std::fs::remove_file(address);
             let listener = tokio::net::UnixListener::bind(address)
                 .with_context(|| format!("Cannot create the socket {}", address.display()))?;
@@ -238,8 +226,6 @@ pub async fn connect_or_start(daemon: bool) -> Result<(Reader, Writer)> {
         return Ok(connection);
     }
     spawn_engine(daemon).context("Cannot start the conversation engine")?;
-    // Losing a start race is fine: the winner accepts instead.
-    // A cold start on a slow disk can take several seconds.
     let deadline = tokio::time::Instant::now() + START_TIMEOUT;
     while tokio::time::Instant::now() < deadline {
         tokio::time::sleep(Duration::from_millis(50)).await;

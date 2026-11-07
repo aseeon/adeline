@@ -89,7 +89,6 @@ impl Adeline {
             Action::AgentSettings | Action::EditAgent => {
                 let entries = &self.agent_catalog().entries;
                 let known = |id: &String| entries.iter().any(|entry| &entry.id == id);
-                // A demo chat has no live session, only its agent's name.
                 let conversation = self
                     .current_id()
                     .and_then(|id| self.conversation_agent(&id))
@@ -130,7 +129,6 @@ impl Adeline {
             Action::ProjectMachine(machine) => {
                 if machine != self.project_machine {
                     self.project_machine = machine;
-                    // A folder path means nothing on another machine.
                     self.project_directory_input
                         .update(cx, |state, cx| state.set_value("", window, cx));
                 }
@@ -196,7 +194,6 @@ impl Adeline {
                     self.agent_filter = None;
                     self.query
                         .update(cx, |state, cx| state.set_value("", window, cx));
-                    // Agents belong to a machine.
                     if self.projects[ix].machine != self.current_machine() {
                         self.project = ix;
                         self.agents_changed(None, None, false, cx);
@@ -230,12 +227,10 @@ impl Adeline {
                 if let [machine] = checked.as_slice() {
                     self.browse_folder_to_open(machine.clone(), window, cx);
                 } else {
-                    // Several machines: ask which one's folders to browse.
                     self.modal = Some("folder-machine");
                 }
             }
             Action::FolderMachine(machine) => {
-                // A remote machine's browser takes the dialog's place.
                 self.modal = None;
                 self.browse_folder_to_open(machine, window, cx);
             }
@@ -375,7 +370,6 @@ impl Adeline {
                 }
             }
             Action::PanelTab(tab) => {
-                // The open pane's own tab closes it; any other tab opens the pane on it.
                 self.side_panel_open = !(self.side_panel_open && self.side_tab == tab);
                 self.side_tab = tab;
                 self.watch_traffic(cx);
@@ -547,7 +541,6 @@ impl Adeline {
             Action::AddFile | Action::AttachFile | Action::AddDirectory
                 if self.workspace().machine != machines::LOCAL && !self.demo_mode =>
             {
-                // A remote project's files are on its machine.
                 let directory = matches!(action, Action::AddDirectory);
                 self.open_browser(project_ui::BrowserPurpose::Attach { directory }, cx);
             }
@@ -612,8 +605,6 @@ impl Adeline {
             self.open_modal(window, cx);
         } else if self.modal.is_none() && previous_modal.is_some() {
             window.close_dialog(cx);
-            // Focus may stay on a control that closed with a menu, where shortcuts
-            // don't reach the main view.
             if !self.focus.contains_focused(window, cx) {
                 window.focus(&self.focus, cx);
             }
@@ -709,7 +700,6 @@ impl Adeline {
             0
         };
         let id = self.projects[self.project].threads[ix].id.clone();
-        // A running demo chat queues the message, like a real one.
         if let Some(live) = self.runtime.conversations.get_mut(&id)
             && live.processing
             && !now

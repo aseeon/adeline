@@ -16,7 +16,6 @@ impl Adeline {
     pub(crate) fn search_sidebar(&self, cx: &mut Context<Self>) {
         let criteria = self.chat_criteria(cx);
         self.chat_list.update(cx, |list, cx| {
-            // Programmatic input resets can emit the same InputEvent::Change.
             if list.criteria != criteria {
                 list.search(criteria, true, cx);
             }
@@ -34,7 +33,6 @@ impl Adeline {
         let isl = theme::islands(cx);
         let done = thread.status.closed();
         let live = thread.status.live();
-        // Unread, waiting and running chats read bright; the rest recede.
         let bright = selected || thread.unread() || live;
         row()
             .h(dp(ROW_HEIGHT))
@@ -272,15 +270,11 @@ impl Adeline {
             || search_focused
             || !self.query.read(cx).value().is_empty()
             || self.agent_filter.is_some();
-        // The frame belongs to the list rather than the input, so the agent button
-        // shares the frame's inset instead of the input's fixed text padding.
-        // Focus shows as the stronger ring, as on the composer.
         let search = row()
             .id("chat-search-field")
             .w_full()
             .h(dp(32.))
             .pl(dp(10.))
-            // Matches the 1 px ring so the agent button is inset evenly on every side.
             .pr(px(1.))
             .rounded(dp(8.))
             .border_1()
@@ -388,13 +382,10 @@ const END_HEIGHT: f32 = 12.;
 
 const COMPACT_WIDTH: f32 = 17.;
 
-// Smaller searches run inline, where they finish well within a frame; larger
-// ones run in the background so typing never stalls.
 const INLINE_SEARCH_ROWS: usize = 256;
 
 const INLINE_SEARCH_BYTES: usize = 64 * 1024;
 
-// Background searches wait this long for the next keystroke.
 const SEARCH_DEBOUNCE: Duration = Duration::from_millis(30);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -407,7 +398,6 @@ pub(crate) enum Item {
 
 #[derive(Default)]
 struct Layout {
-    // The top of every item, then the total height.
     tops: Vec<Pixels>,
     sections: Vec<usize>,
     section: Pixels,
@@ -479,7 +469,6 @@ pub(crate) fn section_label(
         LabelPlacement::Inline => "inline",
         LabelPlacement::Top { .. } => "top",
     };
-    // Inline labels fold their section; pinned ones scroll to it.
     let verb = match (placement, folded) {
         (LabelPlacement::Inline, true) => "Show",
         (LabelPlacement::Inline, false) => "Hide",
@@ -537,9 +526,6 @@ pub(crate) fn section_label(
                         .child(chats.to_string()),
                 ),
         )
-        // The pinned stack's edge sits inside the label's side padding. The stack
-        // stops short of the scrollbar on the right, so the line gives up the
-        // same width on the left and sits evenly in the panel.
         .when(
             matches!(placement, LabelPlacement::Top { last: true }),
             |label| label.child(div().h(px(1.)).ml(theme::SCROLLBAR_TRACK).bg(isl.line)),
@@ -547,8 +533,6 @@ pub(crate) fn section_label(
         .into_any_element()
 }
 
-// GPUI has no letter spacing, so uppercase labels get hair spaces between
-// letters for the design's 0.08em tracking.
 fn spaced(label: &str) -> String {
     let mut spaced = String::with_capacity(label.len() * 4);
     for (ix, letter) in label.chars().enumerate() {
@@ -566,7 +550,6 @@ fn highlighted_title(title: &str, query: &str, cx: &App) -> StyledText {
         return text;
     }
     let lower = title.to_lowercase();
-    // Lowercasing can change byte lengths outside ASCII; skip the mark then.
     match lower.find(query) {
         Some(start) if lower.len() == title.len() => text.with_highlights([(
             start..start + query.len(),
@@ -740,7 +723,6 @@ impl ChatList {
             layout: Layout::default(),
             width: px(0.),
             placeholder: "Search chats",
-            // Finished chats stay out of the way until asked for.
             folded: vec![Group::Completed],
         }
     }
@@ -792,7 +774,6 @@ impl ChatList {
         {
             return;
         }
-        // Selection draws the row fill and hides the separator above it.
         invalidate_range(&self.state, 0..self.state.item_count());
         cx.notify();
     }
@@ -825,8 +806,6 @@ impl ChatList {
         }
         self.search_bytes = self.search_bytes - old.text.len() + record.text.len();
         self.records[index] = record;
-        // Status and activity move chats between sections, so the
-        // sections are rebuilt. Explicit actions skip the typing delay.
         self.search(self.criteria.clone(), false, cx);
         true
     }
@@ -894,7 +873,6 @@ impl ChatList {
         if !old.is_empty() || !new.is_empty() {
             self.state.splice(old, new.len());
         }
-        // Counts and separators live inside rows that kept their keys.
         invalidate_range(&self.state, 0..self.state.item_count());
         self.outcome = outcome;
         self.items = items.into();
@@ -927,8 +905,6 @@ impl ChatList {
             section,
             viewport: self.state.viewport_bounds().size.height,
         };
-        // When the chats overflow, add room after the end so the last section can
-        // reach its place in the top stack, as every earlier section can.
         let tail = match self.layout.sections.last() {
             Some(&last) if self.layout.viewport > px(0.) => {
                 let content = y - self.tail;
@@ -1022,9 +998,6 @@ impl Render for ChatList {
         let this = cx.weak_entity();
         let measured = this.clone();
         let rem = window.rem_size();
-        // Compact tabs share the bar evenly: each is capped at a third of the
-        // room inside the list's side padding and the segmented bar's inset and
-        // gaps, so the labels give up tab padding instead of clipping the last tab.
         let compact = self.width > px(0.) && self.width < rem * COMPACT_WIDTH;
         if let Some(query) = self
             .owner
@@ -1048,7 +1021,6 @@ impl Render for ChatList {
         let filtered = !self.criteria.query.is_empty() || self.criteria.agent.is_some();
         let rows = if self.items.is_empty() {
             let owner = self.owner.clone();
-            // A narrow list tightens the message and shortens the button.
             col()
                 .flex_1()
                 .when(compact, |empty| empty.px_3().py_5())
@@ -1108,8 +1080,6 @@ impl Render for ChatList {
                         placement,
                         {
                             let this = this.clone();
-                            // A label in the list folds its section; a pinned one
-                            // scrolls to it.
                             move |_, _, cx: &mut App| {
                                 let _ = this.update(cx, |list, cx| match placement {
                                     LabelPlacement::Inline => list.toggle_fold(group, cx),
@@ -1170,8 +1140,6 @@ impl Render for ChatList {
                         if event.keystroke.modifiers.modified() {
                             return;
                         }
-                        // Selecting runs the shell's action, which updates this list again,
-                        // so the target is read first and the action runs outside the list.
                         let Some((_, row)) = this.upgrade().and_then(|list| {
                             let list = list.read(cx);
                             let target = list.navigation_target(&event.keystroke.key)?;
@@ -1256,7 +1224,6 @@ mod tests {
     #[test]
     fn labels_stack_under_the_controls() {
         let layout = layout();
-        // At the top, every label is in its place in the list.
         assert_eq!(
             at(&layout, 0.),
             Stacks {
@@ -1264,13 +1231,11 @@ mod tests {
                 current: 0
             }
         );
-        // The second label reaches its slot under the first and stays there.
         let second = f32::from(layout.tops[layout.sections[1]]) - 32.;
         assert_eq!(at(&layout, second - 1.).top, 0..1);
         assert_eq!(at(&layout, second).top, 0..2);
         assert_eq!(at(&layout, second).current, 1);
         assert_eq!(at(&layout, second + 300.).top, 0..2);
-        // At the last section's jump target every label is stacked at the top.
         let last = f32::from(layout.jump_target(2).unwrap());
         assert_eq!(
             at(&layout, last),

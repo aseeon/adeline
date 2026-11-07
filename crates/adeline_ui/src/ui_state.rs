@@ -16,8 +16,6 @@ struct UiState {
     panes: Panes,
 }
 
-/// Widths of the right island's pane, in design pixels: the side pane in
-/// Chats and the chat beside every other mode.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Panes {
@@ -30,7 +28,6 @@ pub struct Panes {
 pub struct Docs {
     pub open: Option<String>,
     pub editor: bool,
-    // The Viewer's top block and offset into it, or the Editor's offset.
     pub scroll: (usize, f32),
     pub expanded: Vec<String>,
     pub chat: Option<String>,

@@ -5,7 +5,6 @@ use super::*;
 impl Adeline {
     pub(crate) fn engine_screen(&self, cx: &Context<Self>) -> Option<AnyElement> {
         let checked = machines::checked();
-        // With several machines, each one's state shows in the machine selector.
         let [machine] = checked.as_slice() else {
             return None;
         };

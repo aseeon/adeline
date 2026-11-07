@@ -13,7 +13,6 @@ pub const VERSION: u32 = 1;
 
 pub const AVATAR: &str = "avatar.svg";
 
-// Read, never written: older files' `permission_mode`, which the agent's modes replace.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Dropped;
 
@@ -35,12 +34,9 @@ pub enum InstructionsMode {
 pub struct AgentDefinition {
     pub version: u32,
     pub name: String,
-    // A registry ID, `omp`, or `custom`.
     pub harness: String,
-    // What a Custom harness reported in its ACP handshake.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub identity: String,
-    // Custom harnesses only. Others are located when a conversation starts.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub command: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -49,7 +45,6 @@ pub struct AgentDefinition {
     pub model: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub effort: String,
-    // Empty keeps the agent's default.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub mode: String,
     #[serde(default, rename = "permission_mode", skip_serializing)]
@@ -58,7 +53,6 @@ pub struct AgentDefinition {
     pub system_instructions: String,
     #[serde(default)]
     pub instructions_mode: InstructionsMode,
-    // Added to the global ones.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp_servers: Vec<McpServer>,
 }
@@ -162,12 +156,12 @@ impl AgentCatalog {
             root,
             demo,
         };
-        if !demo && let Ok(path) = &catalog.root {
-            // Create this directory before the parent starts watching for changes.
-            if let Err(error) = fs::create_dir_all(path) {
-                catalog.errors.push(file_error(path, error));
-                return catalog;
-            }
+        if !demo
+            && let Ok(path) = &catalog.root
+            && let Err(error) = fs::create_dir_all(path)
+        {
+            catalog.errors.push(file_error(path, error));
+            return catalog;
         }
         if demo {
             for (name, model) in [
@@ -222,8 +216,6 @@ impl AgentCatalog {
         expected: Option<&AgentDefinition>,
         overwrite: bool,
     ) -> Result<String> {
-        // `expected` was loaded when editing began. A changed, deleted or invalid
-        // file needs `overwrite`.
         let id = definition.validate()?;
         if self.demo {
             if let Some(original) = original
@@ -299,15 +291,12 @@ impl AgentCatalog {
                 write_new(&path, &definition)?;
             }
         } else {
-            // The directory itself is reserved exclusively. No invalid or missing
-            // definition can be overwritten by a new agent or a rename.
             ensure_no_collision(root, &id)?;
             fs::create_dir(&destination).with_context(|| destination.display().to_string())?;
             if let Err(error) = write_new(&destination.join("agent.yml"), &definition) {
                 let _ = fs::remove_dir(&destination);
                 return Err(error);
             }
-            // The avatar is decoration: a missing one falls back to the robot.
             let avatar = match old.as_deref() {
                 Some(old) => fs::read(old.join(AVATAR)).ok(),
                 None => crate::harness::icon_svg(&definition.harness),
@@ -319,8 +308,6 @@ impl AgentCatalog {
                 && old.exists()
                 && let Err(error) = fs::remove_dir_all(old)
             {
-                // Keep the complete new definition if removing the old directory
-                // fails or stops partway through.
                 self.refresh();
                 return Err(error).with_context(|| old.display().to_string());
             }
@@ -680,7 +667,6 @@ permission_mode: AllowEverything
         let mut good = agent("Good");
         good.system_instructions.clear();
         good.arguments.clear();
-        // A path with spaces is one command, and it may not be installed yet.
         good.command = root
             .join("Program Files")
             .join("omp.exe")

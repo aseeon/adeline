@@ -12,7 +12,6 @@ impl AgentForm {
             return;
         };
         let catalog = cx.global::<Harnesses>();
-        // The engine finds the executable and runs the probe.
         let launch = if id == CUSTOM {
             let command = self.command.read(cx).value().trim().to_owned();
             if command.is_empty() {
@@ -103,7 +102,6 @@ impl AgentForm {
                     picker.set_items(efforts, window, cx);
                     picker.set_selected_value(&effort.into(), window, cx);
                 });
-                // Plan modes are already left out by the agent layer.
                 let modes = choices(&probed, Category::Mode);
                 self.mode.update(cx, |picker, cx| {
                     picker.set_items(modes, window, cx);

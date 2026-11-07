@@ -4,7 +4,6 @@ use super::*;
 use gpui_kit::component::checkbox::Checkbox;
 
 impl Adeline {
-    /// Opens the machines menu, in the chat list's header.
     pub(crate) fn machines_button(&self, cx: &Context<Self>) -> Button {
         let label = match machines::checked().as_slice() {
             [one] => machines::name(one),
@@ -174,8 +173,6 @@ fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
     .into_any_element()
 }
 
-// Kit's popover binds Enter and Space to its Confirm, which closes the menu before
-// the focused control sees the key, so each control answers Confirm itself.
 fn on_confirm(control: impl IntoElement, owner: &WeakEntity<Adeline>, action: Action) -> Div {
     let owner = owner.clone();
     div()

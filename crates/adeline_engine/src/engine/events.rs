@@ -27,7 +27,6 @@ impl Engine {
         if self.locate(&id).is_none() {
             return;
         }
-        // Traffic is the agent's, whatever turn it belongs to.
         if let acp::EventKind::Traffic(entry) = event.kind {
             self.traffic(&id, &entry);
             return;
@@ -191,7 +190,6 @@ impl Engine {
                         self.live.entry(id.clone()).or_default().assistant = None;
                         self.user_message(&id, text, files);
                     } else {
-                        // The agent didn't take it: it goes out when the turn ends.
                         self.queue(&id, text, files, true);
                         if !self.live.get(&id).is_some_and(|live| live.processing) {
                             self.send_queue(&id);
@@ -376,7 +374,6 @@ impl Engine {
             }
         }
         self.send_live(&id);
-        // With no client connected, a finished turn's agent closes.
         let processing = self.live.get(&id).is_some_and(|l| l.processing);
         if was_processing && !processing && self.subscribers() == 0 && !self.daemon() {
             self.shutdown_conversation(&id);

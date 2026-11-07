@@ -16,8 +16,6 @@ impl ThemedIcon {
         Self(svg().path(path.to_owned()))
     }
 
-    // Cached elements must inherit afresh on the next frame, including
-    // after pointer exit, selection changes, and theme changes.
     fn with_color(&mut self, inherited: Hsla, paint: impl FnOnce(&mut Svg)) {
         let explicit = self.0.style().text.color;
         self.0.style().text.color = Some(explicit.unwrap_or(inherited));
@@ -114,7 +112,6 @@ mod tests {
             seen
         };
         let mut icon = ThemedIcon::new("chat");
-        // Hover, a theme change, then pointer exit: each frame takes the parent's color.
         for color in [0xeeeeee, 0x123456, 0xffffff, 0xeeeeee] {
             assert_eq!(painted(&mut icon, color), Some(rgb(color).into()));
             assert_eq!(icon.style().text.color, None);

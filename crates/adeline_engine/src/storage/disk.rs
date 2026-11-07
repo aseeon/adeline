@@ -103,7 +103,6 @@ pub(super) fn flush_events(conversation: &mut StoredConversation, path: &Path) -
         file.seek(SeekFrom::Start(conversation.persisted_len))
             .with_context(|| path.display().to_string())?;
         let write_result = (|| {
-            // One write, so a killed engine leaves whole lines behind.
             let mut lines = Vec::new();
             for event in &conversation.unsaved_events {
                 serde_json::to_writer(&mut lines, event)
@@ -162,7 +161,6 @@ pub(super) fn load_conversation(folder: &Path) -> Result<Option<StoredConversati
         fs::read_to_string(&settings_path).with_context(|| settings_path.display().to_string())?;
     let yaml: serde_yaml_ng::Value =
         serde_yaml_ng::from_str(&text).with_context(|| settings_path.display().to_string())?;
-    // An earlier format stays on disk untouched and is not shown.
     if yaml
         .get("version")
         .and_then(serde_yaml_ng::Value::as_u64)
@@ -191,14 +189,12 @@ pub(super) fn load_conversation(folder: &Path) -> Result<Option<StoredConversati
     let mut needs_rollback = false;
     let mut persisted_len = 0;
     for (index, line) in bytes.split_inclusive(|byte| *byte == b'\n').enumerate() {
-        // A crash mid-write leaves a last line without its newline; the next write cuts it off.
         if !line.ends_with(b"\n") {
             needs_rollback = true;
             break;
         }
         match serde_json::from_slice::<TranscriptEvent>(line) {
             Ok(event) => {
-                // Traffic stays on disk; `ProjectStore::traffic` reads it back when watched.
                 if event.kind != "traffic" {
                     events.push(event);
                 }

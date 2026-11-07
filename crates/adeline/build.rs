@@ -13,7 +13,6 @@ fn main() {
     build_app_icon(&PathBuf::from(env::var("OUT_DIR").unwrap()));
 }
 
-// Render every icon size directly from the portrait, preserving its colors and alpha.
 fn build_app_icon(out_dir: &std::path::Path) {
     let svg = fs::read(PORTRAIT).expect("Adeline close-up portrait");
     let tree = resvg::usvg::Tree::from_data(&svg, &resvg::usvg::Options::default())
@@ -24,8 +23,6 @@ fn build_app_icon(out_dir: &std::path::Path) {
         images.push(render_icon(&tree, size));
     }
     if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("macos") {
-        // `scripts/macos-app` puts this in the app bundle. Each entry is a type code, its
-        // length with the 8-byte header, and one PNG.
         let mut entries = Vec::new();
         for (kind, size) in [
             (b"icp4", 16),
@@ -49,13 +46,12 @@ fn build_app_icon(out_dir: &std::path::Path) {
         return;
     }
 
-    // Windows ICO directory followed by one PNG for each supported size.
     let count = u16::try_from(sizes.len()).unwrap();
     let mut ico = vec![0, 0, 1, 0];
     ico.extend_from_slice(&count.to_le_bytes());
     let mut offset = 6 + 16 * u32::from(count);
     for (size, png) in sizes.iter().zip(&images) {
-        let dimension = u8::try_from(*size).unwrap_or(0); // 0 denotes 256 pixels.
+        let dimension = u8::try_from(*size).unwrap_or(0);
         ico.extend_from_slice(&[dimension, dimension, 0, 0, 1, 0, 32, 0]);
         let length = u32::try_from(png.len()).unwrap();
         ico.extend_from_slice(&length.to_le_bytes());
@@ -68,7 +64,6 @@ fn build_app_icon(out_dir: &std::path::Path) {
     let icon_path = out_dir.join("adeline.ico");
     fs::write(&icon_path, ico).unwrap();
     let resource = out_dir.join("adeline.rc");
-    // GPUI loads icon resource 1 for its Windows window class and taskbar icon.
     fs::write(&resource, format!("1 ICON {icon_path:?}\n")).unwrap();
     embed_resource::compile(&resource, embed_resource::NONE)
         .manifest_required()

@@ -110,7 +110,6 @@ impl Adeline {
                         app.project_error = None;
                         app.modal = None;
                     }
-                    // The engine's change arrived before its reply.
                     if let Some(index) = app.projects.iter().position(|project| {
                         project.machine == target && Some(project.config.id.as_str()) == id.as_str()
                     }) {
@@ -231,7 +230,6 @@ impl Adeline {
             cx.notify();
             return;
         }
-        // Renaming keeps the tab's color.
         self.selected_tint = self.project_tints[ix];
         let directory = self.projects[ix].config.directory.clone();
         self.save_project_as(ix, name, directory, cx);
@@ -466,7 +464,6 @@ impl Adeline {
             self.notify_toast("Demo machines have no folders to browse.", cx);
             return;
         }
-        // A project dialog shows the browser in its place, and gets it back after.
         self.browser_return = if matches!(purpose, BrowserPurpose::ProjectFolder) {
             self.modal
         } else {
@@ -525,7 +522,6 @@ impl Adeline {
         };
         let folder = listing.path.to_string_lossy().into_owned();
         let path = file.map_or_else(|| folder.clone(), |name| join_remote(&folder, &name));
-        // `act` closes the dialog, or shows the project dialog again.
         self.modal = self.browser_return.take();
         match browser.purpose {
             BrowserPurpose::OpenFolder => {
@@ -535,7 +531,6 @@ impl Adeline {
                 self.set_project_folder(Path::new(&path), window, cx);
             }
             BrowserPurpose::Attach { directory: true } => self.attach_path(&path, window, cx),
-            // A remote file stays on its machine; the engine reads it there.
             BrowserPurpose::Attach { directory: false } => {
                 let name = Path::new(&path)
                     .file_name()
@@ -606,7 +601,6 @@ impl Adeline {
             } else {
                 entry.name.clone()
             };
-            // Buttons, so Tab reaches each row and Enter opens it.
             let row = Button::new(("browser-entry", ix))
                 .ghost()
                 .small()
@@ -765,7 +759,6 @@ impl Adeline {
             .map(|error| div().text_color(cx.theme().danger).child(error));
         let footer = views::dialog_footer;
         let mut content = col().gap_3().text_sm();
-        // The newer dialogs name themselves for assistive technology.
         let mut label = None;
         match self.modal {
             Some("browser") => {

@@ -85,7 +85,6 @@ impl Headless {
             .expect("open window")
     }
 
-    // Waits in real time for work off the UI thread, such as diagrams.
     #[expect(
         clippy::disallowed_methods,
         reason = "the test thread waits for other threads"
@@ -100,7 +99,6 @@ impl Headless {
         }
     }
 
-    /// The chat list row of the chat titled `title`, whatever its counts and times.
     fn chat_row(&mut self, title: &str) -> ElementSnapshot {
         let prefix = format!("{title}, ");
         self.cx
@@ -212,7 +210,6 @@ fn mermaid_diagram_renders() {
     ui.wait("Mermaid diagram", false);
     ui.wait("Mermaid diagram, rendering", true);
     let frame = ui.frame();
-    // The demo doc has two diagrams. Check the first.
     let first = ui
         .cx
         .update_window(ui.window, |_, window, _| {

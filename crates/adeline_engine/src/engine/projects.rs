@@ -19,7 +19,6 @@ use std::{
 };
 use tokio::{sync::mpsc, task::block_in_place};
 
-// File events from a conversation the engine wrote this recently are its own.
 const OWN_WRITE: Duration = Duration::from_secs(1);
 
 impl Engine {
@@ -65,7 +64,6 @@ impl Engine {
         }));
     }
 
-    // Drops what the engine holds in memory for a conversation whose project is gone.
     fn forget_conversation(&mut self, id: &str) {
         if let Some(live) = self.live.remove(id) {
             for queued in live.queued {
@@ -310,7 +308,6 @@ impl Engine {
                 self.agents_changed();
             }
         }
-        // The engine's own transcript writes don't need a reload.
         let outside = paths.iter().any(|path| {
             let Ok(relative) = path.strip_prefix(&projects_root) else {
                 return false;

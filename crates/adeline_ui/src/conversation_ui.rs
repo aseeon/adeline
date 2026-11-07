@@ -28,7 +28,6 @@ impl Render for SidePanel {
     }
 }
 
-// A traffic row shows the start of long JSON; "Copy message" takes the whole line.
 const TRAFFIC_LINES: usize = 12;
 const TRAFFIC_CHARS: usize = 2000;
 
@@ -42,7 +41,6 @@ pub(super) fn file_size(bytes: u64) -> String {
 
 pub(super) fn shortcut(keys: &str) -> String {
     if cfg!(target_os = "macos") {
-        // The option menus' Alt shortcuts are Cmd+Shift on macOS (bind_keys).
         keys.replace("Ctrl+", "Cmd+").replace("Alt+", "Cmd+Shift+")
     } else {
         keys.to_owned()
@@ -58,7 +56,6 @@ impl Adeline {
         if let Some(tool) =
             turn.and_then(|turn| thread.turn_tools(turn).filter(|t| t.running).last())
         {
-            // The kind, not the title: titles can be whole command lines.
             use conversation::ToolKind;
             let label = match tool.tool {
                 ToolKind::Think => "Thinking",
@@ -95,8 +92,6 @@ impl Adeline {
         let empty = Live::default();
         let live = self.runtime.conversations.get(&thread.id).unwrap_or(&empty);
         let turn = thread.turn_of(thread.messages.len());
-        // The running turn's steps show live; finished turns fold them into
-        // the summary under their reply.
         if live.processing
             && let Some(turn) = turn
             && !config::current().modes.chats.hide_tool_calls
@@ -106,8 +101,6 @@ impl Adeline {
                 content = content.child(chat::tool_steps(steps, cx));
             }
         }
-        // Only this turn's errors: a later turn means the agent recovered.
-        // Errors without a turn (an interrupted engine, storage) are current.
         let dismissed = |message: &str| {
             self.dismissed_errors
                 .contains(&(thread.id.clone(), turn, message.to_owned()))
@@ -216,7 +209,6 @@ impl Adeline {
         content.into_any_element()
     }
 
-    /// Dismisses every error shown under the open chat.
     pub(super) fn dismiss_errors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(thread) = self.selected.map(|ix| &self.workspace().threads[ix]) else {
             return;

@@ -19,13 +19,11 @@ use gpui_kit::{
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-// The option menus: Alt on Windows and Linux, Cmd+Shift on macOS.
 pub const MENU: &str = if cfg!(target_os = "macos") {
     "cmd-shift"
 } else {
     "alt"
 };
-// Text field keys from GPUI Kit, per OS.
 pub const END_OF_TEXT: &str = if cfg!(target_os = "macos") {
     "cmd-down"
 } else {
@@ -37,7 +35,6 @@ pub const START_OF_TEXT: &str = if cfg!(target_os = "macos") {
     "ctrl-home"
 };
 
-/// Sets a variable for this process and the processes it starts.
 #[expect(
     unsafe_code,
     reason = "Adeline reads its home and binary from the environment"
@@ -47,15 +44,12 @@ pub fn set_env(name: &str, value: impl AsRef<std::ffi::OsStr>) {
     unsafe { std::env::set_var(name, value) };
 }
 
-/// Points HOME and USERPROFILE at `home`.
 pub fn set_home(home: &std::path::Path) {
     set_env("HOME", home);
     set_env("USERPROFILE", home);
 }
 
-/// A fresh temporary home, with HOME and USERPROFILE pointing at it.
 pub fn temp_home(name: &str) -> PathBuf {
-    // macOS limits a socket path to 104 bytes, and its temporary folder is long.
     let temp = if cfg!(unix) {
         PathBuf::from("/tmp")
     } else {
@@ -86,8 +80,6 @@ pub struct Ui<'a> {
 }
 
 impl<'a> Ui<'a> {
-    /// Opens Adeline in the current home: `demo` uses the bundled workspace,
-    /// otherwise it connects to (and starts) the engine.
     pub fn open(cx: &'a mut TestAppContext, demo: bool, verbose: bool) -> Self {
         Self::open_sized(cx, demo, verbose, 1440., 940.)
     }
@@ -100,7 +92,6 @@ impl<'a> Ui<'a> {
         height: f32,
     ) -> Self {
         if !demo {
-            // The engine connection wakes the UI from its own threads.
             cx.executor().allow_parking();
         }
         let before = cx.windows();
@@ -136,9 +127,6 @@ impl<'a> Ui<'a> {
         self.cx.read(|cx| f(adeline.read(cx), cx))
     }
 
-    /// Runs queued work, then draws a frame the way the platform does: only the
-    /// notified views redraw, and cached ones replay. (Kit's `render_frame` refreshes
-    /// the whole window, which would hide view caching bugs.)
     pub fn settle(&mut self) {
         self.cx.run_until_parked();
         if self.cx.windows().contains(&self.window) {
@@ -147,7 +135,6 @@ impl<'a> Ui<'a> {
         }
     }
 
-    /// Lets real time pass for other processes, keeping GPUI's test clock in step.
     pub fn pause(&mut self, duration: Duration) {
         let deadline = Instant::now() + duration;
         while Instant::now() < deadline {
@@ -161,7 +148,6 @@ impl<'a> Ui<'a> {
         self.settle();
     }
 
-    /// Waits in real time, for work in other processes such as the engine.
     pub fn wait(&mut self, what: &str, timeout: Duration, mut done: impl FnMut(&mut Self) -> bool) {
         let deadline = Instant::now() + timeout;
         loop {
@@ -248,14 +234,11 @@ impl<'a> Ui<'a> {
         names
     }
 
-    /// The one visible element named `label`, as `adeline ui click` finds it.
     pub fn unique(&mut self, label: &str) -> ElementSnapshot {
         self.with(|window, _| control::find(window, label))
             .unwrap_or_else(|error| panic!("{error:#}"))
     }
 
-    /// Clicks the one element named `label` once it stops moving: dialogs slide in
-    /// on wall-clock time, so an early click would land where the control isn't yet.
     pub fn click(&mut self, label: &str) {
         let mut element = self.unique(label);
         let deadline = Instant::now() + Duration::from_secs(2);
@@ -310,14 +293,10 @@ impl<'a> Ui<'a> {
         self.settle();
     }
 
-    /// Quits with Cmd+Q, which asks first like the window's close button. Both call
-    /// `interaction::request_close`.
     pub fn quit(&mut self) {
         self.press("cmd-q");
     }
 
-    /// Clicks the window's close button. Use it only where Adeline asks first:
-    /// `VisualTestContext::simulate_close` panics once the window is gone.
     pub fn close(&mut self) {
         VisualTestContext::from_window(self.main, self.cx).simulate_close();
         self.settle();
@@ -339,7 +318,6 @@ impl<'a> Ui<'a> {
             .write_to_clipboard(ClipboardItem::new_string(text.to_owned()));
     }
 
-    /// Switches to the window that opened since `before`, such as Settings.
     pub fn new_window(&mut self, before: &[AnyWindowHandle]) {
         let deadline = Instant::now() + Duration::from_secs(10);
         loop {
@@ -358,7 +336,6 @@ impl<'a> Ui<'a> {
         self.settle();
     }
 
-    /// Opens a chat from the chat search: Ctrl+F, the title, Enter.
     pub fn open_chat(&mut self, title: &str) {
         self.press("ctrl-f secondary-a backspace");
         self.input(title);
@@ -367,11 +344,7 @@ impl<'a> Ui<'a> {
         assert_eq!(open.as_deref(), Some(title));
     }
 
-    /// Presses Tab until the control named `label` has focus, for controls in
-    /// lists that have no shortcut of their own.
     pub fn tab_to(&mut self, label: &str) {
-        // Tab outside the main view moves focus in the active window, and the
-        // test platform starts with none.
         self.with(|window, _| window.activate_window());
         for _ in 0..200 {
             if self
@@ -386,8 +359,6 @@ impl<'a> Ui<'a> {
         panic!("Tab never reached {label:?}. Named: {:?}", self.names());
     }
 
-    /// Tabs to the control named `label` and presses it with Space. GPUI clicks a
-    /// focused control on key up, which `press` doesn't send.
     pub fn activate(&mut self, label: &str) {
         self.tab_to(label);
         let key = Keystroke::parse("space").expect("Space is a keystroke");
@@ -401,7 +372,6 @@ impl<'a> Ui<'a> {
         self.settle();
     }
 
-    /// Switches project tabs with Ctrl+Tab until `name` is the active one.
     pub fn open_tab(&mut self, name: &str) {
         for _ in 0..=self.tabs().len() {
             if self.tab(name).selected() == Some(true) {
@@ -412,7 +382,6 @@ impl<'a> Ui<'a> {
         panic!("Ctrl+Tab never reached the tab {name:?}");
     }
 
-    /// Project tab labels, without the "(n)" of chats needing the user.
     pub fn tabs(&mut self) -> Vec<String> {
         self.elements()
             .into_iter()

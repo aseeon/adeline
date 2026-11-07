@@ -31,7 +31,6 @@ impl Render for ChatHeader {
 }
 
 impl Adeline {
-    /// The right island's header in Docs: the chat's title, which opens the chooser.
     fn chat_header(&self, cx: &Context<Self>) -> Div {
         let title = self.selected.map_or_else(
             || "New chat".to_owned(),
@@ -53,13 +52,9 @@ impl Adeline {
     pub(super) fn chats(&self, window: &Window, cx: &Context<Self>) -> AnyElement {
         let thread = self.selected.map(|ix| &self.workspace().threads[ix]);
         let surface = chat::chat_surface(self.section, cx);
-        // The transcript fills the pane so its scrollbar runs the full height. The
-        // header and composer float over it and stop short of the scrollbar;
-        // matching left padding keeps their columns centered on the messages.
         let scrollbar = theme::SCROLLBAR_TRACK;
         let composer_height = std::rc::Rc::clone(&self.composer_height);
         let transcript = self.transcript.clone();
-        // The activity panel's stats island matches the composer's height.
         let owner = cx.weak_entity();
         let measure = chat::size_probe(move |size, cx| {
             if (composer_height.get() - size.height).abs() > px(0.5) {
@@ -68,8 +63,6 @@ impl Adeline {
                 let _ = owner.update(cx, |_, cx| cx.notify());
             }
         });
-        // Docs shows its chat chooser above the conversation; in Chats the
-        // window header names the chat.
         let header = (self.section == Section::Docs).then(|| {
             div()
                 .absolute()
@@ -78,7 +71,6 @@ impl Adeline {
                 .right(scrollbar)
                 .pl(scrollbar)
                 .bg(surface)
-                // Square corners would paint over the island's round one.
                 .rounded_tl(panes::dp(14.))
                 .child(chat::region(
                     &self.chat_header,
@@ -93,7 +85,6 @@ impl Adeline {
         } else {
             px(0.)
         };
-        // Messages fade out at the top edge instead of meeting a line.
         let fade = div()
             .absolute()
             .top(header_height)
@@ -124,11 +115,9 @@ impl Adeline {
                     .right(scrollbar)
                     .pl(scrollbar)
                     .bg(surface)
-                    // In an island the composer floats 18 above its bottom edge.
                     .when(self.section != Section::Chats, |region| {
                         region.rounded_bl(panes::dp(14.)).pb(panes::dp(18.))
                     })
-                    // Messages fade out just above the composer, mirroring the header.
                     .child(
                         div()
                             .absolute()
@@ -142,7 +131,6 @@ impl Adeline {
                                 linear_color_stop(surface.alpha(0.), 1.),
                             )),
                     )
-                    // Back to the latest message, 0.5rem above the composer.
                     .when(
                         thread.is_some() && !self.transcript.read(cx).following(),
                         |region| {
@@ -244,8 +232,6 @@ impl Adeline {
     }
 
     pub(super) fn refocus_after_menu(&self, window: &mut Window, cx: &mut App) {
-        // A closed menu leaves focus on its search box, which is gone. The
-        // message box takes it, so shortcuts keep working.
         let menu_focused = self
             .command_popup
             .as_ref()
@@ -388,8 +374,6 @@ impl Adeline {
                         let command = entries.iter().enumerate().fold(
                             command,
                             |command, (ix, (heading, group))| {
-                                // Kit draws group labels at a fixed size, so a
-                                // heading is a disabled row the highlight skips.
                                 let heading = heading.map(|heading| {
                                     CommandItem::new().label(heading).disabled(true).child(
                                         move |_, _| {
@@ -446,8 +430,6 @@ impl Adeline {
             return;
         }
         let state = cx.new(|cx| CommandState::new(window, cx));
-        // The state learns it has no search box, and so takes focus on its
-        // list, only when a Command renders it.
         RenderOnce::render(
             Command::new(&state).searchable(searchable(menu)),
             window,
@@ -506,8 +488,6 @@ impl Adeline {
                 })
                 .on_close(move |_, _, cx| {
                     let _ = owner.update(cx, |app, cx| {
-                        // Closing an SSH prompt cancels it. The next prompt, or one
-                        // that came while another dialog was open, shows.
                         match app.modal.take() {
                             Some("prompt") => client::answer_prompt(None, cx),
                             Some("doc-unsaved") => app.docs_cancel(),
@@ -712,7 +692,6 @@ pub(super) fn dialog_title(title: impl Into<SharedString>) -> Div {
 }
 
 pub(super) fn menu_shadow(cx: &App) -> Vec<BoxShadow> {
-    // Replaces the popover's default shadow, so it redraws its hairline ring too.
     let ring = cx.theme().foreground.alpha(0.1);
     let ink = |a| hsla(0., 0., 0., a);
     vec![

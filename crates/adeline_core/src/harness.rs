@@ -23,7 +23,6 @@ pub struct Harness {
     pub name: String,
     pub website: String,
     executables: Vec<String>,
-    // The npm or uv package the executables must come from.
     #[serde(default)]
     package: Option<String>,
     pub arguments: Vec<String>,
@@ -51,8 +50,6 @@ fn omp() -> Harness {
 }
 
 fn with_profile(mut harness: Harness) -> Harness {
-    // Supported agents launch the way their profile says, whatever the registry
-    // guesses from package names.
     if let Some(profile) = crate::profiles::find(&harness.id, "") {
         harness.executables = vec![profile.command.to_owned()];
         harness.arguments = profile.arguments.iter().map(|&a| a.to_owned()).collect();
@@ -66,7 +63,6 @@ fn with_profile(mut harness: Harness) -> Harness {
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Node {
     pub npm: Option<PathBuf>,
-    // `winget` on Windows or `brew` on macOS.
     pub manager: Option<PathBuf>,
 }
 
@@ -100,7 +96,6 @@ impl Catalog {
     }
 
     pub fn is_installed(&self, id: &str) -> Option<bool> {
-        // `None` while detection has not answered yet.
         if id == CUSTOM {
             return Some(true);
         }
@@ -320,7 +315,6 @@ fn download() -> anyhow::Result<()> {
                 .arg(url);
         }
     }
-    // Icons are decoration; a missing one falls back to the generic robot.
     let _ = icons.status();
     Ok(())
 }
@@ -382,7 +376,6 @@ fn parse_registry(text: &str) -> anyhow::Result<Vec<Harness>> {
         let (Some(id), Some(name)) = (agent["id"].as_str(), agent["name"].as_str()) else {
             continue;
         };
-        // The registry must not replace Adeline's own entries.
         if [OMP, CUSTOM].contains(&id) {
             continue;
         }
@@ -407,7 +400,6 @@ fn parse_registry(text: &str) -> anyhow::Result<Vec<Harness>> {
             let Some(package) = distribution[runner]["package"].as_str() else {
                 continue;
             };
-            // `@scope/name@1.2.3` installs a `name` executable, sometimes without `-cli`.
             let unversioned = package
                 .get(1..)
                 .and_then(|rest| rest.find('@'))
@@ -430,7 +422,6 @@ fn parse_registry(text: &str) -> anyhow::Result<Vec<Harness>> {
         }
         executables.push(id.to_owned());
         executables.dedup();
-        // A general interpreter would run whatever arguments the registry supplies.
         executables.retain(|name| {
             !INTERPRETERS
                 .iter()
@@ -475,7 +466,6 @@ fn search_path() -> Vec<PathBuf> {
     let mut dirs: Vec<_> = std::env::var_os("PATH")
         .map(|path| std::env::split_paths(&path).collect())
         .unwrap_or_default();
-    // Default install locations that are often missing from PATH.
     for (variable, folder) in [
         ("LOCALAPPDATA", "omp"),
         ("APPDATA", "npm"),
@@ -493,7 +483,6 @@ fn search_path() -> Vec<PathBuf> {
             dirs.push(PathBuf::from(base).join(folder));
         }
     }
-    // Homebrew, which an app started from Finder has no PATH entry for.
     if cfg!(target_os = "macos") {
         dirs.extend(["/opt/homebrew/bin", "/usr/local/bin"].map(PathBuf::from));
     }
@@ -512,7 +501,6 @@ fn package_version(package: &str, dirs: &[PathBuf]) -> Option<String> {
     })
 }
 
-// Windows npm keeps packages in `<shims>/node_modules`, Unix in `<prefix>/lib/node_modules`.
 fn manifest(package: &str, dir: &Path) -> Option<Value> {
     [dir.join("node_modules"), dir.join("../lib/node_modules")]
         .iter()
@@ -523,7 +511,6 @@ fn manifest(package: &str, dir: &Path) -> Option<Value> {
 }
 
 fn find(name: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
-    // npm also writes an extensionless shell script on Windows; only these run.
     let extensions: &[&str] = if cfg!(windows) {
         &[".exe", ".cmd", ".bat", ".com"]
     } else {
@@ -596,8 +583,6 @@ fn from_package(package: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
 }
 
 fn pick(names: &[String], package: &str) -> Option<String> {
-    // ponytail: else the shortest name, as in `mcode` over `mcode-tools`; let
-    // the agent definition name it if a package ever needs another.
     names
         .iter()
         .find(|name| *name == package)
@@ -623,8 +608,6 @@ fn uv_tool_dirs() -> Vec<PathBuf> {
 }
 
 fn comes_from(path: &Path, package: &str) -> bool {
-    // It links into the package's folder, or is a small shim or launcher naming it.
-    // Names are guessed, so `@minimax-ai/code` must not find VS Code's `code`.
     let needles: Vec<String> = ['/', '\\']
         .iter()
         .map(|sep| format!("{sep}{}{sep}", package.replace('/', &sep.to_string())))
@@ -648,7 +631,6 @@ fn contains_ascii_bytes(haystack: &[u8], needle: &[u8]) -> bool {
 pub fn resolve(command: &str) -> Option<PathBuf> {
     let path = Path::new(command);
     if path.is_file() {
-        // Absolute, so the conversation's working directory cannot change its meaning.
         return std::path::absolute(path).ok();
     }
     if command.contains(['/', '\\']) || command.trim().is_empty() {

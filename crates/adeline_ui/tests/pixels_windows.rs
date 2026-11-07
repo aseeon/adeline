@@ -36,8 +36,6 @@ fn main() {
         adeline_ui::start(true, false, options, cx);
         let window = cx.windows()[0];
         cx.spawn(async move |cx| {
-            // A hidden window keeps Windows' default placement until it shows, and
-            // gets no frames from the platform: size it and draw a frame here.
             cx.update_window(window, |_, window, _| {
                 window.resize(size(px(1440.), px(940.)));
             })

@@ -30,7 +30,6 @@ impl SettingsWindow {
             .child("Choose which features are available in the main view. Chats is always enabled."));
         let features = config::current().general.features;
         let mut modes = Vec::new();
-        // Modes still in the works show only in the demo.
         for (section, name) in MODES
             .into_iter()
             .skip(1)

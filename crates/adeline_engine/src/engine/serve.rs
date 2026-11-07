@@ -26,7 +26,6 @@ pub(super) fn run(daemon: bool) -> i32 {
             return 1;
         }
     };
-    // Another engine won a simultaneous start; its clients connect to it.
     if lock.try_lock().is_err() {
         return 0;
     }
@@ -64,7 +63,6 @@ pub(super) fn run(daemon: bool) -> i32 {
         }
     };
     let code = runtime.block_on(serve(daemon));
-    // A detection or probe still running mustn't hold up the exit.
     runtime.shutdown_timeout(Duration::from_secs(1));
     adeline_core::platform::stop_children();
     tracing::event!(name: "engine.exit",tracing::Level::INFO, "Engine exited");
@@ -111,7 +109,6 @@ async fn serve(daemon: bool) -> i32 {
     });
     let mut tick = tokio::time::interval(TICK);
     while !engine.exit {
-        // Agent events stream fast; their status changes go out on the next tick.
         tokio::select! {
             Some(input) = inputs.recv() => {
                 engine.input(input);
@@ -124,7 +121,6 @@ async fn serve(daemon: bool) -> i32 {
             }
         }
     }
-    // Let writers flush the last replies and the goodbye.
     let writers: Vec<_> = engine
         .clients
         .drain()
@@ -146,7 +142,6 @@ fn connection(
     input: &mpsc::UnboundedSender<Input>,
 ) {
     let (sender, mut outgoing) = mpsc::channel::<String>(CLIENT_BACKLOG);
-    // Dropped with the writer task, which also ends the reader.
     let (writing, mut written) = tokio::sync::oneshot::channel::<()>();
     let writer = tokio::spawn(async move {
         use tokio::io::AsyncWriteExt as _;
@@ -155,7 +150,6 @@ fn connection(
             if writer.write_all(line.as_bytes()).await.is_err() {
                 break;
             }
-            // Batch whatever else is queued before flushing.
             while let Ok(line) = outgoing.try_recv() {
                 if writer.write_all(line.as_bytes()).await.is_err() {
                     return;

@@ -35,7 +35,6 @@ pub(crate) fn render(source: &str, dark: bool) -> Result<Arc<Image>, String> {
         },
     )
     .map_err(|e| format!("invalid SVG: {e}"))?;
-    // `to_int_size` is at least 1x1, so scaling it up can't empty it.
     let size = tree
         .size()
         .to_int_size()

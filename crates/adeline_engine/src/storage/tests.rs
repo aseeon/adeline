@@ -1,3 +1,6 @@
+//! Tests of the project store on a temporary disk: projects, conversations,
+//! transcript events and recovery from bad files.
+
 use super::*;
 
 use adeline_core::files::TempDir;
@@ -119,7 +122,6 @@ fn streamed_events_wait_in_memory_until_the_batch_is_due() {
     std::thread::sleep(std::time::Duration::from_millis(FLUSH_INTERVAL_MS + 20));
     assert!(store.flush_due().is_empty());
     assert_eq!(fs::read_to_string(&transcript).unwrap().lines().count(), 1);
-    // A saved event writes everything queued before it at once.
     store
         .queue_event(
             &id,
@@ -211,7 +213,6 @@ fn legacy_opened_time_is_read_and_survives_a_rename() {
     let mut store = open_store(&test);
     let id = store.save_project(None, "Opened", &work).unwrap();
     assert_eq!(store.projects[0].opened_at, None);
-    // Older versions recorded the time in project.yml; clients copy it once.
     let definition = test.join("projects").join(&id).join("project.yml");
     let text = fs::read_to_string(&definition).unwrap();
     fs::write(
@@ -784,7 +785,6 @@ fn forks_copy_visible_history_through_the_fork_point_only() {
     store
         .update_conversation(&project, &source, settings)
         .unwrap();
-    // Message 1 ends its turn's first reply; message 2 is the retried reply.
     store.fork_conversation(&source, 1).unwrap_err();
     store.fork_conversation(&source, 3).unwrap_err();
     let fork = store.fork_conversation(&source, 2).unwrap();
@@ -808,7 +808,6 @@ fn forks_copy_visible_history_through_the_fork_point_only() {
     assert_eq!(thread.activity.len(), 2);
     assert_eq!(thread.fork.as_ref().unwrap().title, "Plan");
     assert!(!thread.fork.as_ref().unwrap().text_copy);
-    // Forking a fork points at the first fork; the source is untouched.
     let again = store.fork_conversation(&fork, 2).unwrap();
     let again = store.conversation(&again).unwrap().to_thread();
     assert_eq!(again.title, "Plan (fork) (fork)");

@@ -5,8 +5,6 @@
 //! `.git/info/exclude`) ignore and files in hidden folders are not docs.
 //! `.git` itself never holds docs.
 
-// Rust guideline compliant 2026-10-09
-
 use ignore::{
     Match, WalkBuilder,
     gitignore::{Gitignore, GitignoreBuilder},
@@ -55,7 +53,6 @@ fn relative(root: &Path, path: &Path) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("/"))
 }
 
-/// Every doc under `root`, sorted.
 pub fn list(root: &Path, respect_gitignore: bool) -> Vec<String> {
     let mut docs: Vec<String> = WalkBuilder::new(root)
         .standard_filters(false)
@@ -87,7 +84,6 @@ fn matcher(folder: &Path, file: &Path) -> Option<Gitignore> {
 }
 
 fn ignored(root: &Path, path: &str) -> bool {
-    // The deepest `.gitignore` with a matching rule decides, as in git.
     let decide = |levels: &[Gitignore], path: &Path, is_dir: bool| {
         for matcher in levels.iter().rev() {
             match matcher.matched(path, is_dir) {
@@ -105,7 +101,6 @@ fn ignored(root: &Path, path: &str) -> bool {
     .iter()
     .filter_map(|file| matcher(root, file))
     .collect();
-    // An ignored folder hides everything in it, as git never looks inside.
     let mut folder = root.to_path_buf();
     for part in parent(path).split('/').filter(|part| !part.is_empty()) {
         folder.push(part);
@@ -117,7 +112,6 @@ fn ignored(root: &Path, path: &str) -> bool {
     decide(&levels, &root.join(path), false)
 }
 
-/// Whether `path` names a doc. It agrees with [`list`], but doesn't check that the file exists.
 pub fn is_doc(root: &Path, path: &str, respect_gitignore: bool) -> bool {
     if !has_doc_extension(path) || clean(path).is_err() {
         return false;
@@ -146,15 +140,12 @@ fn clean(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// The file `path` names inside `root`, refusing paths that leave it, also through links.
 pub fn resolve(root: &Path, path: &str) -> Result<PathBuf, String> {
     clean(path)?;
     let full = root.join(path);
     let root = root
         .canonicalize()
         .map_err(|error| format!("{}: {error}", root.display()))?;
-    // The deepest part that exists shows where a link leads. A dangling link
-    // can't show it, and writing through one could leave the project.
     let refused = || Err(format!("{path} is not a path inside the project."));
     for ancestor in full.ancestors() {
         if let Ok(existing) = ancestor.canonicalize() {
@@ -171,7 +162,6 @@ pub fn resolve(root: &Path, path: &str) -> Result<PathBuf, String> {
     refused()
 }
 
-/// The project path of an existing file an agent reported, absolute or relative to `root`.
 pub fn project_path(root: &Path, reported: &str) -> Option<String> {
     let reported = Path::new(reported);
     let full = if reported.is_absolute() {
@@ -182,7 +172,6 @@ pub fn project_path(root: &Path, reported: &str) -> Option<String> {
     relative(&root.canonicalize().ok()?, &full.canonicalize().ok()?)
 }
 
-/// `target` from a link in the doc at `from`, as a project path. `None` when it leaves the project.
 pub fn join(from: &str, target: &str) -> Option<String> {
     let mut parts: Vec<String> = if target.starts_with('/') {
         Vec::new()
@@ -225,7 +214,6 @@ fn percent_decoded(part: &str) -> Option<String> {
     String::from_utf8(decoded).ok()
 }
 
-/// Checks a file name the user chose for a doc.
 pub fn check_name(name: &str) -> Result<(), String> {
     const RESERVED: [&str; 4] = ["con", "prn", "aux", "nul"];
     let invalid = |reason: &str| Err(format!("\"{name}\" can't be used: {reason}."));

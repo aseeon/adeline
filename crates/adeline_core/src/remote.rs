@@ -34,28 +34,19 @@ const SUPPORTED: [&str; 4] = [
 ];
 const MARKER: &str = "ADELINE-PROBE";
 const INSTALLED: &str = "ADELINE-INSTALLED";
-// A remote engine stops its agents before it answers; give slow ones time.
 const REMOTE_SHUTDOWN: Duration = Duration::from_secs(45);
-// How long `ssh` gets to exit once its session is done.
 const SSH_EXIT: Duration = Duration::from_secs(5);
-// `ssh` exits with 255 for its own errors, any other code is the remote command's.
 const SSH_FAILED: i32 = 255;
-// Error output is kept to its last part; the end says what went wrong.
 const ERRORS_CAP: usize = 16_384;
 const ERRORS_KEPT: usize = 8_192;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Failure {
-    // Retried with growing delays.
     Network(String),
-    // A rejected password or key. Not retried until the user asks.
     SignIn(String),
-    // Retrying wouldn't help: a refused host key, the wrong engine, no build.
     Fatal(String),
     Unsupported(String),
-    // The remote engine speaks a newer protocol than this client.
     LocalUpdate(String),
-    // An older protocol runs there. Replacing it stops its agents.
     Upgrade { version: String, active: usize },
 }
 
@@ -64,7 +55,6 @@ pub struct Link {
     pub writer: ipc::Writer,
     pub status: Status,
     pub destination: String,
-    // Dropping the `ssh` process ends the session.
     pub child: Child,
 }
 
@@ -83,7 +73,6 @@ pub struct Askpass {
     pub machine: String,
 }
 
-// A password typed in one `ssh` run of a connect answers the same prompt in the next one.
 static SESSION: AtomicU64 = AtomicU64::new(0);
 
 pub async fn connect(
@@ -92,8 +81,6 @@ pub async fn connect(
     upgrade: bool,
     askpass: &Askpass,
 ) -> Result<Link, Failure> {
-    // The first destination that reaches the machine's engine wins. `upgrade` is
-    // the user's consent to restart an older engine.
     let mut failures = Vec::new();
     let (mut sign_in, mut network) = (false, false);
     for destination in &remote.destinations {
@@ -142,14 +129,11 @@ async fn attempt(
             remote.name
         ))
     };
-    // A host whose engine never ran can't be the saved one either.
     if let Some(saved) = &remote.engine
         && probe.id != *saved
     {
         return Err(wrong(&probe.id));
     }
-    // Only the engine's protocol decides compatibility; any Adeline version
-    // that speaks this client's protocol is used as it is.
     if probe.version.trim().is_empty() {
         install(destination, &probe.platform, askpass).await?;
         probe.version = VERSION.into();
@@ -180,7 +164,6 @@ async fn attempt(
                 active: status.conversations.len(),
             });
         }
-        // An installed build newer than this one may already speak its protocol.
         let installed = probe.version.trim();
         if installed != VERSION && !crate::harness::newer(installed, VERSION) {
             install(destination, &probe.platform, askpass).await?;
@@ -216,7 +199,6 @@ fn short_id(id: &str) -> &str {
 }
 
 fn ssh(destination: &str, remote_command: &str, askpass: &Askpass) -> tokio::process::Command {
-    // A test hook: another command line to run instead, such as `python fake_ssh.py`.
     let custom = std::env::var("ADELINE_SSH").unwrap_or_default();
     let mut words = custom.split_whitespace();
     let mut command = tokio::process::Command::new(words.next().unwrap_or("ssh"));
@@ -237,14 +219,12 @@ fn ssh(destination: &str, remote_command: &str, askpass: &Askpass) -> tokio::pro
         host,
         remote_command,
     ]);
-    // Prompts go to Adeline's dialog: `ssh` runs this executable as its askpass.
     if let Ok(exe) = crate::platform::own_exe() {
         command
             .env("SSH_ASKPASS", exe)
             .env("SSH_ASKPASS_REQUIRE", "force");
     }
     if std::env::var_os("DISPLAY").is_none() {
-        // Older `ssh` uses askpass only with a display set.
         command.env("DISPLAY", ":0");
     }
     let session = SESSION.fetch_add(1, Ordering::Relaxed);
@@ -266,7 +246,6 @@ fn ssh(destination: &str, remote_command: &str, askpass: &Askpass) -> tokio::pro
 type Errors = (Arc<Mutex<String>>, tokio::task::JoinHandle<()>);
 
 fn drain(stderr: Option<tokio::process::ChildStderr>) -> Errors {
-    // Reading as it comes means a full pipe never stalls the child.
     let text = Arc::new(Mutex::new(String::new()));
     let sink = Arc::clone(&text);
     let reader = tokio::spawn(async move {
@@ -294,7 +273,6 @@ fn drain(stderr: Option<tokio::process::ChildStderr>) -> Errors {
 }
 
 async fn finish((text, reader): Errors) -> String {
-    // Waits for the last output, but not for a process that holds the pipe open.
     let _ = tokio::time::timeout(Duration::from_millis(500), reader).await;
     text.lock()
         .map(|text| text.trim().to_owned())
@@ -365,7 +343,6 @@ async fn run(
 }
 
 fn powershell(script: &str) -> String {
-    // Base64 survives the quoting of cmd and PowerShell, whichever the SSH shell is.
     let utf16: Vec<u8> = script.encode_utf16().flat_map(u16::to_le_bytes).collect();
     format!(
         "powershell -NoProfile -NonInteractive -EncodedCommand {}",
@@ -389,8 +366,6 @@ fn windows_probe() -> String {
     ))
 }
 
-// Two machines saved for one host install into one home at once, so each
-// writes its own part file.
 fn unix_install() -> String {
     format!(
         "sh -c 'mkdir -p .adeline/bin && p=.adeline/bin/adeline.$$.part && cat > $p && chmod 755 $p && mv -f $p .adeline/bin/adeline && printf %s {VERSION} > .adeline/bin/version && echo {INSTALLED}'"
@@ -398,8 +373,6 @@ fn unix_install() -> String {
 }
 
 fn windows_install() -> String {
-    // A running exe can be renamed but not replaced. A concurrent install can
-    // move the exe between our rename and move, so they retry.
     powershell(&format!(
         r#"$ErrorActionPreference = 'Stop'
 $d = "$env:USERPROFILE\.adeline\bin"
@@ -419,7 +392,6 @@ try {{ [IO.File]::WriteAllText("$d\version", '{VERSION}') }} catch {{ if (-not (
     ))
 }
 
-// A login shell, so agents find the user's usual PATH.
 const UNIX_BRIDGE: &str = r#"sh -c 'exec "${SHELL:-sh}" -lc "exec .adeline/bin/adeline bridge"'"#;
 const WINDOWS_BRIDGE: &str = r".\.adeline\bin\adeline.exe bridge";
 
@@ -448,7 +420,6 @@ async fn probe(destination: &str, askpass: &Askpass) -> Result<Probe, Failure> {
     if let Some(probe) = parse_probe(&output) {
         return Ok(probe);
     }
-    // No POSIX shell: a Windows host.
     let (output, windows_stderr, _) = run(destination, &windows_probe(), &[], askpass).await?;
     parse_probe(&output).ok_or_else(|| {
         let detail = [stderr, windows_stderr]
@@ -527,7 +498,6 @@ async fn install(destination: &str, platform: &str, askpass: &Askpass) -> Result
 }
 
 async fn binary(platform: &str) -> Result<Vec<u8>, Failure> {
-    // A named binary is installed as it is, in place of the release.
     if let Some(exe) = std::env::var_os("ADELINE_EXE") {
         return std::fs::read(&exe)
             .map_err(|e| Failure::Fatal(crate::files::error(exe.as_ref(), e)));
@@ -546,7 +516,6 @@ async fn binary(platform: &str) -> Result<Vec<u8>, Failure> {
 }
 
 async fn download(platform: &str) -> anyhow::Result<Vec<u8>> {
-    // Cached per user: a shared temp folder would let another user plant the binary.
     let cache = crate::config::directory()?.join("cache");
     let folder = cache.join(format!("headless-{VERSION}-{platform}"));
     let exe = folder.join(if platform.starts_with("windows") {
@@ -557,7 +526,6 @@ async fn download(platform: &str) -> anyhow::Result<Vec<u8>> {
     if let Ok(bytes) = tokio::fs::read(&exe).await {
         return Ok(bytes);
     }
-    // Extracted elsewhere and renamed into place, so an interrupted download is never reused.
     let staging = cache.join(crate::files::unique("headless"));
     tokio::fs::create_dir_all(&staging)
         .await
@@ -614,7 +582,6 @@ async fn fetch(platform: &str, folder: &std::path::Path) -> anyhow::Result<()> {
 }
 
 async fn local_tool(name: &str, args: &[&std::ffi::OsStr]) -> anyhow::Result<()> {
-    // Windows uses its own copies, not ones a toolchain put first on PATH.
     #[cfg(windows)]
     let program = std::env::var_os("SystemRoot").map_or_else(
         || std::path::PathBuf::from(format!("{name}.exe")),
@@ -658,7 +625,6 @@ async fn bridge(
     let mut reader = BufReader::new(stdout).lines();
     let mut writer: ipc::Writer = Box::new(child.stdin.take().expect("piped stdin"));
     if ipc::send(&mut writer, hello).await.is_ok() {
-        // Shell start-up files may print before the engine does.
         while let Ok(Some(line)) = reader.next_line().await {
             if let Ok(EngineMessage::Welcome { status }) = serde_json::from_str(&line) {
                 return Ok((child, reader, writer, status));

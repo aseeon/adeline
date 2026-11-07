@@ -9,8 +9,6 @@
 //! remembers the Chats selection and leaving restores it. What Docs shows per
 //! project is kept in `ui_state.rs`.
 
-// Rust guideline compliant 2026-10-09
-
 use super::*;
 use adeline_core::{
     card::EntityRef,
@@ -27,7 +25,6 @@ pub(crate) mod mermaid;
 mod view;
 mod viewer;
 
-// Viewer renderers can't reach `Adeline`, so they dispatch these.
 #[derive(Clone, PartialEq, Debug, gpui_kit::Action)]
 #[action(namespace = adeline, no_json)]
 pub(crate) struct ToggleTask {
@@ -72,9 +69,7 @@ actions!(
     ]
 );
 
-/// Docs mode's shortcuts (docs/shortcuts.md), Ctrl and Cmd alike.
 pub(crate) fn key_bindings() -> Vec<KeyBinding> {
-    // Text fields bind these in their own context, which wins while they have focus.
     let mut bindings = vec![
         KeyBinding::new("pageup", ViewerPageUp, None),
         KeyBinding::new("pagedown", ViewerPageDown, None),
@@ -156,7 +151,6 @@ pub(crate) enum Then {
     Close(usize),
 }
 
-// What follows the unsaved-docs prompt. Projects can shift while it is open, so it names a key.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum After {
     Quit,
@@ -166,13 +160,11 @@ pub(crate) enum After {
 #[derive(Debug, Default)]
 pub(crate) struct Doc {
     saved: String,
-    // The buffer while the doc isn't in the Editor; `None` means `saved`.
     text: Option<String>,
     dirty: bool,
     modified: u64,
     read_only: Option<String>,
     editor: bool,
-    // The text on disk, changed while this doc had unsaved edits.
     conflict: Option<String>,
     gone: bool,
 }
@@ -187,7 +179,6 @@ pub(crate) struct Project {
     list_error: Option<String>,
     expanded: HashSet<String>,
     open: Option<String>,
-    // A doc that couldn't open, and why.
     failed: Option<(String, String)>,
     files: HashMap<String, Doc>,
     chat: Option<String>,
@@ -202,13 +193,10 @@ pub(crate) struct Docs {
     path_input: Entity<InputState>,
     projects: HashMap<String, Project>,
     images: viewer::Images,
-    // Where the note button shows, and the source range it notes.
     note_at: Option<(Point<Pixels>, std::ops::Range<usize>)>,
-    // The doc a dialog acts on, and what follows the unsaved-docs prompt.
     target: Option<String>,
     then: Option<After>,
     unsaved_ok: bool,
-    // While Docs shows, the Chats mode selection to restore.
     chats_selection: Option<String>,
     tree_focus: FocusHandle,
     tree_scroll: UniformListScrollHandle,
@@ -248,7 +236,6 @@ fn slug(heading: &str) -> String {
         .collect()
 }
 
-/// The note a selection of `text` at `range` makes, quoting it with the doc's path and lines.
 fn note(path: &str, text: &str, range: std::ops::Range<usize>) -> String {
     let quoted = text[range.clone()].trim_end_matches(['\n', '\r']);
     let first = text[..range.start].matches('\n').count() + 1;
@@ -348,7 +335,6 @@ impl Project {
         self.put_paths([(path, present)]);
     }
 
-    // Adds or removes each path, rebuilding the tree once.
     fn put_paths<'a>(&mut self, changes: impl IntoIterator<Item = (&'a str, bool)>) {
         let mut paths = self.tree.paths().to_vec();
         let mut changed = false;
@@ -370,7 +356,6 @@ impl Project {
 }
 
 impl Adeline {
-    // A project made later with the same ID lists its docs afresh.
     pub(super) fn docs_forget(&mut self, key: &str) {
         self.docs.projects.remove(key);
         if self.docs.shown.as_ref().is_some_and(|(k, _)| k == key) {
@@ -426,8 +411,6 @@ impl Adeline {
         self.defer_with_window(cx, move |app, window, cx| done(app, result, window, cx));
     }
 
-    // Runs `then` after the current update, with the main window but not its root
-    // leased, so `then` can reach dialogs and notifications.
     pub(crate) fn defer_with_window(
         &self,
         cx: &mut Context<Self>,
@@ -499,7 +482,6 @@ impl Adeline {
         }
     }
 
-    /// Shows Docs for the open project, with `chat` on the right when a card opened it.
     pub(super) fn docs_enter(
         &mut self,
         chat: Option<String>,
@@ -538,7 +520,6 @@ impl Adeline {
         self.docs_refresh_rows(cx);
     }
 
-    /// Leaves Docs: keeps unsaved edits, remembers what showed and restores the Chats selection.
     pub(super) fn docs_leave(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.section != Section::Docs {
             return;
@@ -623,7 +604,6 @@ impl Adeline {
         cx.notify();
     }
 
-    // Keeps the Editor's buffer and scroll with the doc before another doc shows.
     fn docs_stash(&mut self, cx: &mut Context<Self>) {
         let Some((key, path)) = self.docs.shown.take() else {
             return;
@@ -788,7 +768,6 @@ impl Adeline {
         if editor {
             window.focus(&self.docs.editor.focus_handle(cx), cx);
         } else {
-            // The hidden Editor had focus; shortcuts need a focused element.
             window.focus(&self.focus, cx);
             if adeline_docs::is_markdown(&path) {
                 self.docs
@@ -800,7 +779,6 @@ impl Adeline {
         self.docs_record(cx);
     }
 
-    // Writes `path` of the project at `key`, then runs `after` with whether it saved.
     fn docs_save(
         &mut self,
         key: &str,
@@ -852,7 +830,6 @@ impl Adeline {
             move |app, result, window, cx| {
                 let saved = match result {
                     Ok(modified) => {
-                        // Edits made during the write stay unsaved.
                         let current = app
                             .docs
                             .shown
@@ -894,7 +871,6 @@ impl Adeline {
         );
     }
 
-    // A doc changed on disk: reload it, or ask when it has unsaved edits.
     pub(super) fn docs_changed(
         &mut self,
         machine: &str,
@@ -942,7 +918,6 @@ impl Adeline {
         self.docs_refresh_rows(cx);
     }
 
-    // Nothing watched the project while Docs was closed or the engine was away.
     fn docs_reload_cached(&mut self, cx: &mut Context<Self>) {
         let key = self.docs_key();
         let cached: Vec<String> = self
@@ -976,7 +951,6 @@ impl Adeline {
                 {
                     Ok(file) => file,
                     Err(error) => {
-                        // The text shown is stale, so saving it would drop the change on disk.
                         app.notify_toast(&format!("Reloading failed: {error}"), cx);
                         if let Some(doc) = app
                             .docs
@@ -1044,7 +1018,6 @@ impl Adeline {
             doc.text = None;
             self.docs.shown = None;
             self.docs_show(window, cx);
-            // After a failed reload `disk` is the last text read, so read it again.
             self.docs_reload(&key, path, cx);
         }
     }
@@ -1183,7 +1156,6 @@ impl Adeline {
         }
     }
 
-    /// Opens an `adeline://` route from a card or a link, falling back to the file when its mode is off.
     pub(super) fn open_route(
         &mut self,
         route: &EntityRef,
@@ -1407,7 +1379,6 @@ impl Adeline {
         window.focus(&self.docs.editor.focus_handle(cx), cx);
     }
 
-    // Saves every unsaved doc, then does what the unsaved-docs prompt held back.
     fn docs_save_all(&mut self, cx: &mut Context<Self>) {
         let unsaved = self.docs.unsaved();
         let remaining = std::rc::Rc::new(std::cell::Cell::new(unsaved.len()));
@@ -1476,12 +1447,10 @@ impl Adeline {
         window.focus(&self.docs.path_input.focus_handle(cx), cx);
     }
 
-    /// Forgets what the unsaved-docs prompt was asked for once it is cancelled.
     pub(super) fn docs_cancel(&mut self) {
         self.docs.then = None;
     }
 
-    /// Whether closing the window or project `close` can go ahead without losing edits.
     pub(super) fn docs_may_close(&mut self, then: Then, _: &mut Context<Self>) -> bool {
         if self.docs.unsaved_ok {
             return true;
@@ -1502,7 +1471,6 @@ impl Adeline {
         !affected
     }
 
-    /// Re-watches and relists a machine's docs after its engine connection is back.
     pub(super) fn docs_connected(&mut self, machine: &str, cx: &mut Context<Self>) {
         let relisting = self.docs_sync_engine(machine, cx);
         if self.section != Section::Docs
@@ -1527,8 +1495,6 @@ impl Adeline {
         self.docs_reload_cached(cx);
     }
 
-    /// Tells the machine's engine the Docs settings that decide which files get cards,
-    /// and relists its docs once it has them. Whether it sent them.
     pub(super) fn docs_sync_engine(&self, machine: &str, cx: &mut Context<Self>) -> bool {
         if self.demo_mode {
             return false;
@@ -1745,7 +1711,6 @@ impl Adeline {
         cx.notify();
     }
 
-    /// The handlers of Docs mode's actions, on the window's root while Docs shows.
     pub(super) fn docs_actions(&self, content: Div, cx: &Context<Self>) -> Div {
         content
             .on_action(cx.listener(|app, _: &ToggleDocView, window, cx| {
@@ -1779,7 +1744,6 @@ impl Adeline {
             }))
     }
 
-    // The Viewer takes no focus, so its pages scroll from the root.
     fn docs_page(&mut self, pages: f32, cx: &mut Context<Self>) {
         let Some((path, doc)) = self.docs_open_doc() else {
             return;
@@ -1792,7 +1756,6 @@ impl Adeline {
         cx.notify();
     }
 
-    // Reads the images the Viewer asked for since the last frame.
     pub(super) fn docs_load_images(&mut self, cx: &mut Context<Self>) {
         for (key, path) in self.docs.images.wanted() {
             let Some(project) = self.docs.projects.get(&key) else {

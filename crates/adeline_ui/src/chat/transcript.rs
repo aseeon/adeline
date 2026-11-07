@@ -61,7 +61,6 @@ impl Adeline {
         };
         let selectable = panes::selectable_in(panel, cx);
         let theme = cx.theme();
-        // A reply that so far only thought shows as the Thinking row instead.
         let thinking = config::with(|s| s.modes.chats.show_thinking);
         if !user && message.text.is_empty() && (message.thought.is_empty() || !thinking) {
             return div()
@@ -73,7 +72,6 @@ impl Adeline {
         }
         let time = message_time(&message.created_at);
         let isl = theme::islands(cx);
-        // Prose: 15 px, at 1.55 in a bubble and 1.65 in replies.
         let leading = relative(if user { 1.55 } else { 1.65 });
         let mut body = col()
             .w_full()
@@ -104,9 +102,6 @@ impl Adeline {
                 );
             }
         } else {
-            // Compact text with inline code in the accent on the muted fill; the
-            // default fill is nearly the background and hides code spans. Links
-            // take `chart_2` through the theme's link color.
             body = body.child(
                 TextView::new(&reply.expect("a reply"))
                     .selectable(selectable)
@@ -149,7 +144,6 @@ impl Adeline {
         }
         for path in &message.images {
             let asset = image_asset(path);
-            // Reserve height before decoding so a virtual row keeps its scroll anchor.
             let bytes = embedded(asset).expect("bundled message image");
             let (width, height) = image_size(bytes);
             body = body.child(
@@ -208,7 +202,6 @@ impl Adeline {
                 .into_any_element()
         } else {
             let name = self.agent_name(&thread.provider);
-            // The reply being written gets its closing row when the turn ends.
             let writing = self.conversation_processing()
                 && thread
                     .turn_of(thread.messages.len())
@@ -247,7 +240,6 @@ impl Adeline {
             )))
             .w_full()
             .min_w_0()
-            // The message under the hovered row of the activity panel.
             .when(self.activity.lit == Some(i), |row| {
                 row.bg(theme.primary.alpha(0.08))
             })
@@ -257,7 +249,6 @@ impl Adeline {
                     .when_some(thread.fork.as_ref().filter(|_| i == 0), |column, fork| {
                         column.child(self.fork_marker(fork, cx))
                     })
-                    // Notes from the session's start, such as skipped MCP servers.
                     .when(i == 0, |column| {
                         column.children(thread.activity.iter().filter(|a| a.kind == "note").map(
                             |note| {
@@ -329,7 +320,6 @@ impl Adeline {
             .filter(|summary| summary.tools > 0);
         let key = format!("summary:{}:{i}", thread.id);
         let expanded = summary.is_some() && self.runtime.expanded_tools.contains(&key);
-        // A fork that hasn't sent yet has nothing of its own to retry.
         let retry = !self.demo_mode
             && i + 1 == thread.messages.len()
             && self
@@ -350,7 +340,6 @@ impl Adeline {
                 }))
         };
         let actions = row()
-            // Cancel the button inset so the first icon sits on the text edge.
             .ml(rems(-0.3125))
             .gap(rems(0.125))
             .child(action("reply", "reply", "Reply", Action::ReplyTo(i)))
@@ -505,12 +494,7 @@ impl Transcript {
         cx: &mut Context<Self>,
     ) -> Self {
         let state = ListState::new(0, ListAlignment::Top, px(250.));
-        // Stick to the end while the reader is at the bottom; scrolling up
-        // pauses this and scrolling back down resumes it.
         state.set_follow_mode(FollowMode::Tail);
-        // Gpui only resumes within 1px of the end; resume once a downward wheel
-        // scroll brings the last line close to the composer. Deferred because
-        // the list is still borrowed while its handler runs.
         let view = cx.weak_entity();
         state.set_scroll_handler(move |_, window, cx| {
             let view = view.clone();
@@ -564,7 +548,6 @@ impl Transcript {
         cx.notify();
     }
 
-    // Doc cards change under earlier turns, so every row redraws and remeasures.
     pub fn refresh_all(&mut self, cx: &mut Context<Self>) {
         self.state.remeasure();
         self.invalidate(cx);
@@ -581,7 +564,6 @@ impl Transcript {
     fn resume_near_end(&mut self, near: Pixels) {
         let left =
             self.state.max_offset_for_scrollbar().y + self.state.scroll_px_offset_for_scrollbar().y;
-        // Only while moving down, so a small scroll up near the end can leave it.
         if !self.state.is_following_tail() && left <= near && left < self.left_to_end {
             self.state.set_follow_mode(FollowMode::Tail);
         }
@@ -608,7 +590,6 @@ impl Transcript {
         if changed_thread {
             self.state.reset(0);
         }
-        // Streaming can change the final message without appending another row.
         let start = if changed_thread {
             0
         } else if app.demo_mode {
@@ -648,7 +629,6 @@ impl Transcript {
     }
 }
 
-/// The text of a paragraph quoted with `>` on every line, without the markers.
 fn unquote(paragraph: &str) -> Option<String> {
     let lines = paragraph
         .lines()
@@ -699,8 +679,6 @@ impl Render for Transcript {
                 row.update(cx, |row, _| row.fresh = true);
             }
         }
-        // The header and composer float over the transcript so its scrollbar runs
-        // the full height; the messages start and end clear of both.
         let gap = window.rem_size() * 0.5;
         let docs = self
             .owner
@@ -747,7 +725,6 @@ impl Render for Transcript {
             .relative()
             .size_full()
             .min_h_0()
-            // Prepaints before the list, so its rows see this frame's width.
             .child(
                 canvas(
                     move |bounds, _, _| width.set(bounds.size.width),
@@ -804,7 +781,6 @@ impl Render for Row {
                     if row < messages {
                         app.message_row(selected, row, window, cx)
                     } else {
-                        // Wrapped like message rows so the column centers in the row.
                         div()
                             .w_full()
                             .min_w_0()

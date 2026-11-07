@@ -206,7 +206,6 @@ impl Owner {
     }
 
     fn act(&self, action: Action, window: &mut Window, cx: &mut App) {
-        // Preference-save feedback belongs in the window that initiated the change.
         let _ = self
             .entity
             .update(cx, |app, cx| app.act(action, window, cx));
@@ -331,7 +330,6 @@ fn open_at(
                     }
                     _ => {}
                 }
-                // Kit's root paints the background, which would hide the window blur.
                 cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
             },
         );
@@ -836,7 +834,6 @@ impl SettingsWindow {
                 if label == ADD_MACHINE {
                     this.editing = None;
                 }
-                // The dropdown names the machine shown, not the page.
                 let shown = machines::name(&this.machine);
                 this.machine_picker.update(cx, |picker, cx| {
                     picker.set_selected_value(&shown, window, cx);
@@ -861,7 +858,6 @@ impl SettingsWindow {
                 })
                 .err()
                 .map(|e| format!("{e:#}"));
-                // A running turn's row picks up the new animation on its next frame.
                 let _ = this.owner.entity.update(cx, |_, cx| cx.notify());
                 cx.notify();
             },
@@ -871,7 +867,6 @@ impl SettingsWindow {
             window,
             |this, input, event: &InputEvent, window, cx| {
                 if matches!(event, InputEvent::Focus | InputEvent::Blur) {
-                    // The field's border marks focus.
                     cx.notify();
                     return;
                 }
@@ -1305,8 +1300,6 @@ impl Render for SettingsWindow {
             }
         }
         let sidebar_width = window.rem_size() * 15.;
-        // The sidebar shows the window blur, like the main window's mode rail, and runs up
-        // under the title bar.
         let sidebar = div()
             .w(sidebar_width)
             .h_full()
@@ -1369,7 +1362,6 @@ impl Render for SettingsWindow {
                 .map_or(self.group.label(), |child| self.group.subgroups()[child])
                 .to_string()
         };
-        // The title bar names the page, so the content starts with its settings.
         let mut crumbs = if searching || self.machines_page || heading == self.group.label() {
             vec![heading]
         } else {
@@ -1471,16 +1463,11 @@ impl Render for SettingsWindow {
                     .child(crumb),
             );
         }
-        // One bar across the window, drawn over both panes without a line under it: the
-        // sidebar's surface shows through on the left, the content's on the right.
-        // macOS keeps Kit's left padding for the traffic lights.
         let lead = if cfg!(target_os = "macos") {
             sidebar_width - px(80.)
         } else {
             sidebar_width
         };
-        // Kit wraps the bar in an unstyled div, and absolute boxes sit in their parent, so the
-        // overlay is this wrapper rather than the bar itself.
         let title_bar = TitleBar::new()
             .h(titlebar::MAIN_HEIGHT)
             .when(!cfg!(target_os = "macos"), |bar| bar.pl_0())

@@ -17,7 +17,6 @@ thread_local! {
 }
 
 pub fn init(cx: &App) {
-    // Register before any window shapes text. The font travels inside the binary.
     cx.text_system()
         .add_fonts(vec![
             Cow::Borrowed(include_bytes!("../../../assets/fonts/Chivo.ttf")),
@@ -68,10 +67,6 @@ pub fn code() -> String {
     config::with(|s| resolve(&s.general.appearance.code_font, CODE_DEFAULT))
 }
 
-// Coding fonts draw `->` and `!=` through `calt`, and pairs like the `ff` in `diff` through
-// `liga`. Turning both off on every window's root reaches all code text, inline code, Kit
-// code blocks and overlays included. Inline code has no font features of its own, so the
-// interface font loses them too.
 pub struct Ligatures;
 impl Render for Ligatures {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
@@ -89,7 +84,6 @@ impl RootPlugin for Ligatures {
     }
 }
 
-// Virtual rows must be measured again when any of these changes.
 #[derive(PartialEq)]
 pub struct Typography {
     interface: String,

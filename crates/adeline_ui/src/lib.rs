@@ -50,7 +50,6 @@ use std::borrow::Cow;
 
 #[derive(Debug)]
 pub struct Assets;
-// The harnesses of the machine whose project is open.
 #[derive(Clone, Default)]
 struct Harnesses(harness::Catalog);
 impl Global for Harnesses {}
@@ -143,19 +142,16 @@ enum Action {
     ManageMachines,
     MachineUpgrade(String),
     ConfirmUpgrade,
-    // True accepts or submits, false cancels.
     AnswerPrompt(bool),
     FolderMachine(String),
     ProjectMachine(String),
     BrowseTo(std::path::PathBuf),
-    // None picks the shown folder.
     BrowsePick(Option<String>),
     About,
     QuitApp,
     Settings,
     AppSettings,
     AgentSettings,
-    // The conversation's agent, or the first agent in the list.
     EditAgent,
     ModeSettings,
     ConfigureModeSettings,
@@ -165,9 +161,7 @@ enum Action {
     Agent(String),
     Speed(usize),
     ToggleMode(Section),
-    // Queued during a turn.
     Send,
-    // Sends the queue when the composer is empty.
     SendNow,
     OptionMenu(conversation::Category),
     SetOption {
@@ -182,7 +176,6 @@ enum Action {
     AttachFile,
     RemoveAttachment(usize),
     DismissError(String),
-    // Message, attachment.
     PreviewImage(usize, usize),
     ToggleThought(String),
     ShowThinking,
@@ -278,7 +271,6 @@ pub struct Adeline {
     open_projects: Vec<bool>,
     empty_workspace: Workspace,
     demo_mode: bool,
-    // `--verbose`: shows debugging views, such as the ACP traffic tab.
     verbose: bool,
     catalogs: std::collections::HashMap<String, agents::AgentCatalog>,
     empty_catalog: agents::AgentCatalog,
@@ -305,7 +297,6 @@ pub struct Adeline {
     selected: Option<usize>,
     agent_filter: Option<std::sync::Arc<str>>,
     chat_search_open: bool,
-    // The composer floats over the end of the transcript.
     composer_height: std::rc::Rc<std::cell::Cell<Pixels>>,
     show_completed: bool,
     show_archived: bool,
@@ -321,20 +312,15 @@ pub struct Adeline {
     speed: usize,
     attachments: Vec<conversation::Attachment>,
     attachment_error: Option<String>,
-    // Chat, its latest turn, message.
-    // ponytail: in memory only, so a restart shows a dismissed error of the latest turn again.
     dismissed_errors: std::collections::HashSet<(String, Option<usize>, String)>,
     slash: Option<usize>,
-    // Closed with Escape for the text typed so far.
     slash_dismissed: bool,
     side_tab: panes::SideTab,
-    // Newest last.
     traffic: Vec<conversation::TrafficEntry>,
     traffic_scroll: ScrollHandle,
     open_thoughts: std::collections::HashSet<String>,
     logged_in: std::collections::HashSet<String>,
     pictures: std::cell::RefCell<std::collections::HashMap<String, std::sync::Arc<Image>>>,
-    // Per rail: the active tab before the current one, and the current one.
     rail_slides: std::cell::RefCell<std::collections::HashMap<&'static str, panes::Slide>>,
     left_panel_open: bool,
     selected_tint: usize,
@@ -406,8 +392,6 @@ impl Adeline {
                     window,
                     |app, _, event: &InputEvent, window, cx| match event {
                         InputEvent::Change => app.search_sidebar(cx),
-                        // The search icon lights up while the field is focused; an empty
-                        // search folds away once focus leaves it.
                         InputEvent::Focus | InputEvent::Blur => {
                             if matches!(event, InputEvent::Blur)
                                 && app.query.read(cx).value().is_empty()
@@ -416,7 +400,6 @@ impl Adeline {
                             }
                             app.chat_list.update(cx, |_, cx| cx.notify());
                         }
-                        // Enter opens the first chat the search lists.
                         InputEvent::PressEnter { .. } => {
                             if let Some(ix) = app.chat_list.read(cx).first_result() {
                                 app.act(Action::Chat(ix), window, cx);
@@ -430,7 +413,6 @@ impl Adeline {
                 &project_search,
                 |app, _, event: &InputEvent, cx| match event {
                     InputEvent::Change => app.search_projects(cx),
-                    // The field's border marks focus.
                     InputEvent::Focus | InputEvent::Blur => {
                         app.header_region.update(cx, |_, cx| cx.notify());
                     }
@@ -442,8 +424,6 @@ impl Adeline {
             &composer,
             window,
             |app, _, event: &InputEvent, window, cx| {
-                // With submit on Enter, the textarea reports a plain Enter
-                // instead of inserting a line.
                 if matches!(
                     event,
                     InputEvent::PressEnter {
@@ -467,8 +447,6 @@ impl Adeline {
         let side_panel = cx.new(|_| conversation_ui::SidePanel(owner.clone()));
         let chat_header = cx.new(|_| views::ChatHeader(owner.clone()));
         subscriptions.push(cx.observe_self(Self::notify_cached_views));
-        // A focused element that disappears, such as a closed menu's search box,
-        // leaves keys dispatching above the "Adeline" context, so shortcuts stop.
         subscriptions.push(cx.on_focus_lost(window, |app, window, cx| {
             if app.has_open_project() && app.section == Section::Chats {
                 window.focus(&app.composer.focus_handle(cx), cx);
@@ -591,7 +569,6 @@ impl Adeline {
         app.transcript
             .update(cx, |view, cx| view.sync(&app, false, cx));
         app.defer_with_window(cx, |app, window, cx| app.open_last_active_chat(window, cx));
-        // A quiet turn's silence notice appears on time without new deltas.
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor()
@@ -676,7 +653,6 @@ impl Adeline {
             .copied()
             .unwrap_or(false)
     }
-    // Read by the UI tests.
     pub fn open_chat(&self) -> Option<&str> {
         self.selected
             .and_then(|i| self.workspace().threads.get(i))
@@ -963,9 +939,7 @@ pub fn open(demo_mode: bool, verbose: bool, control: bool) {
     #[cfg(feature = "profiler")]
     frame_log::start();
     application().with_assets(Assets).run(move |cx: &mut App| {
-        // These pixels describe native window geometry, not control spacing.
         let bounds = Bounds::centered(None, size(px(1440.), px(940.)), cx);
-        // `--hidden` (control builds) keeps the windows off screen for `adeline ui`.
         if control && std::env::args().any(|arg| arg == "--hidden") {
             cx.set_global(titlebar::Hidden);
         }
@@ -998,7 +972,6 @@ pub fn open(demo_mode: bool, verbose: bool, control: bool) {
     });
 }
 
-// Everything `open` sets up inside the platform application, so tests run it on GPUI's test platform.
 pub fn start(
     demo_mode: bool,
     verbose: bool,
@@ -1028,8 +1001,6 @@ pub fn start(
     let snapshot = initial.as_mut().and_then(|initial| initial.snapshot.take());
     client::init(demo_mode, initial, snapshot.as_ref(), cx);
     bind_keys(cx);
-    // Outside the main view (dialogs, Settings). Deferred, because the window is
-    // still busy with the key press and can't be updated until it's done.
     cx.on_action(|_: &NextFocus, cx| {
         cx.defer(|cx| {
             if let Some(handle) = cx.active_window() {
@@ -1067,14 +1038,12 @@ pub fn start(
         })
         .detach();
         view.update(cx, |app, cx| window.focus(&app.focus, cx));
-        // Kit's root paints the background, which would hide the window blur.
         cx.new(|cx| Root::new(view, window, cx).bg(transparent_black()))
     })
     .expect("open Adeline window");
     adeline.expect("Adeline view")
 }
 
-// ponytail: only ``` fences, add ~~~ if agents start using them.
 fn last_code_block(text: &str) -> Option<String> {
     let mut block = None;
     let mut open: Option<Vec<&str>> = None;
@@ -1091,8 +1060,6 @@ fn last_code_block(text: &str) -> Option<String> {
     block
 }
 
-// The Kit's toast draws its message as bare text, which assistive technology
-// can't name, so every toast carries its message as its label.
 fn toast(message: impl Into<SharedString>) -> notification::Notification {
     let message = message.into();
     notification::Notification::new().content(move |_, _, _| {
@@ -1107,7 +1074,6 @@ fn toast(message: impl Into<SharedString>) -> notification::Notification {
     })
 }
 
-// A new project's tab color, by its place in the bar.
 fn default_tint(ix: usize) -> usize {
     [0, 2, 3][ix.min(2)]
 }
@@ -1140,7 +1106,6 @@ fn bind_keys(cx: &mut App) {
     bind!(keys.next_control, NextFocus);
     bind!(keys.previous_control, PreviousFocus);
     bindings.push(KeyBinding::new("cmd-q", Quit, None));
-    // The conversation controls' shortcuts (docs/shortcuts.md), Ctrl and Cmd alike.
     for modifier in ["ctrl", "cmd"] {
         let key = |rest: &str| format!("{modifier}-{rest}");
         bindings.extend([
@@ -1163,14 +1128,10 @@ fn bind_keys(cx: &mut App) {
             KeyBinding::new(&key("p"), ProjectPalette, None),
         ]);
     }
-    // Cmd+Tab is the macOS app switcher, so tabs switch with Ctrl alone.
     bindings.extend([
         KeyBinding::new("ctrl-tab", NextProject, None),
         KeyBinding::new("ctrl-shift-tab", PreviousProject, None),
     ]);
-    // The option menus, the machines menu and the main menu. Ctrl+Shift+M, E and O are global
-    // hotkeys of common Windows tools (AMD Adrenalin among them), so Windows and
-    // Linux use Alt.
     let menu = |letter: &str| {
         if cfg!(target_os = "macos") {
             format!("cmd-shift-{letter}")

@@ -68,7 +68,6 @@ impl Adeline {
             .px_1()
             .pt_1()
             .pb_2()
-            // Room for the last row to scroll clear of the fade.
             .when(overflows, |list| list.pb(rems(1.25)))
             .children(listed.iter().map(|&ix| self.menu_row(ix, now, owner, cx)))
             .when(listed.is_empty(), |list| {
@@ -89,7 +88,6 @@ impl Adeline {
         let delete_owner = owner.clone();
         col()
             .w(dp(580.))
-            // The search field binds Delete, and bindings run before key listeners.
             .capture_action(move |_: &input::Delete, window, cx| {
                 let handled = delete_owner
                     .update(cx, |app, cx| app.menu_key("delete", window, cx))
@@ -126,27 +124,21 @@ impl Adeline {
                     cx,
                 )),
             )
-            .child(
-                div()
-                    .relative()
-                    .child(list)
-                    // The half-shown row fades out, so the list reads as continuing.
-                    .when(overflows, |area| {
-                        area.child(
-                            div()
-                                .absolute()
-                                .left_0()
-                                .right_0()
-                                .bottom_0()
-                                .h(rems(1.5))
-                                .bg(linear_gradient(
-                                    180.,
-                                    linear_color_stop(theme.popover.opacity(0.), 0.),
-                                    linear_color_stop(theme.popover, 1.),
-                                )),
-                        )
-                    }),
-            )
+            .child(div().relative().child(list).when(overflows, |area| {
+                area.child(
+                    div()
+                        .absolute()
+                        .left_0()
+                        .right_0()
+                        .bottom_0()
+                        .h(rems(1.5))
+                        .bg(linear_gradient(
+                            180.,
+                            linear_color_stop(theme.popover.opacity(0.), 0.),
+                            linear_color_stop(theme.popover, 1.),
+                        )),
+                )
+            }))
             .child(
                 row()
                     .gap_1()
@@ -186,9 +178,6 @@ impl Adeline {
         let group = SharedString::from(format!("project-row-{id}"));
         let (fill, letter) =
             theme::project_mark(theme::project_tint(self.project_tints[ix]), false, theme);
-        // At rest the trailing slot says where the project stands; under the
-        // pointer or keyboard highlight it offers the action: close if open,
-        // delete if not.
         let status = if open {
             div()
                 .px_1()
@@ -320,7 +309,6 @@ impl Adeline {
     }
 
     fn menu_projects(&self, query: &str) -> Vec<usize> {
-        // A project waiting out its undo window is already gone from the user's view.
         let pending = self.pending_removal.as_ref().map(|p| p.id.as_str());
         let mut listed: Vec<usize> = (0..self.projects.len())
             .filter(|&ix| Some(self.projects[ix].key().as_str()) != pending)
@@ -349,7 +337,6 @@ impl Adeline {
     }
 
     fn menu_key(&mut self, key: &str, window: &mut Window, cx: &mut Context<Self>) -> bool {
-        // False lets the key reach the search field.
         let query = self.project_search.read(cx).value().trim().to_lowercase();
         let listed = self.menu_projects(&query);
         if listed.is_empty() {
@@ -377,7 +364,6 @@ impl Adeline {
                 self.act(Action::Project(listed[position.unwrap_or(0)]), window, cx);
                 true
             }
-            // With search text, Delete edits the text instead.
             "delete" if query.is_empty() => {
                 let Some(at) = position else {
                     return false;
@@ -430,7 +416,6 @@ impl Adeline {
         if self.open_projects[ix] {
             return;
         }
-        // One removal waits at a time; an earlier one is committed now.
         self.commit_pending_removal(window, cx);
         self.removal_generation += 1;
         let generation = self.removal_generation;
@@ -457,7 +442,6 @@ impl Adeline {
         window.push_notification(
             toast(format!("Deleted \"{}\"", self.projects[ix].config.name))
                 .id1::<PendingRemoval>(SharedString::from(id.to_owned()))
-                // Clear of the projects menu, which opens at the top right.
                 .placement(Anchor::BottomRight)
                 .action(move |_, _, _| {
                     Button::new("undo-project-removal")
@@ -486,8 +470,6 @@ impl Adeline {
     }
 
     pub(crate) fn commit_pending_removal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // The settings dialog's path: agents stop first, and the dialog appears
-        // only if they are still stopping or storage fails.
         let Some(pending) = self.pending_removal.take() else {
             return;
         };
@@ -541,5 +523,4 @@ const UNDO_WINDOW: Duration = Duration::from_secs(6);
 
 const MENU_ROW_REM: f32 = 2.5;
 
-// The half row signals that more follow.
 const MENU_ROWS: f32 = 5.5;

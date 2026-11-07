@@ -15,7 +15,6 @@ static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    // `ssh` runs this executable to ask for a password or a host key.
     if let Some(address) = std::env::var_os("ADELINE_ASKPASS") {
         let prompt = args.first().map_or("", String::as_str);
         std::process::exit(askpass::askpass_main(&address.to_string_lossy(), prompt));
