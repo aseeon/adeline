@@ -129,138 +129,214 @@ impl StoredConversation {
         };
         let mut current_assistant = None;
         for event in self.events.iter().chain(&self.unsaved_events) {
-            match event.kind.as_str() {
-                "message" => {
-                    if let Ok(mut message) =
-                        serde_json::from_value::<data::Message>(event.data.clone())
-                    {
-                        if message.created_at.is_empty() {
-                            message.created_at = event.timestamp.to_string();
-                        }
-                        if message.role == MessageRole::User {
-                            thread.timing.prompt(event.timestamp);
-                        }
-                        current_assistant = (message.role == MessageRole::Assistant)
-                            .then_some(thread.messages.len());
-                        thread.messages.push(message);
-                    }
-                }
-                kind @ ("assistant_chunk" | "thought_chunk") => {
-                    if let Some(text) = event.data.get("text").and_then(Value::as_str) {
-                        thread.stream(
-                            &mut current_assistant,
-                            event.data.get("message").and_then(Value::as_str),
-                            text,
-                            kind == "thought_chunk",
-                            event.timestamp,
-                        );
-                    }
-                }
-                "message_update" => {
-                    if let (Some(index), Some(text)) = (
-                        event
-                            .data
-                            .get("index")
-                            .and_then(Value::as_u64)
-                            .and_then(|index| usize::try_from(index).ok()),
-                        event.data.get("text").and_then(Value::as_str),
-                    ) && let Some(message) = thread.messages.get_mut(index)
-                    {
-                        text.clone_into(&mut message.text);
-                        current_assistant = Some(index);
-                    }
-                }
-                "message_read" => {
-                    if let Some(through) = event
-                        .data
-                        .get("through")
-                        .and_then(Value::as_u64)
-                        .and_then(|index| usize::try_from(index).ok())
-                    {
-                        for message in thread.messages.iter_mut().take(through.saturating_add(1)) {
-                            message.read = true;
-                        }
-                    }
-                }
-                "tool" => {
-                    if let Ok(call) = serde_json::from_value::<data::ToolReport>(event.data.clone())
-                    {
-                        thread.apply_tool(&call, event.timestamp);
-                    }
-                }
-                "card" => {
-                    if let Ok(card) =
-                        serde_json::from_value::<adeline_core::card::Card>(event.data.clone())
-                    {
-                        thread.put_card(card);
-                    }
-                }
-                "usage" => {
-                    if let (Some(used), Some(size)) = (
-                        event.data.get("used").and_then(Value::as_u64),
-                        event.data.get("size").and_then(Value::as_u64),
-                    ) {
-                        thread.context = Some((used, size));
-                    }
-                }
-                "error" => {
-                    let title = event
-                        .data
-                        .get("message")
-                        .and_then(Value::as_str)
-                        .unwrap_or("Conversation error");
-                    thread.activity.push(data::Activity {
-                        kind: "error".into(),
-                        title: title.to_owned(),
-                        turn: thread
-                            .messages
-                            .iter()
-                            .rposition(|m| m.role == MessageRole::User),
-                        ..Default::default()
-                    });
-                }
-                "note" => {
-                    if let Some(message) = event.data.get("message").and_then(Value::as_str) {
-                        thread.activity.push(data::Activity {
-                            kind: "note".into(),
-                            title: message.to_owned(),
-                            ..Default::default()
-                        });
-                    }
-                }
-                "fork_text_copy" => {
-                    if let Some(fork) = &mut thread.fork {
-                        fork.text_copy = true;
-                    }
-                }
-                "reply_break" => current_assistant = None,
-                "lifecycle" if starts_reply(event) => {
-                    current_assistant = None;
-                }
-                _ => {}
-            }
+            apply_event(&mut thread, &mut current_assistant, event);
         }
+        let error = |title: &str, detail: String| data::Activity {
+            kind: "error".into(),
+            title: title.into(),
+            detail,
+            running: false,
+            ..Default::default()
+        };
         if self.interrupted {
-            thread.activity.push(data::Activity {
-                kind: "error".into(),
-                title: "Prompt interrupted when the conversation engine stopped".into(),
-                detail: "Retry continues from the saved session.".into(),
-                running: false,
-                ..Default::default()
-            });
+            thread.activity.push(error(
+                "Prompt interrupted when the conversation engine stopped",
+                "Retry continues from the saved session.".into(),
+            ));
         }
-        if let Some(error) = &self.storage_error {
-            thread.activity.push(data::Activity {
-                kind: "error".into(),
-                title: "Conversation data could not be saved".into(),
-                detail: error.clone(),
-                running: false,
-                ..Default::default()
-            });
+        if let Some(detail) = &self.storage_error {
+            thread.activity.push(error(
+                "Conversation data could not be saved",
+                detail.clone(),
+            ));
         }
         thread.prepare_search();
         thread
     }
+}
+
+fn apply_event(thread: &mut data::Thread, current: &mut Option<usize>, event: &TranscriptEvent) {
+    match event.kind.as_str() {
+        "message" => {
+            if let Ok(mut message) = serde_json::from_value::<data::Message>(event.data.clone()) {
+                if message.created_at.is_empty() {
+                    message.created_at = event.timestamp.to_string();
+                }
+                if message.role == MessageRole::User {
+                    thread.timing.prompt(event.timestamp);
+                }
+                *current =
+                    (message.role == MessageRole::Assistant).then_some(thread.messages.len());
+                thread.messages.push(message);
+            }
+        }
+        kind @ ("assistant_chunk" | "thought_chunk") => {
+            if let Some(text) = event.data.get("text").and_then(Value::as_str) {
+                thread.stream(
+                    current,
+                    event.data.get("message").and_then(Value::as_str),
+                    text,
+                    kind == "thought_chunk",
+                    event.timestamp,
+                );
+            }
+        }
+        "message_update" => {
+            if let (Some(index), Some(text)) = (
+                index(&event.data, "index"),
+                event.data.get("text").and_then(Value::as_str),
+            ) && let Some(message) = thread.messages.get_mut(index)
+            {
+                text.clone_into(&mut message.text);
+                *current = Some(index);
+            }
+        }
+        "message_read" => {
+            if let Some(through) = index(&event.data, "through") {
+                for message in thread.messages.iter_mut().take(through.saturating_add(1)) {
+                    message.read = true;
+                }
+            }
+        }
+        "tool" => {
+            if let Ok(call) = serde_json::from_value::<data::ToolReport>(event.data.clone()) {
+                thread.apply_tool(&call, event.timestamp);
+            }
+        }
+        "card" => {
+            if let Ok(card) = serde_json::from_value::<adeline_core::card::Card>(event.data.clone())
+            {
+                thread.put_card(card);
+            }
+        }
+        "usage" => {
+            if let (Some(used), Some(size)) = (
+                event.data.get("used").and_then(Value::as_u64),
+                event.data.get("size").and_then(Value::as_u64),
+            ) {
+                thread.context = Some((used, size));
+            }
+        }
+        "error" => {
+            let title = event
+                .data
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("Conversation error");
+            thread.activity.push(data::Activity {
+                kind: "error".into(),
+                title: title.to_owned(),
+                turn: thread
+                    .messages
+                    .iter()
+                    .rposition(|m| m.role == MessageRole::User),
+                ..Default::default()
+            });
+        }
+        "note" => {
+            if let Some(message) = event.data.get("message").and_then(Value::as_str) {
+                thread.activity.push(data::Activity {
+                    kind: "note".into(),
+                    title: message.to_owned(),
+                    ..Default::default()
+                });
+            }
+        }
+        "fork_text_copy" => {
+            if let Some(fork) = &mut thread.fork {
+                fork.text_copy = true;
+            }
+        }
+        "reply_break" => *current = None,
+        "lifecycle" if starts_reply(event) => *current = None,
+        _ => {}
+    }
+}
+
+fn index(data: &Value, key: &str) -> Option<usize> {
+    data.get(key)
+        .and_then(Value::as_u64)
+        .and_then(|index| usize::try_from(index).ok())
+}
+
+fn load_project(
+    root: &Path,
+    entry: &fs::DirEntry,
+    errors: &mut Vec<String>,
+) -> Result<Option<ProjectRecord>> {
+    let folder = entry.path();
+    let kind = entry
+        .file_type()
+        .with_context(|| folder.display().to_string())?;
+    if kind.is_symlink() {
+        bail!(
+            "{}: linked project folders are not loaded.",
+            folder.display()
+        );
+    }
+    if !kind.is_dir() {
+        return Ok(None);
+    }
+    safe_directory(&folder)?;
+    let id = entry.file_name().to_string_lossy().into_owned();
+    checked_id(&id)?;
+    ensure_regular_file(&folder.join("project.yml"))?;
+    let text = fs::read_to_string(folder.join("project.yml"))
+        .with_context(|| folder.join("project.yml").display().to_string())?;
+    let definition: ProjectDefinition = serde_yaml_ng::from_str(&text)
+        .with_context(|| folder.join("project.yml").display().to_string())?;
+    if files::normalize_name(&definition.name)? != id || !definition.directory.is_absolute() {
+        bail!(
+            "{}: project name or directory is invalid.",
+            folder.display()
+        );
+    }
+    if let Err(error) = outside_project_storage(&definition.directory, root) {
+        errors.push(format!(
+            "{}: {error:#}",
+            folder.join("project.yml").display()
+        ));
+    }
+    let conversations = folder.join("conversations");
+    safe_directory(&conversations)?;
+    Ok(Some(ProjectRecord {
+        id,
+        name: definition.name,
+        directory: definition.directory,
+        opened_at: definition.opened_at,
+        conversations: load_conversations(&conversations, errors),
+    }))
+}
+
+fn load_conversations(folder: &Path, errors: &mut Vec<String>) -> Vec<StoredConversation> {
+    let mut conversations = Vec::new();
+    match fs::read_dir(folder) {
+        Ok(entries) => {
+            for entry in entries {
+                match entry
+                    .with_context(|| folder.display().to_string())
+                    .and_then(|entry| load_conversation(&entry.path()))
+                {
+                    Ok(Some(conversation)) => {
+                        if let Some(error) = &conversation.storage_error {
+                            errors.push(error.clone());
+                        }
+                        conversations.push(conversation);
+                    }
+                    Ok(None) => {}
+                    Err(error) => errors.push(format!("{error:#}")),
+                }
+            }
+        }
+        Err(error) => errors.push(file_error(folder, error)),
+    }
+    conversations.sort_by(|a, b| {
+        b.settings
+            .created_at
+            .cmp(&a.settings.created_at)
+            .then(b.id.cmp(&a.id))
+    });
+    conversations
 }
 
 fn starts_reply(event: &TranscriptEvent) -> bool {
@@ -402,79 +478,7 @@ impl ProjectStore {
         for entry in folders {
             let result = entry
                 .with_context(|| root.display().to_string())
-                .and_then(|entry| {
-                    let folder = entry.path();
-                    let kind = entry
-                        .file_type()
-                        .with_context(|| folder.display().to_string())?;
-                    if kind.is_symlink() {
-                        bail!(
-                            "{}: linked project folders are not loaded.",
-                            folder.display()
-                        );
-                    }
-                    if !kind.is_dir() {
-                        return Ok(None);
-                    }
-                    safe_directory(&folder)?;
-                    let id = entry.file_name().to_string_lossy().into_owned();
-                    checked_id(&id)?;
-                    ensure_regular_file(&folder.join("project.yml"))?;
-                    let text = fs::read_to_string(folder.join("project.yml"))
-                        .with_context(|| folder.join("project.yml").display().to_string())?;
-                    let definition: ProjectDefinition = serde_yaml_ng::from_str(&text)
-                        .with_context(|| folder.join("project.yml").display().to_string())?;
-                    if files::normalize_name(&definition.name)? != id
-                        || !definition.directory.is_absolute()
-                    {
-                        bail!(
-                            "{}: project name or directory is invalid.",
-                            folder.display()
-                        );
-                    }
-                    if let Err(error) = outside_project_storage(&definition.directory, root) {
-                        self.errors.push(format!(
-                            "{}: {error:#}",
-                            folder.join("project.yml").display()
-                        ));
-                    }
-                    let mut project = ProjectRecord {
-                        id,
-                        name: definition.name,
-                        directory: definition.directory,
-                        opened_at: definition.opened_at,
-                        conversations: Vec::new(),
-                    };
-                    let conversations = folder.join("conversations");
-                    safe_directory(&conversations)?;
-                    match fs::read_dir(&conversations) {
-                        Ok(entries) => {
-                            for entry in entries {
-                                match entry
-                                    .with_context(|| conversations.display().to_string())
-                                    .and_then(|entry| load_conversation(&entry.path()))
-                                {
-                                    Ok(Some(conversation)) => {
-                                        if let Some(error) = &conversation.storage_error {
-                                            self.errors.push(error.clone());
-                                        }
-                                        project.conversations.push(conversation);
-                                    }
-                                    Ok(None) => {}
-                                    Err(error) => self.errors.push(format!("{error:#}")),
-                                }
-                            }
-                        }
-                        Err(error) => self.errors.push(file_error(&conversations, error)),
-                    }
-                    project.conversations.sort_by(|a, b| {
-                        b.settings
-                            .created_at
-                            .cmp(&a.settings.created_at)
-                            .then(b.id.cmp(&a.id))
-                    });
-                    Ok(Some(project))
-                });
+                .and_then(|entry| load_project(root, &entry, &mut self.errors));
             match result {
                 Ok(Some(project)) => self.projects.push(project),
                 Ok(None) => {}

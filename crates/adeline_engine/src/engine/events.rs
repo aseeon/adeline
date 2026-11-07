@@ -2,7 +2,7 @@
 use super::{Engine, PERMISSION_STOPPED, end_turn};
 use crate::{acp, storage};
 use adeline_core::{
-    conversation::ThreadStatus,
+    conversation::{PermissionOption, StopReason, ThreadStatus},
     protocol::{Delta, EngineMessage, PendingPermission},
 };
 use serde_json::json;
@@ -164,25 +164,7 @@ impl Engine {
                 if closing {
                     return;
                 }
-                if self.record_visible(
-                    &id,
-                    "permission_request",
-                    json!({"request_id":request_id,"title":title,"options":options}),
-                ) {
-                    self.live
-                        .entry(id.clone())
-                        .or_default()
-                        .permission
-                        .push(PendingPermission {
-                            request_id,
-                            title,
-                            options,
-                        });
-                    self.set_runtime_status(&id, ThreadStatus::Blocked);
-                    if self.subscribers() == 0 {
-                        self.stop_for_permission(&id);
-                    }
-                }
+                self.permission_requested(&id, request_id, title, options);
             }
             acp::EventKind::Steered { delivered } => {
                 if let Some((text, files)) = self.steering.remove(&id) {
@@ -235,67 +217,12 @@ impl Engine {
                 }
             }
             acp::EventKind::Error { message, kind } => {
-                let saved = self.record_visible(
-                    &id,
-                    "error",
-                    json!({"message":message,"kind":format!("{kind:?}")}),
-                );
-                let live = self.live_mut(&id);
-                end_turn(live);
-                live.auth_required = kind == acp::FailureKind::Authentication;
-                if saved {
-                    live.error = Some(message);
-                    if !closing {
-                        self.set_runtime_status(&id, ThreadStatus::Blocked);
-                    }
-                }
-                if self.text_copy_pending.remove(&id) {
-                    self.drop_undelivered_fork_session(&id);
-                }
+                self.turn_failed(&id, message, kind, closing);
             }
             acp::EventKind::Finished { stop_reason } => {
-                self.text_copy_pending.remove(&id);
-                self.record_visible(
-                    &id,
-                    "lifecycle",
-                    json!({"event":"turn_finished","reason":stop_reason}),
-                );
-                let live = self.live_mut(&id);
-                end_turn(live);
-                if !closing && !live.storage_failed {
-                    self.set_runtime_status(&id, ThreadStatus::Idle);
-                    self.send_queue(&id);
-                }
+                self.turn_finished(&id, stop_reason, closing);
             }
-            acp::EventKind::Stopped => {
-                let saved =
-                    self.record_visible(&id, "lifecycle", json!({"event":"turn_cancelled"}));
-                let for_permission = self.permission_stopped.remove(&id);
-                let live = self.live_mut(&id);
-                end_turn(live);
-                if for_permission {
-                    live.worked = true;
-                    live.error = Some(PERMISSION_STOPPED.into());
-                    if !closing && !live.storage_failed {
-                        self.set_runtime_status(&id, ThreadStatus::Blocked);
-                    }
-                } else if live.recovering_storage {
-                    live.recovering_storage = false;
-                    if saved {
-                        live.error = (!live.last_prompt.is_empty()).then(|| {
-                            "History is saved. Retry to continue the interrupted turn.".into()
-                        });
-                        if !closing && !live.storage_failed {
-                            self.set_runtime_status(&id, ThreadStatus::Blocked);
-                        }
-                    }
-                } else if saved && !closing && !live.storage_failed {
-                    self.set_runtime_status(&id, ThreadStatus::Idle);
-                    if self.send_after_stop.remove(&id) {
-                        self.send_queue(&id);
-                    }
-                }
-            }
+            acp::EventKind::Stopped => self.turn_stopped(&id, closing),
             acp::EventKind::ShutdownStuck => {
                 let live = self.live_mut(&id);
                 live.shutdown_stuck = true;
@@ -303,41 +230,7 @@ impl Engine {
                     Some("Agent shutdown is stuck. Force Stop terminates this process.".into());
             }
             acp::EventKind::ShutdownComplete => {
-                let saved =
-                    self.record_visible(&id, "lifecycle", json!({"event":"process_stopped"}));
-                self.drivers.remove(&id);
-                if let Some((text, files)) = self.steering.remove(&id) {
-                    self.queue(&id, text, files, true);
-                }
-                self.last_traffic.remove(&id);
-                let finished = self.status_of(&id).is_some_and(ThreadStatus::closed);
-                let live = self.live_mut(&id);
-                live.processing = false;
-                live.shutting_down = false;
-                live.quiet_since = None;
-                if live.shutdown_stuck && saved && !live.storage_failed {
-                    live.error = None;
-                }
-                live.shutdown_stuck = false;
-                live.permission.clear();
-                if live.recovering_storage {
-                    live.recovering_storage = false;
-                    if saved && !live.storage_failed && !finished {
-                        live.error =
-                            Some("Agent stopped. Retry to continue from the saved session.".into());
-                    }
-                }
-                if let Some(prompt) = self.restart_prompt.remove(&id)
-                    && self.stop_all.is_none()
-                {
-                    let files = self.attachments.get(&id).cloned().unwrap_or_default();
-                    self.start_prompt(&id, prompt, files, true);
-                } else if self.send_after_stop.remove(&id) && self.stop_all.is_none() {
-                    self.send_queue(&id);
-                }
-                self.send_live(&id);
-                self.finish_deletions();
-                self.finish_stop_all();
+                self.shutdown_complete(&id);
                 return;
             }
             acp::EventKind::TextCopy => {
@@ -367,6 +260,134 @@ impl Engine {
             self.shutdown_conversation(&id);
             self.send_live(&id);
         }
+    }
+
+    fn permission_requested(
+        &mut self,
+        id: &str,
+        request_id: u64,
+        title: String,
+        options: Vec<PermissionOption>,
+    ) {
+        if self.record_visible(
+            id,
+            "permission_request",
+            json!({"request_id":request_id,"title":title,"options":options}),
+        ) {
+            self.live
+                .entry(id.to_owned())
+                .or_default()
+                .permission
+                .push(PendingPermission {
+                    request_id,
+                    title,
+                    options,
+                });
+            self.set_runtime_status(id, ThreadStatus::Blocked);
+            if self.subscribers() == 0 {
+                self.stop_for_permission(id);
+            }
+        }
+    }
+
+    fn turn_failed(&mut self, id: &str, message: String, kind: acp::FailureKind, closing: bool) {
+        let saved = self.record_visible(
+            id,
+            "error",
+            json!({"message":message,"kind":format!("{kind:?}")}),
+        );
+        let live = self.live_mut(id);
+        end_turn(live);
+        live.auth_required = kind == acp::FailureKind::Authentication;
+        if saved {
+            live.error = Some(message);
+            if !closing {
+                self.set_runtime_status(id, ThreadStatus::Blocked);
+            }
+        }
+        if self.text_copy_pending.remove(id) {
+            self.drop_undelivered_fork_session(id);
+        }
+    }
+
+    fn turn_finished(&mut self, id: &str, stop_reason: StopReason, closing: bool) {
+        self.text_copy_pending.remove(id);
+        self.record_visible(
+            id,
+            "lifecycle",
+            json!({"event":"turn_finished","reason":stop_reason}),
+        );
+        let live = self.live_mut(id);
+        end_turn(live);
+        if !closing && !live.storage_failed {
+            self.set_runtime_status(id, ThreadStatus::Idle);
+            self.send_queue(id);
+        }
+    }
+
+    fn turn_stopped(&mut self, id: &str, closing: bool) {
+        let saved = self.record_visible(id, "lifecycle", json!({"event":"turn_cancelled"}));
+        let for_permission = self.permission_stopped.remove(id);
+        let live = self.live_mut(id);
+        end_turn(live);
+        if for_permission {
+            live.worked = true;
+            live.error = Some(PERMISSION_STOPPED.into());
+            if !closing && !live.storage_failed {
+                self.set_runtime_status(id, ThreadStatus::Blocked);
+            }
+        } else if live.recovering_storage {
+            live.recovering_storage = false;
+            if saved {
+                live.error = (!live.last_prompt.is_empty())
+                    .then(|| "History is saved. Retry to continue the interrupted turn.".into());
+                if !closing && !live.storage_failed {
+                    self.set_runtime_status(id, ThreadStatus::Blocked);
+                }
+            }
+        } else if saved && !closing && !live.storage_failed {
+            self.set_runtime_status(id, ThreadStatus::Idle);
+            if self.send_after_stop.remove(id) {
+                self.send_queue(id);
+            }
+        }
+    }
+
+    fn shutdown_complete(&mut self, id: &str) {
+        let saved = self.record_visible(id, "lifecycle", json!({"event":"process_stopped"}));
+        self.drivers.remove(id);
+        if let Some((text, files)) = self.steering.remove(id) {
+            self.queue(id, text, files, true);
+        }
+        self.last_traffic.remove(id);
+        let finished = self.status_of(id).is_some_and(ThreadStatus::closed);
+        let live = self.live_mut(id);
+        live.processing = false;
+        live.shutting_down = false;
+        live.quiet_since = None;
+        if live.shutdown_stuck && saved && !live.storage_failed {
+            live.error = None;
+        }
+        live.shutdown_stuck = false;
+        live.permission.clear();
+        if live.recovering_storage {
+            live.recovering_storage = false;
+            if saved && !live.storage_failed && !finished {
+                live.error =
+                    Some("Agent stopped. Retry to continue from the saved session.".into());
+            }
+        }
+        if let Some(prompt) = self.restart_prompt.remove(id)
+            && self.stop_all.is_none()
+        {
+            let files = self.attachments.get(id).cloned().unwrap_or_default();
+            self.start_prompt(id, prompt, files, true);
+        } else if self.send_after_stop.remove(id) && self.stop_all.is_none() {
+            self.send_queue(id);
+        }
+        self.send_live(id);
+        self.finish_deletions();
+        self.finish_stop_all();
     }
 
     fn traffic(&mut self, id: &str, entry: &adeline_core::conversation::TrafficEntry) {

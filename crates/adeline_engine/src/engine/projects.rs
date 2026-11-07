@@ -1,5 +1,5 @@
 //! Projects, the agent catalog, harness commands, engine settings and the watched files.
-use super::{Engine, Input, disk_icons, live_for, settings_path};
+use super::{Engine, Input, TRAFFIC_BACKLOG, disk_icons, live_for, settings_path};
 use crate::{
     acp,
     storage::{self, ProjectStore},
@@ -15,6 +15,7 @@ use serde_json::Value;
 use std::{
     collections::HashSet,
     path::Path,
+    sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::{sync::mpsc, task::block_in_place};
@@ -248,6 +249,85 @@ impl Engine {
             });
         });
         None
+    }
+
+    pub(super) fn restart(&mut self, id: &str) {
+        if self.force_stop(id) {
+            let live = self.live_mut(id);
+            live.shutting_down = true;
+            live.progress = Some("Restarting the agent…".into());
+            live.quiet_since = None;
+            self.restart_prompt
+                .insert(id.to_owned(), acp::CONTINUE_TURN.into());
+            self.send_live(id);
+        }
+    }
+
+    pub(super) fn begin_delete_project(
+        &mut self,
+        client: u64,
+        request: u64,
+        id: &str,
+    ) -> Option<Result<Value, String>> {
+        if !self.projects.iter().any(|p| p.config.id == id) {
+            return Some(Err(format!("Project {id} no longer exists.")));
+        }
+        self.deleting
+            .entry(id.to_owned())
+            .or_default()
+            .push((client, request));
+        for conversation in self.project_conversations(id) {
+            self.shutdown_conversation(&conversation);
+            self.send_live(&conversation);
+        }
+        self.finish_deletions();
+        None
+    }
+
+    pub(super) fn install(
+        &mut self,
+        client: u64,
+        request: u64,
+        target: &install::Target,
+    ) -> Option<Result<Value, String>> {
+        let steps = match install::plan(target, &self.harnesses) {
+            Ok(steps) => steps,
+            Err(error) => return Some(Err(format!("{error:#}"))),
+        };
+        let input = self.input.clone();
+        tokio::spawn(async move {
+            let output_input = input.clone();
+            let output = Arc::new(move |line: String| {
+                let _ = output_input.send(Input::Output {
+                    client,
+                    request,
+                    line,
+                });
+            });
+            let result = install::run(steps, output)
+                .await
+                .map(|()| Value::Null)
+                .map_err(|e| format!("{e:#}"));
+            let _ = input.send(Input::Done {
+                client,
+                request,
+                result,
+                detect: true,
+            });
+        });
+        None
+    }
+
+    pub(super) fn watch_traffic(&mut self, client: u64, id: Option<String>) -> Value {
+        let recorded = id
+            .as_ref()
+            .map(|id| block_in_place(|| self.store.traffic(id, TRAFFIC_BACKLOG)))
+            .unwrap_or_default();
+        match id {
+            Some(id) => self.watching.insert(client, id),
+            None => self.watching.remove(&client),
+        };
+        Value::Array(recorded)
     }
 
     pub(super) fn set_settings(&mut self, settings: EngineSettings) -> Result<Value, String> {

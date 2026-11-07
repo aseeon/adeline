@@ -24,7 +24,6 @@ use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::{sync::mpsc, task::block_in_place};
@@ -801,15 +800,7 @@ impl Engine {
             }),
             Command::Retry { id } => conversation(self, &id).and_then(|()| self.retry(&id)),
             Command::Restart { id } => conversation(self, &id).map(|()| {
-                if self.force_stop(&id) {
-                    let live = self.live_mut(&id);
-                    live.shutting_down = true;
-                    live.progress = Some("Restarting the agent…".into());
-                    live.quiet_since = None;
-                    self.restart_prompt
-                        .insert(id.clone(), acp::CONTINUE_TURN.into());
-                    self.send_live(&id);
-                }
+                self.restart(&id);
                 Value::Null
             }),
             Command::RetryStorage { id } => {
@@ -846,20 +837,7 @@ impl Engine {
                 directory,
             } => self.save_project(original.as_deref(), &name, &directory),
             Command::DeleteProject { id } => {
-                if !self.projects.iter().any(|p| p.config.id == id) {
-                    return Some(Err(format!("Project {id} no longer exists.")));
-                }
-                self.deleting
-                    .entry(id.clone())
-                    .or_default()
-                    .push((client, request));
-                let ids = self.project_conversations(&id);
-                for conversation in ids {
-                    self.shutdown_conversation(&conversation);
-                    self.send_live(&conversation);
-                }
-                self.finish_deletions();
-                return None;
+                return self.begin_delete_project(client, request, &id);
             }
             Command::CancelDeleteProject { id } => {
                 for (client, request) in self.deleting.remove(&id).unwrap_or_default() {
@@ -913,51 +891,14 @@ impl Engine {
             Command::PlanInstall { target } => install::plan(&target, &self.harnesses)
                 .map_err(|e| format!("{e:#}"))
                 .and_then(docs::json),
-            Command::Install { target } => {
-                let steps = match install::plan(&target, &self.harnesses) {
-                    Ok(steps) => steps,
-                    Err(error) => return Some(Err(format!("{error:#}"))),
-                };
-                let input = self.input.clone();
-                tokio::spawn(async move {
-                    let output_input = input.clone();
-                    let output = Arc::new(move |line: String| {
-                        let _ = output_input.send(Input::Output {
-                            client,
-                            request,
-                            line,
-                        });
-                    });
-                    let result = install::run(steps, output)
-                        .await
-                        .map(|()| Value::Null)
-                        .map_err(|e| format!("{e:#}"));
-                    let _ = input.send(Input::Done {
-                        client,
-                        request,
-                        result,
-                        detect: true,
-                    });
-                });
-                return None;
-            }
+            Command::Install { target } => return self.install(client, request, &target),
             Command::Login {
                 harness,
                 command,
                 arguments,
                 method,
             } => return self.login(client, request, &harness, &command, arguments, method),
-            Command::WatchTraffic { id } => {
-                let recorded = id
-                    .as_ref()
-                    .map(|id| block_in_place(|| self.store.traffic(id, TRAFFIC_BACKLOG)))
-                    .unwrap_or_default();
-                match id {
-                    Some(id) => self.watching.insert(client, id),
-                    None => self.watching.remove(&client),
-                };
-                Ok(Value::Array(recorded))
-            }
+            Command::WatchTraffic { id } => Ok(self.watch_traffic(client, id)),
             Command::SetSettings { settings } => self.set_settings(settings),
             Command::Status => docs::json(self.compute_status()),
             Command::ListDirectory { path } => block_in_place(|| list_directory(path))

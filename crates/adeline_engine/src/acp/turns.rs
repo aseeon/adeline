@@ -186,16 +186,7 @@ impl Worker {
                     update
                         .available_commands
                         .into_iter()
-                        .map(|command| AgentCommand {
-                            name: command.name,
-                            description: command.description,
-                            hint: match command.input {
-                                Some(wire::AvailableCommandInput::Unstructured(input)) => {
-                                    input.hint
-                                }
-                                _ => String::new(),
-                            },
-                        })
+                        .map(agent_command)
                         .collect(),
                 ));
             }
@@ -218,60 +209,13 @@ impl Worker {
             }
             wire::SessionUpdate::Plan(plan) if self.setup.is_none() => {
                 self.emit(EventKind::Todo(
-                    plan.entries
-                        .into_iter()
-                        .map(|entry| TodoStep {
-                            text: entry.content,
-                            status: match entry.status {
-                                wire::PlanEntryStatus::InProgress => StepStatus::InProgress,
-                                wire::PlanEntryStatus::Completed => StepStatus::Completed,
-                                _ => StepStatus::Pending,
-                            },
-                        })
-                        .collect(),
+                    plan.entries.into_iter().map(todo_step).collect(),
                 ));
             }
-            wire::SessionUpdate::AgentMessageChunk(chunk) if in_turn => {
-                if let Some(text) = chunk_text(&chunk)
-                    && !text.is_empty()
-                {
-                    if let Some(turn) = &mut self.active {
-                        turn.worked = true;
-                        if turn.observed_text.len() < OBSERVED_TEXT {
-                            turn.observed_text.push_str(&text);
-                        }
-                    }
-                    self.emit(EventKind::Text {
-                        message: chunk.message_id.map(|id| id.0.to_string()),
-                        text,
-                    });
-                }
-            }
-            wire::SessionUpdate::AgentThoughtChunk(chunk) if in_turn => {
-                if let Some(text) = chunk_text(&chunk)
-                    && !text.is_empty()
-                {
-                    if let Some(turn) = &mut self.active {
-                        turn.worked = true;
-                    }
-                    self.emit(EventKind::Thought {
-                        message: chunk.message_id.map(|id| id.0.to_string()),
-                        text,
-                    });
-                }
-            }
+            wire::SessionUpdate::AgentMessageChunk(chunk) if in_turn => self.chunk(chunk, false),
+            wire::SessionUpdate::AgentThoughtChunk(chunk) if in_turn => self.chunk(chunk, true),
             wire::SessionUpdate::ToolCall(call) if self.setup.is_none() => {
-                let update = wire::ToolCallUpdate::new(
-                    call.tool_call_id,
-                    wire::ToolCallUpdateFields::new()
-                        .kind(call.kind)
-                        .status(call.status)
-                        .title(call.title)
-                        .content(call.content)
-                        .locations(call.locations)
-                        .raw_output(call.raw_output),
-                );
-                self.tool(update, in_turn);
+                self.tool(call.into(), in_turn);
             }
             wire::SessionUpdate::ToolCallUpdate(update) if self.setup.is_none() => {
                 self.tool(update, in_turn);
@@ -281,6 +225,24 @@ impl Worker {
         if ends_turn && in_turn {
             self.finish(StopReason::Signal);
         }
+    }
+
+    fn chunk(&mut self, chunk: wire::ContentChunk, thought: bool) {
+        let Some(text) = chunk_text(&chunk).filter(|text| !text.is_empty()) else {
+            return;
+        };
+        if let Some(turn) = &mut self.active {
+            turn.worked = true;
+            if !thought && turn.observed_text.len() < OBSERVED_TEXT {
+                turn.observed_text.push_str(&text);
+            }
+        }
+        let message = chunk.message_id.map(|id| id.0.to_string());
+        self.emit(if thought {
+            EventKind::Thought { message, text }
+        } else {
+            EventKind::Text { message, text }
+        });
     }
 
     fn tool(&mut self, update: wire::ToolCallUpdate, in_turn: bool) {
@@ -397,6 +359,28 @@ impl Worker {
         if self.closing {
             self.close_session();
         }
+    }
+}
+
+fn agent_command(command: wire::AvailableCommand) -> AgentCommand {
+    AgentCommand {
+        name: command.name,
+        description: command.description,
+        hint: match command.input {
+            Some(wire::AvailableCommandInput::Unstructured(input)) => input.hint,
+            _ => String::new(),
+        },
+    }
+}
+
+fn todo_step(entry: wire::PlanEntry) -> TodoStep {
+    TodoStep {
+        text: entry.content,
+        status: match entry.status {
+            wire::PlanEntryStatus::InProgress => StepStatus::InProgress,
+            wire::PlanEntryStatus::Completed => StepStatus::Completed,
+            _ => StepStatus::Pending,
+        },
     }
 }
 

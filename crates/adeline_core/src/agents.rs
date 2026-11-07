@@ -218,53 +218,23 @@ impl AgentCatalog {
     ) -> Result<String> {
         let id = definition.validate()?;
         if self.demo {
-            if let Some(original) = original
-                && !self.entries.iter().any(|entry| entry.id == original)
-                && !overwrite
-            {
-                bail!("Agent {original} changed outside this form. Reload or overwrite it.");
-            }
-            if original != Some(id.as_str()) && self.entries.iter().any(|entry| entry.id == id) {
-                bail!("Agent folder {id} already exists.");
-            }
-            if let Some(entry) = self
-                .entries
-                .iter_mut()
-                .find(|entry| Some(entry.id.as_str()) == original)
-            {
-                entry.id.clone_from(&id);
-                entry.definition = definition;
-            } else {
-                self.entries.push(AgentEntry {
-                    id: id.clone(),
-                    definition,
-                });
-            }
-            return Ok(id);
+            return self.save_demo(original, id, definition, overwrite);
         }
 
-        let root = self.root.as_ref().map_err(|e| anyhow!("{e}"))?;
+        let root = self.root.as_ref().map_err(|e| anyhow!("{e}"))?.clone();
         if let Some(original) = original {
             checked_id(original)?;
         }
-        fs::create_dir_all(root).with_context(|| root.display().to_string())?;
+        fs::create_dir_all(&root).with_context(|| root.display().to_string())?;
         let old = original.map(|id| root.join(id));
         if let Some(path) = old.as_deref() {
-            match fs::symlink_metadata(path) {
-                Ok(meta) if !meta.file_type().is_dir() => {
-                    bail!(
-                        "{}: agent folder is not a directory.",
-                        path.join("agent.yml").display()
-                    );
-                }
-                Err(error) if error.kind() != io::ErrorKind::NotFound => {
-                    return Err(error)
-                        .with_context(|| path.join("agent.yml").display().to_string());
-                }
-                _ => {}
+            if let Err(error) = ensure_real_directory(path)
+                && error
+                    .downcast_ref::<io::Error>()
+                    .is_none_or(|error| error.kind() != io::ErrorKind::NotFound)
+            {
+                return Err(error);
             }
-        }
-        if let Some(path) = old.as_deref() {
             let disk = load(path).ok().flatten();
             if !overwrite && (expected.is_none() || disk.as_ref() != expected) {
                 bail!(
@@ -279,41 +249,76 @@ impl AgentCatalog {
         {
             ensure_only_definition(path)?;
         }
-        let destination = root.join(&id);
         if original == Some(id.as_str()) {
-            if !destination.exists() {
-                fs::create_dir(&destination).with_context(|| destination.display().to_string())?;
-            }
-            let path = destination.join("agent.yml");
-            if path.exists() {
-                replace(&path, &definition)?;
-            } else {
-                write_new(&path, &definition)?;
-            }
+            write_in_place(&root.join(&id), &definition)?;
         } else {
-            ensure_no_collision(root, &id)?;
-            fs::create_dir(&destination).with_context(|| destination.display().to_string())?;
-            if let Err(error) = write_new(&destination.join("agent.yml"), &definition) {
-                let _ = fs::remove_dir(&destination);
-                return Err(error);
-            }
-            let avatar = match old.as_deref() {
-                Some(old) => fs::read(old.join(AVATAR)).ok(),
-                None => crate::harness::icon_svg(&definition.harness),
-            };
-            if let Some(avatar) = avatar {
-                let _ = files::write_new(&destination.join(AVATAR), &avatar);
-            }
-            if let Some(old) = old.as_deref()
-                && old.exists()
-                && let Err(error) = fs::remove_dir_all(old)
-            {
-                self.refresh();
-                return Err(error).with_context(|| old.display().to_string());
-            }
+            self.write_moved(&root, &id, &definition, old.as_deref())?;
         }
         self.refresh();
         Ok(id)
+    }
+
+    fn save_demo(
+        &mut self,
+        original: Option<&str>,
+        id: String,
+        definition: AgentDefinition,
+        overwrite: bool,
+    ) -> Result<String> {
+        if let Some(original) = original
+            && !self.entries.iter().any(|entry| entry.id == original)
+            && !overwrite
+        {
+            bail!("Agent {original} changed outside this form. Reload or overwrite it.");
+        }
+        if original != Some(id.as_str()) && self.entries.iter().any(|entry| entry.id == id) {
+            bail!("Agent folder {id} already exists.");
+        }
+        if let Some(entry) = self
+            .entries
+            .iter_mut()
+            .find(|entry| Some(entry.id.as_str()) == original)
+        {
+            entry.id.clone_from(&id);
+            entry.definition = definition;
+        } else {
+            self.entries.push(AgentEntry {
+                id: id.clone(),
+                definition,
+            });
+        }
+        Ok(id)
+    }
+
+    fn write_moved(
+        &mut self,
+        root: &Path,
+        id: &str,
+        definition: &AgentDefinition,
+        old: Option<&Path>,
+    ) -> Result<()> {
+        ensure_no_collision(root, id)?;
+        let destination = root.join(id);
+        fs::create_dir(&destination).with_context(|| destination.display().to_string())?;
+        if let Err(error) = write_new(&destination.join("agent.yml"), definition) {
+            let _ = fs::remove_dir(&destination);
+            return Err(error);
+        }
+        let avatar = match old {
+            Some(old) => fs::read(old.join(AVATAR)).ok(),
+            None => crate::harness::icon_svg(&definition.harness),
+        };
+        if let Some(avatar) = avatar {
+            let _ = files::write_new(&destination.join(AVATAR), &avatar);
+        }
+        if let Some(old) = old
+            && old.exists()
+            && let Err(error) = fs::remove_dir_all(old)
+        {
+            self.refresh();
+            return Err(error).with_context(|| old.display().to_string());
+        }
+        Ok(())
     }
 
     pub fn delete(&mut self, id: &str) -> Result<()> {
@@ -359,13 +364,7 @@ pub fn avatar_path(id: &str, harness: &str) -> String {
 fn load(folder: &Path) -> Result<Option<AgentDefinition>> {
     let path = folder.join("agent.yml");
     let context = || path.display().to_string();
-    if !fs::symlink_metadata(folder)
-        .with_context(context)?
-        .file_type()
-        .is_dir()
-    {
-        bail!("{}: agent folder is not a directory.", path.display());
-    }
+    ensure_real_directory(folder)?;
     let text = fs::read_to_string(&path).with_context(context)?;
     let yaml: serde_yaml_ng::Value = serde_yaml_ng::from_str(&text).with_context(context)?;
     if yaml
@@ -378,6 +377,27 @@ fn load(folder: &Path) -> Result<Option<AgentDefinition>> {
     let definition: AgentDefinition = serde_yaml_ng::from_value(yaml).with_context(context)?;
     definition.validate().with_context(context)?;
     Ok(Some(definition))
+}
+
+fn ensure_real_directory(folder: &Path) -> Result<()> {
+    let path = folder.join("agent.yml");
+    let meta = fs::symlink_metadata(folder).with_context(|| path.display().to_string())?;
+    if !meta.file_type().is_dir() {
+        bail!("{}: agent folder is not a directory.", path.display());
+    }
+    Ok(())
+}
+
+fn write_in_place(destination: &Path, definition: &AgentDefinition) -> Result<()> {
+    if !destination.exists() {
+        fs::create_dir(destination).with_context(|| destination.display().to_string())?;
+    }
+    let path = destination.join("agent.yml");
+    if path.exists() {
+        replace(&path, definition)
+    } else {
+        write_new(&path, definition)
+    }
 }
 
 fn discover(root: &Path) -> (Vec<AgentEntry>, Vec<String>) {

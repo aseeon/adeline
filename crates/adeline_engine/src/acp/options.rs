@@ -170,46 +170,7 @@ fn translate_options(
             wire::SessionConfigKind::Boolean(boolean) => OptionKind::Boolean {
                 current: boolean.current_value,
             },
-            wire::SessionConfigKind::Select(select) => {
-                let mut choices = Vec::new();
-                match &select.options {
-                    wire::SessionConfigSelectOptions::Ungrouped(items) => {
-                        choices.extend(items.iter().map(|item| select_choice(item, "")));
-                        if !choices.is_empty() && choices.iter().all(|c| c.value.contains('/')) {
-                            for choice in &mut choices {
-                                choice.group = choice
-                                    .value
-                                    .split('/')
-                                    .next()
-                                    .unwrap_or_default()
-                                    .to_owned();
-                            }
-                        }
-                    }
-                    wire::SessionConfigSelectOptions::Grouped(groups) => {
-                        for group in groups {
-                            choices.extend(
-                                group
-                                    .options
-                                    .iter()
-                                    .map(|item| select_choice(item, &group.name)),
-                            );
-                        }
-                    }
-                    _ => {}
-                }
-                if category == Category::Mode {
-                    choices.retain(|choice| !profiles::is_plan_mode(profile, &choice.value));
-                    for choice in &mut choices {
-                        choice.description =
-                            profiles::mode_description(profile, &choice.value, &choice.description);
-                    }
-                }
-                OptionKind::Select {
-                    current: select.current_value.0.to_string(),
-                    choices,
-                }
-            }
+            wire::SessionConfigKind::Select(select) => select_kind(select, category, profile),
             _ => continue,
         };
         options.push(SessionOption {
@@ -225,32 +186,82 @@ fn translate_options(
             .iter()
             .any(|option| option.category == Category::Mode)
     {
-        options.push(SessionOption {
-            id: MODE_OPTION.into(),
-            name: "Mode".into(),
-            description: String::new(),
-            category: Category::Mode,
-            kind: OptionKind::Select {
-                current: modes.current_mode_id.0.to_string(),
-                choices: modes
-                    .available_modes
-                    .iter()
-                    .filter(|mode| !profiles::is_plan_mode(profile, &mode.id.0))
-                    .map(|mode| Choice {
-                        value: mode.id.0.to_string(),
-                        name: mode.name.clone(),
-                        description: profiles::mode_description(
-                            profile,
-                            &mode.id.0,
-                            mode.description.as_deref().unwrap_or_default(),
-                        ),
-                        group: String::new(),
-                    })
-                    .collect(),
-            },
-        });
+        options.push(mode_option(modes, profile));
     }
     options
+}
+
+fn select_kind(
+    select: &wire::SessionConfigSelect,
+    category: Category,
+    profile: Option<&Profile>,
+) -> OptionKind {
+    let mut choices = Vec::new();
+    match &select.options {
+        wire::SessionConfigSelectOptions::Ungrouped(items) => {
+            choices.extend(items.iter().map(|item| select_choice(item, "")));
+            if !choices.is_empty() && choices.iter().all(|c| c.value.contains('/')) {
+                for choice in &mut choices {
+                    choice.group = choice
+                        .value
+                        .split('/')
+                        .next()
+                        .unwrap_or_default()
+                        .to_owned();
+                }
+            }
+        }
+        wire::SessionConfigSelectOptions::Grouped(groups) => {
+            for group in groups {
+                choices.extend(
+                    group
+                        .options
+                        .iter()
+                        .map(|item| select_choice(item, &group.name)),
+                );
+            }
+        }
+        _ => {}
+    }
+    if category == Category::Mode {
+        choices = mode_choices(choices, profile);
+    }
+    OptionKind::Select {
+        current: select.current_value.0.to_string(),
+        choices,
+    }
+}
+
+fn mode_option(modes: &wire::SessionModeState, profile: Option<&Profile>) -> SessionOption {
+    let choices = modes
+        .available_modes
+        .iter()
+        .map(|mode| Choice {
+            value: mode.id.0.to_string(),
+            name: mode.name.clone(),
+            description: mode.description.clone().unwrap_or_default(),
+            group: String::new(),
+        })
+        .collect();
+    SessionOption {
+        id: MODE_OPTION.into(),
+        name: "Mode".into(),
+        description: String::new(),
+        category: Category::Mode,
+        kind: OptionKind::Select {
+            current: modes.current_mode_id.0.to_string(),
+            choices: mode_choices(choices, profile),
+        },
+    }
+}
+
+fn mode_choices(mut choices: Vec<Choice>, profile: Option<&Profile>) -> Vec<Choice> {
+    choices.retain(|choice| !profiles::is_plan_mode(profile, &choice.value));
+    for choice in &mut choices {
+        choice.description =
+            profiles::mode_description(profile, &choice.value, &choice.description);
+    }
+    choices
 }
 
 fn select_choice(item: &wire::SessionConfigSelectOption, group: &str) -> Choice {
