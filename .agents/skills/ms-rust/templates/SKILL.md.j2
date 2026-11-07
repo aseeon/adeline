@@ -32,6 +32,5 @@ Before writing or modifying Rust code, **the agent must load ONLY the guideline 
 
 1. **Load the necessary guideline files BEFORE ANY RUST CODE GENERATION.**
 2. Apply the required rules from the relevant guidelines.
-3. Apply the M-CANONICAL-DOCS documentation format (summary sentence < 15 words, then extended docs, Examples, Errors, Panics, Safety, Abort sections as applicable).
+3. Document each module with one `//!` comment at the top of its file. Leave items undocumented, and skip M-CANONICAL-DOCS. Keep the `// SAFETY:` comment that clippy's `undocumented_unsafe_blocks` requires on each `unsafe` block.
 4. Comments must ALWAYS be written in American English, unless the user explicitly requests a different language.
-5. If the file is fully compliant, add the comment `// Rust guideline compliant {{ compliance_date }}` at the top of the file, immediately before the first `use` or item. Place it below any license/copyright header and any module-level `//!` doc comment, separated from the preamble and the code by a blank line. When the file has no preamble, the comment is line 1.
