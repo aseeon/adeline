@@ -1054,29 +1054,26 @@ impl ChatList {
         let folded: Arc<[Group]> = self.folded.clone().into();
         let tail = self.tail;
         let current = stacks.current;
-        let section_view = {
-            let this = this.clone();
-            move |slot: usize, placement: LabelPlacement, cx: &mut App| {
-                let (group, rows) = &groups[slot];
-                let group = *group;
-                section_label(
-                    group,
-                    rows.len(),
-                    folded.contains(&group),
-                    slot == current,
-                    placement,
-                    {
-                        let this = this.clone();
-                        move |_, _, cx: &mut App| {
-                            let _ = this.update(cx, |list, cx| match placement {
-                                LabelPlacement::Inline => list.toggle_fold(group, cx),
-                                LabelPlacement::Top { .. } => list.jump(slot, cx),
-                            });
-                        }
-                    },
-                    cx,
-                )
-            }
+        let section_view = move |slot: usize, placement: LabelPlacement, cx: &mut App| {
+            let (group, rows) = &groups[slot];
+            let group = *group;
+            section_label(
+                group,
+                rows.len(),
+                folded.contains(&group),
+                slot == current,
+                placement,
+                {
+                    let this = this.clone();
+                    move |_, _, cx: &mut App| {
+                        let _ = this.update(cx, |list, cx| match placement {
+                            LabelPlacement::Inline => list.toggle_fold(group, cx),
+                            LabelPlacement::Top { .. } => list.jump(slot, cx),
+                        });
+                    }
+                },
+                cx,
+            )
         };
         let list_view = {
             let section_view = section_view.clone();
