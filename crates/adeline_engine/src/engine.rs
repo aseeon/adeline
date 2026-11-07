@@ -223,6 +223,13 @@ fn unsaved_history(error: &str) -> String {
     format!("History could not be saved: {error}. Restore storage access, then Retry storage.")
 }
 
+fn end_turn(live: &mut Live) {
+    live.processing = false;
+    live.progress = None;
+    live.quiet_since = None;
+    live.permission.clear();
+}
+
 fn live_for(conversation: &storage::StoredConversation) -> Live {
     let thread = conversation.to_thread();
     let copied = conversation
@@ -540,9 +547,28 @@ impl Engine {
         self.broadcast_message(&EngineMessage::Delta(delta));
     }
 
+    fn live_mut(&mut self, id: &str) -> &mut Live {
+        self.live.entry(id.to_owned()).or_default()
+    }
+
+    fn force_stop(&self, id: &str) -> bool {
+        self.drivers
+            .get(id)
+            .inspect(|slot| {
+                let _ = slot.driver.send(acp::Command::ForceStop);
+            })
+            .is_some()
+    }
+
+    fn broadcast_thread(&mut self, id: &str) {
+        if let Some((project_id, thread)) = self.thread_from_store(id) {
+            self.broadcast(Delta::Thread { project_id, thread });
+        }
+    }
+
     fn send_live(&mut self, id: &str) {
         let running = self.drivers.contains_key(id);
-        let live = self.live.entry(id.to_owned()).or_default();
+        let live = self.live_mut(id);
         live.running = running;
         live.turn = if !live.permission.is_empty()
             || live.auth_required
@@ -666,7 +692,7 @@ impl Engine {
                 let result = if self.probes.remove(&(client, probe)).is_some() {
                     result
                         .ok_or_else(|| "The probe stopped.".to_owned())
-                        .and_then(|result| serde_json::to_value(result).map_err(|e| e.to_string()))
+                        .and_then(docs::json)
                 } else {
                     Err("Probe cancelled.".into())
                 };
@@ -770,16 +796,13 @@ impl Engine {
                 Value::Null
             }),
             Command::ForceStop { id } => conversation(self, &id).map(|()| {
-                if let Some(slot) = self.drivers.get(&id) {
-                    let _ = slot.driver.send(acp::Command::ForceStop);
-                }
+                self.force_stop(&id);
                 Value::Null
             }),
             Command::Retry { id } => conversation(self, &id).and_then(|()| self.retry(&id)),
             Command::Restart { id } => conversation(self, &id).map(|()| {
-                if let Some(slot) = self.drivers.get(&id) {
-                    let _ = slot.driver.send(acp::Command::ForceStop);
-                    let live = self.live.entry(id.clone()).or_default();
+                if self.force_stop(&id) {
+                    let live = self.live_mut(&id);
                     live.shutting_down = true;
                     live.progress = Some("Restarting the agent…".into());
                     live.quiet_since = None;
@@ -846,9 +869,7 @@ impl Engine {
             }
             Command::ForceProject { id } => {
                 for conversation in self.project_conversations(&id) {
-                    if let Some(slot) = self.drivers.get(&conversation) {
-                        let _ = slot.driver.send(acp::Command::ForceStop);
-                    }
+                    self.force_stop(&conversation);
                 }
                 Ok(Value::Null)
             }
@@ -891,7 +912,7 @@ impl Engine {
             }
             Command::PlanInstall { target } => install::plan(&target, &self.harnesses)
                 .map_err(|e| format!("{e:#}"))
-                .and_then(|steps| serde_json::to_value(steps).map_err(|e| e.to_string())),
+                .and_then(docs::json),
             Command::Install { target } => {
                 let steps = match install::plan(&target, &self.harnesses) {
                     Ok(steps) => steps,
@@ -938,12 +959,10 @@ impl Engine {
                 Ok(Value::Array(recorded))
             }
             Command::SetSettings { settings } => self.set_settings(settings),
-            Command::Status => {
-                serde_json::to_value(self.compute_status()).map_err(|e| e.to_string())
-            }
+            Command::Status => docs::json(self.compute_status()),
             Command::ListDirectory { path } => block_in_place(|| list_directory(path))
                 .map_err(|e| format!("{e:#}"))
-                .and_then(|listing| serde_json::to_value(listing).map_err(|e| e.to_string())),
+                .and_then(docs::json),
             command @ (Command::ListDocs { .. }
             | Command::ReadDoc { .. }
             | Command::WriteDoc { .. }
@@ -1016,7 +1035,7 @@ impl Engine {
             .collect();
         for id in quiet {
             let since = self.last_traffic.get(&id).copied();
-            self.live.entry(id.clone()).or_default().quiet_since = since;
+            self.live_mut(&id).quiet_since = since;
             self.send_live(&id);
         }
         if self.watch_due.is_some_and(|due| Instant::now() >= due) {
@@ -1154,7 +1173,7 @@ impl Engine {
     }
 
     fn storage_failure(&mut self, id: &str, error: &str) {
-        let live = self.live.entry(id.to_owned()).or_default();
+        let live = self.live_mut(id);
         live.storage_failed = true;
         live.recovering_storage = false;
         live.error = Some(unsaved_history(error));

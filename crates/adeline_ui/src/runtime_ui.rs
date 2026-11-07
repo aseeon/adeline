@@ -193,8 +193,7 @@ impl Adeline {
                         .position(|thread| Some(thread.id.as_str()) == id.as_str());
                 }
                 if app.composer.read(cx).value().trim() == prompt {
-                    app.composer
-                        .update(cx, |state, cx| state.set_value("", window, cx));
+                    clear_input(&app.composer, window, cx);
                 }
                 app.attachments.retain(|file| !sent.contains(file));
                 app.attachment_error = None;
@@ -741,8 +740,7 @@ impl Adeline {
 
     fn open_fork(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
         self.act(Action::Chat(ix), window, cx);
-        self.composer
-            .update(cx, |state, cx| state.set_value("", window, cx));
+        clear_input(&self.composer, window, cx);
         window.focus(&self.composer.focus_handle(cx), cx);
     }
 
@@ -800,8 +798,7 @@ impl Adeline {
             let _ = cx.update_window(handle.into(), |_, window, cx| {
                 let _ = owner.update(cx, |app, cx| {
                     if app.modal == Some(modal) {
-                        app.prompt_input
-                            .update(cx, |input, cx| input.set_value("", window, cx));
+                        clear_input(&app.prompt_input, window, cx);
                         app.open_modal(window, cx);
                     }
                 });

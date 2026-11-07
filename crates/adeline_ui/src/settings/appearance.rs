@@ -80,11 +80,7 @@ impl SettingsWindow {
     fn refresh_fonts(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         fonts::refresh(cx);
         for (which, picker) in self.font_pickers.iter().enumerate() {
-            let mut names = fonts::families();
-            let saved = saved_font(which);
-            if !names.iter().any(|name| name.eq_ignore_ascii_case(&saved)) && !saved.is_empty() {
-                names.insert(0, saved.clone());
-            }
+            let (names, saved) = font_choices(which);
             picker.update(cx, |picker, cx| {
                 picker.set_items(SearchableVec::new(names), window, cx);
                 picker.set_selected_value(&saved, window, cx);

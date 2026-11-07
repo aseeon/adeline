@@ -63,9 +63,7 @@ impl SettingsWindow {
             } else {
                 format!("Engine on {name}")
             }))
-            .child(div().text_sm().text_color(cx.theme().muted_foreground).child(
-                "The conversation engine runs agents in the background, so work can finish after Adeline closes. These settings apply immediately, including to work already running.",
-            ));
+            .child(muted("The conversation engine runs agents in the background, so work can finish after Adeline closes. These settings apply immediately, including to work already running.", cx));
         let Some(connection) = client::get(&self.machine, cx) else {
             let machine = self.machine.clone();
             return page
@@ -186,12 +184,7 @@ impl SettingsWindow {
                         .px_4()
                         .py_2()
                         .child(label)
-                        .child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(value),
-                        )
+                        .child(muted(value, cx))
                 })
                 .collect();
             page = page
@@ -284,12 +277,7 @@ impl SettingsWindow {
             .flex_col()
             .gap_3()
             .child(div().text_lg().child("MCP servers"))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(MCP_DESCRIPTION),
-            )
+            .child(muted(MCP_DESCRIPTION, cx))
             .child(if connected || self.demo {
                 mcp_ui::server_list("settings-mcp", &servers, &edit, &remove, cx).into_any_element()
             } else {

@@ -29,12 +29,7 @@ impl SettingsWindow {
                 .flex_col()
                 .gap_2()
                 .child(div().text_lg().child(name))
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child(description),
-                )
+                .child(muted(description, cx))
                 .child(div().p_4().bg(cx.theme().muted).child(license))
         })
         .collect()

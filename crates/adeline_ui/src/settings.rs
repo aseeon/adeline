@@ -489,12 +489,7 @@ fn choose(
         let close_decided = Rc::clone(&decided);
         views::styled_dialog(dialog, cx)
             .title(views::dialog_title(title.clone()))
-            .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(description),
-            )
+            .child(muted(description, cx))
             .footer(footer)
             .overlay_closable(false)
             .close_button(false)
@@ -585,6 +580,14 @@ fn saved_font(which: usize) -> String {
         appearance.code_font
     }
 }
+fn font_choices(which: usize) -> (Vec<String>, String) {
+    let mut names = fonts::families();
+    let saved = saved_font(which);
+    if !names.iter().any(|name| name.eq_ignore_ascii_case(&saved)) && !saved.is_empty() {
+        names.insert(0, saved.clone());
+    }
+    (names, saved)
+}
 fn error(message: impl Into<String>, cx: &App) -> Div {
     div()
         .text_sm()
@@ -609,12 +612,7 @@ fn switch_row(label: &'static str, description: &'static str, switch: Switch, cx
                 .gap_1()
                 .child(label)
                 .when(!description.is_empty(), |text| {
-                    text.child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(description),
-                    )
+                    text.child(muted(description, cx))
                 }),
         )
         .child(switch.color(cx.theme().info))
@@ -736,11 +734,7 @@ impl SettingsWindow {
             .searchable(true)
         });
         let font_pickers = std::array::from_fn(|which| {
-            let mut names = fonts::families();
-            let saved = saved_font(which);
-            if !names.iter().any(|name| name.eq_ignore_ascii_case(&saved)) && !saved.is_empty() {
-                names.insert(0, saved.clone());
-            }
+            let (names, saved) = font_choices(which);
             let selected = names
                 .iter()
                 .position(|name| *name == saved)
@@ -1034,8 +1028,7 @@ impl SettingsWindow {
             }
             AfterAgent::OpenMode(mode) => {
                 self.last_query.clear();
-                self.query
-                    .update(cx, |input, cx| input.set_value("", window, cx));
+                clear_input(&self.query, window, cx);
                 let child = usize::from(mode == Section::Docs);
                 self.after_agent(
                     AfterAgent::Child(Group::of_mode(Some(mode)), child),
@@ -1433,12 +1426,10 @@ impl Render for SettingsWindow {
             && (self.group == Group::Modes
                 || (self.group == Group::General && self.subgroup.is_none_or(|i| i == 0)))
         {
-            content = content.child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("Changes apply immediately and are saved to settings.yml."),
-            );
+            content = content.child(muted(
+                "Changes apply immediately and are saved to settings.yml.",
+                cx,
+            ));
         }
         let theme = cx.theme();
         let mut breadcrumb = row().h_full().px_6().gap_1p5().text_sm().min_w_0();

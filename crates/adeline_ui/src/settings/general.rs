@@ -26,8 +26,10 @@ impl SettingsWindow {
         if searching || self.subgroup.is_none() {
             page = page.child(div().text_lg().child("Features"));
         }
-        page = page.child(div().text_sm().text_color(cx.theme().muted_foreground)
-            .child("Choose which features are available in the main view. Chats is always enabled."));
+        page = page.child(muted(
+            "Choose which features are available in the main view. Chats is always enabled.",
+            cx,
+        ));
         let features = config::current().general.features;
         let mut modes = Vec::new();
         for (section, name) in MODES
@@ -60,8 +62,7 @@ impl SettingsWindow {
         if searching || self.subgroup.is_none() {
             page = page.child(div().text_lg().child("Keymap"));
         }
-        page = page.child(div().text_sm().text_color(cx.theme().muted_foreground)
-            .child("Edit shortcuts in settings.yml, then restart Adeline. Enter and Space activate focused controls."));
+        page = page.child(muted("Edit shortcuts in settings.yml, then restart Adeline. Enter and Space activate focused controls.", cx));
         let mut keys = Vec::new();
         for (label, value) in KEYMAP.into_iter().zip(keymap_rows()) {
             if !matches_query(query, &["General", "Keymap", label, &value]) {

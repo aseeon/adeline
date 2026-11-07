@@ -382,8 +382,7 @@ impl Adeline {
     }
 
     pub(crate) fn open_projects_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.project_search
-            .update(cx, |state, cx| state.set_value("", window, cx));
+        clear_input(&self.project_search, window, cx);
         self.project_highlight = None;
         self.menu = Some("projects");
         window.focus(&self.project_search.focus_handle(cx), cx);

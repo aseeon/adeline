@@ -329,12 +329,7 @@ pub(super) fn server_list(
                         .font_weight(FontWeight::MEDIUM)
                         .child(server.name.clone()),
                 )
-                .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(server.kind()),
-                )
+                .child(muted(server.kind(), cx))
                 .child(
                     Button::new(SharedString::from(format!("{id}-edit-{ix}")))
                         .small()

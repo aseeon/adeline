@@ -982,11 +982,7 @@ impl Adeline {
                 )
             }
         };
-        col()
-            .id("dialog-content")
-            .test_support()
-            .role(Role::Group)
-            .aria_label(title.clone())
+        views::dialog_content(title.clone())
             .gap_3()
             .text_sm()
             .child(views::dialog_title(title))
@@ -1053,15 +1049,7 @@ impl Adeline {
                 "Conversation: {title}. Choose another (Ctrl+Shift+K)"
             ))
             .tooltip("Choose a conversation (Ctrl+Shift+K)");
-        component::popover::Popover::new("chats")
-            .anchor(Anchor::TopLeft)
-            .trigger(trigger)
-            .open(self.menu == Some("chats"))
-            .p_0()
-            .shadow(views::menu_shadow(cx))
-            .when_some(state.as_ref(), |popover, state| {
-                popover.track_focus(&state.focus_handle(cx))
-            })
+        self.menu_popover("chats", trigger, Anchor::TopLeft, state.as_ref(), cx)
             .on_open_change(move |open, window, cx| {
                 let _ = owner.update(cx, |app, cx| {
                     if *open {

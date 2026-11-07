@@ -1,5 +1,5 @@
 //! Handling events from agent workers.
-use super::{Engine, PERMISSION_STOPPED};
+use super::{Engine, PERMISSION_STOPPED, end_turn};
 use crate::{acp, storage};
 use adeline_core::{
     conversation::ThreadStatus,
@@ -64,11 +64,11 @@ impl Engine {
                 }
             }
             acp::EventKind::Agent { features, .. } => {
-                self.live.entry(id.clone()).or_default().features = features.clone();
+                self.live_mut(&id).features = features.clone();
                 self.save_session_state(&id, |settings| settings.features = features);
             }
             acp::EventKind::Options(options) => {
-                let live = self.live.entry(id.clone()).or_default();
+                let live = self.live_mut(&id);
                 if live.options != options {
                     live.options.clone_from(&options);
                     self.save_session_state(&id, |settings| settings.options = options);
@@ -187,7 +187,7 @@ impl Engine {
             acp::EventKind::Steered { delivered } => {
                 if let Some((text, files)) = self.steering.remove(&id) {
                     if delivered {
-                        self.live.entry(id.clone()).or_default().assistant = None;
+                        self.live_mut(&id).assistant = None;
                         self.user_message(&id, text, files);
                     } else {
                         self.queue(&id, text, files, true);
@@ -207,9 +207,7 @@ impl Engine {
                     let message = format!("Skipped {name}: {agent} doesn't support HTTP servers.");
                     self.record_visible(&id, "note", json!({"message":message}));
                 }
-                if let Some((project_id, thread)) = self.thread_from_store(&id) {
-                    self.broadcast(Delta::Thread { project_id, thread });
-                }
+                self.broadcast_thread(&id);
             }
             acp::EventKind::OpenUrl(url) => {
                 self.broadcast_message(&EngineMessage::Delta(Delta::OpenUrl { url }));
@@ -217,7 +215,7 @@ impl Engine {
             }
             acp::EventKind::Auth(_) => {}
             acp::EventKind::Crashed(stderr) => {
-                self.live.entry(id.clone()).or_default().stderr = stderr;
+                self.live_mut(&id).stderr = stderr;
             }
             acp::EventKind::Retrying {
                 attempt,
@@ -232,7 +230,7 @@ impl Engine {
                     "error",
                     json!({"message":error,"attempt":attempt,"limit":limit}),
                 ) {
-                    self.live.entry(id.clone()).or_default().progress =
+                    self.live_mut(&id).progress =
                         Some(format!("Retry {attempt} of {limit}: {error}"));
                 }
             }
@@ -242,10 +240,8 @@ impl Engine {
                     "error",
                     json!({"message":message,"kind":format!("{kind:?}")}),
                 );
-                let live = self.live.entry(id.clone()).or_default();
-                live.processing = false;
-                live.progress = None;
-                live.permission.clear();
+                let live = self.live_mut(&id);
+                end_turn(live);
                 live.auth_required = kind == acp::FailureKind::Authentication;
                 if saved {
                     live.error = Some(message);
@@ -264,11 +260,8 @@ impl Engine {
                     "lifecycle",
                     json!({"event":"turn_finished","reason":stop_reason}),
                 );
-                let live = self.live.entry(id.clone()).or_default();
-                live.processing = false;
-                live.progress = None;
-                live.quiet_since = None;
-                live.permission.clear();
+                let live = self.live_mut(&id);
+                end_turn(live);
                 if !closing && !live.storage_failed {
                     self.set_runtime_status(&id, ThreadStatus::Idle);
                     self.send_queue(&id);
@@ -278,11 +271,8 @@ impl Engine {
                 let saved =
                     self.record_visible(&id, "lifecycle", json!({"event":"turn_cancelled"}));
                 let for_permission = self.permission_stopped.remove(&id);
-                let live = self.live.entry(id.clone()).or_default();
-                live.processing = false;
-                live.permission.clear();
-                live.progress = None;
-                live.quiet_since = None;
+                let live = self.live_mut(&id);
+                end_turn(live);
                 if for_permission {
                     live.worked = true;
                     live.error = Some(PERMISSION_STOPPED.into());
@@ -307,7 +297,7 @@ impl Engine {
                 }
             }
             acp::EventKind::ShutdownStuck => {
-                let live = self.live.entry(id.clone()).or_default();
+                let live = self.live_mut(&id);
                 live.shutdown_stuck = true;
                 live.error =
                     Some("Agent shutdown is stuck. Force Stop terminates this process.".into());
@@ -321,7 +311,7 @@ impl Engine {
                 }
                 self.last_traffic.remove(&id);
                 let finished = self.status_of(&id).is_some_and(ThreadStatus::closed);
-                let live = self.live.entry(id.clone()).or_default();
+                let live = self.live_mut(&id);
                 live.processing = false;
                 live.shutting_down = false;
                 live.quiet_since = None;
@@ -352,10 +342,8 @@ impl Engine {
             }
             acp::EventKind::TextCopy => {
                 self.text_copy_pending.insert(id.clone());
-                if self.record_visible(&id, "fork_text_copy", json!({}))
-                    && let Some((project_id, thread)) = self.thread_from_store(&id)
-                {
-                    self.broadcast(Delta::Thread { project_id, thread });
+                if self.record_visible(&id, "fork_text_copy", json!({})) {
+                    self.broadcast_thread(&id);
                 }
             }
             acp::EventKind::ReplacementRequired(error) => {
@@ -363,7 +351,7 @@ impl Engine {
                     return;
                 }
                 if self.record_visible(&id, "error", json!({"message":error,"restoration":false})) {
-                    let live = self.live.entry(id.clone()).or_default();
+                    let live = self.live_mut(&id);
                     live.replacement = true;
                     live.processing = false;
                     live.error = Some(format!(
@@ -394,7 +382,7 @@ impl Engine {
                 .get(id)
                 .is_some_and(|live| live.quiet_since.is_some())
             {
-                self.live.entry(id.to_owned()).or_default().quiet_since = None;
+                self.live_mut(id).quiet_since = None;
                 self.send_live(id);
             }
         }

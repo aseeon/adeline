@@ -26,7 +26,7 @@ impl Engine {
             self.events.clone(),
         );
         self.drivers.insert(id.to_owned(), Slot { driver, turn: 0 });
-        self.live.entry(id.to_owned()).or_default().running = true;
+        self.live_mut(id).running = true;
         true
     }
 
@@ -123,9 +123,7 @@ impl Engine {
         })?;
         self.touched.insert(fork.clone(), Instant::now());
         self.live.insert(fork.clone(), live);
-        if let Some((project_id, thread)) = self.thread_from_store(&fork) {
-            self.broadcast(Delta::Thread { project_id, thread });
-        }
+        self.broadcast_thread(&fork);
         self.send_live(&fork);
         Ok(Value::String(fork))
     }
@@ -173,7 +171,7 @@ impl Engine {
             "lifecycle",
             json!({"event":"setting_switched","category":category,"option":option,"value":value}),
         );
-        self.live.entry(id.to_owned()).or_default().execution = Some(execution);
+        self.live_mut(id).execution = Some(execution);
         if let Some(slot) = self.drivers.get(id) {
             let _ = slot.driver.send(acp::Command::SetOption {
                 category,
@@ -220,16 +218,15 @@ impl Engine {
             });
         if let Err(error) = result {
             self.drivers.remove(id);
-            let live = self.live.entry(id.to_owned()).or_default();
-            live.processing = false;
-            live.permission.clear();
+            let live = self.live_mut(id);
+            end_turn(live);
             live.error = Some(error.clone());
             self.record_visible(id, "error", json!({"message":error}));
             self.set_runtime_status(id, ThreadStatus::Blocked);
             self.send_live(id);
             return Err(error);
         }
-        let live = self.live.entry(id.to_owned()).or_default();
+        let live = self.live_mut(id);
         live.permission.remove(index);
         if live.permission.is_empty() {
             self.set_runtime_status(id, ThreadStatus::Processing);

@@ -694,14 +694,6 @@ impl AgentForm {
     }
 }
 
-fn muted(text: impl Into<SharedString>, cx: &App) -> AnyElement {
-    div()
-        .text_sm()
-        .text_color(cx.theme().muted_foreground)
-        .child(text.into())
-        .into_any_element()
-}
-
 impl Render for AgentForm {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let id = self.harness_id(cx);

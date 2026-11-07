@@ -42,7 +42,7 @@ use gpui_kit::base::actions::Cancel;
 use gpui_kit::component::{
     ActiveTheme, Icon, Root, Selectable, Sizable, TitleBar, WindowExt,
     button::{Button, ButtonVariants},
-    input::{Input, InputEvent, InputState, TextareaState},
+    input::{Input, InputEvent, InputModeKind, InputState, TextareaState},
     notification,
 };
 use gpui_kit::{prelude::*, *};
@@ -769,15 +769,9 @@ impl Render for Adeline {
             .text_color(cx.theme().foreground)
             .track_focus(&self.focus)
             .key_context("Adeline")
-            .on_action(
-                cx.listener(|app, _: &Cancel, window, cx| app.act(Action::Close, window, cx)),
-            )
-            .on_action(cx.listener(|app, _: &OpenSettings, window, cx| {
-                app.act(Action::AppSettings, window, cx);
-            }))
-            .on_action(
-                cx.listener(|app, _: &NewThread, window, cx| app.act(Action::NewChat, window, cx)),
-            )
+            .on_action(act_on::<Cancel>(Action::Close, cx))
+            .on_action(act_on::<OpenSettings>(Action::AppSettings, cx))
+            .on_action(act_on::<NewThread>(Action::NewChat, cx))
             .on_action(cx.listener(|app, _: &Search, window, cx| {
                 if app.has_open_project() && app.section == Section::Docs {
                     window.focus(&app.docs.search.focus_handle(cx), cx);
@@ -787,54 +781,33 @@ impl Render for Adeline {
                     app.act(Action::Projects, window, cx);
                 }
             }))
-            .on_action(
-                cx.listener(|app, _: &SendMessage, window, cx| app.act(Action::Send, window, cx)),
-            )
-            .on_action(
-                cx.listener(|app, _: &SendNow, window, cx| app.act(Action::SendNow, window, cx)),
-            )
-            .on_action(
-                cx.listener(|app, _: &StopTurn, window, cx| app.act(Action::Stop, window, cx)),
-            )
-            .on_action(cx.listener(|app, _: &RestartAgent, window, cx| {
-                app.act(Action::Restart, window, cx);
-            }))
-            .on_action(cx.listener(|app, _: &ModelMenu, window, cx| {
-                app.act(
-                    Action::OptionMenu(conversation::Category::Model),
-                    window,
-                    cx,
-                );
-            }))
-            .on_action(cx.listener(|app, _: &EffortMenu, window, cx| {
-                app.act(
-                    Action::OptionMenu(conversation::Category::Effort),
-                    window,
-                    cx,
-                );
-            }))
-            .on_action(cx.listener(|app, _: &ModeMenu, window, cx| {
-                app.act(Action::OptionMenu(conversation::Category::Mode), window, cx);
-            }))
-            .on_action(cx.listener(|app, _: &MoreMenu, window, cx| {
-                app.act(
-                    Action::OptionMenu(conversation::Category::Other),
-                    window,
-                    cx,
-                );
-            }))
-            .on_action(cx.listener(|app, _: &AttachFile, window, cx| {
-                app.act(Action::AttachFile, window, cx);
-            }))
-            .on_action(cx.listener(|app, _: &TrafficView, window, cx| {
-                app.act(Action::TrafficView, window, cx);
-            }))
-            .on_action(
-                cx.listener(|app, _: &TodoList, window, cx| app.act(Action::TodoList, window, cx)),
-            )
-            .on_action(cx.listener(|app, _: &ActivityTab, window, cx| {
-                app.act(Action::PanelTab(panes::SideTab::Activity), window, cx);
-            }))
+            .on_action(act_on::<SendMessage>(Action::Send, cx))
+            .on_action(act_on::<SendNow>(Action::SendNow, cx))
+            .on_action(act_on::<StopTurn>(Action::Stop, cx))
+            .on_action(act_on::<RestartAgent>(Action::Restart, cx))
+            .on_action(act_on::<ModelMenu>(
+                Action::OptionMenu(conversation::Category::Model),
+                cx,
+            ))
+            .on_action(act_on::<EffortMenu>(
+                Action::OptionMenu(conversation::Category::Effort),
+                cx,
+            ))
+            .on_action(act_on::<ModeMenu>(
+                Action::OptionMenu(conversation::Category::Mode),
+                cx,
+            ))
+            .on_action(act_on::<MoreMenu>(
+                Action::OptionMenu(conversation::Category::Other),
+                cx,
+            ))
+            .on_action(act_on::<AttachFile>(Action::AttachFile, cx))
+            .on_action(act_on::<TrafficView>(Action::TrafficView, cx))
+            .on_action(act_on::<TodoList>(Action::TodoList, cx))
+            .on_action(act_on::<ActivityTab>(
+                Action::PanelTab(panes::SideTab::Activity),
+                cx,
+            ))
             .on_action(cx.listener(|app, _: &NextProject, window, cx| {
                 app.step_project(true, window, cx);
             }))
@@ -846,17 +819,13 @@ impl Render for Adeline {
                     app.act(Action::CloseProject(app.project), window, cx);
                 }
             }))
-            .on_action(cx.listener(|app, _: &OpenFolder, window, cx| {
-                app.act(Action::OpenFolder, window, cx);
-            }))
+            .on_action(act_on::<OpenFolder>(Action::OpenFolder, cx))
             .on_action(cx.listener(|app, _: &MachinesMenu, window, cx| {
                 if !machines::remotes().is_empty() {
                     app.act(Action::Machines, window, cx);
                 }
             }))
-            .on_action(cx.listener(|app, _: &MainMenu, window, cx| {
-                app.act(Action::AppMenu, window, cx);
-            }))
+            .on_action(act_on::<MainMenu>(Action::AppMenu, cx))
             .on_action(cx.listener(|app, _: &FocusMessage, window, cx| {
                 window.focus(&app.composer.focus_handle(cx), cx);
             }))
@@ -1058,6 +1027,40 @@ fn last_code_block(text: &str) -> Option<String> {
         }
     }
     block
+}
+
+fn muted(text: impl IntoElement, cx: &App) -> Div {
+    div()
+        .text_sm()
+        .text_color(cx.theme().muted_foreground)
+        .child(text)
+}
+
+fn toast_err(result: Result<()>, window: &mut Window, cx: &mut App) {
+    if let Err(error) = result {
+        window.push_notification(toast(format!("{error:#}")), cx);
+    }
+}
+
+fn act_on<A: gpui_kit::Action>(
+    action: Action,
+    cx: &Context<Adeline>,
+) -> impl Fn(&A, &mut Window, &mut App) + 'static {
+    cx.listener(move |app, _: &A, window, cx| app.act(action.clone(), window, cx))
+}
+
+fn clear_input<M: InputModeKind>(
+    input: &Entity<base::input::InputBaseState<M>>,
+    window: &mut Window,
+    cx: &mut App,
+) {
+    input.update(cx, |input, cx| input.set_value("", window, cx));
+}
+
+fn toggle_member<T: Eq + std::hash::Hash>(set: &mut std::collections::HashSet<T>, key: T) {
+    if !set.remove(&key) {
+        set.insert(key);
+    }
 }
 
 fn toast(message: impl Into<SharedString>) -> notification::Notification {

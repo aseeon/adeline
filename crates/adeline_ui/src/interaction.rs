@@ -118,10 +118,8 @@ impl Adeline {
             }
             Action::About => self.modal = Some("about"),
             Action::AddProject => {
-                self.name_input
-                    .update(cx, |state, cx| state.set_value("", window, cx));
-                self.project_directory_input
-                    .update(cx, |state, cx| state.set_value("", window, cx));
+                clear_input(&self.name_input, window, cx);
+                clear_input(&self.project_directory_input, window, cx);
                 self.project_error = None;
                 self.project_machine = self.current_machine();
                 self.modal = Some("add-project");
@@ -129,8 +127,7 @@ impl Adeline {
             Action::ProjectMachine(machine) => {
                 if machine != self.project_machine {
                     self.project_machine = machine;
-                    self.project_directory_input
-                        .update(cx, |state, cx| state.set_value("", window, cx));
+                    clear_input(&self.project_directory_input, window, cx);
                 }
             }
             Action::SaveProject => self.create_project(window, cx),
@@ -192,8 +189,7 @@ impl Adeline {
                 if self.project != ix {
                     self.selected = None;
                     self.agent_filter = None;
-                    self.query
-                        .update(cx, |state, cx| state.set_value("", window, cx));
+                    clear_input(&self.query, window, cx);
                     if self.projects[ix].machine != self.current_machine() {
                         self.project = ix;
                         self.agents_changed(None, None, false, cx);
@@ -266,8 +262,7 @@ impl Adeline {
                         self.prompt_input.read(cx).value().to_string()
                     }
                 });
-                self.prompt_input
-                    .update(cx, |state, cx| state.set_value("", window, cx));
+                clear_input(&self.prompt_input, window, cx);
                 client::answer_prompt(answer, cx);
                 if client::prompt(cx).is_none() {
                     self.modal = None;
@@ -287,8 +282,7 @@ impl Adeline {
                     self.docs_leave(window, cx);
                     self.selected = None;
                     self.section = Section::Chats;
-                    self.composer
-                        .update(cx, |state, cx| state.set_value("", window, cx));
+                    clear_input(&self.composer, window, cx);
                     window.set_window_title("Adeline");
                 }
             }
@@ -300,8 +294,7 @@ impl Adeline {
                     self.docs_leave(window, cx);
                     self.section = section;
                 }
-                self.query
-                    .update(cx, |state, cx| state.set_value("", window, cx));
+                clear_input(&self.query, window, cx);
                 if section == Section::Docs {
                     self.docs_enter(None, window, cx);
                 }
@@ -320,10 +313,8 @@ impl Adeline {
                     self.section = Section::Chats;
                 }
                 self.selected = None;
-                self.query
-                    .update(cx, |state, cx| state.set_value("", window, cx));
-                self.composer
-                    .update(cx, |state, cx| state.set_value("", window, cx));
+                clear_input(&self.query, window, cx);
+                clear_input(&self.composer, window, cx);
                 if !self.demo_mode && self.agent_catalog().entries.len() == 1 {
                     self.selected_agent = Some(self.agent_catalog().entries[0].id.clone());
                 }
@@ -332,29 +323,31 @@ impl Adeline {
             Action::AgentFilter(agent) => self.agent_filter = agent,
             Action::ClearChatFilters => {
                 self.agent_filter = None;
-                self.query
-                    .update(cx, |state, cx| state.set_value("", window, cx));
+                clear_input(&self.query, window, cx);
             }
             Action::ShowCompleted => self.show_completed = !self.show_completed,
             Action::ShowArchived => self.show_archived = !self.show_archived,
             Action::SubmitOnEnter => {
                 let submit = !config::current().modes.chats.submit_on_enter;
-                if let Err(error) =
-                    config::update(|settings| settings.modes.chats.submit_on_enter = submit)
-                {
-                    window.push_notification(toast(format!("{error:#}")), cx);
-                }
+                toast_err(
+                    config::update(|settings| settings.modes.chats.submit_on_enter = submit),
+                    window,
+                    cx,
+                );
                 let submit = config::current().modes.chats.submit_on_enter;
                 self.composer
                     .update(cx, |state, cx| state.set_submit_on_enter(submit, cx));
                 self.composer_region.update(cx, |_, cx| cx.notify());
             }
             Action::HideToolCalls => {
-                if let Err(error) = config::update(|settings| {
-                    settings.modes.chats.hide_tool_calls = !settings.modes.chats.hide_tool_calls;
-                }) {
-                    window.push_notification(toast(format!("{error:#}")), cx);
-                }
+                toast_err(
+                    config::update(|settings| {
+                        settings.modes.chats.hide_tool_calls =
+                            !settings.modes.chats.hide_tool_calls;
+                    }),
+                    window,
+                    cx,
+                );
                 self.resync_transcript(cx);
             }
             Action::ToggleLeftPanel => self.left_panel_open = !self.left_panel_open,
@@ -384,17 +377,17 @@ impl Adeline {
                 self.watch_traffic(cx);
             }
             Action::ShowThinking => {
-                if let Err(error) = config::update(|settings| {
-                    settings.modes.chats.show_thinking = !settings.modes.chats.show_thinking;
-                }) {
-                    window.push_notification(toast(format!("{error:#}")), cx);
-                }
+                toast_err(
+                    config::update(|settings| {
+                        settings.modes.chats.show_thinking = !settings.modes.chats.show_thinking;
+                    }),
+                    window,
+                    cx,
+                );
                 self.resync_transcript(cx);
             }
             Action::ToggleThought(key) => {
-                if !self.open_thoughts.remove(&key) {
-                    self.open_thoughts.insert(key);
-                }
+                toggle_member(&mut self.open_thoughts, key);
                 self.resync_transcript(cx);
             }
             Action::OptionMenu(category) => {
@@ -519,9 +512,7 @@ impl Adeline {
             }
             Action::Fork(message) => self.fork_conversation(message, window, cx),
             Action::ToggleTool(id) => {
-                if !self.runtime.expanded_tools.remove(&id) {
-                    self.runtime.expanded_tools.insert(id);
-                }
+                toggle_member(&mut self.runtime.expanded_tools, id);
                 self.resync_transcript(cx);
             }
             Action::Decision(ix) => {
@@ -710,8 +701,7 @@ impl Adeline {
                 text: prompt,
                 files: self.attachments.drain(..).map(|a| a.name).collect(),
             });
-            self.composer
-                .update(cx, |state, cx| state.set_value("", window, cx));
+            clear_input(&self.composer, window, cx);
             return;
         }
         let attachments = std::mem::take(&mut self.attachments);
@@ -725,8 +715,7 @@ impl Adeline {
         });
         thread.push_message(Message { role: MessageRole::Assistant, text: "I've added this to our local demo chat. We can work through the next step here. This preview uses sample responses and doesn't run commands or connect to external services.".into(), read: true, ..Default::default() });
         thread.status = ThreadStatus::Idle;
-        self.composer
-            .update(cx, |state, cx| state.set_value("", window, cx));
+        clear_input(&self.composer, window, cx);
     }
 }
 

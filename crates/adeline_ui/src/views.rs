@@ -241,6 +241,25 @@ impl Adeline {
         }
     }
 
+    pub(super) fn menu_popover(
+        &self,
+        menu: &'static str,
+        trigger: Button,
+        anchor: Anchor,
+        state: Option<&Entity<CommandState>>,
+        cx: &App,
+    ) -> component::popover::Popover {
+        component::popover::Popover::new(menu)
+            .anchor(anchor)
+            .trigger(trigger)
+            .open(self.menu == Some(menu))
+            .p_0()
+            .shadow(menu_shadow(cx))
+            .when_some(state, |popover, state| {
+                popover.track_focus(&state.focus_handle(cx))
+            })
+    }
+
     pub(super) fn command_popover(
         &self,
         menu: &'static str,
@@ -265,15 +284,7 @@ impl Adeline {
         } else {
             String::new()
         };
-        component::popover::Popover::new(menu)
-            .anchor(anchor)
-            .trigger(trigger)
-            .open(self.menu == Some(menu))
-            .p_0()
-            .shadow(menu_shadow(cx))
-            .when_some(state.as_ref(), |popover, state| {
-                popover.track_focus(&state.focus_handle(cx))
-            })
+        self.menu_popover(menu, trigger, anchor, state.as_ref(), cx)
             .on_open_change(move |open, window, cx| {
                 let _ = owner.update(cx, |app, cx| {
                     if *open {
@@ -545,11 +556,7 @@ impl Adeline {
                         .danger(),
                     ),
             );
-        col()
-            .id("dialog-content")
-            .test_support()
-            .role(Role::Group)
-            .aria_label(format!("Upgrade {name}?"))
+        dialog_content(format!("Upgrade {name}?"))
             .child(content)
             .into_any_element()
     }
@@ -682,6 +689,16 @@ pub(super) fn styled_dialog(dialog: Dialog, cx: &App) -> Dialog {
 
 pub(super) fn dialog_footer() -> Div {
     row().justify_end().gap_2().pt_1()
+}
+
+pub(super) fn dialog_content(
+    label: impl Into<SharedString>,
+) -> impl IntoElement + ParentElement + Styled {
+    col()
+        .id("dialog-content")
+        .test_support()
+        .role(Role::Group)
+        .aria_label(label.into())
 }
 
 pub(super) fn dialog_title(title: impl Into<SharedString>) -> Div {

@@ -143,12 +143,7 @@ impl Render for AgentWindow {
                 format!("Add an agent on {}", machines::name(&self.machine))
             }))
             .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(
-                        "Configure an agent for this machine's projects. Saving does not start the command.",
-                    ),
+                muted("Configure an agent for this machine's projects. Saving does not start the command.", cx),
             )
             .child(self.form.clone())
             .child(diagnostics(self.owner.diagnostics(&self.machine, cx), cx));

@@ -182,7 +182,7 @@ impl Engine {
                     auth: Vec::new(),
                     version: false,
                 });
-                return Some(serde_json::to_value(failed).map_err(|e| e.to_string()));
+                return Some(super::docs::json(failed));
             }
         };
         config.selections.model = model.unwrap_or_default();

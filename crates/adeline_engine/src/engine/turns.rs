@@ -51,7 +51,7 @@ impl Engine {
             if thread.status == ThreadStatus::Archived {
                 return Err("This conversation is archived.".into());
             }
-            let live = self.live.entry(id.clone()).or_default();
+            let live = self.live_mut(&id);
             if live.storage_failed || live.recovering_storage {
                 return Err("Retry storage before sending.".into());
             }
@@ -110,7 +110,7 @@ impl Engine {
     }
 
     fn deliver(&mut self, id: &str, prompt: String, attachments: Vec<Attachment>) {
-        prompt.clone_into(&mut self.live.entry(id.to_owned()).or_default().last_prompt);
+        prompt.clone_into(&mut self.live_mut(id).last_prompt);
         let saved = self.user_message(id, prompt.clone(), attachments.clone());
         self.attachments.insert(id.to_owned(), attachments.clone());
         if saved {
@@ -126,7 +126,7 @@ impl Engine {
             files: files.iter().map(|file| file.name.clone()).collect(),
         };
         self.queued_files.insert(queued.id, files);
-        let list = &mut self.live.entry(id.to_owned()).or_default().queued;
+        let list = &mut self.live_mut(id).queued;
         if first {
             list.insert(0, queued);
         } else {
@@ -186,7 +186,7 @@ impl Engine {
         id: &str,
         queued: u64,
     ) -> Result<(String, Vec<Attachment>), String> {
-        let live = self.live.entry(id.to_owned()).or_default();
+        let live = self.live_mut(id);
         let index = live
             .queued
             .iter()
@@ -204,7 +204,7 @@ impl Engine {
     }
 
     pub(super) fn send_queue(&mut self, id: &str) {
-        let queued = std::mem::take(&mut self.live.entry(id.to_owned()).or_default().queued);
+        let queued = std::mem::take(&mut self.live_mut(id).queued);
         if queued.is_empty() {
             return;
         }
@@ -235,7 +235,7 @@ impl Engine {
         if !self.ensure_driver(id) {
             let error = "Could not load this conversation's saved agent settings.".to_owned();
             self.record_visible(id, "error", json!({"message":error}));
-            self.live.entry(id.to_owned()).or_default().error = Some(error);
+            self.live_mut(id).error = Some(error);
             self.set_runtime_status(id, ThreadStatus::Blocked);
             return;
         }
@@ -248,7 +248,7 @@ impl Engine {
         {
             return;
         }
-        let live = self.live.entry(id.to_owned()).or_default();
+        let live = self.live_mut(id);
         if live.storage_failed {
             return;
         }
@@ -285,7 +285,7 @@ impl Engine {
             retries,
         }) {
             self.drivers.remove(id);
-            let live = self.live.entry(id.to_owned()).or_default();
+            let live = self.live_mut(id);
             live.processing = false;
             live.error = Some(error.clone());
             self.record_visible(id, "error", json!({"message":error}));
@@ -329,7 +329,7 @@ impl Engine {
         if let Some(error) = self.cannot_turn(id) {
             return Err(error);
         }
-        let live = self.live.entry(id.to_owned()).or_default();
+        let live = self.live_mut(id);
         if live.processing {
             return Err(ALREADY_PROCESSING.into());
         }
@@ -353,7 +353,7 @@ impl Engine {
         if let Some(error) = self.cannot_start(id) {
             return Err(error);
         }
-        let live = self.live.entry(id.to_owned()).or_default();
+        let live = self.live_mut(id);
         if live.shutting_down && !live.shutdown_stuck {
             live.processing = true;
             live.progress = Some("Restarting the agent…".into());
@@ -400,7 +400,7 @@ impl Engine {
         let (settings, thread, recovered_work) = match result {
             Ok(result) => result,
             Err(error) => {
-                self.live.entry(id.to_owned()).or_default().error = Some(error.clone());
+                self.live_mut(id).error = Some(error.clone());
                 self.send_live(id);
                 return Err(error);
             }
@@ -408,7 +408,7 @@ impl Engine {
         if let Some(project_id) = self.project_of(id) {
             self.broadcast(Delta::Thread { project_id, thread });
         }
-        let live = self.live.entry(id.to_owned()).or_default();
+        let live = self.live_mut(id);
         live.storage_failed = false;
         live.worked |= recovered_work;
         live.recovering_storage = live.processing;
@@ -420,7 +420,7 @@ impl Engine {
             None
         };
         if !self.drivers.contains_key(id) {
-            let live = self.live.entry(id.to_owned()).or_default();
+            let live = self.live_mut(id);
             live.processing = false;
             live.recovering_storage = false;
         }
@@ -466,12 +466,12 @@ impl Engine {
             && let Err(error) = slot.driver.send(acp::Command::ReplaceSession { context })
         {
             self.drivers.remove(id);
-            self.live.entry(id.to_owned()).or_default().error = Some(error.clone());
+            self.live_mut(id).error = Some(error.clone());
             self.set_runtime_status(id, ThreadStatus::Blocked);
             self.send_live(id);
             return Err(error);
         }
-        let live = self.live.entry(id.to_owned()).or_default();
+        let live = self.live_mut(id);
         live.replacement = false;
         live.error = None;
         live.processing = true;

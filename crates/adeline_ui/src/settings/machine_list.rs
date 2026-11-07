@@ -11,8 +11,7 @@ impl SettingsWindow {
             .unwrap_or_default();
         self.machine_name
             .update(cx, |input, cx| input.set_value(name, window, cx));
-        self.machine_destination
-            .update(cx, |input, cx| input.set_value("", window, cx));
+        clear_input(&self.machine_destination, window, cx);
     }
 
     fn machines_changed(
@@ -88,16 +87,9 @@ impl SettingsWindow {
             .flex_col()
             .gap_3()
             .child(div().text_lg().child("Machines"))
-            .child(div().text_sm().text_color(theme.muted_foreground).child(
-                "Remote machines are reached with your ssh setup and saved on this computer only. Removing one only forgets it here: its engine, projects and agents stay on that machine.",
-            ));
+            .child(muted("Remote machines are reached with your ssh setup and saved on this computer only. Removing one only forgets it here: its engine, projects and agents stay on that machine.", cx));
         if self.demo {
-            page = page.child(
-                div()
-                    .text_sm()
-                    .text_color(theme.muted_foreground)
-                    .child("Demo machines can't be changed."),
-            );
+            page = page.child(muted("Demo machines can't be changed.", cx));
         }
         for (ix, machine) in machines::remotes().into_iter().enumerate() {
             let editing = self.editing.as_deref() == Some(machine.id.as_str());

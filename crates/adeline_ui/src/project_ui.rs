@@ -353,10 +353,8 @@ impl Adeline {
         cx.defer(move |cx| {
             let _ = cx.update_window(handle.into(), |_, window, cx| {
                 let _ = owner.update(cx, |app, cx| {
-                    app.composer
-                        .update(cx, |state, cx| state.set_value("", window, cx));
-                    app.query
-                        .update(cx, |state, cx| state.set_value("", window, cx));
+                    clear_input(&app.composer, window, cx);
+                    clear_input(&app.query, window, cx);
                     window.set_window_title(if app.has_open_project() {
                         &app.workspace().config.name
                     } else {
@@ -854,11 +852,7 @@ impl Adeline {
             _ => {}
         }
         match label {
-            Some(label) => col()
-                .id("dialog-content")
-                .test_support()
-                .role(Role::Group)
-                .aria_label(label)
+            Some(label) => views::dialog_content(label)
                 .child(content)
                 .into_any_element(),
             None => content.into_any_element(),

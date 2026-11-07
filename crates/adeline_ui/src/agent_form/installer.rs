@@ -196,7 +196,7 @@ impl AgentForm {
                         .into_any_element(),
                 )
             }
-            None => Some(muted("Checking whether this agent is installed…", cx)),
+            None => Some(muted("Checking whether this agent is installed…", cx).into_any_element()),
             Some(false) => {
                 let website = catalog
                     .get(id)

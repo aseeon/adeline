@@ -1585,9 +1585,7 @@ impl Adeline {
             Act::Folder(path) => {
                 let project = self.docs_project();
                 project.cursor = Some(path.clone());
-                if !project.expanded.remove(&path) {
-                    project.expanded.insert(path);
-                }
+                toggle_member(&mut project.expanded, path);
                 self.docs_refresh_rows(cx);
                 self.docs_record(cx);
             }
@@ -1700,9 +1698,7 @@ impl Adeline {
                 window.focus(&self.composer.focus_handle(cx), cx);
             }
             Act::More(key) => {
-                if !self.docs.more.remove(&key) {
-                    self.docs.more.insert(key);
-                }
+                toggle_member(&mut self.docs.more, key);
                 self.transcript.update(cx, chat::Transcript::refresh_all);
             }
             Act::SaveAll => self.docs_save_all(cx),
@@ -1713,21 +1709,11 @@ impl Adeline {
 
     pub(super) fn docs_actions(&self, content: Div, cx: &Context<Self>) -> Div {
         content
-            .on_action(cx.listener(|app, _: &ToggleDocView, window, cx| {
-                app.act(Action::Docs(Act::View), window, cx);
-            }))
-            .on_action(cx.listener(|app, _: &SaveDoc, window, cx| {
-                app.act(Action::Docs(Act::Save), window, cx);
-            }))
-            .on_action(cx.listener(|app, _: &ChooseChat, window, cx| {
-                app.act(Action::Docs(Act::Chooser), window, cx);
-            }))
-            .on_action(cx.listener(|app, _: &NoteOnSelection, window, cx| {
-                app.act(Action::Docs(Act::Note), window, cx);
-            }))
-            .on_action(cx.listener(|app, _: &NewDoc, window, cx| {
-                app.act(Action::Docs(Act::New), window, cx);
-            }))
+            .on_action(act_on::<ToggleDocView>(Action::Docs(Act::View), cx))
+            .on_action(act_on::<SaveDoc>(Action::Docs(Act::Save), cx))
+            .on_action(act_on::<ChooseChat>(Action::Docs(Act::Chooser), cx))
+            .on_action(act_on::<NoteOnSelection>(Action::Docs(Act::Note), cx))
+            .on_action(act_on::<NewDoc>(Action::Docs(Act::New), cx))
             .on_action(cx.listener(|app, _: &ViewerPageUp, _, cx| app.docs_page(-1., cx)))
             .on_action(cx.listener(|app, _: &ViewerPageDown, _, cx| app.docs_page(1., cx)))
             .on_action(cx.listener(|app, action: &ApplyFormat, window, cx| {

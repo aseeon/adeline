@@ -548,9 +548,7 @@ impl Adeline {
                     ),
             )
             .on_click(cx.listener(move |app, _, _, cx| {
-                if !app.activity.expanded.remove(&toggle) {
-                    app.activity.expanded.insert(toggle.clone());
-                }
+                toggle_member(&mut app.activity.expanded, toggle.clone());
                 cx.notify();
             }))
             .on_hover(cx.listener(move |app, hovered: &bool, _, cx| {

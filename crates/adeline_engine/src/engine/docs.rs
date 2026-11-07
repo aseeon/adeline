@@ -27,7 +27,7 @@ fn modified(path: &Path) -> Option<u64> {
     u64::try_from(since.as_millis()).ok()
 }
 
-fn json(value: impl serde::Serialize) -> Result<Value, String> {
+pub(super) fn json(value: impl serde::Serialize) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|e| e.to_string())
 }
 
