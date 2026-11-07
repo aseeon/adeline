@@ -110,43 +110,7 @@ impl Adeline {
         }) {
             content = content.child(self.error_line(&activity.title, cx));
         }
-        let writing = live
-            .assistant
-            .and_then(|i| thread.messages.get(i))
-            .is_some_and(|m| {
-                !m.text.is_empty()
-                    || (config::with(|s| s.modes.chats.show_thinking) && !m.thought.is_empty())
-            });
-        let label = self.activity_label(thread, live);
-        if live.processing && live.storage_failed {
-            content = content.child(text(
-                "Stopping the turn before storage can be retried…",
-                13.,
-                theme::color("muted_text"),
-            ));
-        } else if let Some(minutes) = self.silent_minutes(thread, live) {
-            content = content.child(self.hang_notice(minutes, cx));
-        } else if live.processing && (!writing || label.is_some()) {
-            content = content.child(
-                row()
-                    .h(panes::dp(24.))
-                    .gap(panes::dp(8.))
-                    .text_color(theme::islands(cx).fg3)
-                    .child(chat::spinner())
-                    .child(chat::thinking_label(label)),
-            );
-        } else if !live.processing
-            && turn.is_some_and(|turn| thread.turn_tools(turn).any(|t| t.running))
-        {
-            content = content.child(
-                row()
-                    .gap_2()
-                    .text_size(panes::dp(theme::T_UI))
-                    .text_color(cx.theme().muted_foreground)
-                    .child(chat::spinner())
-                    .child("Background tasks running"),
-            );
-        }
+        content = content.children(self.status_line(thread, live, turn, cx));
         if !live.queued.is_empty() {
             content = content.child(self.queued_entries(live, cx));
         }
@@ -172,30 +136,7 @@ impl Adeline {
         if !live.stderr.is_empty() {
             content = content.child(self.crash_output(&thread.id, &live.stderr, cx));
         }
-        if live.storage_failed {
-            content = content.child(self.button(
-                "retry-storage",
-                "Retry storage",
-                Action::RetryStorage,
-                cx,
-            ));
-        } else if live.replacement && !live.shutting_down {
-            content = content.child(self.button(
-                "replace-session",
-                "Start new session with saved context",
-                Action::ReplaceSession,
-                cx,
-            ));
-        } else if live.error.is_some()
-            && !live.auth_required
-            && !live.shutting_down
-            && !live.processing
-            && !live.recovering_storage
-            && !live.last_prompt.is_empty()
-            && !thread.status.closed()
-        {
-            content = content.child(self.button("retry-prompt", "Retry", Action::RetryPrompt, cx));
-        }
+        content = content.children(self.recovery_button(thread, live, cx));
         if live.shutting_down {
             content = content.child(text(
                 "Waiting for the agent to stop…",
@@ -207,6 +148,83 @@ impl Adeline {
             content = content.child(self.button("force-stop", "Force Stop", Action::ForceStop, cx));
         }
         content.into_any_element()
+    }
+
+    fn status_line(
+        &self,
+        thread: &Thread,
+        live: &Live,
+        turn: Option<usize>,
+        cx: &Context<Self>,
+    ) -> Option<AnyElement> {
+        let writing = live
+            .assistant
+            .and_then(|i| thread.messages.get(i))
+            .is_some_and(|m| {
+                !m.text.is_empty()
+                    || (config::with(|s| s.modes.chats.show_thinking) && !m.thought.is_empty())
+            });
+        let label = self.activity_label(thread, live);
+        if live.processing && live.storage_failed {
+            Some(
+                text(
+                    "Stopping the turn before storage can be retried…",
+                    13.,
+                    theme::color("muted_text"),
+                )
+                .into_any_element(),
+            )
+        } else if let Some(minutes) = self.silent_minutes(thread, live) {
+            Some(self.hang_notice(minutes, cx).into_any_element())
+        } else if live.processing && (!writing || label.is_some()) {
+            Some(
+                row()
+                    .h(panes::dp(24.))
+                    .gap(panes::dp(8.))
+                    .text_color(theme::islands(cx).fg3)
+                    .child(chat::spinner())
+                    .child(chat::thinking_label(label))
+                    .into_any_element(),
+            )
+        } else if !live.processing
+            && turn.is_some_and(|turn| thread.turn_tools(turn).any(|t| t.running))
+        {
+            Some(
+                row()
+                    .gap_2()
+                    .text_size(panes::dp(theme::T_UI))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(chat::spinner())
+                    .child("Background tasks running")
+                    .into_any_element(),
+            )
+        } else {
+            None
+        }
+    }
+
+    fn recovery_button(&self, thread: &Thread, live: &Live, cx: &Context<Self>) -> Option<Button> {
+        if live.storage_failed {
+            Some(self.button("retry-storage", "Retry storage", Action::RetryStorage, cx))
+        } else if live.replacement && !live.shutting_down {
+            Some(self.button(
+                "replace-session",
+                "Start new session with saved context",
+                Action::ReplaceSession,
+                cx,
+            ))
+        } else if live.error.is_some()
+            && !live.auth_required
+            && !live.shutting_down
+            && !live.processing
+            && !live.recovering_storage
+            && !live.last_prompt.is_empty()
+            && !thread.status.closed()
+        {
+            Some(self.button("retry-prompt", "Retry", Action::RetryPrompt, cx))
+        } else {
+            None
+        }
     }
 
     pub(super) fn dismiss_errors(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -1063,59 +1081,11 @@ impl Adeline {
                     .ghost(),
             );
         let mono = theme.mono_font_family.clone();
-        let rows = self.traffic.iter().enumerate().map(|(ix, entry)| {
-            let (marker, color) = match entry.direction {
-                Direction::ToAgent => ("→ agent", theme.foreground),
-                Direction::FromAgent => ("← agent", theme.foreground),
-                Direction::Stderr => ("stderr", theme.muted_foreground),
-            };
-            let note = match entry.note {
-                TrafficNote::NotJson => Some("not JSON"),
-                TrafficNote::Unknown => Some("unknown"),
-                TrafficNote::None => None,
-            };
-            let copy = entry.text.clone();
-            row()
-                .id(SharedString::from(format!("traffic:{ix}")))
-                .items_start()
-                .gap_2()
-                .px_3()
-                .py_0p5()
-                .text_size(panes::dp(theme::T_CAPTION))
-                .font_family(mono.clone())
-                .child(
-                    div()
-                        .w(rems(4.5))
-                        .flex_shrink_0()
-                        .text_color(theme.muted_foreground)
-                        .child(clock(entry.at)),
-                )
-                .child(
-                    div()
-                        .w(rems(4.))
-                        .flex_shrink_0()
-                        .text_color(theme.muted_foreground)
-                        .child(marker),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .text_color(color)
-                        .when_some(note, |text, note| {
-                            text.child(div().text_color(theme.warning).child(note))
-                        })
-                        .child(excerpt(&entry.text, TRAFFIC_LINES, TRAFFIC_CHARS)),
-                )
-                .context_menu(move |menu, _, _| {
-                    let copy = copy.clone();
-                    menu.item(
-                        PopupMenuItem::new("Copy message").on_click(move |_, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
-                        }),
-                    )
-                })
-        });
+        let rows = self
+            .traffic
+            .iter()
+            .enumerate()
+            .map(|(ix, entry)| traffic_row(ix, entry, mono.clone(), cx));
         col()
             .id("acp-traffic")
             .test_support()
@@ -1200,4 +1170,64 @@ fn step_glyph(status: StepStatus, muted: Hsla) -> AnyElement {
             .text_color(muted)
             .into_any_element(),
     }
+}
+
+fn traffic_row(
+    ix: usize,
+    entry: &conversation::TrafficEntry,
+    mono: SharedString,
+    cx: &App,
+) -> impl IntoElement {
+    let theme = cx.theme();
+    let (marker, color) = match entry.direction {
+        Direction::ToAgent => ("→ agent", theme.foreground),
+        Direction::FromAgent => ("← agent", theme.foreground),
+        Direction::Stderr => ("stderr", theme.muted_foreground),
+    };
+    let note = match entry.note {
+        TrafficNote::NotJson => Some("not JSON"),
+        TrafficNote::Unknown => Some("unknown"),
+        TrafficNote::None => None,
+    };
+    let copy = entry.text.clone();
+    row()
+        .id(SharedString::from(format!("traffic:{ix}")))
+        .items_start()
+        .gap_2()
+        .px_3()
+        .py_0p5()
+        .text_size(panes::dp(theme::T_CAPTION))
+        .font_family(mono)
+        .child(
+            div()
+                .w(rems(4.5))
+                .flex_shrink_0()
+                .text_color(theme.muted_foreground)
+                .child(clock(entry.at)),
+        )
+        .child(
+            div()
+                .w(rems(4.))
+                .flex_shrink_0()
+                .text_color(theme.muted_foreground)
+                .child(marker),
+        )
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .text_color(color)
+                .when_some(note, |text, note| {
+                    text.child(div().text_color(theme.warning).child(note))
+                })
+                .child(excerpt(&entry.text, TRAFFIC_LINES, TRAFFIC_CHARS)),
+        )
+        .context_menu(move |menu, _, _| {
+            let copy = copy.clone();
+            menu.item(
+                PopupMenuItem::new("Copy message").on_click(move |_, _, cx| {
+                    cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
+                }),
+            )
+        })
 }

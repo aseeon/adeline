@@ -5,7 +5,6 @@ use super::*;
 impl Adeline {
     pub(crate) fn composer_view(&self, width_rems: f32, focused: bool, cx: &Context<Self>) -> Div {
         let fit = Fit::for_width(width_rems.min(CHAT_COLUMN) - 4.);
-        let theme = cx.theme();
         let isl = theme::islands(cx);
         let bound = self.bound_definition();
         let selected = self.selected_definition();
@@ -29,16 +28,6 @@ impl Adeline {
             bound.is_none() && self.agent_catalog().entries.is_empty() && !self.demo_mode;
         let (agent_path, agent_color) = self.agent_icon(&agent_name, cx);
         let processing = self.conversation_processing();
-        let can_send = !self.attachments.is_empty()
-            || self
-                .composer
-                .read(cx)
-                .text()
-                .chars()
-                .any(|character| !character.is_whitespace());
-        let steering = self
-            .current_live()
-            .is_some_and(|live| live.features.steering);
         let defaults = (bound.is_none())
             .then(|| selected.map(|d| (d.model.clone(), d.effort.clone(), d.mode.clone())))
             .flatten();
@@ -72,105 +61,7 @@ impl Adeline {
                 menu(conversation::Category::Mode, fit.mode),
             )
         };
-        let send_tooltip = if config::with(|s| s.modes.chats.submit_on_enter) {
-            "Send (Enter)".to_owned()
-        } else {
-            format!("Send ({})", conversation_ui::shortcut("Ctrl+Enter"))
-        };
-        let send_button = |id: &'static str, icon_path: &str, turn: f32| {
-            Button::new(id)
-                .size(dp(30.))
-                .p_0()
-                .rounded(dp(9.))
-                .bg(isl.send_bg)
-                .text_color(isl.send_fg)
-                .icon(
-                    Icon::default()
-                        .path(icon_path.to_owned())
-                        .size(dp(16.))
-                        .rotate(Radians(turn)),
-                )
-        };
-        let up = -std::f32::consts::FRAC_PI_2;
-        let send = if no_agents {
-            Button::new("send-chat-message")
-                .small()
-                .primary()
-                .label("Add an agent…")
-                .on_click(cx.listener(|app, _, window, cx| app.act(Action::AddAgent, window, cx)))
-                .into_any_element()
-        } else if processing {
-            let owner = cx.weak_entity();
-            let send_now = if steering {
-                format!(
-                    "Send now ({})",
-                    conversation_ui::shortcut("Ctrl+Shift+Enter")
-                )
-            } else {
-                format!(
-                    "Send now: stops the turn, then sends ({})",
-                    conversation_ui::shortcut("Ctrl+Shift+Enter")
-                )
-            };
-            row()
-                .gap(dp(4.))
-                .child(
-                    Button::new("send-chat-options")
-                        .ghost()
-                        .size(dp(28.))
-                        .p_0()
-                        .text_color(isl.fg3)
-                        .icon(Icon::default().path("chevron.svg").size(dp(12.)))
-                        .accessibility_label("Send options")
-                        .tooltip("Send options")
-                        .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
-                            let (queue, now) = (owner.clone(), owner.clone());
-                            menu.item(PopupMenuItem::new("Queue").on_click(move |_, window, cx| {
-                                let _ =
-                                    queue.update(cx, |app, cx| app.act(Action::Send, window, cx));
-                            }))
-                            .item(
-                                PopupMenuItem::new(send_now.clone()).on_click(
-                                    move |_, window, cx| {
-                                        let _ = now.update(cx, |app, cx| {
-                                            app.act(Action::SendNow, window, cx);
-                                        });
-                                    },
-                                ),
-                            )
-                        }),
-                )
-                .child(
-                    send_button("send-chat-message", "arrow.svg", up)
-                        .accessibility_label("Queue")
-                        .tooltip("Queue: sends when this turn ends")
-                        .when(!can_send, |button| button.opacity(0.25))
-                        .when(can_send, |button| button.border_0())
-                        .disabled(!can_send)
-                        .on_click(
-                            cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx)),
-                        ),
-                )
-                .child(
-                    send_button("stop-chat-turn", "stop.svg", 0.)
-                        .border_0()
-                        .accessibility_label("Stop")
-                        .tooltip(format!("Stop ({})", conversation_ui::shortcut("Ctrl+.")))
-                        .on_click(
-                            cx.listener(|app, _, window, cx| app.act(Action::Stop, window, cx)),
-                        ),
-                )
-                .into_any_element()
-        } else {
-            send_button("send-chat-message", "arrow.svg", up)
-                .accessibility_label("Send")
-                .tooltip(send_tooltip)
-                .when(!can_send, |button| button.opacity(0.25))
-                .when(can_send, |button| button.border_0())
-                .disabled(!can_send)
-                .on_click(cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx)))
-                .into_any_element()
-        };
+        let send = self.send_controls(no_agents, processing, cx);
         let owner = cx.weak_entity();
         let textarea = Textarea::new(&self.composer)
             .aria_label("Message")
@@ -183,23 +74,7 @@ impl Adeline {
                     .update(cx, |app, cx| app.paste(item, cx))
                     .unwrap_or(false)
             });
-        let chips = (!self.attachments.is_empty() || self.attachment_error.is_some()).then(|| {
-            col()
-                .w_full()
-                .gap_1()
-                .mb_2()
-                .when(!self.attachments.is_empty(), |column| {
-                    column.child(self.attachment_chips(&self.attachments, None, cx))
-                })
-                .when_some(self.attachment_error.clone(), |column, error| {
-                    column.child(
-                        div()
-                            .text_size(dp(theme::T_UI))
-                            .text_color(theme.danger)
-                            .child(error),
-                    )
-                })
-        });
+        let chips = self.attachment_strip(cx);
         let context = self
             .selected
             .map(|ix| context_ring(self.workspace().threads[ix].context, cx));
@@ -256,13 +131,8 @@ impl Adeline {
                     .child(
                         self.command_popover(
                             "files",
-                            Button::new("attach-chat-files")
-                                .ghost()
-                                .size(dp(28.))
-                                .p_0()
+                            ghost_icon("attach-chat-files", "plus.svg", 16., isl.fg2)
                                 .flex_shrink_0()
-                                .text_color(isl.fg2)
-                                .icon(Icon::default().path("plus.svg").size(dp(16.)))
                                 .accessibility_label("Attach files…")
                                 .tooltip(format!(
                                     "Attach files… ({})",
@@ -329,6 +199,134 @@ impl Adeline {
             .child(chat_column(self.section).child(div().relative().child(island).children(slash)))
     }
 
+    fn attachment_strip(&self, cx: &Context<Self>) -> Option<Div> {
+        (!self.attachments.is_empty() || self.attachment_error.is_some()).then(|| {
+            col()
+                .w_full()
+                .gap_1()
+                .mb_2()
+                .when(!self.attachments.is_empty(), |column| {
+                    column.child(self.attachment_chips(&self.attachments, None, cx))
+                })
+                .when_some(self.attachment_error.clone(), |column, error| {
+                    column.child(
+                        div()
+                            .text_size(dp(theme::T_UI))
+                            .text_color(cx.theme().danger)
+                            .child(error),
+                    )
+                })
+        })
+    }
+
+    fn send_controls(&self, no_agents: bool, processing: bool, cx: &Context<Self>) -> AnyElement {
+        let isl = theme::islands(cx);
+        let can_send = !self.attachments.is_empty()
+            || self
+                .composer
+                .read(cx)
+                .text()
+                .chars()
+                .any(|character| !character.is_whitespace());
+        let steering = self
+            .current_live()
+            .is_some_and(|live| live.features.steering);
+        let send_tooltip = if config::with(|s| s.modes.chats.submit_on_enter) {
+            "Send (Enter)".to_owned()
+        } else {
+            format!("Send ({})", conversation_ui::shortcut("Ctrl+Enter"))
+        };
+        let send_button = |id: &'static str, icon_path: &str, turn: f32| {
+            Button::new(id)
+                .size(dp(30.))
+                .p_0()
+                .rounded(dp(9.))
+                .bg(isl.send_bg)
+                .text_color(isl.send_fg)
+                .icon(
+                    Icon::default()
+                        .path(icon_path.to_owned())
+                        .size(dp(16.))
+                        .rotate(Radians(turn)),
+                )
+        };
+        let up = -std::f32::consts::FRAC_PI_2;
+        if no_agents {
+            Button::new("send-chat-message")
+                .small()
+                .primary()
+                .label("Add an agent…")
+                .on_click(cx.listener(|app, _, window, cx| app.act(Action::AddAgent, window, cx)))
+                .into_any_element()
+        } else if processing {
+            let owner = cx.weak_entity();
+            let send_now = if steering {
+                format!(
+                    "Send now ({})",
+                    conversation_ui::shortcut("Ctrl+Shift+Enter")
+                )
+            } else {
+                format!(
+                    "Send now: stops the turn, then sends ({})",
+                    conversation_ui::shortcut("Ctrl+Shift+Enter")
+                )
+            };
+            row()
+                .gap(dp(4.))
+                .child(
+                    ghost_icon("send-chat-options", "chevron.svg", 12., isl.fg3)
+                        .accessibility_label("Send options")
+                        .tooltip("Send options")
+                        .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
+                            let (queue, now) = (owner.clone(), owner.clone());
+                            menu.item(PopupMenuItem::new("Queue").on_click(move |_, window, cx| {
+                                let _ =
+                                    queue.update(cx, |app, cx| app.act(Action::Send, window, cx));
+                            }))
+                            .item(
+                                PopupMenuItem::new(send_now.clone()).on_click(
+                                    move |_, window, cx| {
+                                        let _ = now.update(cx, |app, cx| {
+                                            app.act(Action::SendNow, window, cx);
+                                        });
+                                    },
+                                ),
+                            )
+                        }),
+                )
+                .child(
+                    send_button("send-chat-message", "arrow.svg", up)
+                        .accessibility_label("Queue")
+                        .tooltip("Queue: sends when this turn ends")
+                        .when(!can_send, |button| button.opacity(0.25))
+                        .when(can_send, |button| button.border_0())
+                        .disabled(!can_send)
+                        .on_click(
+                            cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx)),
+                        ),
+                )
+                .child(
+                    send_button("stop-chat-turn", "stop.svg", 0.)
+                        .border_0()
+                        .accessibility_label("Stop")
+                        .tooltip(format!("Stop ({})", conversation_ui::shortcut("Ctrl+.")))
+                        .on_click(
+                            cx.listener(|app, _, window, cx| app.act(Action::Stop, window, cx)),
+                        ),
+                )
+                .into_any_element()
+        } else {
+            send_button("send-chat-message", "arrow.svg", up)
+                .accessibility_label("Send")
+                .tooltip(send_tooltip)
+                .when(!can_send, |button| button.opacity(0.25))
+                .when(can_send, |button| button.border_0())
+                .disabled(!can_send)
+                .on_click(cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx)))
+                .into_any_element()
+        }
+    }
+
     fn option_menu(
         &self,
         category: conversation::Category,
@@ -369,13 +367,8 @@ impl Adeline {
         };
         let shortcut = conversation_ui::shortcut(keys);
         let trigger = if category == Category::Other {
-            Button::new(id)
-                .ghost()
-                .size(dp(28.))
-                .p_0()
+            ghost_icon(id, "more.svg", 16., theme::islands(cx).fg3)
                 .flex_shrink_0()
-                .text_color(theme::islands(cx).fg3)
-                .icon(Icon::default().path("more.svg").size(dp(16.)))
                 .accessibility_label(heading)
         } else {
             let option = &shown[0];
@@ -407,21 +400,13 @@ impl Adeline {
         let owner = cx.weak_entity();
         let content_owner = owner.clone();
         let state = self.command_popup.clone();
-        let cache_note = matches!(category, Category::Model | Category::Effort);
+        let anchor = if category == Category::Mode {
+            Anchor::BottomRight
+        } else {
+            Anchor::BottomLeft
+        };
         Some(
-            component::popover::Popover::new(menu)
-                .anchor(if category == Category::Mode {
-                    Anchor::BottomRight
-                } else {
-                    Anchor::BottomLeft
-                })
-                .trigger(trigger)
-                .open(self.menu == Some(menu))
-                .p_0()
-                .shadow(views::menu_shadow(cx))
-                .when_some(state.as_ref(), |popover, state| {
-                    popover.track_focus(&state.focus_handle(cx))
-                })
+            self.menu_popover(menu, trigger, anchor, state.as_ref(), cx)
                 .on_open_change(move |open, window, cx| {
                     let _ = owner.update(cx, |app, cx| {
                         if *open {
@@ -436,78 +421,19 @@ impl Adeline {
                 })
                 .content(move |_, _, cx| {
                     let popover = cx.entity();
-                    let owner = content_owner.clone();
-                    let (groups, ids) = option_groups(category, &shown, &currents);
-                    let values: Vec<Vec<String>> = groups
-                        .iter()
-                        .map(|(_, items)| items.iter().map(|item| item.0.clone()).collect())
-                        .collect();
-                    col().w(rems(24.)).when_some(state.as_ref(), |column, state| {
-                        let mut command = Command::new(state)
-                            .bordered(false)
-                            .placeholder(format!("Search {}", heading.to_lowercase()))
-                            .when(cache_note, |command| {
-                                command.header(|_, _, cx| {
-                                    div()
-                                        .px_3()
-                                        .py_2()
-                                        .text_size(dp(theme::T_CAPTION))
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(
-                                            "Switching may invalidate the prompt cache and cost more on the next turn.",
-                                        )
-                                })
-                            });
-                        for (group, items) in &groups {
-                            let mut entry = CommandGroup::new();
-                            if !group.is_empty() {
-                                entry = entry.label(group.clone());
-                            }
-                            command = command.group(entry.items(items.iter().map(
-                                |(value, name, description, checked)| {
-                                    let item = CommandItem::new()
-                                        .label(name.clone())
-                                        .keywords([value.clone()])
-                                        .checked(*checked);
-                                    if description.is_empty() {
-                                        return item;
-                                    }
-                                    let (name, description) = (name.clone(), description.clone());
-                                    item.child(move |_, cx| {
-                                        col()
-                                            .child(name.clone())
-                                            .child(
-                                                div()
-                                                    .text_size(dp(theme::T_CAPTION))
-                                                    .text_color(cx.theme().muted_foreground)
-                                                    .child(description.clone()),
-                                            )
-                                    })
-                                },
-                            )));
-                        }
-                        column.child(command.on_confirm(move |path, window, cx| {
-                            let (Some(value), Some(option)) = (
-                                values.get(path.section).and_then(|items| items.get(path.row)).cloned(),
-                                ids.get(path.section).cloned(),
-                            ) else {
-                                return;
-                            };
-                            popover.update(cx, |state, cx| state.dismiss(window, cx));
-                            let _ = owner.update(cx, |app, cx| {
-                                app.menu = None;
-                                app.act(
-                                    Action::SetOption {
-                                        category,
-                                        option,
-                                        value,
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            });
-                        }))
-                    })
+                    col()
+                        .w(rems(24.))
+                        .when_some(state.as_ref(), |column, state| {
+                            column.child(option_command(
+                                state,
+                                category,
+                                heading,
+                                &shown,
+                                &currents,
+                                popover,
+                                content_owner.clone(),
+                            ))
+                        })
                 })
                 .into_any_element(),
         )
@@ -580,6 +506,91 @@ fn option_groups(
     (groups, ids)
 }
 
+fn option_command(
+    state: &Entity<component::command::CommandState>,
+    category: conversation::Category,
+    heading: &str,
+    shown: &[conversation::SessionOption],
+    currents: &[String],
+    popover: Entity<component::popover::PopoverState>,
+    owner: WeakEntity<Adeline>,
+) -> Command {
+    use conversation::Category;
+    let (groups, ids) = option_groups(category, shown, currents);
+    let values: Vec<Vec<String>> = groups
+        .iter()
+        .map(|(_, items)| items.iter().map(|item| item.0.clone()).collect())
+        .collect();
+    let mut command = Command::new(state)
+        .bordered(false)
+        .placeholder(format!("Search {}", heading.to_lowercase()))
+        .when(
+            matches!(category, Category::Model | Category::Effort),
+            |command| {
+                command.header(|_, _, cx| {
+                    div()
+                    .px_3()
+                    .py_2()
+                    .text_size(dp(theme::T_CAPTION))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(
+                        "Switching may invalidate the prompt cache and cost more on the next turn.",
+                    )
+                })
+            },
+        );
+    for (group, items) in &groups {
+        let mut entry = CommandGroup::new();
+        if !group.is_empty() {
+            entry = entry.label(group.clone());
+        }
+        command = command.group(entry.items(items.iter().map(
+            |(value, name, description, checked)| {
+                let item = CommandItem::new()
+                    .label(name.clone())
+                    .keywords([value.clone()])
+                    .checked(*checked);
+                if description.is_empty() {
+                    return item;
+                }
+                let (name, description) = (name.clone(), description.clone());
+                item.child(move |_, cx| {
+                    col().child(name.clone()).child(
+                        div()
+                            .text_size(dp(theme::T_CAPTION))
+                            .text_color(cx.theme().muted_foreground)
+                            .child(description.clone()),
+                    )
+                })
+            },
+        )));
+    }
+    command.on_confirm(move |path, window, cx| {
+        let (Some(value), Some(option)) = (
+            values
+                .get(path.section)
+                .and_then(|items| items.get(path.row))
+                .cloned(),
+            ids.get(path.section).cloned(),
+        ) else {
+            return;
+        };
+        popover.update(cx, |state, cx| state.dismiss(window, cx));
+        let _ = owner.update(cx, |app, cx| {
+            app.menu = None;
+            app.act(
+                Action::SetOption {
+                    category,
+                    option,
+                    value,
+                },
+                window,
+                cx,
+            );
+        });
+    })
+}
+
 fn model_label(model: &str) -> String {
     model.rsplit('/').next().unwrap_or(model).to_owned()
 }
@@ -638,6 +649,15 @@ fn execution_setting(
                 }),
             )
     })
+}
+
+fn ghost_icon(id: &'static str, path: &'static str, size: f32, color: Hsla) -> Button {
+    Button::new(id)
+        .ghost()
+        .size(dp(28.))
+        .p_0()
+        .text_color(color)
+        .icon(Icon::default().path(path).size(dp(size)))
 }
 
 fn picker(button: Button, cx: &App) -> Button {
@@ -729,20 +749,13 @@ impl Render for Composer {
         } else {
             f32::MAX
         };
-        let measured = cx.entity();
+        let measured = cx.weak_entity();
         self.owner
             .update(cx, |app, cx| {
                 let focused = app.composer.focus_handle(cx).is_focused(window);
                 app.composer_view(width, focused, cx)
                     .relative()
-                    .child(size_probe(move |size, cx| {
-                        measured.update(cx, |composer, cx| {
-                            if (composer.width - size.width).abs() > px(0.5) {
-                                composer.width = size.width;
-                                cx.notify();
-                            }
-                        });
-                    }))
+                    .child(width_probe(measured, |composer| &mut composer.width))
                     .into_any_element()
             })
             .unwrap_or_else(|_| div().into_any_element())

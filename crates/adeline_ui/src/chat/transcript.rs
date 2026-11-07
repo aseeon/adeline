@@ -54,12 +54,6 @@ impl Adeline {
         let message = &thread.messages[i];
         let user = message.role == MessageRole::User;
         let reply = (!user).then(|| reply_text(&thread.id, i, message, window, cx));
-        let panel = if self.section == Section::Docs {
-            panes::DOCS_CHAT
-        } else {
-            panes::CHATS_MAIN
-        };
-        let selectable = panes::selectable_in(panel, cx);
         let theme = cx.theme();
         let thinking = config::with(|s| s.modes.chats.show_thinking);
         if !user && message.text.is_empty() && (message.thought.is_empty() || !thinking) {
@@ -71,6 +65,131 @@ impl Adeline {
                 .into_any_element();
         }
         let time = message_time(&message.created_at);
+        let isl = theme::islands(cx);
+        let body = self.message_body(message, i, reply, cx);
+        let group = SharedString::from(format!("message:{}:{i}", thread.id));
+        let content = if user {
+            col()
+                .group(group.clone())
+                .items_end()
+                .child(
+                    div()
+                        .max_w(relative(0.78))
+                        .px(dp(16.))
+                        .py(dp(10.))
+                        .rounded(dp(14.))
+                        .bg(isl.bubble)
+                        .text_color(isl.fg)
+                        .child(body),
+                )
+                .child(
+                    row()
+                        .h(dp(28.))
+                        .gap(dp(4.))
+                        .text_size(dp(theme::T_CAPTION))
+                        .text_color(isl.fg3)
+                        .child(
+                            div()
+                                .invisible()
+                                .group_hover(group, |style| style.visible())
+                                .child(
+                                    self.icon_button(
+                                        SharedString::from(format!(
+                                            "copy-prompt:{}:{i}",
+                                            thread.id
+                                        )),
+                                        "Copy",
+                                        Icon::default().path("copy.svg"),
+                                        Action::CopyMessage(i),
+                                        cx,
+                                    )
+                                    .xsmall()
+                                    .text_color(isl.fg3),
+                                ),
+                        )
+                        .children(time),
+                )
+                .into_any_element()
+        } else {
+            let name = self.agent_name(&thread.provider);
+            let writing = self.conversation_processing()
+                && thread
+                    .turn_of(thread.messages.len())
+                    .is_some_and(|last| i > last);
+            let meta = row()
+                .h(dp(24.))
+                .gap(dp(6.))
+                .text_size(dp(theme::T_CAPTION))
+                .text_color(isl.fg3)
+                .child(agent_mark(self.agent_icon(&thread.provider, cx)).size(dp(13.)))
+                .child(name)
+                .children(time.map(|time| format!("· {time}")));
+            col()
+                .w_full()
+                .min_w_0()
+                .children(
+                    self.thought_block(thread, i, cx)
+                        .map(|thought| div().mb(dp(6.)).child(thought)),
+                )
+                .when(!message.text.is_empty(), |content| {
+                    content.child(div().group("reply").text_color(isl.fg).child(body))
+                })
+                .child(meta.mt(dp(4.)))
+                .when(thread.ends_turn(i) && !writing, |content| {
+                    content
+                        .children(self.turn_cards(thread, i, cx))
+                        .child(self.closing_row(thread, i, cx))
+                })
+                .into_any_element()
+        };
+        div()
+            .id(SharedString::from(format!(
+                "chat-message:{}:{}:{i}",
+                self.workspace().config.id,
+                thread.id
+            )))
+            .w_full()
+            .min_w_0()
+            .when(self.activity.lit == Some(i), |row| {
+                row.bg(theme.primary.alpha(0.08))
+            })
+            .child(
+                chat_column(self.section)
+                    .pb(dp(if user { 16. } else { 28. }))
+                    .when_some(thread.fork.as_ref().filter(|_| i == 0), |column, fork| {
+                        column.child(self.fork_marker(fork, cx))
+                    })
+                    .when(i == 0, |column| {
+                        column.children(thread.activity.iter().filter(|a| a.kind == "note").map(
+                            |note| {
+                                div()
+                                    .pb_3()
+                                    .text_size(dp(theme::T_UI))
+                                    .text_color(theme.muted_foreground)
+                                    .child(note.title.clone())
+                            },
+                        ))
+                    })
+                    .child(content),
+            )
+            .into_any_element()
+    }
+
+    fn message_body(
+        &self,
+        message: &Message,
+        i: usize,
+        reply: Option<Entity<TextViewState>>,
+        cx: &Context<Self>,
+    ) -> Div {
+        let user = message.role == MessageRole::User;
+        let panel = if self.section == Section::Docs {
+            panes::DOCS_CHAT
+        } else {
+            panes::CHATS_MAIN
+        };
+        let selectable = panes::selectable_in(panel, cx);
+        let theme = cx.theme();
         let isl = theme::islands(cx);
         let leading = relative(if user { 1.55 } else { 1.65 });
         let mut body = col()
@@ -158,111 +277,7 @@ impl Adeline {
                     .object_fit(ObjectFit::Contain),
             );
         }
-        let copy = |id: String| {
-            Button::new(SharedString::from(id))
-                .ghost()
-                .xsmall()
-                .text_color(isl.fg3)
-                .icon(Icon::default().path("copy.svg"))
-                .accessibility_label("Copy")
-                .tooltip("Copy")
-                .on_click(cx.listener(move |app, _, window, cx| {
-                    app.act(Action::CopyMessage(i), window, cx);
-                }))
-        };
-        let group = SharedString::from(format!("message:{}:{i}", thread.id));
-        let content = if user {
-            col()
-                .group(group.clone())
-                .items_end()
-                .child(
-                    div()
-                        .max_w(relative(0.78))
-                        .px(dp(16.))
-                        .py(dp(10.))
-                        .rounded(dp(14.))
-                        .bg(isl.bubble)
-                        .text_color(isl.fg)
-                        .child(body),
-                )
-                .child(
-                    row()
-                        .h(dp(28.))
-                        .gap(dp(4.))
-                        .text_size(dp(theme::T_CAPTION))
-                        .text_color(isl.fg3)
-                        .child(
-                            div()
-                                .invisible()
-                                .group_hover(group, |style| style.visible())
-                                .child(copy(format!("copy-prompt:{}:{i}", thread.id))),
-                        )
-                        .children(time),
-                )
-                .into_any_element()
-        } else {
-            let name = self.agent_name(&thread.provider);
-            let writing = self.conversation_processing()
-                && thread
-                    .turn_of(thread.messages.len())
-                    .is_some_and(|last| i > last);
-            let meta = row()
-                .h(dp(24.))
-                .gap(dp(6.))
-                .text_size(dp(theme::T_CAPTION))
-                .text_color(isl.fg3)
-                .child(agent_mark(self.agent_icon(&thread.provider, cx)).size(dp(13.)))
-                .child(name)
-                .children(time.map(|time| format!("· {time}")));
-            col()
-                .w_full()
-                .min_w_0()
-                .children(
-                    self.thought_block(thread, i, cx)
-                        .map(|thought| div().mb(dp(6.)).child(thought)),
-                )
-                .when(!message.text.is_empty(), |content| {
-                    content.child(div().group("reply").text_color(isl.fg).child(body))
-                })
-                .child(meta.mt(dp(4.)))
-                .when(thread.ends_turn(i) && !writing, |content| {
-                    content
-                        .children(self.turn_cards(thread, i, cx))
-                        .child(self.closing_row(thread, i, cx))
-                })
-                .into_any_element()
-        };
-        div()
-            .id(SharedString::from(format!(
-                "chat-message:{}:{}:{i}",
-                self.workspace().config.id,
-                thread.id
-            )))
-            .w_full()
-            .min_w_0()
-            .when(self.activity.lit == Some(i), |row| {
-                row.bg(theme.primary.alpha(0.08))
-            })
-            .child(
-                chat_column(self.section)
-                    .pb(dp(if user { 16. } else { 28. }))
-                    .when_some(thread.fork.as_ref().filter(|_| i == 0), |column, fork| {
-                        column.child(self.fork_marker(fork, cx))
-                    })
-                    .when(i == 0, |column| {
-                        column.children(thread.activity.iter().filter(|a| a.kind == "note").map(
-                            |note| {
-                                div()
-                                    .pb_3()
-                                    .text_size(dp(theme::T_UI))
-                                    .text_color(theme.muted_foreground)
-                                    .child(note.title.clone())
-                            },
-                        ))
-                    })
-                    .child(content),
-            )
-            .into_any_element()
+        body
     }
 
     fn fork_marker(&self, fork: &Fork, cx: &Context<Self>) -> impl IntoElement {
@@ -328,16 +343,14 @@ impl Adeline {
                 .get(&thread.id)
                 .is_some_and(|live| !live.last_prompt.is_empty());
         let action = |name: &str, asset: &str, label: &'static str, action: Action| {
-            Button::new(SharedString::from(format!("{name}:{}:{i}", thread.id)))
-                .ghost()
-                .small()
-                .text_color(theme.muted_foreground)
-                .icon(Icon::default().path(format!("{asset}.svg")))
-                .accessibility_label(label)
-                .tooltip(label)
-                .on_click(cx.listener(move |app, _, window, cx| {
-                    app.act(action.clone(), window, cx);
-                }))
+            self.icon_button(
+                SharedString::from(format!("{name}:{}:{i}", thread.id)),
+                label,
+                Icon::default().path(format!("{asset}.svg")),
+                action,
+                cx,
+            )
+            .text_color(theme.muted_foreground)
         };
         let actions = row()
             .ml(rems(-0.3125))
@@ -355,24 +368,42 @@ impl Adeline {
             });
         let mut content = row().w_full().min_w_0().gap_1().child(actions);
         if let Some(summary) = summary {
-            let mut parts = Vec::new();
-            if summary.read > 0 {
-                parts.push(("file", summary.read, "file", "Read"));
-            }
-            if summary.edited > 0 {
-                parts.push(("edit", summary.edited, "file", "edited"));
-            }
-            parts.push(("wrench", summary.tools, "tool", "used"));
-            let spoken = parts
-                .iter()
-                .map(|(_, number, noun, verb)| format!("{verb} {}", count(*number, noun)))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let last = parts.len() - 1;
-            let mut button = Button::new(SharedString::from(format!(
-                "turn-summary:{}:{i}",
-                thread.id
-            )))
+            let id = SharedString::from(format!("turn-summary:{}:{i}", thread.id));
+            content = content.child(self.summary_button(id, summary, key, expanded, cx));
+        }
+        col()
+            .w_full()
+            .mt_2()
+            .child(content)
+            .when_some(turn.filter(|_| expanded), |column, turn| {
+                column.child(tool_steps(thread.turn_tools(turn).collect(), cx))
+            })
+    }
+
+    fn summary_button(
+        &self,
+        id: SharedString,
+        summary: TurnSummary,
+        key: String,
+        expanded: bool,
+        cx: &Context<Self>,
+    ) -> Button {
+        let theme = cx.theme();
+        let mut parts = Vec::new();
+        if summary.read > 0 {
+            parts.push(("file", summary.read, "file", "Read"));
+        }
+        if summary.edited > 0 {
+            parts.push(("edit", summary.edited, "file", "edited"));
+        }
+        parts.push(("wrench", summary.tools, "tool", "used"));
+        let spoken = parts
+            .iter()
+            .map(|(_, number, noun, verb)| format!("{verb} {}", count(*number, noun)))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let last = parts.len() - 1;
+        let mut button = Button::new(id)
             .ghost()
             .small()
             .text_color(theme.muted_foreground)
@@ -383,37 +414,26 @@ impl Adeline {
             .on_click(cx.listener(move |app, _, window, cx| {
                 app.act(Action::ToggleTool(key.clone()), window, cx);
             }));
-            for (ix, (asset, number, noun, _)) in parts.into_iter().enumerate() {
-                button = button.child(
-                    row()
-                        .gap_1()
-                        .when(ix < last, |part| part.mr_1p5())
-                        .child(icon(asset).size(rems(0.8125)))
-                        .child(
-                            div()
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(theme.foreground)
-                                .child(number.to_string()),
-                        )
-                        .child(format!(
-                            "{noun}{}{}",
-                            if number == 1 { "" } else { "s" },
-                            if ix < last { "," } else { "" }
-                        )),
-                );
-            }
-            content =
-                content.child(button.child(
-                    icon(if expanded { "chevron" } else { "caret-right" }).size(rems(0.625)),
-                ));
+        for (ix, (asset, number, noun, _)) in parts.into_iter().enumerate() {
+            button = button.child(
+                row()
+                    .gap_1()
+                    .when(ix < last, |part| part.mr_1p5())
+                    .child(icon(asset).size(rems(0.8125)))
+                    .child(
+                        div()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(theme.foreground)
+                            .child(number.to_string()),
+                    )
+                    .child(format!(
+                        "{noun}{}{}",
+                        if number == 1 { "" } else { "s" },
+                        if ix < last { "," } else { "" }
+                    )),
+            );
         }
-        col()
-            .w_full()
-            .mt_2()
-            .child(content)
-            .when_some(turn.filter(|_| expanded), |column, turn| {
-                column.child(tool_steps(thread.turn_tools(turn).collect(), cx))
-            })
+        button.child(icon(if expanded { "chevron" } else { "caret-right" }).size(rems(0.625)))
     }
 
     pub(crate) fn decision_row(&self, index: usize, cx: &Context<Self>) -> AnyElement {

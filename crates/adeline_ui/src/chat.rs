@@ -58,6 +58,21 @@ pub(super) fn size_probe(
     .size_full()
 }
 
+pub(super) fn width_probe<V: 'static>(
+    view: WeakEntity<V>,
+    width: fn(&mut V) -> &mut Pixels,
+) -> impl IntoElement {
+    size_probe(move |size, cx| {
+        let _ = view.update(cx, |view, cx| {
+            let width = width(view);
+            if (*width - size.width).abs() > px(0.5) {
+                *width = size.width;
+                cx.notify();
+            }
+        });
+    })
+}
+
 pub(super) fn region<V: Render>(
     view: &Entity<V>,
     style: StyleRefinement,

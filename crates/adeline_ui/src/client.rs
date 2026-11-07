@@ -591,6 +591,32 @@ fn schedule_retry(machine: &str, cx: &mut App) {
     .detach();
 }
 
+fn connection_closed(machine: &str, cx: &mut App) {
+    let connection = get_mut(machine, cx).expect("connection");
+    connection.sender = None;
+    connection.cancel = None;
+    if matches!(connection.state, State::Waiting | State::Mismatch(_)) {
+        return;
+    }
+    if machine != LOCAL && !connection.bye {
+        connection.state = State::Disconnected("The connection was lost.".into());
+        let error = format!("{} disconnected.", machines::name(machine));
+        fail_pending(machine, &error, cx);
+        schedule_retry(machine, cx);
+        update_owner(cx, |app, cx| app.refresh_runtime_views(cx));
+        cx.refresh_windows();
+        return;
+    }
+    let unexpected = !connection.bye;
+    connection.state = State::Stopped { unexpected };
+    fail_pending(machine, "The conversation engine stopped.", cx);
+    let target = machine.to_owned();
+    update_owner(cx, move |app, cx| {
+        app.engine_stopped(&target, unexpected, cx);
+    });
+    cx.refresh_windows();
+}
+
 fn adopt_engine(machine: &str, engine: &str, cx: &mut App) -> anyhow::Result<()> {
     let saved = machines::remote(machine).and_then(|m| m.engine);
     if saved.is_some() || engine.is_empty() {
@@ -631,7 +657,6 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
     if get(machine, cx).is_none_or(|c| c.epoch != epoch) {
         return;
     }
-    let local = machine == LOCAL;
     match incoming {
         Incoming::Starting => {
             get_mut(machine, cx).expect("connection").state = State::Starting;
@@ -752,31 +777,7 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
         Incoming::Message(EngineMessage::Bye) => {
             get_mut(machine, cx).expect("connection").bye = true;
         }
-        Incoming::Closed => {
-            let connection = get_mut(machine, cx).expect("connection");
-            connection.sender = None;
-            connection.cancel = None;
-            if matches!(connection.state, State::Waiting | State::Mismatch(_)) {
-                return;
-            }
-            if !local && !connection.bye {
-                connection.state = State::Disconnected("The connection was lost.".into());
-                let error = format!("{} disconnected.", machines::name(machine));
-                fail_pending(machine, &error, cx);
-                schedule_retry(machine, cx);
-                update_owner(cx, |app, cx| app.refresh_runtime_views(cx));
-                cx.refresh_windows();
-                return;
-            }
-            let unexpected = !connection.bye;
-            connection.state = State::Stopped { unexpected };
-            fail_pending(machine, "The conversation engine stopped.", cx);
-            let target = machine.to_owned();
-            update_owner(cx, move |app, cx| {
-                app.engine_stopped(&target, unexpected, cx);
-            });
-            cx.refresh_windows();
-        }
+        Incoming::Closed => connection_closed(machine, cx),
         Incoming::Failed(error) => {
             get_mut(machine, cx).expect("connection").state = State::Unavailable(error.clone());
             fail_pending(machine, &error, cx);

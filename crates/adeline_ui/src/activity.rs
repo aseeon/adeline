@@ -190,6 +190,48 @@ struct Detail {
 
 type LazyDetail<'a> = Box<dyn FnOnce() -> Detail + 'a>;
 
+struct RowParts<'a> {
+    key: String,
+    glyph: AnyElement,
+    label: String,
+    color: Hsla,
+    lit: usize,
+    card: Card,
+    detail: LazyDetail<'a>,
+}
+
+fn card_tooltip(card: Card, mono: SharedString, window: &mut Window, cx: &mut App) -> AnyView {
+    Tooltip::element(move |_, cx| {
+        let theme = cx.theme();
+        col()
+            .max_w(rems(20.))
+            .py_1()
+            .gap_1()
+            .whitespace_normal()
+            .child(
+                div()
+                    .text_color(theme.popover_foreground)
+                    .child(card.text.clone()),
+            )
+            .child(
+                div()
+                    .text_size(dp(theme::T_CAPTION))
+                    .text_color(theme.muted_foreground)
+                    .child(card.meta.clone()),
+            )
+            .when_some(card.preview.clone(), |card, preview| {
+                card.child(
+                    div()
+                        .font_family(mono.clone())
+                        .text_size(dp(theme::T_CAPTION))
+                        .text_color(theme.muted_foreground)
+                        .child(preview),
+                )
+            })
+    })
+    .build(window, cx)
+}
+
 pub(super) fn jump_to_latest(id: &'static str, cx: &Context<Adeline>) -> impl IntoElement {
     let theme = cx.theme();
     div().occlude().child(
@@ -356,148 +398,17 @@ impl Adeline {
 
     fn activity_row(&self, thread: &Thread, entry: &Entry<'_>, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme();
-        let message_icon = |path: &str| icon(path).size(dp(14.)).into_any_element();
-        let (key, glyph, label, color, lit, card, detail) = match *entry {
-            Entry::Turn { number, message } => {
-                return row()
-                    .pt(dp(if number == 1 { 4. } else { 18. }))
-                    .pb(dp(4.))
-                    .px_2()
-                    .gap_2()
-                    .text_size(dp(theme::T_CAPTION))
-                    .text_color(theme.muted_foreground)
-                    .child(
-                        div()
-                            .font_weight(FontWeight::MEDIUM)
-                            .text_color(theme.sidebar_foreground)
-                            .child(format!("Turn {number}")),
-                    )
-                    .child(div().flex_1())
-                    .children(message_time(&thread.messages[message].created_at))
-                    .into_any_element();
-            }
-            Entry::Prompt(message) => {
-                let text = &thread.messages[message].text;
-                let sent = message_time(&thread.messages[message].created_at);
-                (
-                    format!("{}:prompt:{message}", thread.id),
-                    message_icon("user"),
-                    first_line(text).to_owned(),
-                    theme.foreground,
-                    message,
-                    Card {
-                        text: excerpt(text, 6, 280),
-                        meta: sent
-                            .clone()
-                            .map_or_else(|| "You".into(), |at| format!("You, {at}")),
-                        preview: None,
-                    },
-                    Box::new(move || Detail {
-                        facts: [
-                            sent.map(|at| ("Sent", at)),
-                            Some(("Length", format!("≈{} tokens", token_estimate(text)))),
-                        ]
-                        .into_iter()
-                        .flatten()
-                        .collect(),
-                        text: Some(excerpt(text, 40, 2000)),
-                        output: None,
-                        message: Some((message, false)),
-                        copy: Some(("Copy", text.clone())),
-                    }) as LazyDetail<'_>,
-                )
-            }
-            Entry::Reply { message, text } => {
-                let start =
-                    text.as_ptr() as usize - thread.messages[message].text.as_ptr() as usize;
-                (
-                    format!("{}:reply:{message}:{start}", thread.id),
-                    agent_mark(self.agent_icon(&thread.provider, cx))
-                        .size(dp(14.))
-                        .into_any_element(),
-                    first_line(text).to_owned(),
-                    theme.sidebar_foreground,
-                    message,
-                    Card {
-                        text: excerpt(text, 6, 280),
-                        meta: format!(
-                            "{}, ≈{} tokens",
-                            self.agent_name(&thread.provider),
-                            token_estimate(text)
-                        ),
-                        preview: None,
-                    },
-                    Box::new(move || Detail {
-                        facts: vec![("Length", format!("≈{} tokens", token_estimate(text)))],
-                        text: Some(excerpt(text, 40, 2000)),
-                        output: None,
-                        message: Some((message, false)),
-                        copy: Some(("Copy", text.to_owned())),
-                    }) as LazyDetail<'_>,
-                )
-            }
-            Entry::Call(ix) => {
-                let call = &thread.activity[ix];
-                let error = call.kind == "error";
-                let failed = error || call.status == conversation::ToolStatus::Failed;
-                let closing = call.turn.and_then(|prompt| {
-                    (prompt + 1..thread.messages.len())
-                        .take_while(|&i| thread.messages[i].role != MessageRole::User)
-                        .last()
-                        .filter(|&i| thread.ends_turn(i))
-                });
-                let glyph = if call.running {
-                    chat::spinner()
-                } else {
-                    icon(if error { "flag" } else { tool_icon(call.tool) })
-                        .size(dp(14.))
-                        .when(failed, |glyph| glyph.text_color(theme.danger))
-                        .into_any_element()
-                };
-                let outcome = outcome(call);
-                let status = outcome.clone();
-                (
-                    format!("{}:{ix}", thread.id),
-                    glyph,
-                    call.name().to_owned(),
-                    if call.running {
-                        theme.foreground
-                    } else {
-                        theme.muted_foreground
-                    },
-                    closing.or(call.turn).unwrap_or(0),
-                    Card {
-                        text: excerpt(call.name(), 4, 280),
-                        meta: if call.started > 0 && !error {
-                            format!("{outcome}, started {}", clock(call.started))
-                        } else {
-                            outcome
-                        },
-                        preview: (!call.detail.trim().is_empty())
-                            .then(|| excerpt(&call.detail, 3, 240)),
-                    },
-                    Box::new(move || {
-                        let mut facts = vec![("Status", status)];
-                        if call.started > 0 {
-                            facts.push(("Started", clock(call.started)));
-                        }
-                        if !call.paths.is_empty() {
-                            facts.push(("Files", call.paths.join("\n")));
-                        }
-                        Detail {
-                            facts,
-                            text: error.then(|| call.title.clone()),
-                            output: (!call.detail.trim().is_empty())
-                                .then(|| excerpt(&call.detail, 14, 1600)),
-                            message: closing
-                                .map(|closing| (closing, true))
-                                .or(call.turn.map(|prompt| (prompt, false))),
-                            copy: (!call.detail.trim().is_empty())
-                                .then(|| ("Copy output", call.detail.clone())),
-                        }
-                    }) as LazyDetail<'_>,
-                )
-            }
+        let RowParts {
+            key,
+            glyph,
+            label,
+            color,
+            lit,
+            card,
+            detail,
+        } = match self.entry_parts(thread, entry, cx) {
+            Ok(parts) => parts,
+            Err(header) => return header,
         };
         let expanded = self.activity.expanded.contains(&key);
         let toggle = key.clone();
@@ -555,39 +466,9 @@ impl Adeline {
                 app.light_message(*hovered, &hover_key, lit, cx);
             }));
         let mono = theme.mono_font_family.clone();
-        button.interactivity().tooltip(move |window, cx| {
-            let card = card.clone();
-            let mono = mono.clone();
-            Tooltip::element(move |_, cx| {
-                let theme = cx.theme();
-                col()
-                    .max_w(rems(20.))
-                    .py_1()
-                    .gap_1()
-                    .whitespace_normal()
-                    .child(
-                        div()
-                            .text_color(theme.popover_foreground)
-                            .child(card.text.clone()),
-                    )
-                    .child(
-                        div()
-                            .text_size(dp(theme::T_CAPTION))
-                            .text_color(theme.muted_foreground)
-                            .child(card.meta.clone()),
-                    )
-                    .when_some(card.preview.clone(), |card, preview| {
-                        card.child(
-                            div()
-                                .font_family(mono.clone())
-                                .text_size(dp(theme::T_CAPTION))
-                                .text_color(theme.muted_foreground)
-                                .child(preview),
-                        )
-                    })
-            })
-            .build(window, cx)
-        });
+        button
+            .interactivity()
+            .tooltip(move |window, cx| card_tooltip(card.clone(), mono.clone(), window, cx));
         col()
             .w_full()
             .child(button)
@@ -595,6 +476,156 @@ impl Adeline {
                 column.child(self.activity_detail(&key, detail(), cx))
             })
             .into_any_element()
+    }
+
+    fn entry_parts<'a>(
+        &self,
+        thread: &'a Thread,
+        entry: &Entry<'a>,
+        cx: &Context<Self>,
+    ) -> Result<RowParts<'a>, AnyElement> {
+        let theme = cx.theme();
+        let message_icon = |path: &str| icon(path).size(dp(14.)).into_any_element();
+        match *entry {
+            Entry::Turn { number, message } => Err(row()
+                .pt(dp(if number == 1 { 4. } else { 18. }))
+                .pb(dp(4.))
+                .px_2()
+                .gap_2()
+                .text_size(dp(theme::T_CAPTION))
+                .text_color(theme.muted_foreground)
+                .child(
+                    div()
+                        .font_weight(FontWeight::MEDIUM)
+                        .text_color(theme.sidebar_foreground)
+                        .child(format!("Turn {number}")),
+                )
+                .child(div().flex_1())
+                .children(message_time(&thread.messages[message].created_at))
+                .into_any_element()),
+            Entry::Prompt(message) => {
+                let text = &thread.messages[message].text;
+                let sent = message_time(&thread.messages[message].created_at);
+                Ok(RowParts {
+                    key: format!("{}:prompt:{message}", thread.id),
+                    glyph: message_icon("user"),
+                    label: first_line(text).to_owned(),
+                    color: theme.foreground,
+                    lit: message,
+                    card: Card {
+                        text: excerpt(text, 6, 280),
+                        meta: sent
+                            .clone()
+                            .map_or_else(|| "You".into(), |at| format!("You, {at}")),
+                        preview: None,
+                    },
+                    detail: Box::new(move || Detail {
+                        facts: [
+                            sent.map(|at| ("Sent", at)),
+                            Some(("Length", format!("≈{} tokens", token_estimate(text)))),
+                        ]
+                        .into_iter()
+                        .flatten()
+                        .collect(),
+                        text: Some(excerpt(text, 40, 2000)),
+                        output: None,
+                        message: Some((message, false)),
+                        copy: Some(("Copy", text.clone())),
+                    }),
+                })
+            }
+            Entry::Reply { message, text } => {
+                let start =
+                    text.as_ptr() as usize - thread.messages[message].text.as_ptr() as usize;
+                Ok(RowParts {
+                    key: format!("{}:reply:{message}:{start}", thread.id),
+                    glyph: agent_mark(self.agent_icon(&thread.provider, cx))
+                        .size(dp(14.))
+                        .into_any_element(),
+                    label: first_line(text).to_owned(),
+                    color: theme.sidebar_foreground,
+                    lit: message,
+                    card: Card {
+                        text: excerpt(text, 6, 280),
+                        meta: format!(
+                            "{}, ≈{} tokens",
+                            self.agent_name(&thread.provider),
+                            token_estimate(text)
+                        ),
+                        preview: None,
+                    },
+                    detail: Box::new(move || Detail {
+                        facts: vec![("Length", format!("≈{} tokens", token_estimate(text)))],
+                        text: Some(excerpt(text, 40, 2000)),
+                        output: None,
+                        message: Some((message, false)),
+                        copy: Some(("Copy", text.to_owned())),
+                    }),
+                })
+            }
+            Entry::Call(ix) => {
+                let call = &thread.activity[ix];
+                let error = call.kind == "error";
+                let failed = error || call.status == conversation::ToolStatus::Failed;
+                let closing = call.turn.and_then(|prompt| {
+                    (prompt + 1..thread.messages.len())
+                        .take_while(|&i| thread.messages[i].role != MessageRole::User)
+                        .last()
+                        .filter(|&i| thread.ends_turn(i))
+                });
+                let glyph = if call.running {
+                    chat::spinner()
+                } else {
+                    icon(if error { "flag" } else { tool_icon(call.tool) })
+                        .size(dp(14.))
+                        .when(failed, |glyph| glyph.text_color(theme.danger))
+                        .into_any_element()
+                };
+                let outcome = outcome(call);
+                let status = outcome.clone();
+                Ok(RowParts {
+                    key: format!("{}:{ix}", thread.id),
+                    glyph,
+                    label: call.name().to_owned(),
+                    color: if call.running {
+                        theme.foreground
+                    } else {
+                        theme.muted_foreground
+                    },
+                    lit: closing.or(call.turn).unwrap_or(0),
+                    card: Card {
+                        text: excerpt(call.name(), 4, 280),
+                        meta: if call.started > 0 && !error {
+                            format!("{outcome}, started {}", clock(call.started))
+                        } else {
+                            outcome
+                        },
+                        preview: (!call.detail.trim().is_empty())
+                            .then(|| excerpt(&call.detail, 3, 240)),
+                    },
+                    detail: Box::new(move || {
+                        let mut facts = vec![("Status", status)];
+                        if call.started > 0 {
+                            facts.push(("Started", clock(call.started)));
+                        }
+                        if !call.paths.is_empty() {
+                            facts.push(("Files", call.paths.join("\n")));
+                        }
+                        Detail {
+                            facts,
+                            text: error.then(|| call.title.clone()),
+                            output: (!call.detail.trim().is_empty())
+                                .then(|| excerpt(&call.detail, 14, 1600)),
+                            message: closing
+                                .map(|closing| (closing, true))
+                                .or(call.turn.map(|prompt| (prompt, false))),
+                            copy: (!call.detail.trim().is_empty())
+                                .then(|| ("Copy output", call.detail.clone())),
+                        }
+                    }),
+                })
+            }
+        }
     }
 
     fn activity_detail(&self, key: &str, detail: Detail, cx: &Context<Self>) -> Div {

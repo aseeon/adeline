@@ -983,6 +983,159 @@ impl ChatList {
     }
 }
 
+impl ChatList {
+    fn empty_rows(&self, compact: bool, filtered: bool, cx: &Context<Self>) -> AnyElement {
+        let owner = self.owner.clone();
+        col()
+            .flex_1()
+            .when(compact, |empty| empty.px_3().py_5())
+            .when(!compact, |empty| empty.p_5())
+            .gap_3()
+            .items_start()
+            .text_size(dp(theme::T_UI))
+            .text_color(cx.theme().muted_foreground)
+            .child(if self.searching {
+                "Searching…".to_owned()
+            } else if !self.criteria.query.is_empty() {
+                format!("No chats match “{}”.", self.criteria.query)
+            } else if filtered {
+                "No chats match these filters.".to_owned()
+            } else {
+                "No chats yet.".to_owned()
+            })
+            .when(filtered && !self.searching, |empty| {
+                empty.child(
+                    Button::new("clear-chat-filters")
+                        .outline()
+                        .small()
+                        .max_w_full()
+                        .label(if compact {
+                            "Clear filters"
+                        } else {
+                            "Clear search and filters"
+                        })
+                        .accessibility_label("Clear search and filters")
+                        .when(compact, |button| button.tooltip("Clear search and filters"))
+                        .on_click(move |_, window, cx| {
+                            let _ = owner.update(cx, |app, cx| {
+                                app.act(Action::ClearChatFilters, window, cx);
+                            });
+                        }),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn list_rows(
+        &self,
+        stacks: &Stacks,
+        list_focus: FocusHandle,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let this = cx.weak_entity();
+        let owner = self.owner.clone();
+        let items = Arc::clone(&self.items);
+        let groups: Arc<[(Group, Vec<usize>)]> = self.outcome.groups.clone().into();
+        let folded: Arc<[Group]> = self.folded.clone().into();
+        let selected = self.selected;
+        let tail = self.tail;
+        let current = stacks.current;
+        let section_view = {
+            let this = this.clone();
+            move |slot: usize, placement: LabelPlacement, cx: &mut App| {
+                let (group, rows) = &groups[slot];
+                let group = *group;
+                section_label(
+                    group,
+                    rows.len(),
+                    folded.contains(&group),
+                    slot == current,
+                    placement,
+                    {
+                        let this = this.clone();
+                        move |_, _, cx: &mut App| {
+                            let _ = this.update(cx, |list, cx| match placement {
+                                LabelPlacement::Inline => list.toggle_fold(group, cx),
+                                LabelPlacement::Top { .. } => list.jump(slot, cx),
+                            });
+                        }
+                    },
+                    cx,
+                )
+            }
+        };
+        let list_view = {
+            let section_view = section_view.clone();
+            let cards = std::rc::Rc::clone(&self.cards);
+            list(self.state.clone(), move |ix, window, cx| match items[ix] {
+                Item::Section(slot) => section_view(slot, LabelPlacement::Inline, cx),
+                Item::Chat(row) => match cards.borrow().get(row) {
+                    Some(card) => region(
+                        card,
+                        StyleRefinement::default().w_full().h(dp(ROW_HEIGHT)),
+                        window,
+                    ),
+                    None => owner
+                        .update(cx, |app, cx| app.chat_card(row, cx))
+                        .unwrap_or_else(|_| div().into_any_element()),
+                },
+                Item::End => div().h(dp(END_HEIGHT)).into_any_element(),
+                Item::Tail => div().h(tail).into_any_element(),
+            })
+            .size_full()
+            .pr(theme::SCROLLBAR_TRACK)
+        };
+        let top_stack = col()
+            .absolute()
+            .top_0()
+            .left_0()
+            .right(theme::SCROLLBAR_TRACK)
+            .children(stacks.top.clone().map(|slot| {
+                section_view(
+                    slot,
+                    LabelPlacement::Top {
+                        last: slot + 1 == stacks.top.end,
+                    },
+                    cx,
+                )
+            }));
+        div()
+            .id("chat-list-viewport")
+            .role(Role::ListBox)
+            .aria_label("Chats")
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .track_focus(&list_focus)
+            .on_key_down({
+                let owner = self.owner.clone();
+                move |event, window, cx| {
+                    if event.keystroke.modifiers.modified() {
+                        return;
+                    }
+                    let Some((_, row)) = this.upgrade().and_then(|list| {
+                        let list = list.read(cx);
+                        let target = list.navigation_target(&event.keystroke.key)?;
+                        list.reveal(target.0);
+                        Some(target)
+                    }) else {
+                        return;
+                    };
+                    list_focus.focus(window, cx);
+                    if selected != Some(row) {
+                        let _ = owner.update(cx, |app, cx| app.act(Action::Chat(row), window, cx));
+                    }
+                    window.refresh();
+                    cx.stop_propagation();
+                }
+            })
+            .child(list_view)
+            .child(top_stack)
+            .child(Scrollbar::vertical(&self.state))
+            .into_any_element()
+    }
+}
+
 impl Render for ChatList {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let typography = fonts::typography();
@@ -995,8 +1148,6 @@ impl Render for ChatList {
         }
         self.measure();
         let stacks = self.layout.stacks(self.scroll());
-        let this = cx.weak_entity();
-        let measured = this.clone();
         let rem = window.rem_size();
         let compact = self.width > px(0.) && self.width < rem * COMPACT_WIDTH;
         if let Some(query) = self
@@ -1020,147 +1171,9 @@ impl Render for ChatList {
             .clone();
         let filtered = !self.criteria.query.is_empty() || self.criteria.agent.is_some();
         let rows = if self.items.is_empty() {
-            let owner = self.owner.clone();
-            col()
-                .flex_1()
-                .when(compact, |empty| empty.px_3().py_5())
-                .when(!compact, |empty| empty.p_5())
-                .gap_3()
-                .items_start()
-                .text_size(dp(theme::T_UI))
-                .text_color(cx.theme().muted_foreground)
-                .child(if self.searching {
-                    "Searching…".to_owned()
-                } else if !self.criteria.query.is_empty() {
-                    format!("No chats match “{}”.", self.criteria.query)
-                } else if filtered {
-                    "No chats match these filters.".to_owned()
-                } else {
-                    "No chats yet.".to_owned()
-                })
-                .when(filtered && !self.searching, |empty| {
-                    empty.child(
-                        Button::new("clear-chat-filters")
-                            .outline()
-                            .small()
-                            .max_w_full()
-                            .label(if compact {
-                                "Clear filters"
-                            } else {
-                                "Clear search and filters"
-                            })
-                            .accessibility_label("Clear search and filters")
-                            .when(compact, |button| button.tooltip("Clear search and filters"))
-                            .on_click(move |_, window, cx| {
-                                let _ = owner.update(cx, |app, cx| {
-                                    app.act(Action::ClearChatFilters, window, cx);
-                                });
-                            }),
-                    )
-                })
-                .into_any_element()
+            self.empty_rows(compact, filtered, cx)
         } else {
-            let owner = self.owner.clone();
-            let items = Arc::clone(&self.items);
-            let groups: Arc<[(Group, Vec<usize>)]> = self.outcome.groups.clone().into();
-            let folded: Arc<[Group]> = self.folded.clone().into();
-            let selected = self.selected;
-            let tail = self.tail;
-            let current = stacks.current;
-            let section_view = {
-                let this = this.clone();
-                move |slot: usize, placement: LabelPlacement, cx: &mut App| {
-                    let (group, rows) = &groups[slot];
-                    let group = *group;
-                    section_label(
-                        group,
-                        rows.len(),
-                        folded.contains(&group),
-                        slot == current,
-                        placement,
-                        {
-                            let this = this.clone();
-                            move |_, _, cx: &mut App| {
-                                let _ = this.update(cx, |list, cx| match placement {
-                                    LabelPlacement::Inline => list.toggle_fold(group, cx),
-                                    LabelPlacement::Top { .. } => list.jump(slot, cx),
-                                });
-                            }
-                        },
-                        cx,
-                    )
-                }
-            };
-            let list_view = {
-                let section_view = section_view.clone();
-                let cards = std::rc::Rc::clone(&self.cards);
-                list(self.state.clone(), move |ix, window, cx| match items[ix] {
-                    Item::Section(slot) => section_view(slot, LabelPlacement::Inline, cx),
-                    Item::Chat(row) => match cards.borrow().get(row) {
-                        Some(card) => region(
-                            card,
-                            StyleRefinement::default().w_full().h(dp(ROW_HEIGHT)),
-                            window,
-                        ),
-                        None => owner
-                            .update(cx, |app, cx| app.chat_card(row, cx))
-                            .unwrap_or_else(|_| div().into_any_element()),
-                    },
-                    Item::End => div().h(dp(END_HEIGHT)).into_any_element(),
-                    Item::Tail => div().h(tail).into_any_element(),
-                })
-                .size_full()
-                .pr(theme::SCROLLBAR_TRACK)
-            };
-            let top_stack = col()
-                .absolute()
-                .top_0()
-                .left_0()
-                .right(theme::SCROLLBAR_TRACK)
-                .children(stacks.top.clone().map(|slot| {
-                    section_view(
-                        slot,
-                        LabelPlacement::Top {
-                            last: slot + 1 == stacks.top.end,
-                        },
-                        cx,
-                    )
-                }));
-            div()
-                .id("chat-list-viewport")
-                .role(Role::ListBox)
-                .aria_label("Chats")
-                .relative()
-                .flex_1()
-                .min_h_0()
-                .track_focus(&list_focus)
-                .on_key_down({
-                    let owner = self.owner.clone();
-                    move |event, window, cx| {
-                        if event.keystroke.modifiers.modified() {
-                            return;
-                        }
-                        let Some((_, row)) = this.upgrade().and_then(|list| {
-                            let list = list.read(cx);
-                            let target = list.navigation_target(&event.keystroke.key)?;
-                            list.reveal(target.0);
-                            Some(target)
-                        }) else {
-                            return;
-                        };
-                        list_focus.focus(window, cx);
-                        if selected != Some(row) {
-                            let _ =
-                                owner.update(cx, |app, cx| app.act(Action::Chat(row), window, cx));
-                        }
-                        window.refresh();
-                        cx.stop_propagation();
-                    }
-                })
-                .child(list_view)
-                .child(top_stack)
-                .child(Scrollbar::vertical(&self.state))
-                .into_any_element()
+            self.list_rows(&stacks, list_focus, cx)
         };
         let focused = self
             .owner
@@ -1177,14 +1190,7 @@ impl Render for ChatList {
             .relative()
             .size_full()
             .child(sidebar)
-            .child(size_probe(move |size, cx| {
-                let _ = measured.update(cx, |list, cx| {
-                    if (list.width - size.width).abs() > px(0.5) {
-                        list.width = size.width;
-                        cx.notify();
-                    }
-                });
-            }))
+            .child(width_probe(cx.weak_entity(), |list| &mut list.width))
             .into_any_element()
     }
 }
