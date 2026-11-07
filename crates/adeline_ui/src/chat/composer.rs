@@ -15,111 +15,20 @@ impl Adeline {
             .unwrap_or("Select an agent")
             .to_owned()
             .into();
-        let options = if bound.is_some() {
-            self.conversation_options()
-        } else {
-            Vec::new()
-        };
-        let running = self.current_live().is_some_and(|live| live.running);
-        let selections = bound
-            .as_ref()
-            .map(|definition| definition.selections.clone());
         let no_agents =
             bound.is_none() && self.agent_catalog().entries.is_empty() && !self.demo_mode;
-        let (agent_path, agent_color) = self.agent_icon(&agent_name, cx);
         let processing = self.conversation_processing();
-        let defaults = (bound.is_none())
-            .then(|| selected.map(|d| (d.model.clone(), d.effort.clone(), d.mode.clone())))
-            .flatten();
-        let menu = |category, max_chars| {
-            self.option_menu(
-                category,
-                &options,
-                selections.as_ref(),
-                running,
-                processing,
-                max_chars,
-                cx,
-            )
-        };
-        let (model, effort, more, mode) = if let Some((model, effort, mode)) = defaults {
-            let fixed = |id, heading, value: String| {
-                (!value.is_empty())
-                    .then(|| execution_setting(id, heading, value, 16, cx).into_any_element())
-            };
-            (
-                fixed("chat-model", "Model", model_label(&model)),
-                fixed("chat-effort", "Effort", effort_label(&effort)),
-                None,
-                fixed("chat-mode", "Mode", effort_label(&mode)),
-            )
-        } else {
-            (
-                menu(conversation::Category::Model, fit.model),
-                menu(conversation::Category::Effort, fit.effort),
-                menu(conversation::Category::Other, 0),
-                menu(conversation::Category::Mode, fit.mode),
-            )
-        };
+        let (model, effort, more, mode) =
+            self.option_menus(bound.as_ref(), selected, &fit, processing, cx);
         let send = self.send_controls(no_agents, processing, cx);
-        let owner = cx.weak_entity();
-        let textarea = Textarea::new(&self.composer)
-            .aria_label("Message")
-            .appearance(false)
-            .flex_1()
-            .min_w_0()
-            .text_size(dp(theme::T_PROSE))
-            .on_paste(move |item, _, cx| {
-                owner
-                    .update(cx, |app, cx| app.paste(item, cx))
-                    .unwrap_or(false)
-            });
         let chips = self.attachment_strip(cx);
         let context = self
             .selected
             .map(|ix| context_ring(self.workspace().threads[ix].context, cx));
-        let island = col()
-            .id("composer-island")
-            .w_full()
-            .min_w_0()
-            .p(dp(6.))
-            .bg(isl.raise)
-            .rounded(dp(14.))
-            .shadow(vec![
-                BoxShadow::new(
-                    px(0.),
-                    px(0.),
-                    if focused { isl.ring_strong } else { isl.ring },
-                )
-                .blur_radius(px(0.))
-                .spread_radius(px(1.)),
-            ])
-            .on_drop(cx.listener(|app, paths: &ExternalPaths, _, cx| {
-                for path in paths.paths() {
-                    app.attach_local(path.clone(), cx);
-                }
-            }))
-            .capture_key_down(cx.listener(|app, event: &KeyDownEvent, window, cx| {
-                if event.keystroke.modifiers.modified()
-                    || !app.composer.focus_handle(cx).is_focused(window)
-                {
-                    return;
-                }
-                if app.composer_key(&event.keystroke.key, window, cx) {
-                    cx.stop_propagation();
-                }
-            }))
+        let island = self
+            .composer_island(focused, cx)
             .children(chips.map(|chips| chips.px(dp(8.)).pt(dp(6.))))
-            .child(
-                div()
-                    .w_full()
-                    .min_w_0()
-                    .px(dp(10.))
-                    .pt(dp(8.))
-                    .pb(dp(4.))
-                    .text_size(dp(theme::T_PROSE))
-                    .child(textarea),
-            )
+            .child(self.composer_input(cx))
             .child(
                 row()
                     .w_full()
@@ -151,30 +60,7 @@ impl Adeline {
                             .min_w_0()
                             .overflow_hidden()
                             .gap(dp(2.))
-                            .child(
-                                self.command_popover(
-                                    "agent",
-                                    picker(
-                                        Button::new("chat-agent-picker")
-                                            .icon(
-                                                Icon::default()
-                                                    .path(agent_path)
-                                                    .text_color(agent_color),
-                                            )
-                                            .map(|button| {
-                                                if self.section == Section::Chats {
-                                                    button.label(shorten(&agent_name, fit.agent))
-                                                } else {
-                                                    button.accessibility_label(agent_name.clone())
-                                                }
-                                            })
-                                            .tooltip(agent_name),
-                                        cx,
-                                    ),
-                                    Anchor::BottomLeft,
-                                    cx,
-                                ),
-                            )
+                            .child(self.agent_picker(agent_name, fit.agent, cx))
                             .children(model)
                             .children(effort)
                             .children(more),
@@ -199,6 +85,138 @@ impl Adeline {
             .child(chat_column(self.section).child(div().relative().child(island).children(slash)))
     }
 
+    fn option_menus(
+        &self,
+        bound: Option<&agents::ExecutionConfig>,
+        selected: Option<&agents::AgentDefinition>,
+        fit: &Fit,
+        processing: bool,
+        cx: &Context<Self>,
+    ) -> (
+        Option<AnyElement>,
+        Option<AnyElement>,
+        Option<AnyElement>,
+        Option<AnyElement>,
+    ) {
+        if bound.is_none()
+            && let Some(defaults) = selected
+        {
+            let fixed = |id, heading, value: String| {
+                (!value.is_empty())
+                    .then(|| execution_setting(id, heading, value, 16, cx).into_any_element())
+            };
+            return (
+                fixed("chat-model", "Model", model_label(&defaults.model)),
+                fixed("chat-effort", "Effort", effort_label(&defaults.effort)),
+                None,
+                fixed("chat-mode", "Mode", effort_label(&defaults.mode)),
+            );
+        }
+        let options = if bound.is_some() {
+            self.conversation_options()
+        } else {
+            Vec::new()
+        };
+        let running = self.current_live().is_some_and(|live| live.running);
+        let selections = bound.map(|definition| &definition.selections);
+        let menu = |category, max_chars| {
+            self.option_menu(
+                category, &options, selections, running, processing, max_chars, cx,
+            )
+        };
+        (
+            menu(conversation::Category::Model, fit.model),
+            menu(conversation::Category::Effort, fit.effort),
+            menu(conversation::Category::Other, 0),
+            menu(conversation::Category::Mode, fit.mode),
+        )
+    }
+
+    fn agent_picker(
+        &self,
+        agent_name: SharedString,
+        max_chars: usize,
+        cx: &Context<Self>,
+    ) -> impl IntoElement {
+        let (agent_path, agent_color) = self.agent_icon(&agent_name, cx);
+        self.command_popover(
+            "agent",
+            picker(
+                Button::new("chat-agent-picker")
+                    .icon(Icon::default().path(agent_path).text_color(agent_color))
+                    .map(|button| {
+                        if self.section == Section::Chats {
+                            button.label(shorten(&agent_name, max_chars))
+                        } else {
+                            button.accessibility_label(agent_name.clone())
+                        }
+                    })
+                    .tooltip(agent_name),
+                cx,
+            ),
+            Anchor::BottomLeft,
+            cx,
+        )
+    }
+
+    fn composer_island(&self, focused: bool, cx: &Context<Self>) -> Stateful<Div> {
+        let isl = theme::islands(cx);
+        col()
+            .id("composer-island")
+            .w_full()
+            .min_w_0()
+            .p(dp(6.))
+            .bg(isl.raise)
+            .rounded(dp(14.))
+            .shadow(vec![
+                BoxShadow::new(
+                    px(0.),
+                    px(0.),
+                    if focused { isl.ring_strong } else { isl.ring },
+                )
+                .blur_radius(px(0.))
+                .spread_radius(px(1.)),
+            ])
+            .on_drop(cx.listener(|app, paths: &ExternalPaths, _, cx| {
+                for path in paths.paths() {
+                    app.attach_local(path.clone(), cx);
+                }
+            }))
+            .capture_key_down(cx.listener(|app, event: &KeyDownEvent, window, cx| {
+                if event.keystroke.modifiers.modified()
+                    || !app.composer.focus_handle(cx).is_focused(window)
+                {
+                    return;
+                }
+                if app.composer_key(&event.keystroke.key, window, cx) {
+                    cx.stop_propagation();
+                }
+            }))
+    }
+
+    fn composer_input(&self, cx: &Context<Self>) -> Div {
+        let owner = cx.weak_entity();
+        let textarea = Textarea::new(&self.composer)
+            .aria_label("Message")
+            .appearance(false)
+            .flex_1()
+            .min_w_0()
+            .text_size(dp(theme::T_PROSE))
+            .on_paste(move |item, _, cx| {
+                owner
+                    .update(cx, |app, cx| app.paste(item, cx))
+                    .unwrap_or(false)
+            });
+        div()
+            .w_full()
+            .min_w_0()
+            .px(dp(10.))
+            .pt(dp(8.))
+            .pb(dp(4.))
+            .text_size(dp(theme::T_PROSE))
+            .child(textarea)
+    }
+
     fn attachment_strip(&self, cx: &Context<Self>) -> Option<Div> {
         (!self.attachments.is_empty() || self.attachment_error.is_some()).then(|| {
             col()
@@ -220,7 +238,6 @@ impl Adeline {
     }
 
     fn send_controls(&self, no_agents: bool, processing: bool, cx: &Context<Self>) -> AnyElement {
-        let isl = theme::islands(cx);
         let can_send = !self.attachments.is_empty()
             || self
                 .composer
@@ -228,29 +245,11 @@ impl Adeline {
                 .text()
                 .chars()
                 .any(|character| !character.is_whitespace());
-        let steering = self
-            .current_live()
-            .is_some_and(|live| live.features.steering);
         let send_tooltip = if config::with(|s| s.modes.chats.submit_on_enter) {
             "Send (Enter)".to_owned()
         } else {
             format!("Send ({})", conversation_ui::shortcut("Ctrl+Enter"))
         };
-        let send_button = |id: &'static str, icon_path: &str, turn: f32| {
-            Button::new(id)
-                .size(dp(30.))
-                .p_0()
-                .rounded(dp(9.))
-                .bg(isl.send_bg)
-                .text_color(isl.send_fg)
-                .icon(
-                    Icon::default()
-                        .path(icon_path.to_owned())
-                        .size(dp(16.))
-                        .rotate(Radians(turn)),
-                )
-        };
-        let up = -std::f32::consts::FRAC_PI_2;
         if no_agents {
             Button::new("send-chat-message")
                 .small()
@@ -259,64 +258,9 @@ impl Adeline {
                 .on_click(cx.listener(|app, _, window, cx| app.act(Action::AddAgent, window, cx)))
                 .into_any_element()
         } else if processing {
-            let owner = cx.weak_entity();
-            let send_now = if steering {
-                format!(
-                    "Send now ({})",
-                    conversation_ui::shortcut("Ctrl+Shift+Enter")
-                )
-            } else {
-                format!(
-                    "Send now: stops the turn, then sends ({})",
-                    conversation_ui::shortcut("Ctrl+Shift+Enter")
-                )
-            };
-            row()
-                .gap(dp(4.))
-                .child(
-                    ghost_icon("send-chat-options", "chevron.svg", 12., isl.fg3)
-                        .accessibility_label("Send options")
-                        .tooltip("Send options")
-                        .dropdown_menu_with_anchor(Anchor::BottomRight, move |menu, _, _| {
-                            let (queue, now) = (owner.clone(), owner.clone());
-                            menu.item(PopupMenuItem::new("Queue").on_click(move |_, window, cx| {
-                                let _ =
-                                    queue.update(cx, |app, cx| app.act(Action::Send, window, cx));
-                            }))
-                            .item(
-                                PopupMenuItem::new(send_now.clone()).on_click(
-                                    move |_, window, cx| {
-                                        let _ = now.update(cx, |app, cx| {
-                                            app.act(Action::SendNow, window, cx);
-                                        });
-                                    },
-                                ),
-                            )
-                        }),
-                )
-                .child(
-                    send_button("send-chat-message", "arrow.svg", up)
-                        .accessibility_label("Queue")
-                        .tooltip("Queue: sends when this turn ends")
-                        .when(!can_send, |button| button.opacity(0.25))
-                        .when(can_send, |button| button.border_0())
-                        .disabled(!can_send)
-                        .on_click(
-                            cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx)),
-                        ),
-                )
-                .child(
-                    send_button("stop-chat-turn", "stop.svg", 0.)
-                        .border_0()
-                        .accessibility_label("Stop")
-                        .tooltip(format!("Stop ({})", conversation_ui::shortcut("Ctrl+.")))
-                        .on_click(
-                            cx.listener(|app, _, window, cx| app.act(Action::Stop, window, cx)),
-                        ),
-                )
-                .into_any_element()
+            self.turn_controls(can_send, cx)
         } else {
-            send_button("send-chat-message", "arrow.svg", up)
+            send_button("send-chat-message", "arrow.svg", UP, cx)
                 .accessibility_label("Send")
                 .tooltip(send_tooltip)
                 .when(!can_send, |button| button.opacity(0.25))
@@ -325,6 +269,69 @@ impl Adeline {
                 .on_click(cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx)))
                 .into_any_element()
         }
+    }
+
+    fn turn_controls(&self, can_send: bool, cx: &Context<Self>) -> AnyElement {
+        let steering = self
+            .current_live()
+            .is_some_and(|live| live.features.steering);
+        let owner = cx.weak_entity();
+        let send_now = if steering {
+            format!(
+                "Send now ({})",
+                conversation_ui::shortcut("Ctrl+Shift+Enter")
+            )
+        } else {
+            format!(
+                "Send now: stops the turn, then sends ({})",
+                conversation_ui::shortcut("Ctrl+Shift+Enter")
+            )
+        };
+        row()
+            .gap(dp(4.))
+            .child(
+                ghost_icon(
+                    "send-chat-options",
+                    "chevron.svg",
+                    12.,
+                    theme::islands(cx).fg3,
+                )
+                .accessibility_label("Send options")
+                .tooltip("Send options")
+                .dropdown_menu_with_anchor(
+                    Anchor::BottomRight,
+                    move |menu, _, _| {
+                        let (queue, now) = (owner.clone(), owner.clone());
+                        menu.item(PopupMenuItem::new("Queue").on_click(move |_, window, cx| {
+                            let _ = queue.update(cx, |app, cx| app.act(Action::Send, window, cx));
+                        }))
+                        .item(
+                            PopupMenuItem::new(send_now.clone()).on_click(move |_, window, cx| {
+                                let _ = now.update(cx, |app, cx| {
+                                    app.act(Action::SendNow, window, cx);
+                                });
+                            }),
+                        )
+                    },
+                ),
+            )
+            .child(
+                send_button("send-chat-message", "arrow.svg", UP, cx)
+                    .accessibility_label("Queue")
+                    .tooltip("Queue: sends when this turn ends")
+                    .when(!can_send, |button| button.opacity(0.25))
+                    .when(can_send, |button| button.border_0())
+                    .disabled(!can_send)
+                    .on_click(cx.listener(|app, _, window, cx| app.act(Action::Send, window, cx))),
+            )
+            .child(
+                send_button("stop-chat-turn", "stop.svg", 0., cx)
+                    .border_0()
+                    .accessibility_label("Stop")
+                    .tooltip(format!("Stop ({})", conversation_ui::shortcut("Ctrl+.")))
+                    .on_click(cx.listener(|app, _, window, cx| app.act(Action::Stop, window, cx))),
+            )
+            .into_any_element()
     }
 
     fn option_menu(
@@ -397,46 +404,57 @@ impl Adeline {
             return Some(trigger.into_any_element());
         }
         let currents: Vec<String> = shown.iter().map(current).collect();
+        Some(self.option_popover(menu, trigger, category, heading, shown, currents, cx))
+    }
+
+    fn option_popover(
+        &self,
+        menu: &'static str,
+        trigger: Button,
+        category: conversation::Category,
+        heading: &'static str,
+        shown: Vec<conversation::SessionOption>,
+        currents: Vec<String>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
         let owner = cx.weak_entity();
         let content_owner = owner.clone();
         let state = self.command_popup.clone();
-        let anchor = if category == Category::Mode {
+        let anchor = if category == conversation::Category::Mode {
             Anchor::BottomRight
         } else {
             Anchor::BottomLeft
         };
-        Some(
-            self.menu_popover(menu, trigger, anchor, state.as_ref(), cx)
-                .on_open_change(move |open, window, cx| {
-                    let _ = owner.update(cx, |app, cx| {
-                        if *open {
-                            app.open_commands(menu, window, cx);
-                        } else if app.menu == Some(menu) {
-                            app.menu = None;
-                            app.refocus_after_menu(window, cx);
-                            app.composer_region.update(cx, |_, cx| cx.notify());
-                            cx.notify();
-                        }
-                    });
-                })
-                .content(move |_, _, cx| {
-                    let popover = cx.entity();
-                    col()
-                        .w(rems(24.))
-                        .when_some(state.as_ref(), |column, state| {
-                            column.child(option_command(
-                                state,
-                                category,
-                                heading,
-                                &shown,
-                                &currents,
-                                popover,
-                                content_owner.clone(),
-                            ))
-                        })
-                })
-                .into_any_element(),
-        )
+        self.menu_popover(menu, trigger, anchor, state.as_ref(), cx)
+            .on_open_change(move |open, window, cx| {
+                let _ = owner.update(cx, |app, cx| {
+                    if *open {
+                        app.open_commands(menu, window, cx);
+                    } else if app.menu == Some(menu) {
+                        app.menu = None;
+                        app.refocus_after_menu(window, cx);
+                        app.composer_region.update(cx, |_, cx| cx.notify());
+                        cx.notify();
+                    }
+                });
+            })
+            .content(move |_, _, cx| {
+                let popover = cx.entity();
+                col()
+                    .w(rems(24.))
+                    .when_some(state.as_ref(), |column, state| {
+                        column.child(option_command(
+                            state,
+                            category,
+                            heading,
+                            &shown,
+                            &currents,
+                            popover,
+                            content_owner.clone(),
+                        ))
+                    })
+            })
+            .into_any_element()
     }
 }
 
@@ -658,6 +676,24 @@ fn ghost_icon(id: &'static str, path: &'static str, size: f32, color: Hsla) -> B
         .p_0()
         .text_color(color)
         .icon(Icon::default().path(path).size(dp(size)))
+}
+
+const UP: f32 = -std::f32::consts::FRAC_PI_2;
+
+fn send_button(id: &'static str, icon_path: &'static str, turn: f32, cx: &App) -> Button {
+    let isl = theme::islands(cx);
+    Button::new(id)
+        .size(dp(30.))
+        .p_0()
+        .rounded(dp(9.))
+        .bg(isl.send_bg)
+        .text_color(isl.send_fg)
+        .icon(
+            Icon::default()
+                .path(icon_path)
+                .size(dp(16.))
+                .rotate(Radians(turn)),
+        )
 }
 
 fn picker(button: Button, cx: &App) -> Button {

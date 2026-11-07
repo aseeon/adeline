@@ -265,66 +265,8 @@ pub(super) fn thinking_label(progress: Option<String>) -> AnyElement {
                 )
                 .into_any_element()
         }
-        config::ThinkingAnimation::Dots => {
-            let label = progress.unwrap_or_else(|| "Thinking".into());
-            let dot = size * 0.23;
-            row()
-                .child(base.child(label.trim_end_matches(['…', '.']).to_owned()))
-                .child(
-                    row().gap(dot).ml(dot).with_animation(
-                        "thinking-dots",
-                        Animation::new(Duration::from_millis(1200))
-                            .repeat()
-                            .with_max_fps(ANIMATION_FPS),
-                        move |dots, delta| {
-                            dots.children((0..3).map(|i| {
-                                let phase = (delta - i as f32 * 0.125).rem_euclid(1.);
-                                let lift = if phase < 0.6 {
-                                    (phase / 0.6 * std::f32::consts::PI).sin()
-                                } else {
-                                    0.
-                                };
-                                div()
-                                    .size(dot)
-                                    .rounded_full()
-                                    .bg(muted)
-                                    .opacity(0.4 + 0.6 * lift)
-                                    .relative()
-                                    .top(-dot * 1.3 * lift)
-                            }))
-                        },
-                    ),
-                )
-                .into_any_element()
-        }
-        config::ThinkingAnimation::Braille => {
-            let dot = size * 0.2;
-            row()
-                .gap(size * 0.5)
-                .child(
-                    row().gap(dot * 0.6).with_animation(
-                        "thinking-braille",
-                        Animation::new(Duration::from_millis(800))
-                            .repeat()
-                            .with_max_fps(12.5),
-                        move |cell, delta| {
-                            let frames = BRAILLE_FRAMES.len();
-                            let frame = (1..frames)
-                                .filter(|&i| delta * frames as f32 >= i as f32)
-                                .count();
-                            let mask = BRAILLE_FRAMES[frame];
-                            cell.children((0..2).map(|column| {
-                                col().gap(dot * 0.6).children((0..3).map(move |dot_row| {
-                                    let lit = mask >> (column * 3 + dot_row) & 1 == 1;
-                                    div().size(dot).rounded_full().when(lit, |d| d.bg(accent))
-                                }))
-                            }))
-                        },
-                    ),
-                )
-                .child(base.child(progress.unwrap_or_else(|| "Thinking…".into())))
-                .into_any_element()
-        }
+        config::ThinkingAnimation::Dots => thinking_dots(base, progress, size, muted),
+        config::ThinkingAnimation::Braille => thinking_braille(base, progress, size, accent),
         config::ThinkingAnimation::Fill | config::ThinkingAnimation::Words => {
             let label: SharedString = progress.unwrap_or_else(|| "Thinking…".into()).into();
             base.relative()
@@ -350,6 +292,68 @@ pub(super) fn thinking_label(progress: Option<String>) -> AnyElement {
                 .into_any_element()
         }
     }
+}
+
+fn thinking_dots(base: Div, progress: Option<String>, size: Pixels, muted: Hsla) -> AnyElement {
+    let label = progress.unwrap_or_else(|| "Thinking".into());
+    let dot = size * 0.23;
+    row()
+        .child(base.child(label.trim_end_matches(['…', '.']).to_owned()))
+        .child(
+            row().gap(dot).ml(dot).with_animation(
+                "thinking-dots",
+                Animation::new(Duration::from_millis(1200))
+                    .repeat()
+                    .with_max_fps(ANIMATION_FPS),
+                move |dots, delta| {
+                    dots.children((0..3).map(|i| {
+                        let phase = (delta - i as f32 * 0.125).rem_euclid(1.);
+                        let lift = if phase < 0.6 {
+                            (phase / 0.6 * std::f32::consts::PI).sin()
+                        } else {
+                            0.
+                        };
+                        div()
+                            .size(dot)
+                            .rounded_full()
+                            .bg(muted)
+                            .opacity(0.4 + 0.6 * lift)
+                            .relative()
+                            .top(-dot * 1.3 * lift)
+                    }))
+                },
+            ),
+        )
+        .into_any_element()
+}
+
+fn thinking_braille(base: Div, progress: Option<String>, size: Pixels, accent: Hsla) -> AnyElement {
+    let dot = size * 0.2;
+    row()
+        .gap(size * 0.5)
+        .child(
+            row().gap(dot * 0.6).with_animation(
+                "thinking-braille",
+                Animation::new(Duration::from_millis(800))
+                    .repeat()
+                    .with_max_fps(12.5),
+                move |cell, delta| {
+                    let frames = BRAILLE_FRAMES.len();
+                    let frame = (1..frames)
+                        .filter(|&i| delta * frames as f32 >= i as f32)
+                        .count();
+                    let mask = BRAILLE_FRAMES[frame];
+                    cell.children((0..2).map(|column| {
+                        col().gap(dot * 0.6).children((0..3).map(move |dot_row| {
+                            let lit = mask >> (column * 3 + dot_row) & 1 == 1;
+                            div().size(dot).rounded_full().when(lit, |d| d.bg(accent))
+                        }))
+                    }))
+                },
+            ),
+        )
+        .child(base.child(progress.unwrap_or_else(|| "Thinking…".into())))
+        .into_any_element()
 }
 
 pub(super) fn chat_column(section: Section) -> Div {

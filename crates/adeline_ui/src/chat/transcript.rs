@@ -65,82 +65,11 @@ impl Adeline {
                 .into_any_element();
         }
         let time = message_time(&message.created_at);
-        let isl = theme::islands(cx);
         let body = self.message_body(message, i, reply, cx);
-        let group = SharedString::from(format!("message:{}:{i}", thread.id));
         let content = if user {
-            col()
-                .group(group.clone())
-                .items_end()
-                .child(
-                    div()
-                        .max_w(relative(0.78))
-                        .px(dp(16.))
-                        .py(dp(10.))
-                        .rounded(dp(14.))
-                        .bg(isl.bubble)
-                        .text_color(isl.fg)
-                        .child(body),
-                )
-                .child(
-                    row()
-                        .h(dp(28.))
-                        .gap(dp(4.))
-                        .text_size(dp(theme::T_CAPTION))
-                        .text_color(isl.fg3)
-                        .child(
-                            div()
-                                .invisible()
-                                .group_hover(group, |style| style.visible())
-                                .child(
-                                    self.icon_button(
-                                        SharedString::from(format!(
-                                            "copy-prompt:{}:{i}",
-                                            thread.id
-                                        )),
-                                        "Copy",
-                                        Icon::default().path("copy.svg"),
-                                        Action::CopyMessage(i),
-                                        cx,
-                                    )
-                                    .xsmall()
-                                    .text_color(isl.fg3),
-                                ),
-                        )
-                        .children(time),
-                )
-                .into_any_element()
+            self.prompt_content(thread, i, body, time, cx)
         } else {
-            let name = self.agent_name(&thread.provider);
-            let writing = self.conversation_processing()
-                && thread
-                    .turn_of(thread.messages.len())
-                    .is_some_and(|last| i > last);
-            let meta = row()
-                .h(dp(24.))
-                .gap(dp(6.))
-                .text_size(dp(theme::T_CAPTION))
-                .text_color(isl.fg3)
-                .child(agent_mark(self.agent_icon(&thread.provider, cx)).size(dp(13.)))
-                .child(name)
-                .children(time.map(|time| format!("· {time}")));
-            col()
-                .w_full()
-                .min_w_0()
-                .children(
-                    self.thought_block(thread, i, cx)
-                        .map(|thought| div().mb(dp(6.)).child(thought)),
-                )
-                .when(!message.text.is_empty(), |content| {
-                    content.child(div().group("reply").text_color(isl.fg).child(body))
-                })
-                .child(meta.mt(dp(4.)))
-                .when(thread.ends_turn(i) && !writing, |content| {
-                    content
-                        .children(self.turn_cards(thread, i, cx))
-                        .child(self.closing_row(thread, i, cx))
-                })
-                .into_any_element()
+            self.reply_content(thread, i, body, time, cx)
         };
         div()
             .id(SharedString::from(format!(
@@ -175,6 +104,97 @@ impl Adeline {
             .into_any_element()
     }
 
+    fn prompt_content(
+        &self,
+        thread: &Thread,
+        i: usize,
+        body: Div,
+        time: Option<String>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let isl = theme::islands(cx);
+        let group = SharedString::from(format!("message:{}:{i}", thread.id));
+        col()
+            .group(group.clone())
+            .items_end()
+            .child(
+                div()
+                    .max_w(relative(0.78))
+                    .px(dp(16.))
+                    .py(dp(10.))
+                    .rounded(dp(14.))
+                    .bg(isl.bubble)
+                    .text_color(isl.fg)
+                    .child(body),
+            )
+            .child(
+                row()
+                    .h(dp(28.))
+                    .gap(dp(4.))
+                    .text_size(dp(theme::T_CAPTION))
+                    .text_color(isl.fg3)
+                    .child(
+                        div()
+                            .invisible()
+                            .group_hover(group, |style| style.visible())
+                            .child(
+                                self.icon_button(
+                                    SharedString::from(format!("copy-prompt:{}:{i}", thread.id)),
+                                    "Copy",
+                                    Icon::default().path("copy.svg"),
+                                    Action::CopyMessage(i),
+                                    cx,
+                                )
+                                .xsmall()
+                                .text_color(isl.fg3),
+                            ),
+                    )
+                    .children(time),
+            )
+            .into_any_element()
+    }
+
+    fn reply_content(
+        &self,
+        thread: &Thread,
+        i: usize,
+        body: Div,
+        time: Option<String>,
+        cx: &Context<Self>,
+    ) -> AnyElement {
+        let isl = theme::islands(cx);
+        let name = self.agent_name(&thread.provider);
+        let writing = self.conversation_processing()
+            && thread
+                .turn_of(thread.messages.len())
+                .is_some_and(|last| i > last);
+        let meta = row()
+            .h(dp(24.))
+            .gap(dp(6.))
+            .text_size(dp(theme::T_CAPTION))
+            .text_color(isl.fg3)
+            .child(agent_mark(self.agent_icon(&thread.provider, cx)).size(dp(13.)))
+            .child(name)
+            .children(time.map(|time| format!("· {time}")));
+        col()
+            .w_full()
+            .min_w_0()
+            .children(
+                self.thought_block(thread, i, cx)
+                    .map(|thought| div().mb(dp(6.)).child(thought)),
+            )
+            .when(!thread.messages[i].text.is_empty(), |content| {
+                content.child(div().group("reply").text_color(isl.fg).child(body))
+            })
+            .child(meta.mt(dp(4.)))
+            .when(thread.ends_turn(i) && !writing, |content| {
+                content
+                    .children(self.turn_cards(thread, i, cx))
+                    .child(self.closing_row(thread, i, cx))
+            })
+            .into_any_element()
+    }
+
     fn message_body(
         &self,
         message: &Message,
@@ -190,7 +210,6 @@ impl Adeline {
         };
         let selectable = panes::selectable_in(panel, cx);
         let theme = cx.theme();
-        let isl = theme::islands(cx);
         let leading = relative(if user { 1.55 } else { 1.65 });
         let mut body = col()
             .w_full()
@@ -221,42 +240,12 @@ impl Adeline {
                 );
             }
         } else {
-            body = body.child(
-                TextView::new(&reply.expect("a reply"))
-                    .selectable(selectable)
-                    .style(
-                        TextViewStyle::default()
-                            .paragraph_gap(rems(0.625))
-                            .inline_code(HighlightStyle {
-                                color: Some(theme::hsla("inline_highlight")),
-                                background_color: Some(isl.chip),
-                                ..Default::default()
-                            }),
-                    )
-                    .code_block_actions(|block, _, _| {
-                        let code = block.code();
-                        div()
-                            .invisible()
-                            .group_hover("reply", |style| style.visible())
-                            .child(
-                                Button::new("copy-code")
-                                    .ghost()
-                                    .xsmall()
-                                    .icon(Icon::default().path("copy.svg"))
-                                    .accessibility_label("Copy code")
-                                    .tooltip("Copy")
-                                    .on_click(move |_, _, cx| {
-                                        cx.write_to_clipboard(ClipboardItem::new_string(
-                                            code.to_string(),
-                                        ));
-                                    }),
-                            )
-                    })
-                    .text_size(dp(theme::T_PROSE))
-                    .line_height(leading)
-                    .w_full()
-                    .min_w_0(),
-            );
+            body = body.child(reply_view(
+                &reply.expect("a reply"),
+                selectable,
+                leading,
+                cx,
+            ));
         }
         if !message.attachments.is_empty() {
             body = body.child(self.attachment_chips(&message.attachments, Some(i), cx));
@@ -658,6 +647,46 @@ fn unquote(paragraph: &str) -> Option<String> {
         })
         .collect::<Option<Vec<_>>>()?;
     Some(lines.join("\n"))
+}
+
+fn reply_view(
+    reply: &Entity<TextViewState>,
+    selectable: bool,
+    leading: DefiniteLength,
+    cx: &App,
+) -> TextView {
+    TextView::new(reply)
+        .selectable(selectable)
+        .style(
+            TextViewStyle::default()
+                .paragraph_gap(rems(0.625))
+                .inline_code(HighlightStyle {
+                    color: Some(theme::hsla("inline_highlight")),
+                    background_color: Some(theme::islands(cx).chip),
+                    ..Default::default()
+                }),
+        )
+        .code_block_actions(|block, _, _| {
+            let code = block.code();
+            div()
+                .invisible()
+                .group_hover("reply", |style| style.visible())
+                .child(
+                    Button::new("copy-code")
+                        .ghost()
+                        .xsmall()
+                        .icon(Icon::default().path("copy.svg"))
+                        .accessibility_label("Copy code")
+                        .tooltip("Copy")
+                        .on_click(move |_, _, cx| {
+                            cx.write_to_clipboard(ClipboardItem::new_string(code.to_string()));
+                        }),
+                )
+        })
+        .text_size(dp(theme::T_PROSE))
+        .line_height(leading)
+        .w_full()
+        .min_w_0()
 }
 
 fn reply_text(

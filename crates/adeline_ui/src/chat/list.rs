@@ -270,36 +270,6 @@ impl Adeline {
             || search_focused
             || !self.query.read(cx).value().is_empty()
             || self.agent_filter.is_some();
-        let search = row()
-            .id("chat-search-field")
-            .w_full()
-            .h(dp(32.))
-            .pl(dp(10.))
-            .pr(px(1.))
-            .rounded(dp(8.))
-            .border_1()
-            .border_color(if search_focused {
-                isl.ring_strong
-            } else {
-                isl.ring
-            })
-            .bg(isl.chip)
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|app, _, window, cx| {
-                    window.focus(&app.query.focus_handle(cx), cx);
-                }),
-            )
-            .child(icon("search").size(dp(14.)).text_color(isl.fg3))
-            .child(
-                div().flex_1().min_w_0().child(
-                    Input::new(&self.query)
-                        .aria_label("Search chats")
-                        .cleanable(true)
-                        .appearance(false),
-                ),
-            )
-            .child(self.agent_filter_button(outcome, cx));
         let header = row()
             .h(dp(44.))
             .flex_shrink_0()
@@ -366,9 +336,54 @@ impl Adeline {
             .child(self.project_switcher(cx))
             .child(header)
             .when(searching, |panel| {
-                panel.child(div().w_full().px(dp(8.)).pb(dp(8.)).child(search))
+                panel.child(
+                    div()
+                        .w_full()
+                        .px(dp(8.))
+                        .pb(dp(8.))
+                        .child(self.chat_search_field(outcome, search_focused, cx)),
+                )
             })
             .child(list)
+    }
+
+    fn chat_search_field(
+        &self,
+        outcome: &Outcome,
+        search_focused: bool,
+        cx: &Context<Self>,
+    ) -> Stateful<Div> {
+        let isl = theme::islands(cx);
+        row()
+            .id("chat-search-field")
+            .w_full()
+            .h(dp(32.))
+            .pl(dp(10.))
+            .pr(px(1.))
+            .rounded(dp(8.))
+            .border_1()
+            .border_color(if search_focused {
+                isl.ring_strong
+            } else {
+                isl.ring
+            })
+            .bg(isl.chip)
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|app, _, window, cx| {
+                    window.focus(&app.query.focus_handle(cx), cx);
+                }),
+            )
+            .child(icon("search").size(dp(14.)).text_color(isl.fg3))
+            .child(
+                div().flex_1().min_w_0().child(
+                    Input::new(&self.query)
+                        .aria_label("Search chats")
+                        .cleanable(true)
+                        .appearance(false),
+                ),
+            )
+            .child(self.agent_filter_button(outcome, cx))
     }
 }
 
@@ -1037,7 +1052,6 @@ impl ChatList {
         let items = Arc::clone(&self.items);
         let groups: Arc<[(Group, Vec<usize>)]> = self.outcome.groups.clone().into();
         let folded: Arc<[Group]> = self.folded.clone().into();
-        let selected = self.selected;
         let tail = self.tail;
         let current = stacks.current;
         let section_view = {
@@ -1107,32 +1121,40 @@ impl ChatList {
             .flex_1()
             .min_h_0()
             .track_focus(&list_focus)
-            .on_key_down({
-                let owner = self.owner.clone();
-                move |event, window, cx| {
-                    if event.keystroke.modifiers.modified() {
-                        return;
-                    }
-                    let Some((_, row)) = this.upgrade().and_then(|list| {
-                        let list = list.read(cx);
-                        let target = list.navigation_target(&event.keystroke.key)?;
-                        list.reveal(target.0);
-                        Some(target)
-                    }) else {
-                        return;
-                    };
-                    list_focus.focus(window, cx);
-                    if selected != Some(row) {
-                        let _ = owner.update(cx, |app, cx| app.act(Action::Chat(row), window, cx));
-                    }
-                    window.refresh();
-                    cx.stop_propagation();
-                }
-            })
+            .on_key_down(self.list_keys(list_focus, cx))
             .child(list_view)
             .child(top_stack)
             .child(Scrollbar::vertical(&self.state))
             .into_any_element()
+    }
+
+    fn list_keys(
+        &self,
+        list_focus: FocusHandle,
+        cx: &Context<Self>,
+    ) -> impl Fn(&KeyDownEvent, &mut Window, &mut App) + 'static {
+        let this = cx.weak_entity();
+        let owner = self.owner.clone();
+        let selected = self.selected;
+        move |event, window, cx| {
+            if event.keystroke.modifiers.modified() {
+                return;
+            }
+            let Some((_, row)) = this.upgrade().and_then(|list| {
+                let list = list.read(cx);
+                let target = list.navigation_target(&event.keystroke.key)?;
+                list.reveal(target.0);
+                Some(target)
+            }) else {
+                return;
+            };
+            list_focus.focus(window, cx);
+            if selected != Some(row) {
+                let _ = owner.update(cx, |app, cx| app.act(Action::Chat(row), window, cx));
+            }
+            window.refresh();
+            cx.stop_propagation();
+        }
     }
 }
 

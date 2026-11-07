@@ -666,23 +666,7 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
         Incoming::Linked {
             destination,
             status,
-        } => {
-            cx.global_mut::<Connections>().secrets.remove(machine);
-            if let Err(error) = adopt_engine(machine, &status.engine_id, cx) {
-                let error = format!("{error:#}");
-                let connection = get_mut(machine, cx).expect("connection");
-                connection.epoch += 1;
-                connection.cancel = None;
-                connection.state = State::Unavailable(error.clone());
-                let _ = machines::remove(machine);
-                update_owner(cx, move |app, cx| app.notify_toast(&error, cx));
-                sync_now(cx);
-                return;
-            }
-            get_mut(machine, cx).expect("connection").destination = Some(destination);
-            set_status(machine, status, cx);
-            cx.refresh_windows();
-        }
+        } => linked(machine, destination, status, cx),
         Incoming::Message(EngineMessage::Welcome { status }) => {
             let mismatch = status.protocol != PROTOCOL;
             set_status(machine, status.clone(), cx);
@@ -692,65 +676,10 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
             }
         }
         Incoming::Message(EngineMessage::Snapshot(snapshot)) => {
-            let connection = get_mut(machine, cx).expect("connection");
-            connection.state = State::Connected;
-            connection.loaded = true;
-            connection.retries = 0;
-            connection.settings = snapshot.settings.clone();
-            connection.stream = Some(Resume {
-                epoch: snapshot.epoch.clone(),
-                seq: snapshot.seq,
-            });
-            set_status(machine, snapshot.status.clone(), cx);
-            harness::set_icons(&snapshot.icons);
-            set_harnesses(machine, snapshot.harnesses.clone(), cx);
-            let target = machine.to_owned();
-            update_owner(cx, move |app, cx| {
-                app.apply_snapshot(&target, *snapshot, cx);
-                app.docs_connected(&target, cx);
-            });
-            flush_queued(machine, cx);
-            cx.refresh_windows();
+            snapshot_arrived(machine, *snapshot, cx);
         }
-        Incoming::Message(EngineMessage::Resumed) => {
-            let connection = get_mut(machine, cx).expect("connection");
-            connection.state = State::Connected;
-            connection.retries = 0;
-            flush_queued(machine, cx);
-            let target = machine.to_owned();
-            update_owner(cx, move |app, cx| {
-                app.refresh_runtime_views(cx);
-                app.docs_connected(&target, cx);
-            });
-            cx.refresh_windows();
-        }
-        Incoming::Message(EngineMessage::Delta(delta)) => {
-            if let Some(stream) = &mut get_mut(machine, cx).expect("connection").stream {
-                stream.seq += 1;
-            }
-            match delta {
-                Delta::EngineStatus(status) => {
-                    set_status(machine, status, cx);
-                    cx.refresh_windows();
-                }
-                Delta::Settings(settings) => {
-                    get_mut(machine, cx).expect("connection").settings = settings;
-                    cx.refresh_windows();
-                }
-                Delta::Harnesses(catalog) => {
-                    set_harnesses(machine, catalog, cx);
-                    cx.refresh_windows();
-                }
-                Delta::Icons(icons) => {
-                    harness::set_icons(&icons);
-                    cx.refresh_windows();
-                }
-                delta => {
-                    let target = machine.to_owned();
-                    update_owner(cx, move |app, cx| app.apply_delta(&target, delta, cx));
-                }
-            }
-        }
+        Incoming::Message(EngineMessage::Resumed) => resumed(machine, cx),
+        Incoming::Message(EngineMessage::Delta(delta)) => delta_arrived(machine, delta, cx),
         Incoming::Message(EngineMessage::Reply { id, result }) => {
             let connection = get_mut(machine, cx).expect("connection");
             connection.outputs.remove(&id);
@@ -760,16 +689,7 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
             }
         }
         Incoming::Message(EngineMessage::Output { request, line }) => {
-            let output = get_mut(machine, cx)
-                .expect("connection")
-                .outputs
-                .remove(&request);
-            if let Some(mut output) = output {
-                output(line, cx);
-                if let Some(connection) = get_mut(machine, cx) {
-                    connection.outputs.insert(request, output);
-                }
-            }
+            output_arrived(machine, request, line, cx);
         }
         Incoming::Message(EngineMessage::Traffic { id, entry }) => {
             update_owner(cx, move |app, cx| app.traffic_arrived(&id, entry, cx));
@@ -783,37 +703,131 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
             fail_pending(machine, &error, cx);
             cx.refresh_windows();
         }
-        Incoming::Remote(failure) => {
-            cx.global_mut::<Connections>().secrets.remove(machine);
-            let retry = matches!(failure, remote::Failure::Network(_));
-            let upgrade = matches!(failure, remote::Failure::Upgrade { .. });
-            let state = match failure {
-                remote::Failure::Network(error) => State::Disconnected(error),
-                remote::Failure::SignIn(error) => State::SignInFailed(error),
-                remote::Failure::Fatal(error) => State::Unavailable(error),
-                remote::Failure::Unsupported(error) => State::Unsupported(error),
-                remote::Failure::LocalUpdate(version) => State::LocalUpdateNeeded(version),
-                remote::Failure::Upgrade { version, active } => {
-                    State::UpgradeNeeded { version, active }
-                }
-            };
-            get_mut(machine, cx).expect("connection").state = state;
-            let error = format!("{} is not connected.", machines::name(machine));
-            fail_pending(machine, &error, cx);
-            if retry {
-                schedule_retry(machine, cx);
-            }
-            let target = machine.to_owned();
-            update_owner(cx, move |app, cx| {
-                if upgrade {
-                    app.ask_upgrade(&target, cx);
-                }
-                app.refresh_runtime_views(cx);
-            });
-            cx.refresh_windows();
-        }
+        Incoming::Remote(failure) => remote_failed(machine, failure, cx),
         Incoming::OldGone => connect(LOCAL, cx),
     }
+}
+
+fn linked(machine: &str, destination: String, status: Status, cx: &mut App) {
+    cx.global_mut::<Connections>().secrets.remove(machine);
+    if let Err(error) = adopt_engine(machine, &status.engine_id, cx) {
+        let error = format!("{error:#}");
+        let connection = get_mut(machine, cx).expect("connection");
+        connection.epoch += 1;
+        connection.cancel = None;
+        connection.state = State::Unavailable(error.clone());
+        let _ = machines::remove(machine);
+        update_owner(cx, move |app, cx| app.notify_toast(&error, cx));
+        sync_now(cx);
+        return;
+    }
+    get_mut(machine, cx).expect("connection").destination = Some(destination);
+    set_status(machine, status, cx);
+    cx.refresh_windows();
+}
+
+fn snapshot_arrived(machine: &str, snapshot: Snapshot, cx: &mut App) {
+    let connection = get_mut(machine, cx).expect("connection");
+    connection.state = State::Connected;
+    connection.loaded = true;
+    connection.retries = 0;
+    connection.settings = snapshot.settings.clone();
+    connection.stream = Some(Resume {
+        epoch: snapshot.epoch.clone(),
+        seq: snapshot.seq,
+    });
+    set_status(machine, snapshot.status.clone(), cx);
+    harness::set_icons(&snapshot.icons);
+    set_harnesses(machine, snapshot.harnesses.clone(), cx);
+    let target = machine.to_owned();
+    update_owner(cx, move |app, cx| {
+        app.apply_snapshot(&target, snapshot, cx);
+        app.docs_connected(&target, cx);
+    });
+    flush_queued(machine, cx);
+    cx.refresh_windows();
+}
+
+fn resumed(machine: &str, cx: &mut App) {
+    let connection = get_mut(machine, cx).expect("connection");
+    connection.state = State::Connected;
+    connection.retries = 0;
+    flush_queued(machine, cx);
+    let target = machine.to_owned();
+    update_owner(cx, move |app, cx| {
+        app.refresh_runtime_views(cx);
+        app.docs_connected(&target, cx);
+    });
+    cx.refresh_windows();
+}
+
+fn delta_arrived(machine: &str, delta: Delta, cx: &mut App) {
+    if let Some(stream) = &mut get_mut(machine, cx).expect("connection").stream {
+        stream.seq += 1;
+    }
+    match delta {
+        Delta::EngineStatus(status) => {
+            set_status(machine, status, cx);
+            cx.refresh_windows();
+        }
+        Delta::Settings(settings) => {
+            get_mut(machine, cx).expect("connection").settings = settings;
+            cx.refresh_windows();
+        }
+        Delta::Harnesses(catalog) => {
+            set_harnesses(machine, catalog, cx);
+            cx.refresh_windows();
+        }
+        Delta::Icons(icons) => {
+            harness::set_icons(&icons);
+            cx.refresh_windows();
+        }
+        delta => {
+            let target = machine.to_owned();
+            update_owner(cx, move |app, cx| app.apply_delta(&target, delta, cx));
+        }
+    }
+}
+
+fn output_arrived(machine: &str, request: u64, line: String, cx: &mut App) {
+    let output = get_mut(machine, cx)
+        .expect("connection")
+        .outputs
+        .remove(&request);
+    if let Some(mut output) = output {
+        output(line, cx);
+        if let Some(connection) = get_mut(machine, cx) {
+            connection.outputs.insert(request, output);
+        }
+    }
+}
+
+fn remote_failed(machine: &str, failure: remote::Failure, cx: &mut App) {
+    cx.global_mut::<Connections>().secrets.remove(machine);
+    let retry = matches!(failure, remote::Failure::Network(_));
+    let upgrade = matches!(failure, remote::Failure::Upgrade { .. });
+    let state = match failure {
+        remote::Failure::Network(error) => State::Disconnected(error),
+        remote::Failure::SignIn(error) => State::SignInFailed(error),
+        remote::Failure::Fatal(error) => State::Unavailable(error),
+        remote::Failure::Unsupported(error) => State::Unsupported(error),
+        remote::Failure::LocalUpdate(version) => State::LocalUpdateNeeded(version),
+        remote::Failure::Upgrade { version, active } => State::UpgradeNeeded { version, active },
+    };
+    get_mut(machine, cx).expect("connection").state = state;
+    let error = format!("{} is not connected.", machines::name(machine));
+    fail_pending(machine, &error, cx);
+    if retry {
+        schedule_retry(machine, cx);
+    }
+    let target = machine.to_owned();
+    update_owner(cx, move |app, cx| {
+        if upgrade {
+            app.ask_upgrade(&target, cx);
+        }
+        app.refresh_runtime_views(cx);
+    });
+    cx.refresh_windows();
 }
 
 fn send_line(sender: &mpsc::UnboundedSender<String>, id: u64, command: Command) {
