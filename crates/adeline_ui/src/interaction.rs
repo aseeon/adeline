@@ -109,11 +109,11 @@ impl Adeline {
         }
         let changed = action.clone();
         let previous_modal = self.modal;
-        if let Some(action) = self
-            .act_project(action, window, cx)
-            .and_then(|action| self.act_chat(action, window, cx))
-        {
-            self.act_app(&action, window, cx);
+        match action.area() {
+            Area::Project => self.act_project(action, window, cx),
+            Area::Chat => self.act_chat(action, window, cx),
+            Area::App => self.act_app(&action, window, cx),
+            Area::Menu(_) => unreachable!("menu actions returned above"),
         }
         if matches!(
             changed,
@@ -139,12 +139,7 @@ impl Adeline {
         cx.notify();
     }
 
-    fn act_project(
-        &mut self,
-        action: Action,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Action> {
+    fn act_project(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         match action {
             Action::AddProject => self.begin_add_project(window, cx),
             Action::ProjectMachine(machine) => {
@@ -199,17 +194,11 @@ impl Adeline {
             Action::EngineRetry => client::connect(machines::LOCAL, cx),
             Action::EngineWait => client::replace_old(false, cx),
             Action::EngineStopOld => client::replace_old(true, cx),
-            action => return Some(action),
+            _ => unreachable!("Action::area routes only project actions here"),
         }
-        None
     }
 
-    fn act_chat(
-        &mut self,
-        action: Action,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Option<Action> {
+    fn act_chat(&mut self, action: Action, window: &mut Window, cx: &mut Context<Self>) {
         match action {
             Action::Section(section) => self.switch_section(section, window, cx),
             Action::Chat(ix) => self.show_chat(ix, cx),
@@ -288,9 +277,8 @@ impl Adeline {
             }
             Action::Docs(act) => self.docs_act(act, window, cx),
             Action::OpenCard { route, chat } => self.open_route(&route, Some(chat), window, cx),
-            action => return Some(action),
+            _ => unreachable!("Action::area routes only chat actions here"),
         }
-        None
     }
 
     fn act_app(&mut self, action: &Action, window: &mut Window, cx: &mut Context<Self>) {
@@ -345,7 +333,7 @@ impl Adeline {
                 cx.write_to_clipboard(ClipboardItem::new_string(self.traffic_text()));
             }
             Action::ToggleMode(section) => self.toggle_mode(*section, window, cx),
-            _ => unreachable!("act handles command surfaces, act_project and act_chat the rest"),
+            _ => unreachable!("Action::area routes only app actions here"),
         }
     }
 

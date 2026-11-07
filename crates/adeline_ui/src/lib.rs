@@ -214,16 +214,122 @@ enum Action {
         chat: String,
     },
 }
+#[derive(Clone, Copy)]
+enum Area {
+    Menu(&'static str),
+    Project,
+    Chat,
+    App,
+}
+
 impl Action {
-    fn menu_target(&self) -> Option<&'static str> {
+    fn area(&self) -> Area {
         match self {
-            Self::AppMenu => Some("app"),
-            Self::ModeSettings => Some("mode-settings"),
-            Self::Machines => Some("machines"),
-            Self::Projects => Some("projects"),
-            Self::Agents => Some("agents"),
-            Self::AgentMenu => Some("agent"),
-            Self::InsertFiles => Some("files"),
+            Self::AppMenu => Area::Menu("app"),
+            Self::ModeSettings => Area::Menu("mode-settings"),
+            Self::Machines => Area::Menu("machines"),
+            Self::Projects => Area::Menu("projects"),
+            Self::Agents => Area::Menu("agents"),
+            Self::AgentMenu => Area::Menu("agent"),
+            Self::InsertFiles => Area::Menu("files"),
+            Self::AddProject
+            | Self::ProjectMachine(..)
+            | Self::SaveProject
+            | Self::Settings
+            | Self::SaveSettings
+            | Self::RenameProject(..)
+            | Self::SaveRename
+            | Self::DeleteProject
+            | Self::ConfirmDeleteProject
+            | Self::ForceDeleteProject
+            | Self::Project(..)
+            | Self::RemoveClosedProject(..)
+            | Self::UndoProjectRemoval(..)
+            | Self::ToggleProjectSort
+            | Self::OpenFolder
+            | Self::FolderMachine(..)
+            | Self::CloseProject(..)
+            | Self::BrowseTo(..)
+            | Self::BrowsePick(..)
+            | Self::Tint(..)
+            | Self::Machine(..)
+            | Self::MachineRetry(..)
+            | Self::MachineUpgrade(..)
+            | Self::ConfirmUpgrade
+            | Self::AnswerPrompt(..)
+            | Self::StartEngine
+            | Self::EngineRetry
+            | Self::EngineWait
+            | Self::EngineStopOld => Area::Project,
+            Self::AppSettings
+            | Self::AgentSettings
+            | Self::EditAgent
+            | Self::AddAgent
+            | Self::ConfigureModeSettings
+            | Self::ManageMachines
+            | Self::QuitApp
+            | Self::About
+            | Self::Close
+            | Self::StopAll
+            | Self::QuitStopAll
+            | Self::FinishInBackground
+            | Self::SubmitOnEnter
+            | Self::HideToolCalls
+            | Self::ShowThinking
+            | Self::ToggleLeftPanel
+            | Self::ToggleSidePanel
+            | Self::TrafficView
+            | Self::PanelTab(..)
+            | Self::TodoList
+            | Self::CopyTraffic
+            | Self::ToggleMode(..) => Area::App,
+            Self::Section(..)
+            | Self::Chat(..)
+            | Self::NewChat
+            | Self::AgentFilter(..)
+            | Self::ClearChatFilters
+            | Self::ShowCompleted
+            | Self::ShowArchived
+            | Self::ToggleThought(..)
+            | Self::OptionMenu(..)
+            | Self::SetOption { .. }
+            | Self::EditQueued(..)
+            | Self::EditLastQueued
+            | Self::RemoveQueued(..)
+            | Self::SendQueuedNow(..)
+            | Self::DismissError(..)
+            | Self::RemoveAttachment(..)
+            | Self::PreviewImage(..)
+            | Self::Login(..)
+            | Self::Restart
+            | Self::Complete
+            | Self::ArchiveChat(..)
+            | Self::Agent(..)
+            | Self::Speed(..)
+            | Self::Send
+            | Self::SendNow
+            | Self::Stop
+            | Self::ForceStop
+            | Self::RetryPrompt
+            | Self::RetryStorage
+            | Self::ReplaceSession
+            | Self::PermissionResponse(..)
+            | Self::ReplyTo(..)
+            | Self::CopyMessage(..)
+            | Self::Fork(..)
+            | Self::ToggleTool(..)
+            | Self::Decision(..)
+            | Self::AddFile
+            | Self::AttachFile
+            | Self::AddDirectory
+            | Self::Docs(..)
+            | Self::OpenCard { .. } => Area::Chat,
+        }
+    }
+
+    fn menu_target(&self) -> Option<&'static str> {
+        match self.area() {
+            Area::Menu(menu) => Some(menu),
             _ => None,
         }
     }
