@@ -79,8 +79,14 @@ impl SettingsWindow {
         self.machines_changed(result, window, cx);
     }
 
+    fn set_editing(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        self.editing = id;
+        self.machine_error = None;
+        self.fill_machine_inputs(window, cx);
+        cx.notify();
+    }
+
     pub(super) fn machines_settings(&self, cx: &Context<Self>) -> Div {
-        let theme = cx.theme();
         let mut page = div()
             .w_full()
             .flex()
@@ -92,221 +98,7 @@ impl SettingsWindow {
             page = page.child(muted("Demo machines can't be changed.", cx));
         }
         for (ix, machine) in machines::remotes().into_iter().enumerate() {
-            let editing = self.editing.as_deref() == Some(machine.id.as_str());
-            let id = machine.id.clone();
-            let mut rows = vec![
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .px_4()
-                    .py_3()
-                    .child(
-                        div()
-                            .flex_1()
-                            .font_weight(FontWeight::MEDIUM)
-                            .child(machine.name.clone()),
-                    )
-                    .when(!editing && !self.demo, |row| {
-                        let id = id.clone();
-                        row.child(
-                            Button::new(("machine-edit", ix))
-                                .small()
-                                .label("Edit")
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.editing = Some(id.clone());
-                                    this.machine_error = None;
-                                    this.fill_machine_inputs(window, cx);
-                                    cx.notify();
-                                })),
-                        )
-                    })
-                    .when(!self.demo, |row| {
-                        let id = id.clone();
-                        row.child(
-                            Button::new(("machine-remove", ix))
-                                .small()
-                                .danger()
-                                .label("Remove")
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.confirm_remove(id.clone(), window, cx);
-                                })),
-                        )
-                    }),
-            ];
-            let count = machine.destinations.len();
-            for (at, destination) in machine.destinations.iter().enumerate() {
-                let button = |name: &'static str, label: &'static str, enabled: bool| {
-                    Button::new(format!("{name}-{ix}-{at}"))
-                        .xsmall()
-                        .ghost()
-                        .label(label)
-                        .disabled(!enabled || self.demo)
-                };
-                let (up, down, remove) = (id.clone(), id.clone(), id.clone());
-                rows.push(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_2()
-                        .px_4()
-                        .py_2()
-                        .child(
-                            div()
-                                .w(rems(1.5))
-                                .text_sm()
-                                .text_color(theme.muted_foreground)
-                                .child(format!("{}.", at + 1)),
-                        )
-                        .child(
-                            div()
-                                .flex_1()
-                                .min_w_0()
-                                .truncate()
-                                .font_family(theme.mono_font_family.clone())
-                                .text_sm()
-                                .child(destination.clone()),
-                        )
-                        .child(button("destination-up", "Up", at > 0).on_click(cx.listener(
-                            move |this, _, window, cx| {
-                                this.edit_machine(
-                                    &up,
-                                    |m| {
-                                        m.destinations.swap(at - 1, at);
-                                        Ok(())
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            },
-                        )))
-                        .child(button("destination-down", "Down", at + 1 < count).on_click(
-                            cx.listener(move |this, _, window, cx| {
-                                this.edit_machine(
-                                    &down,
-                                    |m| {
-                                        m.destinations.swap(at, at + 1);
-                                        Ok(())
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            }),
-                        ))
-                        .child(button("destination-remove", "Remove", count > 1).on_click(
-                            cx.listener(move |this, _, window, cx| {
-                                this.edit_machine(
-                                    &remove,
-                                    |m| {
-                                        m.destinations.remove(at);
-                                        Ok(())
-                                    },
-                                    window,
-                                    cx,
-                                );
-                            }),
-                        )),
-                );
-            }
-            if editing {
-                let (rename, add) = (id.clone(), id.clone());
-                rows.push(
-                    div()
-                        .flex()
-                        .flex_col()
-                        .gap_2()
-                        .px_4()
-                        .py_3()
-                        .child(
-                            Field::new().label("Name").child(
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .child(div().flex_1().child(
-                                        Input::new(&self.machine_name).aria_label("Machine name"),
-                                    ))
-                                    .child(
-                                        Button::new("machine-rename")
-                                            .small()
-                                            .label("Rename")
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                let name =
-                                                    this.machine_name.read(cx).value().to_string();
-                                                this.edit_machine(
-                                                    &rename,
-                                                    |m| {
-                                                        m.name = name;
-                                                        Ok(())
-                                                    },
-                                                    window,
-                                                    cx,
-                                                );
-                                            })),
-                                    ),
-                            ),
-                        )
-                        .child(
-                            Field::new().label("Another destination").child(
-                                div()
-                                    .flex()
-                                    .gap_2()
-                                    .child(
-                                        div().flex_1().child(
-                                            Input::new(&self.machine_destination)
-                                                .aria_label("New destination"),
-                                        ),
-                                    )
-                                    .child(
-                                        Button::new("destination-add")
-                                            .small()
-                                            .label("Add destination")
-                                            .on_click(cx.listener(move |this, _, window, cx| {
-                                                let destination = this
-                                                    .machine_destination
-                                                    .read(cx)
-                                                    .value()
-                                                    .trim()
-                                                    .to_owned();
-                                                this.edit_machine(
-                                                    &add,
-                                                    |m| {
-                                                        machines::check_destination(&destination)?;
-                                                        if m.destinations.contains(&destination) {
-                                                            anyhow::bail!(
-                                                                "{destination} is already listed."
-                                                            );
-                                                        }
-                                                        m.destinations.push(destination);
-                                                        Ok(())
-                                                    },
-                                                    window,
-                                                    cx,
-                                                );
-                                                if this.machine_error.is_none() {
-                                                    this.machine_destination.update(
-                                                        cx,
-                                                        |input, cx| {
-                                                            input.set_value("", window, cx);
-                                                        },
-                                                    );
-                                                }
-                                            })),
-                                    ),
-                            ),
-                        )
-                        .child(div().flex().justify_end().child(
-                            Button::new("machine-done").small().label("Done").on_click(
-                                cx.listener(|this, _, window, cx| {
-                                    this.editing = None;
-                                    this.machine_error = None;
-                                    this.fill_machine_inputs(window, cx);
-                                    cx.notify();
-                                }),
-                            ),
-                        )),
-                );
-            }
-            page = page.children(card(rows, cx));
+            page = page.children(self.machine_card(ix, &machine, cx));
         }
         if let Some(message) = &self.machine_error {
             page = page.child(error(message.clone(), cx));
@@ -351,5 +143,214 @@ impl SettingsWindow {
             ));
         }
         page
+    }
+
+    fn machine_card(
+        &self,
+        ix: usize,
+        machine: &machines::Machine,
+        cx: &Context<Self>,
+    ) -> Option<Div> {
+        let theme = cx.theme();
+        let editing = self.editing.as_deref() == Some(machine.id.as_str());
+        let id = machine.id.clone();
+        let mut rows = vec![
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_4()
+                .py_3()
+                .child(
+                    div()
+                        .flex_1()
+                        .font_weight(FontWeight::MEDIUM)
+                        .child(machine.name.clone()),
+                )
+                .when(!editing && !self.demo, |row| {
+                    let id = id.clone();
+                    row.child(
+                        Button::new(("machine-edit", ix))
+                            .small()
+                            .label("Edit")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.set_editing(Some(id.clone()), window, cx);
+                            })),
+                    )
+                })
+                .when(!self.demo, |row| {
+                    let id = id.clone();
+                    row.child(
+                        Button::new(("machine-remove", ix))
+                            .small()
+                            .danger()
+                            .label("Remove")
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.confirm_remove(id.clone(), window, cx);
+                            })),
+                    )
+                }),
+        ];
+        let count = machine.destinations.len();
+        for (at, destination) in machine.destinations.iter().enumerate() {
+            let button = |name: &'static str,
+                          label: &'static str,
+                          enabled: bool,
+                          change: fn(&mut Vec<String>, usize)| {
+                let id = id.clone();
+                Button::new(format!("{name}-{ix}-{at}"))
+                    .xsmall()
+                    .ghost()
+                    .label(label)
+                    .disabled(!enabled || self.demo)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.edit_machine(
+                            &id,
+                            |m| {
+                                change(&mut m.destinations, at);
+                                Ok(())
+                            },
+                            window,
+                            cx,
+                        );
+                    }))
+            };
+            rows.push(
+                div()
+                    .flex()
+                    .items_center()
+                    .gap_2()
+                    .px_4()
+                    .py_2()
+                    .child(
+                        div()
+                            .w(rems(1.5))
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .child(format!("{}.", at + 1)),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .truncate()
+                            .font_family(theme.mono_font_family.clone())
+                            .text_sm()
+                            .child(destination.clone()),
+                    )
+                    .child(button("destination-up", "Up", at > 0, |d, at| {
+                        d.swap(at - 1, at);
+                    }))
+                    .child(button(
+                        "destination-down",
+                        "Down",
+                        at + 1 < count,
+                        |d, at| {
+                            d.swap(at, at + 1);
+                        },
+                    ))
+                    .child(button(
+                        "destination-remove",
+                        "Remove",
+                        count > 1,
+                        |d, at| {
+                            d.remove(at);
+                        },
+                    )),
+            );
+        }
+        if editing {
+            rows.push(self.machine_edit_row(&id, cx));
+        }
+        card(rows, cx)
+    }
+
+    fn machine_edit_row(&self, id: &str, cx: &Context<Self>) -> Div {
+        let (rename, add) = (id.to_owned(), id.to_owned());
+        div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .px_4()
+            .py_3()
+            .child(
+                Field::new().label("Name").child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .child(Input::new(&self.machine_name).aria_label("Machine name")),
+                        )
+                        .child(
+                            Button::new("machine-rename")
+                                .small()
+                                .label("Rename")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    let name = this.machine_name.read(cx).value().to_string();
+                                    this.edit_machine(
+                                        &rename,
+                                        |m| {
+                                            m.name = name;
+                                            Ok(())
+                                        },
+                                        window,
+                                        cx,
+                                    );
+                                })),
+                        ),
+                ),
+            )
+            .child(
+                Field::new().label("Another destination").child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(div().flex_1().child(
+                            Input::new(&self.machine_destination).aria_label("New destination"),
+                        ))
+                        .child(
+                            Button::new("destination-add")
+                                .small()
+                                .label("Add destination")
+                                .on_click(cx.listener(move |this, _, window, cx| {
+                                    this.add_destination(&add, window, cx);
+                                })),
+                        ),
+                ),
+            )
+            .child(
+                div().flex().justify_end().child(
+                    Button::new("machine-done")
+                        .small()
+                        .label("Done")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.set_editing(None, window, cx);
+                        })),
+                ),
+            )
+    }
+
+    fn add_destination(&mut self, id: &str, window: &mut Window, cx: &mut Context<Self>) {
+        let destination = self.machine_destination.read(cx).value().trim().to_owned();
+        self.edit_machine(
+            id,
+            |m| {
+                machines::check_destination(&destination)?;
+                if m.destinations.contains(&destination) {
+                    anyhow::bail!("{destination} is already listed.");
+                }
+                m.destinations.push(destination);
+                Ok(())
+            },
+            window,
+            cx,
+        );
+        if self.machine_error.is_none() {
+            self.machine_destination.update(cx, |input, cx| {
+                input.set_value("", window, cx);
+            });
+        }
     }
 }

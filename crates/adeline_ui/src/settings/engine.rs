@@ -121,98 +121,86 @@ impl SettingsWindow {
             page = page.child(error(message.clone(), cx));
         }
         if matches_query(query, &[&["Engine"][..], &ENGINE_STATUS[..]].concat()) {
-            let status = &connection.status;
-            let state = match &connection.state {
-                client::State::Connected => "Running".to_owned(),
-                client::State::Connecting | client::State::Starting => "Starting…".to_owned(),
-                client::State::Stopped { unexpected: true } => "Stopped unexpectedly".to_owned(),
-                client::State::Stopped { .. } => "Stopped".to_owned(),
-                client::State::Unavailable(reason) => format!("Unavailable: {reason}"),
-                client::State::Mismatch(_) | client::State::Waiting => {
-                    "An older engine is running".to_owned()
-                }
-                client::State::Demo => "Not used in demo mode".to_owned(),
-                state => format!(
-                    "{}{}",
-                    state.label(),
-                    state.detail().map(|d| format!(": {d}")).unwrap_or_default()
-                ),
-            };
-            let uptime = status.uptime_secs + connection.status_at.elapsed().as_secs();
-            let mut fields = vec![("Status", state)];
-            if let Some(destination) = &connection.destination {
-                fields.push(("Connected through", destination.clone()));
-            }
-            if connected {
-                fields.extend([
-                    ("PID", status.pid.to_string()),
-                    ("Version", status.version.clone()),
-                    ("Build", status.build().to_owned()),
-                    ("Protocol", status.protocol.to_string()),
-                    (
-                        "Daemon mode",
-                        if status.daemon { "On" } else { "Off" }.to_owned(),
-                    ),
-                    (
-                        "Uptime",
-                        format!("{}h {}m {}s", uptime / 3600, uptime / 60 % 60, uptime % 60),
-                    ),
-                    ("Connected clients", status.clients.to_string()),
-                    (
-                        "Active conversations",
-                        status.conversations.len().to_string(),
-                    ),
-                ]);
-                for conversation in &status.conversations {
-                    fields.push((
-                        "",
-                        format!(
-                            "{} / {} · {}",
-                            conversation.project, conversation.title, conversation.state
-                        ),
-                    ));
-                }
-                fields.push(("Logs", status.log.clone()));
-            }
-            let rows = fields
-                .into_iter()
-                .map(|(label, value)| {
-                    div()
-                        .flex()
-                        .justify_between()
-                        .gap_4()
-                        .px_4()
-                        .py_2()
-                        .child(label)
-                        .child(muted(value, cx))
-                })
-                .collect();
-            page = page
-                .child(caps("Status", cx).mt_2())
-                .children(card(rows, cx));
-            let button = if connected {
-                Button::new("engine-stop")
-                    .danger()
-                    .label(if self.engine_stopping {
-                        "Stopping engine…"
-                    } else {
-                        "Stop engine"
-                    })
-                    .disabled(self.engine_stopping)
-                    .on_click(cx.listener(|this, _, _, cx| this.stop_engine(cx)))
-            } else {
-                Button::new("engine-start")
-                    .primary()
-                    .label("Start engine")
-                    .disabled(matches!(
-                        connection.state,
-                        client::State::Demo | client::State::Connecting | client::State::Starting
-                    ))
-                    .on_click(cx.listener(|this, _, _, cx| client::retry(&this.machine, cx)))
-            };
-            page = page.child(div().flex().justify_end().mt_2().child(button.small()));
+            page = self.engine_status(page, connection, cx);
         }
         page
+    }
+
+    fn engine_status(&self, page: Div, connection: &client::Connection, cx: &Context<Self>) -> Div {
+        let connected = connection.state == client::State::Connected;
+        let status = &connection.status;
+        let uptime = status.uptime_secs + connection.status_at.elapsed().as_secs();
+        let mut fields = vec![("Status", state_text(&connection.state))];
+        if let Some(destination) = &connection.destination {
+            fields.push(("Connected through", destination.clone()));
+        }
+        if connected {
+            fields.extend([
+                ("PID", status.pid.to_string()),
+                ("Version", status.version.clone()),
+                ("Build", status.build().to_owned()),
+                ("Protocol", status.protocol.to_string()),
+                (
+                    "Daemon mode",
+                    if status.daemon { "On" } else { "Off" }.to_owned(),
+                ),
+                (
+                    "Uptime",
+                    format!("{}h {}m {}s", uptime / 3600, uptime / 60 % 60, uptime % 60),
+                ),
+                ("Connected clients", status.clients.to_string()),
+                (
+                    "Active conversations",
+                    status.conversations.len().to_string(),
+                ),
+            ]);
+            for conversation in &status.conversations {
+                fields.push((
+                    "",
+                    format!(
+                        "{} / {} · {}",
+                        conversation.project, conversation.title, conversation.state
+                    ),
+                ));
+            }
+            fields.push(("Logs", status.log.clone()));
+        }
+        let rows = fields
+            .into_iter()
+            .map(|(label, value)| {
+                div()
+                    .flex()
+                    .justify_between()
+                    .gap_4()
+                    .px_4()
+                    .py_2()
+                    .child(label)
+                    .child(muted(value, cx))
+            })
+            .collect();
+        let button = if connected {
+            Button::new("engine-stop")
+                .danger()
+                .label(if self.engine_stopping {
+                    "Stopping engine…"
+                } else {
+                    "Stop engine"
+                })
+                .disabled(self.engine_stopping)
+                .on_click(cx.listener(|this, _, _, cx| this.stop_engine(cx)))
+        } else {
+            Button::new("engine-start")
+                .primary()
+                .label("Start engine")
+                .disabled(matches!(
+                    connection.state,
+                    client::State::Demo | client::State::Connecting | client::State::Starting
+                ))
+                .on_click(cx.listener(|this, _, _, cx| client::retry(&this.machine, cx)))
+        };
+        page.child(caps("Status", cx).mt_2())
+            .children(card(rows, cx))
+            .child(div().flex().justify_end().mt_2().child(button.small()))
     }
 
     fn save_mcp_servers(&mut self, servers: Vec<conversation::McpServer>, cx: &mut Context<Self>) {
@@ -289,5 +277,24 @@ impl SettingsWindow {
             .when_some(self.mcp_error.clone(), |page, message| {
                 page.child(error(message, cx))
             })
+    }
+}
+
+fn state_text(state: &client::State) -> String {
+    match state {
+        client::State::Connected => "Running".to_owned(),
+        client::State::Connecting | client::State::Starting => "Starting…".to_owned(),
+        client::State::Stopped { unexpected: true } => "Stopped unexpectedly".to_owned(),
+        client::State::Stopped { .. } => "Stopped".to_owned(),
+        client::State::Unavailable(reason) => format!("Unavailable: {reason}"),
+        client::State::Mismatch(_) | client::State::Waiting => {
+            "An older engine is running".to_owned()
+        }
+        client::State::Demo => "Not used in demo mode".to_owned(),
+        state => format!(
+            "{}{}",
+            state.label(),
+            state.detail().map(|d| format!(": {d}")).unwrap_or_default()
+        ),
     }
 }

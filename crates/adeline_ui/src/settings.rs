@@ -5,8 +5,8 @@
 use super::*;
 use gpui_kit::AppContext as _;
 use gpui_kit::component::{
-    ActiveTheme as _, Colorize as _, Disableable as _, FocusableExt as _, IndexPath,
-    Selectable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Colorize as _, Disableable as _, FocusableExt as _, Selectable as _,
+    Sizable as _, WindowExt as _,
     button::Button,
     form::{Field, Form},
     input::Input,
@@ -63,6 +63,16 @@ impl Group {
             Self::Licenses => &["Phosphor Icons", "GPUI", "Chivo & Chivo Mono"],
             Self::Agents => &["MCP servers"],
             Self::Engine => &["Engine"],
+        }
+    }
+
+    fn icon(self, child: usize) -> &'static str {
+        match self {
+            Self::General => ["settings.svg", "pen.svg", "code.svg"][child],
+            Self::Modes => "chat.svg",
+            Self::Agents => "link.svg",
+            Self::Licenses => "file.svg",
+            Self::Engine => "devices.svg",
         }
     }
 
@@ -703,216 +713,49 @@ impl SettingsWindow {
         );
         let thinking = config::current().modes.chats.thinking_animation;
         let thinking_picker = cx.new(|cx| {
-            SelectState::new(
-                SearchableVec::new(
-                    config::ThinkingAnimation::ALL
-                        .map(|choice| choice.label().to_owned())
-                        .to_vec(),
-                ),
-                config::ThinkingAnimation::ALL
-                    .iter()
-                    .position(|choice| *choice == thinking)
-                    .map(|index| IndexPath::default().row(index)),
-                window,
-                cx,
-            )
+            let labels = config::ThinkingAnimation::ALL.map(|choice| choice.label().to_owned());
+            let mut picker =
+                SelectState::new(SearchableVec::new(labels.to_vec()), None, window, cx);
+            picker.set_selected_value(&thinking.label().to_owned(), window, cx);
+            picker
         });
         let (theme_choices, errors) =
             theme::discover().unwrap_or_else(|error| (Vec::new(), vec![format!("{error:#}")]));
-        let selected_theme = config::current().general.appearance.theme;
-        let selected_theme = theme_choices
-            .iter()
-            .position(|choice| choice.file == selected_theme)
-            .map(|index| IndexPath::default().row(index));
         let theme_picker = cx.new(|cx| {
-            SelectState::new(
-                SearchableVec::new(theme_choices),
-                selected_theme,
-                window,
-                cx,
-            )
-            .searchable(true)
+            let mut picker = SelectState::new(SearchableVec::new(theme_choices), None, window, cx)
+                .searchable(true);
+            picker.set_selected_value(&config::current().general.appearance.theme, window, cx);
+            picker
         });
         let font_pickers = std::array::from_fn(|which| {
             let (names, saved) = font_choices(which);
-            let selected = names
-                .iter()
-                .position(|name| *name == saved)
-                .map(|index| IndexPath::default().row(index));
             cx.new(|cx| {
-                SelectState::new(SearchableVec::new(names), selected, window, cx).searchable(true)
+                let mut picker =
+                    SelectState::new(SearchableVec::new(names), None, window, cx).searchable(true);
+                picker.set_selected_value(&saved, window, cx);
+                picker
             })
         });
         let mut subscriptions = Vec::new();
         for (which, size_input) in font_sizes.iter().enumerate() {
-            subscriptions.push(cx.subscribe(
-                size_input,
-                move |this, input, event: &InputEvent, cx| {
-                    if !matches!(event, InputEvent::Change) {
-                        return;
-                    }
-                    let value = input.read(cx).value();
-                    if let Ok(size) = value.trim().parse::<u16>() {
-                        this.save_font_size(which, size, cx);
-                    } else {
-                        this.font_size_errors[which] = Some(font_size_error());
-                        cx.notify();
-                    }
-                },
-            ));
+            subscriptions.push(cx.subscribe(size_input, move |this, input, event, cx| {
+                this.font_size_changed(which, &input, event, cx);
+            }));
         }
-        subscriptions.push(
-            cx.subscribe(&retry_limit, |this, input, event: &InputEvent, cx| {
-                if !matches!(event, InputEvent::Change) {
-                    return;
-                }
-                let value = input.read(cx).value().trim().parse::<usize>();
-                let current = engine_settings_of(&this.machine, cx);
-                match value {
-                    Ok(limit) if limit != current.retry_limit => {
-                        let settings = protocol::EngineSettings {
-                            retry_limit: limit,
-                            ..current
-                        };
-                        this.save_engine_settings(settings, |this| &mut this.retry_limit_error, cx);
-                    }
-                    Ok(_) => this.retry_limit_error = None,
-                    Err(_) => {
-                        this.retry_limit_error = Some(
-                            "Enter a non-negative whole number. Zero disables retries.".into(),
-                        );
-                    }
-                }
-                cx.notify();
-            }),
-        );
-        subscriptions.push(cx.subscribe(
-            &silence_minutes,
-            |this, input, event: &InputEvent, cx| {
-                if !matches!(event, InputEvent::Change) {
-                    return;
-                }
-                this.silence_error = match input.read(cx).value().trim().parse::<u32>() {
-                    Ok(minutes) => config::update(|settings| {
-                        settings.modes.chats.silence_notice_minutes = minutes;
-                    })
-                    .err()
-                    .map(|e| format!("{e:#}")),
-                    Err(_) => {
-                        Some("Enter a whole number of minutes. 0 turns the notice off.".into())
-                    }
-                };
-                let _ = this.owner.entity.update(cx, |app, cx| {
-                    app.transcript.update(cx, chat::Transcript::invalidate);
-                });
-                cx.notify();
-            },
-        ));
-        subscriptions.push(cx.subscribe_in(
-            &machine_picker,
-            window,
-            |this, _, event: &SelectEvent<SearchableVec<String>>, window, cx| {
-                let SelectEvent::Confirm(Some(label)) = event else {
-                    return;
-                };
-                let next = match label.as_str() {
-                    ADD_MACHINE | MANAGE_MACHINES => AfterAgent::Machines,
-                    name => match machines::all()
-                        .into_iter()
-                        .find(|m| machines::name(m) == name)
-                    {
-                        Some(machine) => AfterAgent::Machine(machine),
-                        None => return,
-                    },
-                };
-                if label == ADD_MACHINE {
-                    this.editing = None;
-                }
-                let shown = machines::name(&this.machine);
-                this.machine_picker.update(cx, |picker, cx| {
-                    picker.set_selected_value(&shown, window, cx);
-                });
-                this.leave(next, window, cx);
-            },
-        ));
-        subscriptions.push(cx.subscribe(
-            &thinking_picker,
-            |this, _, event: &SelectEvent<SearchableVec<String>>, cx| {
-                let SelectEvent::Confirm(Some(label)) = event else {
-                    return;
-                };
-                let Some(choice) = config::ThinkingAnimation::ALL
-                    .into_iter()
-                    .find(|choice| choice.label() == label)
-                else {
-                    return;
-                };
-                this.thinking_error = config::update(|settings| {
-                    settings.modes.chats.thinking_animation = choice;
-                })
-                .err()
-                .map(|e| format!("{e:#}"));
-                let _ = this.owner.entity.update(cx, |_, cx| cx.notify());
-                cx.notify();
-            },
-        ));
-        subscriptions.push(cx.subscribe_in(
-            &query,
-            window,
-            |this, input, event: &InputEvent, window, cx| {
-                if matches!(event, InputEvent::Focus | InputEvent::Blur) {
-                    cx.notify();
-                    return;
-                }
-                if !matches!(event, InputEvent::Change) {
-                    return;
-                }
-                let requested = input.read(cx).value().to_string();
-                if requested == this.last_query {
-                    return;
-                }
-                if this.agent_dirty(cx) {
-                    input.update(cx, |input, cx| {
-                        input.set_value(this.last_query.clone(), window, cx);
-                    });
-                    this.leave(AfterAgent::Search(requested), window, cx);
-                } else {
-                    this.after_agent(AfterAgent::Search(requested), window, cx);
-                }
-            },
-        ));
-        subscriptions.push(cx.subscribe_in(
-            &theme_picker,
-            window,
-            |this, _, event: &SelectEvent<SearchableVec<theme::ThemeChoice>>, window, cx| {
-                if let SelectEvent::Confirm(Some(file)) = event {
-                    this.theme_status = match theme::select(file, cx) {
-                        Ok(()) => None,
-                        Err(message) => {
-                            let saved = config::current().general.appearance.theme;
-                            this.theme_picker.update(cx, |picker, cx| {
-                                picker.set_selected_value(&saved, window, cx);
-                            });
-                            Some(format!("{message:#}"))
-                        }
-                    };
-                    cx.notify();
-                }
-            },
-        ));
+        subscriptions.extend([
+            cx.subscribe(&retry_limit, Self::retry_limit_changed),
+            cx.subscribe(&silence_minutes, Self::silence_changed),
+            cx.subscribe_in(&machine_picker, window, Self::machine_chosen),
+            cx.subscribe(&thinking_picker, Self::thinking_chosen),
+            cx.subscribe_in(&query, window, Self::query_changed),
+            cx.subscribe_in(&theme_picker, window, Self::theme_chosen),
+        ]);
         for (which, picker) in font_pickers.iter().enumerate() {
             subscriptions.push(cx.subscribe_in(
                 picker,
                 window,
-                move |this, _, event: &SelectEvent<SearchableVec<String>>, window, cx| {
-                    if let SelectEvent::Confirm(Some(name)) = event {
-                        this.choose_font(which, name, cx);
-                        if saved_font(which) != *name {
-                            this.font_pickers[which].update(cx, |picker, cx| {
-                                picker.set_selected_value(&saved_font(which), window, cx);
-                            });
-                        }
-                    }
+                move |this, _, event, window, cx| {
+                    this.font_chosen(which, event, window, cx);
                 },
             ));
         }
@@ -973,6 +816,199 @@ impl SettingsWindow {
             folded: std::array::from_fn(|group| group != Group::of_mode(mode) as usize),
             focus,
             _subscriptions: subscriptions,
+        }
+    }
+
+    fn font_size_changed(
+        &mut self,
+        which: usize,
+        input: &Entity<InputState>,
+        event: &InputEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(event, InputEvent::Change) {
+            return;
+        }
+        let value = input.read(cx).value();
+        if let Ok(size) = value.trim().parse::<u16>() {
+            self.save_font_size(which, size, cx);
+        } else {
+            self.font_size_errors[which] = Some(font_size_error());
+            cx.notify();
+        }
+    }
+
+    fn retry_limit_changed(
+        &mut self,
+        _: Entity<InputState>,
+        event: &InputEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(event, InputEvent::Change) {
+            return;
+        }
+        let value = self.retry_limit.read(cx).value().trim().parse::<usize>();
+        let current = engine_settings_of(&self.machine, cx);
+        match value {
+            Ok(limit) if limit != current.retry_limit => {
+                let settings = protocol::EngineSettings {
+                    retry_limit: limit,
+                    ..current
+                };
+                self.save_engine_settings(settings, |this| &mut this.retry_limit_error, cx);
+            }
+            Ok(_) => self.retry_limit_error = None,
+            Err(_) => {
+                self.retry_limit_error =
+                    Some("Enter a non-negative whole number. Zero disables retries.".into());
+            }
+        }
+        cx.notify();
+    }
+
+    fn silence_changed(
+        &mut self,
+        _: Entity<InputState>,
+        event: &InputEvent,
+        cx: &mut Context<Self>,
+    ) {
+        if !matches!(event, InputEvent::Change) {
+            return;
+        }
+        self.silence_error = match self.silence_minutes.read(cx).value().trim().parse::<u32>() {
+            Ok(minutes) => config::update(|settings| {
+                settings.modes.chats.silence_notice_minutes = minutes;
+            })
+            .err()
+            .map(|e| format!("{e:#}")),
+            Err(_) => Some("Enter a whole number of minutes. 0 turns the notice off.".into()),
+        };
+        let _ = self.owner.entity.update(cx, |app, cx| {
+            app.transcript.update(cx, chat::Transcript::invalidate);
+        });
+        cx.notify();
+    }
+
+    fn machine_chosen(
+        &mut self,
+        _: &Entity<SelectState<SearchableVec<String>>>,
+        event: &SelectEvent<SearchableVec<String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let SelectEvent::Confirm(Some(label)) = event else {
+            return;
+        };
+        let next = match label.as_str() {
+            ADD_MACHINE | MANAGE_MACHINES => AfterAgent::Machines,
+            name => match machines::all()
+                .into_iter()
+                .find(|m| machines::name(m) == name)
+            {
+                Some(machine) => AfterAgent::Machine(machine),
+                None => return,
+            },
+        };
+        if label == ADD_MACHINE {
+            self.editing = None;
+        }
+        let shown = machines::name(&self.machine);
+        self.machine_picker.update(cx, |picker, cx| {
+            picker.set_selected_value(&shown, window, cx);
+        });
+        self.leave(next, window, cx);
+    }
+
+    fn thinking_chosen(
+        &mut self,
+        _: Entity<SelectState<SearchableVec<String>>>,
+        event: &SelectEvent<SearchableVec<String>>,
+        cx: &mut Context<Self>,
+    ) {
+        let SelectEvent::Confirm(Some(label)) = event else {
+            return;
+        };
+        let Some(choice) = config::ThinkingAnimation::ALL
+            .into_iter()
+            .find(|choice| choice.label() == label)
+        else {
+            return;
+        };
+        self.thinking_error = config::update(|settings| {
+            settings.modes.chats.thinking_animation = choice;
+        })
+        .err()
+        .map(|e| format!("{e:#}"));
+        let _ = self.owner.entity.update(cx, |_, cx| cx.notify());
+        cx.notify();
+    }
+
+    fn query_changed(
+        &mut self,
+        input: &Entity<InputState>,
+        event: &InputEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if matches!(event, InputEvent::Focus | InputEvent::Blur) {
+            cx.notify();
+            return;
+        }
+        if !matches!(event, InputEvent::Change) {
+            return;
+        }
+        let requested = input.read(cx).value().to_string();
+        if requested == self.last_query {
+            return;
+        }
+        if self.agent_dirty(cx) {
+            input.update(cx, |input, cx| {
+                input.set_value(self.last_query.clone(), window, cx);
+            });
+            self.leave(AfterAgent::Search(requested), window, cx);
+        } else {
+            self.after_agent(AfterAgent::Search(requested), window, cx);
+        }
+    }
+
+    fn theme_chosen(
+        &mut self,
+        _: &Entity<SelectState<SearchableVec<theme::ThemeChoice>>>,
+        event: &SelectEvent<SearchableVec<theme::ThemeChoice>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let SelectEvent::Confirm(Some(file)) = event else {
+            return;
+        };
+        self.theme_status = match theme::select(file, cx) {
+            Ok(()) => None,
+            Err(message) => {
+                let saved = config::current().general.appearance.theme;
+                self.theme_picker.update(cx, |picker, cx| {
+                    picker.set_selected_value(&saved, window, cx);
+                });
+                Some(format!("{message:#}"))
+            }
+        };
+        cx.notify();
+    }
+
+    fn font_chosen(
+        &mut self,
+        which: usize,
+        event: &SelectEvent<SearchableVec<String>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let SelectEvent::Confirm(Some(name)) = event else {
+            return;
+        };
+        self.choose_font(which, name, cx);
+        if saved_font(which) != *name {
+            self.font_pickers[which].update(cx, |picker, cx| {
+                picker.set_selected_value(&saved_font(which), window, cx);
+            });
         }
     }
 
@@ -1177,12 +1213,16 @@ fn navigation_button(
         .border_color(cx.theme().transparent)
         .focus_visible(|style| style.border_color(ring))
 }
-impl Render for SettingsWindow {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let query = self.query.read(cx).value().to_lowercase();
-        let searching = !query.trim().is_empty();
+impl SettingsWindow {
+    fn navigation(
+        &self,
+        query: &str,
+        searching: bool,
+        remote: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Div {
         let mut navigation = div().flex().flex_col().gap_1();
-        let remote = self.machine != machines::LOCAL;
         for group in Group::NAVIGATION {
             let name = group.label();
             if group == Group::Licenses && searching || remote && group.local_only() {
@@ -1194,38 +1234,21 @@ impl Render for SettingsWindow {
                 .enumerate()
                 .filter(|(child, title)| {
                     if group == Group::General {
-                        general_matches(*child, &query)
+                        general_matches(*child, query)
                     } else {
-                        matches_query(&query, &[name, title])
+                        matches_query(query, &[name, title])
                     }
                 })
                 .collect();
-            let matching_agents: Vec<_> = if group == Group::Agents {
-                let machine = self.machine.clone();
-                self.owner
-                    .entity
-                    .read_with(cx, |app, _| {
-                        app.catalog(&machine)
-                            .entries
-                            .iter()
-                            .filter(|entry| agent_matches(entry, &query))
-                            .map(|entry| {
-                                (
-                                    entry.id.clone(),
-                                    entry.definition.name.clone(),
-                                    entry.definition.harness.clone(),
-                                )
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default()
+            let matching_agents = if group == Group::Agents {
+                self.matching_agents(query, cx)
             } else {
                 Vec::new()
             };
             if searching
                 && matching.is_empty()
                 && matching_agents.is_empty()
-                && !(group == Group::Agents && matches_query(&query, &["Agents"]))
+                && !(group == Group::Agents && matches_query(query, &["Agents"]))
             {
                 continue;
             }
@@ -1241,18 +1264,11 @@ impl Render for SettingsWindow {
                 continue;
             }
             for (child, title) in matching {
-                let icon = match group {
-                    Group::General => ["settings.svg", "pen.svg", "code.svg"][child],
-                    Group::Modes => "chat.svg",
-                    Group::Agents => "link.svg",
-                    Group::Licenses => "file.svg",
-                    Group::Engine => "devices.svg",
-                };
                 navigation = navigation.child(
                     navigation_button(
                         format!("settings-{}-{child}", group as usize),
                         *title,
-                        icon,
+                        group.icon(child),
                         !self.machines_page && self.group == group && self.subgroup == Some(child),
                         cx,
                     )
@@ -1292,6 +1308,178 @@ impl Render for SettingsWindow {
                 );
             }
         }
+        navigation
+    }
+
+    fn matching_agents(&self, query: &str, cx: &App) -> Vec<(String, String, String)> {
+        let machine = self.machine.clone();
+        self.owner
+            .entity
+            .read_with(cx, |app, _| {
+                app.catalog(&machine)
+                    .entries
+                    .iter()
+                    .filter(|entry| agent_matches(entry, query))
+                    .map(|entry| {
+                        (
+                            entry.id.clone(),
+                            entry.definition.name.clone(),
+                            entry.definition.harness.clone(),
+                        )
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    fn pages(&self, query: &str, searching: bool, remote: bool, cx: &Context<Self>) -> Vec<Div> {
+        let show = |group: Group, child| {
+            if self.machines_page || remote && group.local_only() {
+                false
+            } else if searching {
+                self.search_page
+                    .is_none_or(|(g, c)| g == group && c.is_none_or(|c| c == child))
+            } else {
+                self.group == group && self.subgroup.is_none_or(|c| c == child)
+            }
+        };
+        let mut pages = Vec::new();
+        if self.machines_page {
+            pages.push(self.machines_settings(cx));
+        }
+        if let Some(owner) = self.owner.entity.upgrade() {
+            let app = owner.read(cx);
+            if show(Group::General, 0) && general_matches(0, query) {
+                pages.push(self.features_settings(query, searching, cx));
+            }
+            if show(Group::General, 1) && general_matches(1, query) {
+                pages.push(self.appearance_settings(cx));
+            }
+            if show(Group::General, 2) && general_matches(2, query) {
+                pages.push(self.keymap_settings(query, searching, cx));
+            }
+            if show(Group::Modes, 0) {
+                pages.extend(self.chats_settings(app, query, searching, cx));
+            }
+            if show(Group::Modes, 1) {
+                pages.extend(self.docs_settings(app, query, searching, cx));
+            }
+        }
+        if show(Group::Engine, 0) && engine_matches(query) {
+            pages.push(self.engine_settings(query, cx));
+        }
+        if self.group == Group::Licenses && !searching && !remote && !self.machines_page {
+            pages.extend(self.licenses_settings(cx));
+        }
+        let mcp_page = !self.machines_page
+            && self.agent_page.is_none()
+            && if searching {
+                matches_query(query, &["Agents", "MCP servers", MCP_DESCRIPTION])
+            } else {
+                self.group == Group::Agents && self.subgroup == Some(0)
+            };
+        if mcp_page {
+            pages.push(self.mcp_settings(cx));
+        }
+        if !self.machines_page && (searching || (self.group == Group::Agents && !mcp_page)) {
+            pages.extend(self.agent_settings(query, searching, cx));
+        }
+        pages
+    }
+
+    fn crumbs(&self, searching: bool, remote: bool, cx: &App) -> Vec<String> {
+        let heading = if self.machines_page {
+            "Machines".to_string()
+        } else if searching {
+            "Search results".to_string()
+        } else if let Some(form) = self
+            .agent_form
+            .as_ref()
+            .filter(|_| self.group == Group::Agents)
+        {
+            form.read(cx).name(cx)
+        } else {
+            self.subgroup
+                .map_or(self.group.label(), |child| self.group.subgroups()[child])
+                .to_string()
+        };
+        let mut crumbs = if searching || self.machines_page || heading == self.group.label() {
+            vec![heading]
+        } else {
+            vec![self.group.label().to_string(), heading]
+        };
+        if remote && !self.machines_page {
+            crumbs.insert(0, machines::name(&self.machine));
+        }
+        crumbs
+    }
+
+    fn title_bar(
+        crumbs: Vec<String>,
+        sidebar_width: Pixels,
+        window: &mut Window,
+        cx: &App,
+    ) -> TitleBar {
+        let theme = cx.theme();
+        let mut breadcrumb = row().h_full().px_6().gap_1p5().text_sm().min_w_0();
+        let last = crumbs.len() - 1;
+        for (ix, crumb) in crumbs.into_iter().enumerate() {
+            if ix > 0 {
+                breadcrumb = breadcrumb.child(
+                    Icon::default()
+                        .path("caret-right.svg")
+                        .size(rems(0.625))
+                        .text_color(theme.muted_foreground),
+                );
+            }
+            breadcrumb = breadcrumb.child(
+                div()
+                    .truncate()
+                    .text_color(if ix == last {
+                        theme.foreground
+                    } else {
+                        theme.muted_foreground
+                    })
+                    .child(crumb),
+            );
+        }
+        let lead = if cfg!(target_os = "macos") {
+            sidebar_width - px(80.)
+        } else {
+            sidebar_width
+        };
+        TitleBar::new()
+            .h(titlebar::MAIN_HEIGHT)
+            .when(!cfg!(target_os = "macos"), |bar| bar.pl_0())
+            .border_b_0()
+            .bg(transparent_black())
+            .child(
+                row()
+                    .size_full()
+                    .child(
+                        row()
+                            .h_full()
+                            .w(lead)
+                            .flex_shrink_0()
+                            .gap_2()
+                            .when(!cfg!(target_os = "macos"), |cell| {
+                                cell.pl(rems(0.375)).child(titlebar::app_icon(window))
+                            })
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .child("Settings"),
+                    )
+                    .child(breadcrumb),
+            )
+    }
+}
+
+impl Render for SettingsWindow {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let query = self.query.read(cx).value().to_lowercase();
+        let searching = !query.trim().is_empty();
+        let remote = self.machine != machines::LOCAL;
+        let navigation = self.navigation(&query, searching, remote, window, cx);
         let sidebar_width = window.rem_size() * 15.;
         let sidebar = div()
             .w(sidebar_width)
@@ -1330,80 +1518,8 @@ impl Render for SettingsWindow {
                             .menu_width(rems(15.)),
                     ),
             );
-        let show = |group: Group, child| {
-            if self.machines_page || remote && group.local_only() {
-                false
-            } else if searching {
-                self.search_page
-                    .is_none_or(|(g, c)| g == group && c.is_none_or(|c| c == child))
-            } else {
-                self.group == group && self.subgroup.is_none_or(|c| c == child)
-            }
-        };
-        let heading = if self.machines_page {
-            "Machines".to_string()
-        } else if searching {
-            "Search results".to_string()
-        } else if let Some(form) = self
-            .agent_form
-            .as_ref()
-            .filter(|_| self.group == Group::Agents)
-        {
-            form.read(cx).name(cx)
-        } else {
-            self.subgroup
-                .map_or(self.group.label(), |child| self.group.subgroups()[child])
-                .to_string()
-        };
-        let mut crumbs = if searching || self.machines_page || heading == self.group.label() {
-            vec![heading]
-        } else {
-            vec![self.group.label().to_string(), heading]
-        };
-        if remote && !self.machines_page {
-            crumbs.insert(0, machines::name(&self.machine));
-        }
-        let mut pages = Vec::new();
-        if self.machines_page {
-            pages.push(self.machines_settings(cx));
-        }
-        if let Some(owner) = self.owner.entity.upgrade() {
-            let app = owner.read(cx);
-            if show(Group::General, 0) && general_matches(0, &query) {
-                pages.push(self.features_settings(&query, searching, cx));
-            }
-            if show(Group::General, 1) && general_matches(1, &query) {
-                pages.push(self.appearance_settings(cx));
-            }
-            if show(Group::General, 2) && general_matches(2, &query) {
-                pages.push(self.keymap_settings(&query, searching, cx));
-            }
-            if show(Group::Modes, 0) {
-                pages.extend(self.chats_settings(app, &query, searching, cx));
-            }
-            if show(Group::Modes, 1) {
-                pages.extend(self.docs_settings(app, &query, searching, cx));
-            }
-        }
-        if show(Group::Engine, 0) && engine_matches(&query) {
-            pages.push(self.engine_settings(&query, cx));
-        }
-        if self.group == Group::Licenses && !searching && !remote && !self.machines_page {
-            pages.extend(self.licenses_settings(cx));
-        }
-        let mcp_page = !self.machines_page
-            && self.agent_page.is_none()
-            && if searching {
-                matches_query(&query, &["Agents", "MCP servers", MCP_DESCRIPTION])
-            } else {
-                self.group == Group::Agents && self.subgroup == Some(0)
-            };
-        if mcp_page {
-            pages.push(self.mcp_settings(cx));
-        }
-        if !self.machines_page && (searching || (self.group == Group::Agents && !mcp_page)) {
-            pages.extend(self.agent_settings(&query, searching, cx));
-        }
+        let crumbs = self.crumbs(searching, remote, cx);
+        let pages = self.pages(&query, searching, remote, cx);
         let found = !pages.is_empty();
         let mut content = div()
             .w_full()
@@ -1431,57 +1547,8 @@ impl Render for SettingsWindow {
                 cx,
             ));
         }
+        let title_bar = Self::title_bar(crumbs, sidebar_width, window, cx);
         let theme = cx.theme();
-        let mut breadcrumb = row().h_full().px_6().gap_1p5().text_sm().min_w_0();
-        let last = crumbs.len() - 1;
-        for (ix, crumb) in crumbs.into_iter().enumerate() {
-            if ix > 0 {
-                breadcrumb = breadcrumb.child(
-                    Icon::default()
-                        .path("caret-right.svg")
-                        .size(rems(0.625))
-                        .text_color(theme.muted_foreground),
-                );
-            }
-            breadcrumb = breadcrumb.child(
-                div()
-                    .truncate()
-                    .text_color(if ix == last {
-                        theme.foreground
-                    } else {
-                        theme.muted_foreground
-                    })
-                    .child(crumb),
-            );
-        }
-        let lead = if cfg!(target_os = "macos") {
-            sidebar_width - px(80.)
-        } else {
-            sidebar_width
-        };
-        let title_bar = TitleBar::new()
-            .h(titlebar::MAIN_HEIGHT)
-            .when(!cfg!(target_os = "macos"), |bar| bar.pl_0())
-            .border_b_0()
-            .bg(transparent_black())
-            .child(
-                row()
-                    .size_full()
-                    .child(
-                        row()
-                            .h_full()
-                            .w(lead)
-                            .flex_shrink_0()
-                            .gap_2()
-                            .when(!cfg!(target_os = "macos"), |cell| {
-                                cell.pl(rems(0.375)).child(titlebar::app_icon(window))
-                            })
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child("Settings"),
-                    )
-                    .child(breadcrumb),
-            );
         div()
             .relative()
             .size_full()

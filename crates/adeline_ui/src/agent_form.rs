@@ -15,7 +15,9 @@ use gpui_kit::component::{
     input::Textarea,
     link::Link,
     radio::RadioGroup,
-    select::{SearchableVec, Select, SelectEvent, SelectGroup, SelectItem, SelectState},
+    select::{
+        SearchableVec, Select, SelectDelegate, SelectEvent, SelectGroup, SelectItem, SelectState,
+    },
     spinner::Spinner,
     text::TextView,
 };
@@ -278,14 +280,6 @@ impl AgentForm {
                 this.status = None;
                 this.start_probe(window, cx);
             }),
-            cx.subscribe(&effort, |this, _, _: &SelectEvent<_>, cx| {
-                this.status = None;
-                cx.notify();
-            }),
-            cx.subscribe(&mode, |this, _, _: &SelectEvent<_>, cx| {
-                this.status = None;
-                cx.notify();
-            }),
             cx.subscribe_in(
                 &command,
                 window,
@@ -295,20 +289,14 @@ impl AgentForm {
                     }
                 },
             ),
-            cx.observe_global_in::<Harnesses>(window, |this, window, cx| {
-                let selected = this.harness_id(cx);
-                this.harness.update(cx, |picker, cx| {
-                    picker.set_items(harness_items(cx), window, cx);
-                    if let Some(selected) = selected {
-                        picker.set_selected_value(&selected.into(), window, cx);
-                    }
-                });
-                if matches!(this.probing, Probing::Idle) {
-                    this.start_probe(window, cx);
-                }
-                cx.notify();
-            }),
+            cx.observe_global_in::<Harnesses>(window, Self::harnesses_changed),
         ];
+        for picker in [&effort, &mode] {
+            subscriptions.push(cx.subscribe(picker, |this, _, _: &SelectEvent<_>, cx| {
+                this.status = None;
+                cx.notify();
+            }));
+        }
         for text in [&name, &model_text, &effort_text, &command] {
             subscriptions.push(cx.subscribe(text, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -349,6 +337,20 @@ impl AgentForm {
         };
         form.start_probe(window, cx);
         form
+    }
+
+    fn harnesses_changed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let selected = self.harness_id(cx);
+        self.harness.update(cx, |picker, cx| {
+            picker.set_items(harness_items(cx), window, cx);
+            if let Some(selected) = selected {
+                picker.set_selected_value(&selected.into(), window, cx);
+            }
+        });
+        if matches!(self.probing, Probing::Idle) {
+            self.start_probe(window, cx);
+        }
+        cx.notify();
     }
 
     pub(super) fn name_focus(&self, cx: &App) -> FocusHandle {
@@ -692,6 +694,58 @@ impl AgentForm {
             )
             .into_any_element()
     }
+    fn choice_field<D: SelectDelegate>(
+        &self,
+        category: Category,
+        label: &'static str,
+        prompt: &'static str,
+        select: Select<D>,
+        cx: &App,
+    ) -> Field {
+        let saved = match category {
+            Category::Model => &self.original.model,
+            _ => &self.original.effort,
+        };
+        let marker = self
+            .not_offered(category, cx)
+            .then(|| format!("{saved} — not offered by the agent"));
+        Field::new()
+            .label(label)
+            .child(
+                select
+                    .placeholder(marker.clone().unwrap_or(prompt.into()))
+                    .accessibility_label(label),
+            )
+            .when_some(marker, |field, marker| field.description(marker))
+    }
+
+    fn instructions_form(&self, window: &Window, cx: &mut Context<Self>) -> Form {
+        let mode = match self.instructions_mode {
+            InstructionsMode::Append => 0,
+            InstructionsMode::Overwrite => 1,
+        };
+        Form::new()
+            .child(
+                Field::new()
+                    .label("System instructions (optional, Markdown)")
+                    .child(self.instructions_field(window, cx)),
+            )
+            .child(
+                Field::new().label("Instructions").child(
+                    RadioGroup::horizontal("agent-instructions-mode")
+                        .children(["Append to the agent's guidance", "Overwrite it"])
+                        .selected_index(Some(mode))
+                        .on_change(cx.listener(|this, index: &usize, _, cx| {
+                            this.instructions_mode = if *index == 0 {
+                                InstructionsMode::Append
+                            } else {
+                                InstructionsMode::Overwrite
+                            };
+                            cx.notify();
+                        })),
+                ),
+            )
+    }
 }
 
 impl Render for AgentForm {
@@ -751,36 +805,25 @@ impl Render for AgentForm {
                 );
         } else if usable && self.offered.is_some() {
             if self.offers(Category::Model) {
-                let marker = self
-                    .not_offered(Category::Model, cx)
-                    .then(|| format!("{} — not offered by the agent", self.original.model));
-                form = form.child(
-                    Field::new()
-                        .label("Model")
-                        .child(
-                            Select::new(&self.model)
-                                .placeholder(marker.clone().unwrap_or("Choose a model".into()))
-                                .search_placeholder("Search models")
-                                .accessibility_label("Model"),
-                        )
-                        .when_some(marker, |field, marker| field.description(marker)),
-                );
+                let select = Select::new(&self.model).search_placeholder("Search models");
+                form = form.child(self.choice_field(
+                    Category::Model,
+                    "Model",
+                    "Choose a model",
+                    select,
+                    cx,
+                ));
             }
             if self.offers(Category::Effort) {
-                let marker = self
-                    .not_offered(Category::Effort, cx)
-                    .then(|| format!("{} — not offered by the agent", self.original.effort));
-                form = form.child(
-                    Field::new()
-                        .label("Effort")
-                        .child(
-                            Select::new(&self.effort)
-                                .placeholder(marker.clone().unwrap_or("Choose an effort".into()))
-                                .accessibility_label("Effort")
-                                .disabled(matches!(self.probing, Probing::Loading)),
-                        )
-                        .when_some(marker, |field, marker| field.description(marker)),
-                );
+                let select =
+                    Select::new(&self.effort).disabled(matches!(self.probing, Probing::Loading));
+                form = form.child(self.choice_field(
+                    Category::Effort,
+                    "Effort",
+                    "Choose an effort",
+                    select,
+                    cx,
+                ));
             }
             if self.offers(Category::Mode) {
                 form = form.child(
@@ -802,33 +845,7 @@ impl Render for AgentForm {
         if let Some(id) = id.as_deref()
             && profiles::instructions(id, &self.identity(cx)) != profiles::Instructions::None
         {
-            let mode = match self.instructions_mode {
-                InstructionsMode::Append => 0,
-                InstructionsMode::Overwrite => 1,
-            };
-            body = body.child(
-                Form::new()
-                    .child(
-                        Field::new()
-                            .label("System instructions (optional, Markdown)")
-                            .child(self.instructions_field(window, cx)),
-                    )
-                    .child(
-                        Field::new().label("Instructions").child(
-                            RadioGroup::horizontal("agent-instructions-mode")
-                                .children(["Append to the agent's guidance", "Overwrite it"])
-                                .selected_index(Some(mode))
-                                .on_change(cx.listener(|this, index: &usize, _, cx| {
-                                    this.instructions_mode = if *index == 0 {
-                                        InstructionsMode::Append
-                                    } else {
-                                        InstructionsMode::Overwrite
-                                    };
-                                    cx.notify();
-                                })),
-                        ),
-                    ),
-            );
+            body = body.child(self.instructions_form(window, cx));
         }
         body
     }

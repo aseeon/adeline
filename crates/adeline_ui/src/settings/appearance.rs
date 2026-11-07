@@ -1,13 +1,27 @@
 //! General › Appearance: theme, fonts, font sizes and ligatures.
 use super::*;
 
-fn font_label(which: usize) -> &'static str {
-    if which == 0 {
-        "Interface font"
-    } else {
-        "Code font"
-    }
+struct FontSlot {
+    label: &'static str,
+    size_label: &'static str,
+    fallback: &'static str,
+    resolved: fn() -> String,
 }
+
+const FONT_SLOTS: [FontSlot; 2] = [
+    FontSlot {
+        label: "Interface font",
+        size_label: "Interface font size",
+        fallback: config::DEFAULT_FONT,
+        resolved: fonts::interface,
+    },
+    FontSlot {
+        label: "Code font",
+        size_label: "Code font size",
+        fallback: config::DEFAULT_CODE_FONT,
+        resolved: fonts::code,
+    },
+];
 
 impl SettingsWindow {
     pub(super) fn save_font_size(&mut self, which: usize, size: u16, cx: &mut Context<Self>) {
@@ -118,28 +132,20 @@ impl SettingsWindow {
         if let Some(status) = &self.theme_status {
             page = page.child(error(status.clone(), cx));
         }
-        for which in 0..2 {
-            let fallback = if which == 0 {
-                config::DEFAULT_FONT
-            } else {
-                config::DEFAULT_CODE_FONT
-            };
+        for (which, slot) in FONT_SLOTS.iter().enumerate() {
             let saved = saved_font(which);
-            let resolved = if which == 0 {
-                fonts::interface()
-            } else {
-                fonts::code()
-            };
+            let resolved = (slot.resolved)();
             page = page.child(
                 Form::new().child(
                     Field::new()
-                        .label(font_label(which))
+                        .label(slot.label)
                         .description(format!(
-                            "{fallback} is used if the selected font is unavailable."
+                            "{} is used if the selected font is unavailable.",
+                            slot.fallback
                         ))
                         .child(
                             Select::new(&self.font_pickers[which])
-                                .accessibility_label(font_label(which))
+                                .accessibility_label(slot.label)
                                 .search_placeholder("Search installed fonts"),
                         ),
                 ),
@@ -150,51 +156,16 @@ impl SettingsWindow {
                     cx,
                 ));
             }
-            let size_label = if which == 0 {
-                "Interface font size"
-            } else {
-                "Code font size"
-            };
             page = page.child(
                 Form::new().child(
                     Field::new()
-                        .label(size_label)
+                        .label(slot.size_label)
                         .description(format!(
                             "A whole number from {} to {} pixels. Changes save immediately.",
                             config::MIN_FONT_SIZE,
                             config::MAX_FONT_SIZE
                         ))
-                        .child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap_2()
-                                .child(
-                                    Button::new(format!("decrease-font-size-{which}"))
-                                        .label("Smaller")
-                                        .accessibility_label(format!("Decrease {size_label}"))
-                                        .disabled(
-                                            selected_font_size(which) <= config::MIN_FONT_SIZE,
-                                        )
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.step_font(which, -1, window, cx);
-                                        })),
-                                )
-                                .child(div().w_16().child(
-                                    Input::new(&self.font_sizes[which]).aria_label(size_label),
-                                ))
-                                .child(
-                                    Button::new(format!("increase-font-size-{which}"))
-                                        .label("Larger")
-                                        .accessibility_label(format!("Increase {size_label}"))
-                                        .disabled(
-                                            selected_font_size(which) >= config::MAX_FONT_SIZE,
-                                        )
-                                        .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.step_font(which, 1, window, cx);
-                                        })),
-                                ),
-                        ),
+                        .child(self.font_size_stepper(which, slot.size_label, cx)),
                 ),
             );
             if let Some(message) = &self.font_size_errors[which] {
@@ -221,6 +192,36 @@ impl SettingsWindow {
                 .on_click(cx.listener(|this, _, window, cx| this.refresh_fonts(window, cx))),
         )
     }
+    fn font_size_stepper(&self, which: usize, size_label: &str, cx: &Context<Self>) -> Div {
+        div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(
+                Button::new(format!("decrease-font-size-{which}"))
+                    .label("Smaller")
+                    .accessibility_label(format!("Decrease {size_label}"))
+                    .disabled(selected_font_size(which) <= config::MIN_FONT_SIZE)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.step_font(which, -1, window, cx);
+                    })),
+            )
+            .child(
+                div()
+                    .w_16()
+                    .child(Input::new(&self.font_sizes[which]).aria_label(size_label)),
+            )
+            .child(
+                Button::new(format!("increase-font-size-{which}"))
+                    .label("Larger")
+                    .accessibility_label(format!("Increase {size_label}"))
+                    .disabled(selected_font_size(which) >= config::MAX_FONT_SIZE)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.step_font(which, 1, window, cx);
+                    })),
+            )
+    }
+
     fn step_font(&mut self, which: usize, step: i16, window: &mut Window, cx: &mut Context<Self>) {
         let next = selected_font_size(which)
             .saturating_add_signed(step)

@@ -130,142 +130,153 @@ impl AgentForm {
         if let Some(install) = &self.install {
             return Some(self.install_area(install, cx));
         }
-        let catalog = cx.global::<Harnesses>();
         let profile = profiles::find(id, "");
-        let name = profile.map_or_else(|| catalog.label(id, ""), |p| p.name.to_owned());
+        Some(match cx.global::<Harnesses>().is_installed(id) {
+            Some(true) => self.installed_status(id, profile.is_some(), cx),
+            None => muted("Checking whether this agent is installed…", cx).into_any_element(),
+            Some(false) => Self::missing_status(id, profile, cx),
+        })
+    }
+
+    fn installed_status(&self, id: &str, supported: bool, cx: &mut Context<Self>) -> AnyElement {
+        let catalog = cx.global::<Harnesses>();
         let logout = self
             .offered
             .as_ref()
             .is_some_and(|probed| probed.features.logout);
         let login_note = self.login.clone().map(|note| muted(note, cx));
-        match catalog.is_installed(id) {
-            Some(true) => {
-                let update = catalog
-                    .update(id)
-                    .map(|(installed, latest)| (installed.to_owned(), latest.to_owned()));
-                let path = catalog
-                    .installed
-                    .get(id)
-                    .map(|path| path.display().to_string());
-                Some(
-                    col()
-                        .gap_2()
-                        .child(
-                            row()
-                                .gap_2()
-                                .min_w_0()
-                                .child(installed_dot(true))
-                                .children(path.map(|path| found_on(&path, cx)))
-                                .when(logout, |row| {
-                                    row.child(
-                                        Button::new("agent-logout")
-                                            .ghost()
-                                            .xsmall()
-                                            .label("Log out")
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.run_login(None, window, cx);
-                                            })),
-                                    )
-                                }),
+        let update = catalog
+            .update(id)
+            .map(|(installed, latest)| (installed.to_owned(), latest.to_owned()));
+        let path = catalog
+            .installed
+            .get(id)
+            .map(|path| path.display().to_string());
+        col()
+            .gap_2()
+            .child(
+                row()
+                    .gap_2()
+                    .min_w_0()
+                    .child(installed_dot(true))
+                    .children(path.map(|path| found_on(&path, cx)))
+                    .when(logout, |row| {
+                        row.child(
+                            Button::new("agent-logout")
+                                .ghost()
+                                .xsmall()
+                                .label("Log out")
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.run_login(None, window, cx);
+                                })),
                         )
-                        .when_some(
-                            update.filter(|_| profile.is_some()),
-                            |column, (installed, latest)| {
-                                let target = Target::Agent {
-                                    harness: id.to_owned(),
-                                };
-                                column.child(
-                                    row()
-                                        .gap_2()
-                                        .text_sm()
-                                        .child(format!(
-                                            "Installed {installed}. Version {latest} is available."
-                                        ))
-                                        .child(
-                                            Button::new("agent-update")
-                                                .small()
-                                                .label("Update…")
-                                                .on_click(cx.listener(move |this, _, _, cx| {
-                                                    this.plan_install(target.clone(), cx);
-                                                })),
-                                        ),
-                                )
-                            },
-                        )
-                        .children(login_note)
-                        .into_any_element(),
-                )
-            }
-            None => Some(muted("Checking whether this agent is installed…", cx).into_any_element()),
-            Some(false) => {
-                let website = catalog
-                    .get(id)
-                    .map(|harness| harness.website.clone())
-                    .unwrap_or_default();
-                let node_missing =
-                    profile.is_some_and(|p| p.install.needs_node) && catalog.node.npm.is_none();
-                let mut status = col().gap_2().child(
-                    row()
-                        .gap_2()
-                        .text_sm()
-                        .child(installed_dot(false))
-                        .child("Not installed")
-                        .when(profile.is_some() && !node_missing, |row| {
-                            let target = Target::Agent {
-                                harness: id.to_owned(),
-                            };
-                            row.child(
-                                Button::new("agent-install")
-                                    .small()
-                                    .label("Install…")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.plan_install(target.clone(), cx);
-                                    })),
-                            )
-                        })
-                        .when(!website.is_empty(), |row| {
-                            row.child(
-                                Link::new("agent-harness-website")
-                                    .href(website.clone())
-                                    .child(website.clone()),
-                            )
-                        }),
-                );
-                if node_missing {
-                    status = status.child(
+                    }),
+            )
+            .when_some(
+                update.filter(|_| supported),
+                |column, (installed, latest)| {
+                    let target = Target::Agent {
+                        harness: id.to_owned(),
+                    };
+                    column.child(
                         row()
                             .gap_2()
                             .text_sm()
-                            .child(format!("{name} needs Node.js."))
-                            .when(catalog.node.manager.is_some(), |row| {
-                                row.child(
-                                    Button::new("node-install")
-                                        .small()
-                                        .label("Install Node.js…")
-                                        .on_click(cx.listener(|this, _, _, cx| {
-                                            this.plan_install(Target::Node, cx);
-                                        })),
-                                )
-                            }),
-                    );
-                    if catalog.node.manager.is_none() {
-                        status = status.child(
-                            row()
-                                .gap_2()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child(install::node_missing())
-                                .child(
-                                    Link::new("nodejs-link")
-                                        .href("https://nodejs.org")
-                                        .child("nodejs.org"),
-                                ),
-                        );
-                    }
-                }
-                Some(status.into_any_element())
+                            .child(format!(
+                                "Installed {installed}. Version {latest} is available."
+                            ))
+                            .child(Self::plan_button("agent-update", "Update…", target, cx)),
+                    )
+                },
+            )
+            .children(login_note)
+            .into_any_element()
+    }
+
+    fn missing_status(
+        id: &str,
+        profile: Option<&profiles::Profile>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let catalog = cx.global::<Harnesses>();
+        let name = profile.map_or_else(|| catalog.label(id, ""), |p| p.name.to_owned());
+        let website = catalog
+            .get(id)
+            .map(|harness| harness.website.clone())
+            .unwrap_or_default();
+        let node_missing =
+            profile.is_some_and(|p| p.install.needs_node) && catalog.node.npm.is_none();
+        let mut status = col().gap_2().child(
+            row()
+                .gap_2()
+                .text_sm()
+                .child(installed_dot(false))
+                .child("Not installed")
+                .when(profile.is_some() && !node_missing, |row| {
+                    let target = Target::Agent {
+                        harness: id.to_owned(),
+                    };
+                    row.child(Self::plan_button("agent-install", "Install…", target, cx))
+                })
+                .when(!website.is_empty(), |row| {
+                    row.child(
+                        Link::new("agent-harness-website")
+                            .href(website.clone())
+                            .child(website.clone()),
+                    )
+                }),
+        );
+        if node_missing {
+            status = status.child(
+                row()
+                    .gap_2()
+                    .text_sm()
+                    .child(format!("{name} needs Node.js."))
+                    .when(catalog.node.manager.is_some(), |row| {
+                        row.child(Self::plan_button(
+                            "node-install",
+                            "Install Node.js…",
+                            Target::Node,
+                            cx,
+                        ))
+                    }),
+            );
+            if catalog.node.manager.is_none() {
+                status = status.child(
+                    row()
+                        .gap_2()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(install::node_missing())
+                        .child(nodejs_link()),
+                );
             }
         }
+        status.into_any_element()
+    }
+
+    fn plan_button(
+        id: &'static str,
+        label: &'static str,
+        target: Target,
+        cx: &Context<Self>,
+    ) -> Button {
+        Button::new(id)
+            .small()
+            .label(label)
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.plan_install(target.clone(), cx);
+            }))
+    }
+
+    fn close_button(id: &'static str, label: &'static str, cx: &Context<Self>) -> Button {
+        Button::new(id)
+            .small()
+            .label(label)
+            .on_click(cx.listener(|this, _, _, cx| {
+                this.install = None;
+                cx.notify();
+            }))
     }
 
     fn install_area(&self, install: &Install, cx: &mut Context<Self>) -> AnyElement {
@@ -283,38 +294,25 @@ impl AgentForm {
                 .text_xs()
                 .child(lines.join("\n"))
         };
-        let machine = (self.machine != machines::LOCAL).then(|| machines::name(&self.machine));
-        match install {
-            Install::Planning => row()
+        let spinner = |text: &'static str| {
+            row()
                 .gap_2()
                 .text_sm()
                 .child(Spinner::new().small())
-                .child("Checking what to run…")
-                .into_any_element(),
+                .child(text)
+        };
+        let machine = (self.machine != machines::LOCAL).then(|| machines::name(&self.machine));
+        match install {
+            Install::Planning => spinner("Checking what to run…").into_any_element(),
             Install::Unavailable(reason) => col()
                 .gap_2()
                 .text_sm()
                 .child(div().text_color(theme.danger).child(reason.clone()))
                 .when(
                     reason.contains("Node.js") && reason.contains("nodejs.org"),
-                    |column| {
-                        column.child(
-                            Link::new("nodejs-link")
-                                .href("https://nodejs.org")
-                                .child("nodejs.org"),
-                        )
-                    },
+                    |column| column.child(nodejs_link()),
                 )
-                .child(
-                    Button::new("install-close")
-                        .small()
-                        .ghost()
-                        .label("Close")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.install = None;
-                            cx.notify();
-                        })),
-                )
+                .child(Self::close_button("install-close", "Close", cx).ghost())
                 .into_any_element(),
             Install::Confirm(target, steps) => {
                 let target = target.clone();
@@ -335,15 +333,7 @@ impl AgentForm {
                         row()
                             .gap_2()
                             .justify_end()
-                            .child(
-                                Button::new("install-cancel")
-                                    .small()
-                                    .label("Cancel")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.install = None;
-                                        cx.notify();
-                                    })),
-                            )
+                            .child(Self::close_button("install-cancel", "Cancel", cx))
                             .child(
                                 Button::new("install-confirm")
                                     .small()
@@ -362,13 +352,7 @@ impl AgentForm {
             }
             Install::Running(lines) => col()
                 .gap_2()
-                .child(
-                    row()
-                        .gap_2()
-                        .text_sm()
-                        .child(Spinner::new().small())
-                        .child("Installing"),
-                )
+                .child(spinner("Installing"))
                 .child(output(lines))
                 .into_any_element(),
             Install::Failed(target, lines, error) => {
@@ -393,19 +377,16 @@ impl AgentForm {
                                         this.run_install(target.clone(), cx);
                                     })),
                             )
-                            .child(
-                                Button::new("install-dismiss")
-                                    .small()
-                                    .ghost()
-                                    .label("Close")
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        this.install = None;
-                                        cx.notify();
-                                    })),
-                            ),
+                            .child(Self::close_button("install-dismiss", "Close", cx).ghost()),
                     )
                     .into_any_element()
             }
         }
     }
+}
+
+fn nodejs_link() -> Link {
+    Link::new("nodejs-link")
+        .href("https://nodejs.org")
+        .child("nodejs.org")
 }
