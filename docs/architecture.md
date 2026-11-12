@@ -56,6 +56,7 @@ A new conversation feature usually touches every step: `Action`, `act`, `runtime
 Every command and agent event goes through one task, in arrival order, so commands from several clients can't interleave or deadlock. `engine.rs` keeps that task's state, its dispatch (`command`, `input`, `tick`) and broadcasting. Its children:
 
 - `serve.rs`: the single-instance lock, the runtime, and one task per client connection.
+- `phase.rs`: `Lifecycle`, the engine's one record of a conversation's lifecycle. `Phase` says whether its agent worker runs (`Agent`, with `Closing` while it shuts down), whether a turn runs (`Turn`, with the `Stop` reason once it is stopping), and what the last turn left (`After`). `Lifecycle`'s methods are the transitions. `send_live` (`engine.rs`) computes `Live`'s phase flags (`Lifecycle::project`) and saves the runtime `ThreadStatus` (`Lifecycle::status`) from it, so nothing else writes either.
 - `turns.rs`: sending, queueing, starting, stopping and retrying prompts.
 - `conversations.rs`: a conversation's driver, forks, option changes, permission answers and read markers.
 - `events.rs`: events from agent workers.
@@ -66,7 +67,7 @@ Every command and agent event goes through one task, in arrival order, so comman
 
 ## Agents and ACP
 
-`acp.rs` speaks ACP through the official `agent-client-protocol` SDK, which owns JSON-RPC framing, request IDs and the typed schema. Its `Worker` is a state machine fed by `Input`s: SDK requests and notifications, replies, process exit, and `Command`s from the engine. `acp.rs` keeps the types and the worker's loop. Its children handle session setup and shutdown (`session.rs`), options, turns, permissions, failures and retries, and probes and logins (`probe.rs`). Dropping a `Driver` shuts down its worker and agent. `acp/tests.rs` drives the worker through a fake `Link`.
+`acp.rs` speaks ACP through the official `agent-client-protocol` SDK, which owns JSON-RPC framing, request IDs and the typed schema. Its `Worker` is fed by `Input`s: SDK requests and notifications, replies, process exit, and `Command`s from the engine. It keeps its phases in plain enums. `Connection` holds the process and link, with the handshake and session setup as `Setup` inside it, and `AgentSession` says which session to open. `Step` is the active turn's phase. `Exit` and `ExitWatch` are shutdown and an overdue process exit. `acp.rs` keeps the types and the worker's loop. Its children handle session setup and shutdown (`session.rs`), options, turns, permissions, failures and retries, and probes and logins (`probe.rs`). Dropping a `Driver` shuts down its worker and agent. `acp/tests.rs` drives the worker through a fake `Link`.
 
 The worker translates SDK types into `conversation.rs`: session options by category, TODO steps, tool calls, permission options, features, attachments, MCP servers and traffic entries. Nothing outside `acp/` sees an SDK type. Every line in and out, and the agent's stderr, is reported as a `TrafficEntry`. The engine saves those in the transcript without keeping them in memory, reads them back when a client opens the traffic tab, and streams new ones to clients watching it.
 
@@ -86,6 +87,8 @@ One client shows the projects of every checked machine. `machines.rs` keeps the 
 `ssh` runs this executable as `SSH_ASKPASS` with `ADELINE_ASKPASS` set. The helper in `askpass.rs` hands each prompt to the UI over an owner-only pipe or socket. A password typed during one connect answers the same prompt in that connect's later `ssh` runs, and is then forgotten.
 
 The engine numbers every delta it broadcasts and keeps the latest ones. A reconnecting client sends its place (`Hello.resume`). It gets `Resumed` plus only the deltas it missed, or a full snapshot if the engine restarted or the gap is too long. A client that stops reading for longer than its queue holds (`CLIENT_BACKLOG` in `serve.rs`) is disconnected, and catches up the same way when it reconnects. A dropped remote machine keeps its last state on screen, read-only, while `client.rs` reconnects with growing delays. `runtime_ui/screens.rs` draws what shows while an engine isn't usable.
+
+Each `Connection`'s `State` names its phase, and only the phases with an open link (`Connecting`, `Connected`, `Mismatch`, `Waiting`) hold its `Link`, the sender of lines to the engine. Requests made while connecting wait in a queue that goes out on the move to `Connected`, when the snapshot or `Resumed` arrives. A local engine with another `PROTOCOL` gives `Mismatch`. Wait or Stop moves it to `Waiting`, and when the old engine closes the link the client waits for its pipe or socket to go, then starts a new engine. `Bye` ends in `Stopped`, a lost remote in `Disconnected` until its retry timer dials again. `Connection::loaded` (a snapshot has arrived) and the stream position for `Hello.resume` stay beside the state, since they outlive every phase.
 
 `ADELINE_SSH` replaces the `ssh` command line. `scripts/engine-check/fake_ssh.py` uses it to simulate remote machines on one computer.
 

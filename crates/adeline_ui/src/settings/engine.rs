@@ -82,7 +82,7 @@ impl SettingsWindow {
                     ),
                 );
         };
-        let connected = connection.state == client::State::Connected;
+        let connected = connection.state.connected();
         let mut rows = Vec::new();
         if matches_query(
             query,
@@ -127,7 +127,7 @@ impl SettingsWindow {
     }
 
     fn engine_status(&self, page: Div, connection: &client::Connection, cx: &Context<Self>) -> Div {
-        let connected = connection.state == client::State::Connected;
+        let connected = connection.state.connected();
         let status = &connection.status;
         let uptime = status.uptime_secs + connection.status_at.elapsed().as_secs();
         let mut fields = vec![("Status", state_text(&connection.state))];
@@ -194,7 +194,7 @@ impl SettingsWindow {
                 .label("Start engine")
                 .disabled(matches!(
                     connection.state,
-                    client::State::Demo | client::State::Connecting | client::State::Starting
+                    client::State::Demo | client::State::Connecting { .. }
                 ))
                 .on_click(cx.listener(|this, _, _, cx| client::retry(&this.machine, cx)))
         };
@@ -282,12 +282,12 @@ impl SettingsWindow {
 
 fn state_text(state: &client::State) -> String {
     match state {
-        client::State::Connected => "Running".to_owned(),
-        client::State::Connecting | client::State::Starting => "Starting…".to_owned(),
+        client::State::Connected(_) => "Running".to_owned(),
+        client::State::Connecting { .. } => "Starting…".to_owned(),
         client::State::Stopped { unexpected: true } => "Stopped unexpectedly".to_owned(),
         client::State::Stopped { .. } => "Stopped".to_owned(),
         client::State::Unavailable(reason) => format!("Unavailable: {reason}"),
-        client::State::Mismatch(_) | client::State::Waiting => {
+        client::State::Mismatch { .. } | client::State::Waiting(_) => {
             "An older engine is running".to_owned()
         }
         client::State::Demo => "Not used in demo mode".to_owned(),

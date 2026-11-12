@@ -1337,7 +1337,6 @@
           "agent_id": "claude",
           "running": true,
           "processing": true,
-          "turn": "running",
           "options": [
             {
               "id": "model",
@@ -1586,7 +1585,6 @@
           "agent_id": "claude",
           "running": true,
           "processing": true,
-          "turn": "running",
           "quiet_since": 12,
           "options": [
             {

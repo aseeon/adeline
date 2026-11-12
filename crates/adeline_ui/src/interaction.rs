@@ -306,6 +306,12 @@ impl Adeline {
                 self.browser = None;
                 self.modal = self.browser_return.take();
             }
+            Action::Close
+                if self.composer.focus_handle(cx).is_focused(window)
+                    && !self.slash_matches(cx).is_empty() =>
+            {
+                self.dismiss_slash(cx);
+            }
             Action::Close => self.close_overlays(window, cx),
             Action::StopAll => self.stop_all(cx),
             Action::QuitStopAll => self.quit_stopping_all(cx),

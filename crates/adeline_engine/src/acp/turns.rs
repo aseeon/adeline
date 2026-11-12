@@ -4,20 +4,19 @@ use super::*;
 
 impl Worker {
     pub(super) fn send_prompt(&mut self) {
-        if self.closing || !self.configured {
+        if self.exit != Exit::Running || self.setup() != Some(Setup::Ready) {
             return;
         }
-        let Some(session_id) = self.session_id.clone() else {
+        let Some(session_id) = self.session_id().map(str::to_owned) else {
             return;
         };
         let Some(turn) = &self.active else {
             return;
         };
-        if turn.cancelled
-            || turn.prompt_request.is_some()
-            || turn.retry_at.is_some_and(|when| Instant::now() < when)
-        {
-            return;
+        match turn.step {
+            Step::Waiting => {}
+            Step::Backoff(when) if Instant::now() >= when => {}
+            _ => return,
         }
         let blocks = match self.content(&turn.prompt) {
             Ok(blocks) => blocks,
@@ -31,8 +30,7 @@ impl Worker {
             Request::Prompt,
         );
         if let Some(turn) = &mut self.active {
-            turn.prompt_request = request;
-            turn.retry_at = None;
+            turn.step = request.map_or(Step::Waiting, Step::Prompting);
         }
     }
 
@@ -124,8 +122,8 @@ impl Worker {
             && self
                 .active
                 .as_ref()
-                .is_some_and(|turn| turn.prompt_request.is_some() && !turn.cancelled);
-        let Some(session) = self.session_id.clone().filter(|_| steerable) else {
+                .is_some_and(|turn| matches!(turn.step, Step::Prompting(_)));
+        let Some(session) = self.session_id().filter(|_| steerable).map(str::to_owned) else {
             self.emit(EventKind::Steered { delivered: false });
             return;
         };
@@ -154,9 +152,10 @@ impl Worker {
     }
 
     pub(super) fn update(&mut self, notification: wire::SessionNotification) {
-        if Some(notification.session_id.0.as_ref()) != self.session_id.as_deref() {
+        if Some(notification.session_id.0.as_ref()) != self.session_id() {
             return;
         }
+        let opening = matches!(self.setup(), Some(Setup::Opening { .. }));
         let ends_turn = self.profile.is_some_and(|profile| {
             profile.turn_end.iter().any(|key| {
                 notification
@@ -167,14 +166,14 @@ impl Worker {
                     == Some(true)
             })
         });
-        let in_turn = self.setup.is_none()
+        let in_turn = !opening
             && self
                 .active
                 .as_ref()
-                .is_some_and(|turn| !turn.cancelled && turn.prompt_request.is_some());
+                .is_some_and(|turn| matches!(turn.step, Step::Prompting(_)));
         match notification.update {
             wire::SessionUpdate::UsageUpdate(usage) => {
-                if self.setup.is_none() {
+                if !opening {
                     self.emit(EventKind::Usage {
                         used: usage.used,
                         size: usage.size,
@@ -207,17 +206,17 @@ impl Worker {
                     self.emit(EventKind::Title(title));
                 }
             }
-            wire::SessionUpdate::Plan(plan) if self.setup.is_none() => {
+            wire::SessionUpdate::Plan(plan) if !opening => {
                 self.emit(EventKind::Todo(
                     plan.entries.into_iter().map(todo_step).collect(),
                 ));
             }
             wire::SessionUpdate::AgentMessageChunk(chunk) if in_turn => self.chunk(chunk, false),
             wire::SessionUpdate::AgentThoughtChunk(chunk) if in_turn => self.chunk(chunk, true),
-            wire::SessionUpdate::ToolCall(call) if self.setup.is_none() => {
+            wire::SessionUpdate::ToolCall(call) if !opening => {
                 self.tool(call.into(), in_turn);
             }
-            wire::SessionUpdate::ToolCallUpdate(update) if self.setup.is_none() => {
+            wire::SessionUpdate::ToolCallUpdate(update) if !opening => {
                 self.tool(update, in_turn);
             }
             _ => {}
@@ -293,20 +292,20 @@ impl Worker {
         let Some(turn) = &mut self.active else {
             return;
         };
-        turn.cancelled = true;
-        turn.retry_at = None;
-        if turn.prompt_request.is_some() {
-            if let (Some(link), Some(session)) = (&self.link, &self.session_id) {
+        if let Step::Prompting(id) | Step::Cancelling(id) = turn.step {
+            turn.step = Step::Cancelling(id);
+            if let (Connection::Up(link, _), Some(session)) = (&self.connection, self.session_id())
+            {
                 link.cancel(session);
             }
         } else {
-            self.active = None;
+            self.end_turn();
             self.emit(EventKind::Stopped);
         }
     }
 
     fn finish(&mut self, stop_reason: StopReason) {
-        self.active = None;
+        self.end_turn();
         self.cancel_permissions();
         self.emit(EventKind::Finished { stop_reason });
     }
@@ -315,14 +314,16 @@ impl Worker {
         let Some(turn) = &mut self.active else {
             return;
         };
-        if turn.prompt_request != Some(id) {
-            return;
-        }
-        turn.prompt_request = None;
-        if turn.cancelled {
-            self.active = None;
+        let cancelled = match turn.step {
+            Step::Prompting(request) if request == id => false,
+            Step::Cancelling(request) if request == id => true,
+            _ => return,
+        };
+        turn.step = Step::Waiting;
+        if cancelled {
+            self.end_turn();
             self.emit(EventKind::Stopped);
-            if self.closing {
+            if self.exit != Exit::Running {
                 self.close_session();
             }
             return;
@@ -335,28 +336,23 @@ impl Worker {
             _ => StopReason::Cancelled,
         };
         if reason == StopReason::Cancelled {
-            self.active = None;
+            self.end_turn();
             self.emit(EventKind::Stopped);
         } else if self.active.as_ref().is_some_and(|turn| turn.denied) {
             self.fail("Permission denied by the user.".into(), FailureKind::Denied);
         } else if reason == StopReason::EndTurn
-            && self
+            && let Some(error) = self
                 .active
                 .as_ref()
-                .is_some_and(|turn| looks_like_agent_error(&turn.observed_text))
+                .map(|turn| turn.observed_text.clone())
+                .filter(|text| looks_like_agent_error(text))
         {
-            let error = self
-                .active
-                .as_ref()
-                .map_or(String::new(), |turn| turn.observed_text.clone());
-            if let Some(turn) = &mut self.active {
-                turn.retries = turn.attempt;
-            }
-            self.fail(error.clone(), classify_error(&error, None));
+            let kind = classify_error(&error, None);
+            self.give_up(error, kind);
         } else {
             self.finish(reason);
         }
-        if self.closing {
+        if self.exit != Exit::Running {
             self.close_session();
         }
     }

@@ -7,11 +7,11 @@ impl Worker {
         request: &wire::RequestPermissionRequest,
         responder: Responder<wire::RequestPermissionResponse>,
     ) {
-        if Some(request.session_id.0.as_ref()) != self.session_id.as_deref()
+        if Some(request.session_id.0.as_ref()) != self.session_id()
             || self
                 .active
                 .as_ref()
-                .is_none_or(|turn| turn.cancelled || turn.prompt_request.is_none())
+                .is_none_or(|turn| !matches!(turn.step, Step::Prompting(_)))
         {
             respond(Some(responder), None);
             return;
@@ -75,7 +75,12 @@ impl Worker {
         let Some(mut pending) = self.permissions.remove(&id) else {
             return;
         };
-        if pending.turn != self.turn || self.active.as_ref().is_none_or(|active| active.cancelled) {
+        if pending.turn != self.turn
+            || self
+                .active
+                .as_ref()
+                .is_none_or(|active| matches!(active.step, Step::Cancelling(_)))
+        {
             respond(pending.responder.take(), None);
             return;
         }

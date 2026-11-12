@@ -9,6 +9,11 @@
 //! aren't JSON are kept as traffic and skipped. Session modes offered through
 //! `session/set_mode` rather than as a config option appear as `MODE_OPTION`.
 //! Usage is in tokens.
+//!
+//! The `Worker` is three state machines side by side: `Connection` (the process,
+//! its link and the handshake, with `AgentSession` for which session to open),
+//! `Step` (the active turn) and `Exit` (shutdown, with `ExitWatch` for an exit
+//! that is overdue).
 use adeline_core::agents::ExecutionConfig;
 use adeline_core::{
     agents::InstructionsMode,
@@ -439,6 +444,81 @@ struct ToolState {
     paths: Vec<String>,
 }
 
+enum Connection {
+    Down,
+    Connecting,
+    Up(Link, Setup),
+    Dropped,
+    Lost(Lost),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Setup {
+    Uninitialized,
+    Initializing,
+    Initialized,
+    Opening { fork: bool },
+    Configuring(usize),
+    Ready,
+}
+
+impl Setup {
+    fn initialized(self) -> bool {
+        !matches!(self, Self::Uninitialized | Self::Initializing)
+    }
+}
+
+struct Lost {
+    error: String,
+    at: Instant,
+    initializing: bool,
+    reported: bool,
+}
+
+enum AgentSession {
+    New,
+    Saved(String),
+    Unrestorable(String),
+    Replacing,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Step {
+    Waiting,
+    Prompting(u64),
+    Backoff(Instant),
+    Cancelling(u64),
+    Parked,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Exit {
+    Running,
+    Closing,
+    CloseSent,
+    Forced,
+}
+
+enum ExitWatch {
+    Idle,
+    Until(Instant),
+    Stuck,
+}
+
+impl ExitWatch {
+    fn arm(&mut self) {
+        if matches!(self, Self::Idle) {
+            *self = Self::Until(Instant::now() + SHUTDOWN_GRACE);
+        }
+    }
+
+    fn restart(&mut self) {
+        if !matches!(self, Self::Stuck) {
+            *self = Self::Until(Instant::now() + SHUTDOWN_GRACE);
+        }
+    }
+}
+
 struct Turn {
     prompt: Vec<Part>,
     retries: u32,
@@ -446,9 +526,8 @@ struct Turn {
     worked: bool,
     observed_text: String,
     denied: bool,
-    cancelled: bool,
-    prompt_request: Option<u64>,
-    retry_at: Option<Instant>,
+    replacement: Option<String>,
+    step: Step,
 }
 
 impl Turn {
@@ -460,9 +539,8 @@ impl Turn {
             worked: false,
             observed_text: String::new(),
             denied: false,
-            cancelled: false,
-            prompt_request: None,
-            retry_at: None,
+            replacement: None,
+            step: Step::Waiting,
         }
     }
 }
@@ -477,13 +555,12 @@ struct Worker {
     id: String,
     config: ExecutionConfig,
     profile: Option<&'static Profile>,
-    session_id: Option<String>,
+    session: AgentSession,
     events: Sender<Event>,
     sender: UnboundedSender<Input>,
     receiver: UnboundedReceiver<Input>,
     child: Option<Child>,
-    link: Option<Link>,
-    connecting: bool,
+    connection: Connection,
     epoch: u64,
     next_request: u64,
     next_permission: u64,
@@ -495,27 +572,13 @@ struct Worker {
     modes: Option<wire::SessionModeState>,
     options: Vec<SessionOption>,
     tools: HashMap<String, ToolState>,
-    setup: Option<Request>,
-    configured: bool,
-    config_step: usize,
-    restore_required: bool,
     active: Option<Turn>,
     turn: u64,
-    closing: bool,
-    shutdown_deadline: Option<Instant>,
-    stuck_reported: bool,
+    exit: Exit,
+    watch: ExitWatch,
     stderr: VecDeque<String>,
-    timeout_reported: bool,
-    lost_pending: Option<String>,
-    lost_at: Option<Instant>,
-    lost_during_initialize: bool,
-    replacement: Option<String>,
-    previous_session: Option<String>,
     pending_context: Option<String>,
-    forced: bool,
-    replacing: bool,
     fork: Option<(Option<String>, String)>,
-    forking: bool,
     probing: bool,
     attachments: std::cell::OnceCell<tempfile::TempDir>,
     #[expect(
@@ -538,13 +601,12 @@ impl Worker {
             id,
             profile: profiles::find(&config.harness, &config.identity),
             config,
-            session_id,
+            session: session_id.map_or(AgentSession::New, AgentSession::Saved),
             events,
             sender,
             receiver,
             child: None,
-            link: None,
-            connecting: false,
+            connection: Connection::Down,
             epoch: 0,
             next_request: 0,
             next_permission: 0,
@@ -556,27 +618,13 @@ impl Worker {
             modes: None,
             options: Vec::new(),
             tools: HashMap::new(),
-            setup: None,
-            configured: false,
-            config_step: 0,
-            restore_required: false,
             active: None,
             turn: 0,
-            closing: false,
-            shutdown_deadline: None,
-            stuck_reported: false,
+            exit: Exit::Running,
+            watch: ExitWatch::Idle,
             stderr: VecDeque::new(),
-            timeout_reported: false,
-            lost_pending: None,
-            lost_at: None,
-            lost_during_initialize: false,
-            replacement: None,
-            previous_session: None,
             pending_context: None,
-            forced: false,
-            replacing: false,
             fork: None,
-            forking: false,
             probing: false,
             attachments: std::cell::OnceCell::new(),
             auth: None,
@@ -592,7 +640,33 @@ impl Worker {
     }
 
     fn stopped_talking(&self) -> bool {
-        self.child.is_some() && self.link.is_none() && !self.connecting
+        matches!(self.connection, Connection::Dropped | Connection::Lost(_))
+    }
+
+    fn setup(&self) -> Option<Setup> {
+        match self.connection {
+            Connection::Up(_, setup) => Some(setup),
+            _ => None,
+        }
+    }
+
+    fn set_setup(&mut self, next: Setup) {
+        if let Connection::Up(_, setup) = &mut self.connection {
+            *setup = next;
+        }
+    }
+
+    fn session_id(&self) -> Option<&str> {
+        match &self.session {
+            AgentSession::Saved(id) | AgentSession::Unrestorable(id) => Some(id),
+            AgentSession::New | AgentSession::Replacing => None,
+        }
+    }
+
+    fn end_turn(&mut self) {
+        if let Some(context) = self.active.take().and_then(|turn| turn.replacement) {
+            self.pending_context = Some(context);
+        }
     }
 
     async fn run(mut self) {
@@ -613,9 +687,8 @@ impl Worker {
         match input {
             Input::Command(command) => self.command(command),
             Input::Connected { epoch, link } if epoch == self.epoch => {
-                self.connecting = false;
-                self.link = Some(link);
-                if self.closing && self.active.is_none() && !self.probing {
+                self.connection = Connection::Up(link, Setup::Uninitialized);
+                if self.exit != Exit::Running && self.active.is_none() {
                     self.close_link();
                 } else {
                     self.initialize();
@@ -652,79 +725,41 @@ impl Worker {
     fn tick(&mut self) -> bool {
         if let Some(child) = &mut self.child {
             match child.try_wait() {
-                Ok(Some(_)) if self.forced => {
+                Ok(Some(_)) if self.exit == Exit::Forced => {
                     self.child = None;
-                    self.link = None;
+                    self.connection = Connection::Down;
                     self.emit(EventKind::ShutdownComplete);
                     return true;
                 }
-                Ok(Some(_))
-                    if self
-                        .lost_at
-                        .is_some_and(|when| when.elapsed() < LOST_WINDOW) => {}
-                Ok(Some(status)) if self.lost_pending.is_some() => {
-                    let error = self.lost_pending.take().expect("checked above");
-                    let stderr = self.stderr.make_contiguous().join("\n");
-                    let missing_initialize = self.lost_during_initialize;
-                    self.child = None;
-                    self.link = None;
-                    self.connecting = false;
-                    self.clear_pending();
-                    self.handshake = None;
-                    self.cancel_permissions();
-                    self.setup = None;
-                    self.configured = false;
-                    self.epoch += 1;
-                    self.shutdown_deadline = None;
-                    self.stuck_reported = false;
-                    if self.closing {
-                        self.emit(EventKind::ShutdownComplete);
-                        return true;
-                    }
-                    if !self.timeout_reported {
-                        if !stderr.is_empty() {
-                            self.emit(EventKind::Crashed(stderr));
-                        }
-                        let error = format!("{error} Agent exited: {status}.");
-                        let kind = classify_error(&error, None);
-                        if missing_initialize
-                            && kind == FailureKind::Temporary
-                            && self.config.harness == harness::OMP
-                        {
-                            self.fail(
-                                format!("{error} The configured OMP Arguments must include `acp`."),
-                                FailureKind::Configuration,
-                            );
-                        } else {
-                            self.fail(error, kind);
+                Ok(Some(status)) => match &self.connection {
+                    Connection::Lost(lost) if lost.at.elapsed() < LOST_WINDOW => {}
+                    Connection::Lost(_) => {
+                        if self.exited(status) {
+                            return true;
                         }
                     }
-                }
-                Ok(Some(_)) => {
-                    self.shutdown_deadline
-                        .get_or_insert_with(|| Instant::now() + SHUTDOWN_GRACE);
-                }
+                    _ => self.watch.arm(),
+                },
                 Err(error) => {
-                    self.link = None;
+                    if let Connection::Up(..) = self.connection {
+                        self.connection = Connection::Dropped;
+                    }
                     self.emit(EventKind::Error {
                         message: format!("Checking agent process failed: {error}"),
                         kind: FailureKind::Temporary,
                     });
-                    self.shutdown_deadline
-                        .get_or_insert_with(|| Instant::now() + SHUTDOWN_GRACE);
+                    self.watch.arm();
                 }
                 Ok(None) => (),
             }
-        } else if self.closing {
+        } else if self.exit != Exit::Running {
             self.emit(EventKind::ShutdownComplete);
             return true;
         }
-        if self
-            .shutdown_deadline
-            .is_some_and(|deadline| Instant::now() >= deadline)
-            && !self.stuck_reported
+        if let ExitWatch::Until(deadline) = self.watch
+            && Instant::now() >= deadline
         {
-            self.stuck_reported = true;
+            self.watch = ExitWatch::Stuck;
             self.emit(EventKind::ShutdownStuck);
         }
         if self
@@ -733,12 +768,11 @@ impl Worker {
         {
             self.handshake_timeout();
         }
-        if !self.closing
+        if self.exit == Exit::Running
             && !self.stopped_talking()
-            && self
-                .active
-                .as_ref()
-                .is_some_and(|turn| turn.retry_at.is_some_and(|when| Instant::now() >= when))
+            && self.active.as_ref().is_some_and(
+                |turn| matches!(turn.step, Step::Backoff(when) if Instant::now() >= when),
+            )
         {
             self.retry_now();
         }
@@ -748,12 +782,12 @@ impl Worker {
     fn command(&mut self, command: Command) {
         match command {
             Command::Prompt { prompt, retries } => {
-                if self.closing || self.active.is_some() {
+                if self.exit != Exit::Running || self.active.is_some() {
                     self.emit(EventKind::Error {
                         message: "This conversation is already processing or shutting down.".into(),
                         kind: FailureKind::Configuration,
                     });
-                } else if self.restore_required {
+                } else if let AgentSession::Unrestorable(_) = self.session {
                     self.emit(EventKind::ReplacementRequired("The saved session could not be restored. Confirm a replacement session before prompting.".into()));
                 } else if self.stopped_talking() {
                     self.emit(EventKind::Error {
@@ -787,77 +821,36 @@ impl Worker {
                 id,
                 value,
             } => self.switch(category, &id, &value),
-            Command::ReplaceSession { context } => {
-                if !self.closing && self.stopped_talking() {
-                    self.emit(EventKind::Error {
-                        message: "Agent communication stopped. Use Force Stop before starting a replacement session.".into(),
-                        kind: FailureKind::Temporary,
-                    });
-                } else if !self.closing
-                    && self
-                        .active
-                        .as_ref()
-                        .is_none_or(|turn| turn.prompt_request.is_none())
-                {
-                    self.replacement = Some(context);
-                    self.replacing = true;
-                    self.previous_session = self.session_id.take();
-                    self.restore_required = false;
-                    if self.child.is_none() {
-                        self.start();
-                    } else if self.link.is_some() {
-                        self.setup_session();
-                    }
-                }
-            }
+            Command::ReplaceSession { context } => self.replace_session(context),
             Command::Fork { session, context } => self.fork = Some((session, context)),
             Command::Authenticate { method } => self.authenticate(Some(method)),
             Command::Logout => self.authenticate(None),
             Command::Probe => {
-                self.probing = true;
-                self.advance();
-            }
-            Command::Shutdown => self.shutdown(),
-            Command::ForceStop => {
-                self.closing = true;
-                self.shutdown_deadline = Some(Instant::now() + SHUTDOWN_GRACE);
-                self.active = None;
-                self.clear_pending();
-                self.cancel_permissions();
-                if let Some(child) = &mut self.child {
-                    match block_in_place(|| adeline_core::platform::kill_tree(child)) {
-                        Ok(()) => self.forced = true,
-                        Err(error) => self.emit(EventKind::Error {
-                            message: format!("Force stopping agent failed: {error}"),
-                            kind: FailureKind::Temporary,
-                        }),
-                    }
+                if self.exit == Exit::Running {
+                    self.probing = true;
+                    self.advance();
                 }
             }
+            Command::Shutdown => self.shutdown(),
+            Command::ForceStop => self.force_stop(),
         }
     }
 
     fn advance(&mut self) {
-        if self.child.is_none() && self.link.is_none() && !self.connecting {
-            self.start();
-        } else if self.link.is_none() {
-        } else if self.configured {
-            if self.probing {
-                self.emit(EventKind::Probed);
-            } else {
-                self.send_prompt();
-            }
-        } else if self.pending.is_empty() && self.setup.is_none() {
-            if self.features.is_none() {
-                self.initialize();
-            } else {
-                self.setup_session();
-            }
+        match self.connection {
+            Connection::Down => self.start(),
+            Connection::Up(_, Setup::Ready) if self.probing => self.emit(EventKind::Probed),
+            Connection::Up(_, Setup::Ready) => self.send_prompt(),
+            Connection::Up(_, Setup::Uninitialized) => self.initialize(),
+            Connection::Up(_, Setup::Initialized) => self.setup_session(),
+            _ => {}
         }
     }
 
     fn request(&mut self, outgoing: Outgoing, request: Request) -> Option<u64> {
-        let link = self.link.as_ref()?;
+        let Connection::Up(link, _) = &self.connection else {
+            return None;
+        };
         self.next_request += 1;
         let id = self.next_request;
         link.send(id, self.epoch, outgoing, &self.sender);
@@ -896,7 +889,7 @@ impl Worker {
                     self.raw_options = options;
                     self.refresh_options();
                 }
-                if self.closing && !self.probing {
+                if self.exit != Exit::Running {
                     self.close_session();
                     return;
                 }
@@ -914,12 +907,11 @@ impl Worker {
             }
             (Request::Close, _) => {
                 self.close_link();
-                self.shutdown_deadline
-                    .get_or_insert_with(|| Instant::now() + SHUTDOWN_GRACE);
+                self.watch.arm();
             }
             (Request::Authenticate | Request::Logout, _) => {
                 self.emit(EventKind::Auth(Ok(())));
-                if self.active.is_some() && !self.configured && self.setup.is_none() {
+                if self.active.is_some() && self.setup() == Some(Setup::Initialized) {
                     self.setup_session();
                 }
             }

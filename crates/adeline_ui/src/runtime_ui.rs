@@ -480,7 +480,7 @@ impl Adeline {
     fn connected_machines(cx: &App) -> Vec<String> {
         client::connections(cx)
             .iter()
-            .filter(|c| c.state == client::State::Connected)
+            .filter(|c| c.state.connected())
             .map(|c| c.machine.clone())
             .collect()
     }
@@ -518,7 +518,7 @@ impl Adeline {
             return true;
         }
         let busy = client::connections(cx).iter().any(|connection| {
-            connection.state == client::State::Connected
+            connection.state.connected()
                 && connection.status.clients <= 1
                 && self
                     .projects
@@ -649,7 +649,7 @@ impl Adeline {
         }
         let machines: Vec<String> = client::connections(cx)
             .iter()
-            .filter(|c| c.state == client::State::Connected && c.status.clients <= 1)
+            .filter(|c| c.state.connected() && c.status.clients <= 1)
             .map(|c| c.machine.clone())
             .collect();
         if machines.is_empty() {

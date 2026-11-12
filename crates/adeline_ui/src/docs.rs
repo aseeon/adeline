@@ -1435,7 +1435,6 @@ impl Adeline {
                 if let Some(ix) = self.projects.iter().position(|p| p.key() == key) {
                     self.docs.unsaved_ok = true;
                     self.act(Action::CloseProject(ix), window, cx);
-                    self.docs.unsaved_ok = false;
                 }
             }
             None => {}
@@ -1452,7 +1451,7 @@ impl Adeline {
     }
 
     pub(super) fn docs_may_close(&mut self, then: Then, _: &mut Context<Self>) -> bool {
-        if self.docs.unsaved_ok {
+        if std::mem::take(&mut self.docs.unsaved_ok) {
             return true;
         }
         let unsaved = self.docs.unsaved();
@@ -1506,7 +1505,7 @@ impl Adeline {
             enabled: config::with(|s| s.general.features.docs),
             respect_gitignore: config::with(|s| s.modes.docs.respect_gitignore),
         };
-        if connection.state != client::State::Connected || connection.settings.docs == wanted {
+        if !connection.state.connected() || connection.settings.docs == wanted {
             return false;
         }
         let settings = protocol::EngineSettings {

@@ -35,12 +35,11 @@ fn worker() -> (Worker, async_channel::Receiver<Event>, Sent) {
         receiver,
     );
     let sent = Sent::default();
-    worker.link = Some(Link::Test(Arc::clone(&sent)));
+    worker.connection = Connection::Up(Link::Test(Arc::clone(&sent)), Setup::Ready);
     worker.features = Some(Features {
         known: true,
         ..Default::default()
     });
-    worker.configured = true;
     worker.turn = 1;
     (worker, received, sent)
 }
@@ -76,7 +75,7 @@ fn options(value: Value) -> Vec<wire::SessionConfigOption> {
 
 fn turn(retries: u32) -> Turn {
     let mut turn = Turn::new(vec![Part::Text("original user request".into())], retries);
-    turn.prompt_request = Some(1);
+    turn.step = Step::Prompting(1);
     turn
 }
 
@@ -88,8 +87,8 @@ fn error(code: i32, message: &str) -> sdk::Error {
 fn forks_use_the_native_fork_and_fall_back_to_the_text_copy() {
     for native_works in [true, false] {
         let (mut worker, received, sent) = worker();
-        worker.session_id = None;
-        worker.configured = false;
+        worker.session = AgentSession::New;
+        worker.set_setup(Setup::Initialized);
         worker.config.selections = Selections::default();
         worker.features.as_mut().unwrap().fork = true;
         worker.command(Command::Fork {
@@ -141,7 +140,7 @@ fn forks_use_the_native_fork_and_fall_back_to_the_text_copy() {
 #[test]
 fn effort_offered_only_after_the_model_is_set_is_still_applied() {
     let (mut worker, received, sent) = worker();
-    worker.configured = false;
+    worker.set_setup(Setup::Configuring(0));
     worker.config.selections.model = "gpt-6-astra".into();
     worker.raw_options = options(json!([{"id":"model","name":"Model","category":"model",
         "type":"select","currentValue":"gpt-6-astra","options":[{"value":"gpt-6-astra","name":"A"}]}]));
@@ -165,7 +164,7 @@ fn effort_offered_only_after_the_model_is_set_is_still_applied() {
     assert_eq!(effort.config_id.0.as_ref(), "reasoning_effort");
     let second = worker.next_request;
     worker.reply(second, Ok(Reply::Options(Vec::new())));
-    assert!(worker.configured);
+    assert_eq!(worker.setup(), Some(Setup::Ready));
     assert!(
         events(&received)
             .iter()
@@ -187,7 +186,7 @@ fn switching_while_idle_sets_the_option_and_while_stopped_waits_for_setup() {
     });
     assert_eq!(worker.config.selections.effort, "low");
     assert_eq!(methods(&sent), ["session/set_config_option"]);
-    worker.link = None;
+    worker.connection = Connection::Down;
     worker.command(Command::SetOption {
         category: Category::Model,
         id: String::new(),
@@ -232,8 +231,7 @@ fn session_modes_hide_the_profiles_plan_modes_and_switch_by_set_mode() {
 fn cancel_discards_pending_retry_and_permission() {
     let (mut worker, received, _) = worker();
     let mut pending = turn(5);
-    pending.prompt_request = None;
-    pending.retry_at = Some(Instant::now() + Duration::from_secs(30));
+    pending.step = Step::Backoff(Instant::now() + Duration::from_secs(30));
     worker.active = Some(pending);
     worker.permissions.insert(
         7,
@@ -298,10 +296,11 @@ fn error_looking_reply_is_reported_without_retry() {
 #[test]
 fn temporary_failure_obeys_retry_limit_and_preserves_original_until_work() {
     let (mut worker, received, _) = worker();
+    worker.connection = Connection::Down;
     worker.active = Some(turn(2));
     for (expected, prompt) in [(1, "original user request"), (2, CONTINUE_TURN)] {
         if expected == 2 {
-            worker.active.as_mut().unwrap().prompt_request = Some(1);
+            worker.active.as_mut().unwrap().step = Step::Prompting(1);
             worker.update(
                 serde_json::from_value(json!({"sessionId":"session-1","update":{
                     "sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"partial"}}}))
@@ -312,13 +311,13 @@ fn temporary_failure_obeys_retry_limit_and_preserves_original_until_work() {
         worker.fail("Provider timed out".into(), FailureKind::Temporary);
         let active = worker.active.as_ref().unwrap();
         assert_eq!(active.attempt, expected);
-        assert!(active.retry_at.is_some());
+        assert!(matches!(active.step, Step::Backoff(_)));
         assert!(
             matches!(events(&received)[..], [EventKind::Retrying { attempt, .. }] if attempt == expected)
         );
-        worker.closing = true;
+        worker.exit = Exit::Closing;
         worker.retry_now();
-        worker.closing = false;
+        worker.exit = Exit::Running;
         assert_eq!(text_of(&worker.active.as_ref().unwrap().prompt), prompt);
     }
     worker.fail("Provider timed out".into(), FailureKind::Temporary);
@@ -351,7 +350,7 @@ fn changing_retries_affects_the_running_turn() {
 #[test]
 fn unavailable_saved_model_fails_before_prompt() {
     let (mut worker, received, sent) = worker();
-    worker.configured = false;
+    worker.set_setup(Setup::Configuring(0));
     worker.active = Some(turn(0));
     worker.raw_options = options(json!([{"id":"model","name":"Model","category":"model",
         "type":"select","currentValue":"other/model","options":[{"value":"other/model","name":"Other"}]}]));
@@ -376,7 +375,7 @@ fn missing_auth_during_setup_needs_login_without_retry() {
     worker.pending.insert(1, Request::Setup);
     worker.active = Some(turn(5));
     worker.reply(1, Err(error(-32000, "Authentication required")));
-    assert!(!worker.restore_required);
+    assert!(!matches!(worker.session, AgentSession::Unrestorable(_)));
     assert!(worker.active.is_none());
     assert!(matches!(&*events(&received), [EventKind::Error {
         kind: FailureKind::Authentication, message
@@ -409,7 +408,7 @@ fn a_profile_turn_end_signal_ends_the_turn_and_its_late_answer_is_ignored() {
         }
     )));
     worker.active = Some(Turn::new(vec![Part::Text("next".into())], 0));
-    worker.active.as_mut().unwrap().prompt_request = Some(2);
+    worker.active.as_mut().unwrap().step = Step::Prompting(2);
     worker.prompt_result(1, wire::StopReason::EndTurn);
     assert!(
         worker.active.is_some(),
@@ -508,6 +507,74 @@ fn a_steer_still_waiting_when_the_agent_goes_is_reported_undelivered() {
     }
 }
 
+fn prompt(text: &str) -> Command {
+    Command::Prompt {
+        prompt: vec![Part::Text(text.into())],
+        retries: 0,
+    }
+}
+
+#[test]
+fn a_failed_replacement_keeps_the_next_prompt_and_adds_the_saved_context() {
+    let (mut worker, received, sent) = worker();
+    worker.config.selections = Selections::default();
+    worker.features.as_mut().unwrap().load = true;
+    worker.set_setup(Setup::Initialized);
+    worker.command(prompt("first"));
+    worker.reply(worker.next_request, Err(error(-32603, "Session not found")));
+    assert!(matches!(worker.active.as_ref().unwrap().step, Step::Parked));
+    worker.command(Command::ReplaceSession {
+        context: "user: first".into(),
+    });
+    worker.reply(
+        worker.next_request,
+        Err(error(-32602, "bad session params")),
+    );
+    assert!(worker.active.is_none());
+    worker.command(prompt("second"));
+    worker.reply(
+        worker.next_request,
+        Ok(Reply::Session(SessionReply {
+            session_id: Some("s2".into()),
+            ..Default::default()
+        })),
+    );
+    assert_eq!(
+        methods(&sent),
+        [
+            "session/load",
+            "session/new",
+            "session/new",
+            "session/prompt"
+        ]
+    );
+    let prompt = text_of(&worker.active.as_ref().unwrap().prompt);
+    assert!(prompt.contains("user: first") && prompt.ends_with("second"));
+    assert!(events(&received).iter().any(|event| matches!(event,
+        EventKind::Session { session_id, replaced: true } if session_id == "s2")));
+}
+
+#[test]
+fn a_prompt_sets_up_the_session_while_another_request_is_in_flight() {
+    let (mut worker, _, sent) = worker();
+    worker.features.as_mut().unwrap().load = true;
+    worker.set_setup(Setup::Initialized);
+    worker.pending.insert(9, Request::Steer);
+    worker.command(prompt("hello"));
+    assert_eq!(methods(&sent), ["session/load"]);
+}
+
+#[test]
+fn a_failed_force_stop_drops_the_link_so_the_agent_can_exit() {
+    let (mut worker, received, sent) = worker();
+    worker.command(Command::ForceStop);
+    worker.killed(Err(std::io::Error::other("Access is denied.")));
+    assert!(events(&received).iter().any(|event| matches!(event,
+        EventKind::Error { message, .. } if message.starts_with("Force stopping agent failed"))));
+    assert_eq!(Arc::strong_count(&sent), 1, "the agent still has its link");
+    assert_eq!(worker.exit, Exit::Closing);
+}
+
 #[test]
 fn claude_gets_instructions_in_session_meta_and_codex_gets_none() {
     let (mut worker, _, _) = worker();
@@ -591,7 +658,7 @@ fn connected() -> (
     });
     worker.epoch = 1;
     worker.connect_lines(outgoing, incoming);
-    worker.connecting = true;
+    worker.connection = Connection::Connecting;
     (worker, received, from_worker, to_worker)
 }
 

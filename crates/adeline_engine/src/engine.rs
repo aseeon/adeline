@@ -12,7 +12,7 @@ use crate::{
 use adeline_core::{
     agents::{self, AgentCatalog},
     config,
-    conversation::{Attachment, Category, MessageRole, PermissionKind, ThreadStatus, TurnState},
+    conversation::{Attachment, Category, MessageRole, PermissionKind, ThreadStatus},
     data::{Message, Thread, Workspace},
     harness, install, ipc,
     protocol::{
@@ -32,11 +32,13 @@ mod cli;
 mod conversations;
 mod docs;
 mod events;
+mod phase;
 mod projects;
 mod serve;
 mod turns;
 
 pub use cli::main;
+use phase::{After, Lifecycle, Stop};
 
 const IDLE_EXIT: Duration = Duration::from_secs(60);
 const RECENT_DELTAS: usize = 20_000;
@@ -49,6 +51,8 @@ const TRAFFIC_BACKLOG: usize = 2000;
 const BLOCKING_THREADS: usize = 64;
 const ALREADY_PROCESSING: &str =
     "This conversation is already processing (sent from another window)";
+const INTERRUPTED: &str =
+    "The previous turn was interrupted. Retry continues from the saved session.";
 const PERMISSION_STOPPED: &str = "Stopped while waiting for permission: no Adeline window was open to answer it. Retry continues the turn.";
 
 fn settings_path() -> anyhow::Result<PathBuf> {
@@ -159,11 +163,6 @@ impl Client {
     }
 }
 
-struct Slot {
-    driver: acp::Driver,
-    turn: u64,
-}
-
 struct StopAll {
     deadline: Instant,
     forced: bool,
@@ -176,7 +175,7 @@ struct Engine {
     store: ProjectStore,
     projects: Vec<Workspace>,
     live: HashMap<String, Live>,
-    drivers: HashMap<String, Slot>,
+    lifecycles: HashMap<String, Lifecycle>,
     agents: AgentCatalog,
     harnesses: harness::Catalog,
     icons: BTreeMap<String, String>,
@@ -195,12 +194,7 @@ struct Engine {
     queued_files: HashMap<u64, Vec<Attachment>>,
     next_queued: u64,
     attachments: HashMap<String, Vec<Attachment>>,
-    steering: HashMap<String, (String, Vec<Attachment>)>,
-    send_after_stop: HashSet<String>,
     last_traffic: HashMap<String, u64>,
-    permission_stopped: HashSet<String>,
-    text_copy_pending: HashSet<String>,
-    restart_prompt: HashMap<String, String>,
     touched: HashMap<String, Instant>,
     watched: Vec<PathBuf>,
     watch_due: Option<Instant>,
@@ -222,11 +216,11 @@ fn unsaved_history(error: &str) -> String {
     format!("History could not be saved: {error}. Restore storage access, then Retry storage.")
 }
 
-fn end_turn(live: &mut Live) {
-    live.processing = false;
-    live.progress = None;
-    live.quiet_since = None;
-    live.permission.clear();
+fn lifecycle_for(conversation: &storage::StoredConversation) -> Lifecycle {
+    Lifecycle::loaded(
+        conversation.settings.status,
+        conversation.storage_error.is_some(),
+    )
 }
 
 fn live_for(conversation: &storage::StoredConversation) -> Live {
@@ -257,20 +251,9 @@ fn live_for(conversation: &storage::StoredConversation) -> Live {
         .storage_error
         .clone()
         .map(|error| unsaved_history(&error))
-        .or_else(|| {
-            interrupted.then(|| {
-                last_error.map_or_else(
-                    || {
-                        "The previous turn was interrupted. Retry continues from the saved session."
-                            .to_owned()
-                    },
-                    str::to_owned,
-                )
-            })
-        });
+        .or_else(|| interrupted.then(|| last_error.unwrap_or(INTERRUPTED).to_owned()));
     Live {
         agent_id: conversation.settings.agent_id.clone(),
-        storage_failed: conversation.storage_error.is_some(),
         execution: Some(conversation.settings.execution.clone()),
         options: conversation.settings.options.clone(),
         commands: conversation.settings.commands.clone(),
@@ -373,17 +356,23 @@ impl Engine {
             );
         }
         let projects = store.to_workspaces();
-        let live = store
+        let (live, lifecycles) = store
             .projects
             .iter()
             .flat_map(|project| &project.conversations)
-            .map(|conversation| (conversation.id.clone(), live_for(conversation)))
-            .collect();
+            .map(|conversation| {
+                let id = conversation.id.clone();
+                (
+                    (id.clone(), live_for(conversation)),
+                    (id, lifecycle_for(conversation)),
+                )
+            })
+            .unzip();
         let mut engine = Self {
             store,
             projects,
             live,
-            drivers: HashMap::new(),
+            lifecycles,
             agents: block_in_place(|| AgentCatalog::new(false)),
             harnesses: harness::Catalog {
                 harnesses: block_in_place(harness::load),
@@ -406,12 +395,7 @@ impl Engine {
             queued_files: HashMap::new(),
             next_queued: 0,
             attachments: HashMap::new(),
-            steering: HashMap::new(),
-            send_after_stop: HashSet::new(),
             last_traffic: HashMap::new(),
-            permission_stopped: HashSet::new(),
-            text_copy_pending: HashSet::new(),
-            restart_prompt: HashMap::new(),
             touched: HashMap::new(),
             watched: Vec::new(),
             watch_due: None,
@@ -454,22 +438,11 @@ impl Engine {
             .iter()
             .flat_map(|project| {
                 project.threads.iter().filter_map(|thread| {
-                    let live = self.live.get(&thread.id)?;
-                    live.processing.then(|| ActiveConversation {
+                    let state = self.lifecycles.get(&thread.id)?.state()?;
+                    Some(ActiveConversation {
                         project: project.config.name.clone(),
                         title: thread.title.clone(),
-                        state: if !live.permission.is_empty() {
-                            "waiting for permission"
-                        } else if live
-                            .progress
-                            .as_deref()
-                            .is_some_and(|p| p.starts_with("Retry"))
-                        {
-                            "retrying"
-                        } else {
-                            "processing"
-                        }
-                        .into(),
+                        state: state.into(),
                     })
                 })
             })
@@ -550,13 +523,31 @@ impl Engine {
         self.live.entry(id.to_owned()).or_default()
     }
 
-    fn force_stop(&self, id: &str) -> bool {
-        self.drivers
-            .get(id)
-            .inspect(|slot| {
-                let _ = slot.driver.send(acp::Command::ForceStop);
-            })
-            .is_some()
+    fn lifecycle(&mut self, id: &str) -> &mut Lifecycle {
+        self.lifecycles.entry(id.to_owned()).or_default()
+    }
+
+    fn agent(&self, id: &str) -> Option<&phase::Agent> {
+        self.lifecycles.get(id)?.phase.agent()
+    }
+
+    fn agent_ids(&self) -> Vec<String> {
+        self.lifecycles
+            .iter()
+            .filter(|(_, lifecycle)| lifecycle.phase.agent().is_some())
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    fn processing(&self, id: &str) -> bool {
+        self.lifecycles.get(id).is_some_and(Lifecycle::processing)
+    }
+
+    fn force_stop(&mut self, id: &str) {
+        if let Some(driver) = self.lifecycle(id).force_stop() {
+            let _ = driver.send(acp::Command::ForceStop);
+        }
+        self.send_live(id);
     }
 
     fn broadcast_thread(&mut self, id: &str) {
@@ -566,20 +557,12 @@ impl Engine {
     }
 
     fn send_live(&mut self, id: &str) {
-        let running = self.drivers.contains_key(id);
-        let live = self.live_mut(id);
-        live.running = running;
-        live.turn = if !live.permission.is_empty()
-            || live.auth_required
-            || live.replacement
-            || live.storage_failed
-        {
-            TurnState::NeedsAction
-        } else if live.processing {
-            TurnState::Running
-        } else {
-            TurnState::Idle
-        };
+        self.sync_status(id);
+        let live = self.live.entry(id.to_owned()).or_default();
+        self.lifecycles
+            .entry(id.to_owned())
+            .or_default()
+            .project(live);
         let live = live.clone();
         self.broadcast_message(&EngineMessage::Delta(Delta::Live {
             id: id.to_owned(),
@@ -600,7 +583,9 @@ impl Engine {
     fn snapshot(&self) -> Snapshot {
         let mut live = self.live.clone();
         for (id, state) in &mut live {
-            state.running = self.drivers.contains_key(id);
+            if let Some(lifecycle) = self.lifecycles.get(id) {
+                lifecycle.project(state);
+            }
         }
         Snapshot {
             projects: self.projects.clone(),
@@ -854,21 +839,22 @@ impl Engine {
             return;
         }
         let waiting: Vec<_> = self
-            .live
+            .lifecycles
             .iter()
-            .filter(|(_, live)| !live.permission.is_empty())
+            .filter(|(_, lifecycle)| {
+                lifecycle
+                    .phase
+                    .turn()
+                    .is_some_and(|turn| !turn.permission.is_empty())
+            })
             .map(|(id, _)| id.clone())
             .collect();
         for id in waiting {
             self.stop_for_permission(&id);
         }
         if !self.daemon() {
-            let idle: Vec<_> = self
-                .drivers
-                .keys()
-                .filter(|id| self.live.get(*id).is_none_or(|live| !live.processing))
-                .cloned()
-                .collect();
+            let mut idle = self.agent_ids();
+            idle.retain(|id| !self.processing(id));
             for id in idle {
                 self.shutdown_conversation(&id);
             }
@@ -886,7 +872,7 @@ impl Engine {
             .live
             .iter()
             .filter(|(id, live)| {
-                live.processing
+                self.processing(id)
                     && live.quiet_since.is_none()
                     && self
                         .last_traffic
@@ -917,7 +903,11 @@ impl Engine {
                     tracing::Level::WARN,
                     "Some agents did not stop after being killed"
                 );
-                self.drivers.clear();
+                for id in self.agent_ids() {
+                    self.agent_gone(&id, false);
+                    self.send_live(&id);
+                }
+                self.finish_deletions();
                 self.finish_stop_all();
             } else {
                 stop.forced = true;
@@ -928,15 +918,17 @@ impl Engine {
                     stop.grace_secs = STOP_GRACE.as_secs(),
                     "Killing agents that did not stop within {{stop.grace_secs}} seconds"
                 );
-                for slot in self.drivers.values() {
-                    let _ = slot.driver.send(acp::Command::ForceStop);
+                for lifecycle in self.lifecycles.values() {
+                    if let Some(agent) = lifecycle.phase.agent() {
+                        let _ = agent.driver.send(acp::Command::ForceStop);
+                    }
                 }
             }
         }
         let idle = self.subscribers() == 0
             && !self.daemon()
             && self.stop_all.is_none()
-            && !self.live.values().any(|live| live.processing);
+            && !self.lifecycles.values().any(Lifecycle::processing);
         if !idle {
             self.idle_since = None;
         } else if self.idle_since.get_or_insert_with(Instant::now).elapsed() >= IDLE_EXIT {
@@ -966,14 +958,14 @@ impl Engine {
             stop.exit |= exit;
             return;
         }
-        let ids: Vec<_> = self.drivers.keys().cloned().collect();
+        let ids = self.agent_ids();
         let stopped = ids
             .iter()
             .filter_map(|id| {
                 let project_id = self.project_of(id)?;
                 let project = self.projects.iter().find(|p| p.config.id == project_id)?;
                 let thread = project.threads.iter().find(|t| &t.id == id)?;
-                let state = if self.live.get(id).is_some_and(|l| l.processing) {
+                let state = if self.processing(id) {
                     "processing"
                 } else {
                     "idle"
@@ -999,7 +991,7 @@ impl Engine {
     }
 
     fn finish_stop_all(&mut self) {
-        if !self.drivers.is_empty() {
+        if !self.agent_ids().is_empty() {
             return;
         }
         let Some(stop) = self.stop_all.take() else {
@@ -1045,21 +1037,13 @@ impl Engine {
     }
 
     fn storage_failure(&mut self, id: &str, error: &str) {
-        let live = self.live_mut(id);
-        live.storage_failed = true;
-        live.recovering_storage = false;
-        live.error = Some(unsaved_history(error));
-        live.permission.clear();
-        if let Some(slot) = self.drivers.get(id) {
-            let _ = slot.driver.send(acp::Command::Cancel);
+        let lifecycle = self.lifecycle(id);
+        lifecycle.storage_failed = true;
+        if let Some(driver) = lifecycle.stop(Stop::Storage) {
+            let _ = driver.send(acp::Command::Cancel);
         }
-        let status = self.status_of(id);
-        if status.is_some_and(|status| !status.closed()) {
-            self.broadcast(Delta::Status {
-                id: id.to_owned(),
-                status: ThreadStatus::Blocked,
-            });
-        }
+        self.live_mut(id).error = Some(unsaved_history(error));
+        self.sync_status(id);
     }
 
     fn queue_visible(&mut self, id: &str, kind: &str, data: Value) -> bool {
@@ -1068,7 +1052,7 @@ impl Engine {
             .store
             .queue_event(id, storage::TranscriptEvent::new(kind, data));
         if let Err(error) = result {
-            if !self.live.get(id).is_some_and(|live| live.storage_failed) {
+            if !self.lifecycles.get(id).is_some_and(|l| l.storage_failed) {
                 self.storage_failure(id, &format!("{error:#}"));
             }
             false
@@ -1109,19 +1093,38 @@ impl Engine {
         }
     }
 
-    fn set_runtime_status(&mut self, id: &str, status: ThreadStatus) -> bool {
+    fn write_status(&mut self, id: &str, status: ThreadStatus) {
         let Some(mut settings) = self.conversation_settings(id) else {
-            return false;
+            return;
         };
         settings.status = status;
-        if !self.save_conversation_settings(id, settings) {
-            return false;
+        if self.save_conversation_settings(id, settings) {
+            self.broadcast(Delta::Status {
+                id: id.to_owned(),
+                status,
+            });
         }
-        self.broadcast(Delta::Status {
-            id: id.to_owned(),
-            status,
-        });
-        true
+    }
+
+    fn sync_status(&mut self, id: &str) {
+        if self.stop_all.as_ref().is_some_and(|stop| stop.exit) {
+            return;
+        }
+        let (Some(saved), Some(lifecycle)) = (self.status_of(id), self.lifecycles.get(id)) else {
+            return;
+        };
+        let (status, storage_failed) = (lifecycle.status(saved), lifecycle.storage_failed);
+        if status == saved {
+            return;
+        }
+        if storage_failed {
+            self.broadcast(Delta::Status {
+                id: id.to_owned(),
+                status,
+            });
+        } else {
+            self.write_status(id, status);
+        }
     }
 
     fn set_status(&mut self, id: &str, status: ThreadStatus) -> Result<Value, String> {
@@ -1136,10 +1139,13 @@ impl Engine {
         }
         match status {
             ThreadStatus::Idle if current.is_some_and(ThreadStatus::closed) => {
-                self.set_runtime_status(id, ThreadStatus::Idle);
+                if self.lifecycle(id).after() == Some(After::Blocked) {
+                    self.lifecycle(id).block(After::Done);
+                }
+                self.write_status(id, ThreadStatus::Idle);
             }
             ThreadStatus::Completed | ThreadStatus::Archived => {
-                self.set_runtime_status(id, status);
+                self.write_status(id, status);
                 self.shutdown_conversation(id);
             }
             _ => return Err(format!("Cannot change this conversation to {status:?}.")),

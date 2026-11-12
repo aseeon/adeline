@@ -1,6 +1,6 @@
 //! The conversation's live surfaces: the activity row and silence notice,
 //! queued messages, the permission and login cards, a crashed agent's output,
-//! attachment chips, the `/` command list, the TODO list in the chat header,
+//! attachment chips, the `/` command list, the TODO button in the chat header,
 //! thoughts in replies, and the side panel view with its activity and ACP
 //! traffic tabs.
 use super::*;
@@ -14,7 +14,6 @@ use gpui_kit::component::{
     alert::Alert,
     button::ButtonVariants as _,
     menu::{ContextMenuExt as _, PopupMenuItem},
-    popover::Popover,
     scroll::Scrollbar,
 };
 use std::sync::Arc;
@@ -709,10 +708,10 @@ impl Adeline {
     }
 
     pub(super) fn slash_matches(&self, cx: &App) -> Vec<conversation::AgentCommand> {
-        if self.slash_dismissed {
+        let text = self.composer.read(cx).value().to_string();
+        if self.slash_dismissed.as_ref() == Some(&text) {
             return Vec::new();
         }
-        let text = self.composer.read(cx).value().to_string();
         let Some(typed) = text.strip_prefix('/') else {
             return Vec::new();
         };
@@ -740,6 +739,7 @@ impl Adeline {
         let highlight = self.slash.unwrap_or(0).min(commands.len() - 1);
         let mut list = col()
             .id("slash-commands")
+            .test_support()
             .role(Role::ListBox)
             .aria_label("Commands")
             .w_full()
@@ -810,6 +810,12 @@ impl Adeline {
         self.composer_region.update(cx, |_, cx| cx.notify());
     }
 
+    pub(super) fn dismiss_slash(&mut self, cx: &mut Context<Self>) {
+        self.slash_dismissed = Some(self.composer.read(cx).value().to_string());
+        self.slash = None;
+        self.composer_region.update(cx, |_, cx| cx.notify());
+    }
+
     pub(super) fn composer_key(
         &mut self,
         key: &str,
@@ -827,10 +833,7 @@ impl Adeline {
                     self.insert_command(&commands[current].name.clone(), window, cx);
                     return true;
                 }
-                "escape" => {
-                    self.slash_dismissed = true;
-                    self.slash = None;
-                }
+                "escape" => self.dismiss_slash(cx),
                 _ => return false,
             }
             self.composer_region.update(cx, |_, cx| cx.notify());
@@ -864,73 +867,32 @@ impl Adeline {
         } else {
             format!("{} of {}", done + 1, steps.len())
         };
-        let muted = theme.muted_foreground;
-        let glyph = move |status| step_glyph(status, muted);
         let label = current.map_or_else(|| "All steps done".to_owned(), |step| step.text.clone());
-        let trigger = Button::new("chat-todo")
-            .ghost()
-            .small()
-            .flex_shrink_0()
-            .dropdown_caret(true)
-            .accessibility_label(format!("TODO: {label}, {count}"))
-            .tooltip(format!("{label} ({})", shortcut("Ctrl+Shift+T")))
-            .child(
-                row()
-                    .gap_1p5()
-                    .text_size(panes::dp(theme::T_UI))
-                    .child(glyph(current.map_or(StepStatus::Completed, |s| s.status)))
-                    .child(
-                        div()
-                            .flex_shrink_0()
-                            .text_color(theme.muted_foreground)
-                            .child(count),
-                    ),
-            );
-        let owner = cx.weak_entity();
         Some(
-            Popover::new("todo")
-                .anchor(Anchor::TopRight)
-                .trigger(trigger)
-                .open(self.menu == Some("todo"))
-                .on_open_change(move |open, window, cx| {
-                    let _ = owner.update(cx, |app, cx| {
-                        if *open != (app.menu == Some("todo")) {
-                            app.act(Action::TodoList, window, cx);
-                        }
-                    });
-                })
-                .content(move |_, _, cx| {
-                    let theme = cx.theme();
-                    col()
-                        .id("todo-list")
-                        .test_support()
-                        .role(Role::List)
-                        .aria_label("TODO")
-                        .w(rems(22.))
-                        .gap_1()
-                        .p_1()
+            Button::new("chat-todo")
+                .ghost()
+                .small()
+                .flex_shrink_0()
+                .accessibility_label(format!("TODO: {label}, {count}"))
+                .tooltip(format!("{label} ({})", shortcut("Ctrl+Shift+T")))
+                .on_click(cx.listener(|app, _, window, cx| {
+                    app.act(Action::TodoList, window, cx);
+                }))
+                .child(
+                    row()
+                        .gap_1p5()
+                        .text_size(panes::dp(theme::T_UI))
+                        .child(step_glyph(
+                            current.map_or(StepStatus::Completed, |s| s.status),
+                            theme.muted_foreground,
+                        ))
                         .child(
                             div()
-                                .px_2()
-                                .py_1()
-                                .text_size(panes::dp(theme::T_CAPTION))
+                                .flex_shrink_0()
                                 .text_color(theme.muted_foreground)
-                                .child("TODO"),
-                        )
-                        .children(steps.iter().map(|step| {
-                            row()
-                                .items_start()
-                                .gap_2()
-                                .px_2()
-                                .py_1()
-                                .text_size(panes::dp(theme::T_UI))
-                                .when(step.status == StepStatus::Completed, |row| {
-                                    row.text_color(theme.muted_foreground)
-                                })
-                                .child(div().pt_0p5().child(glyph(step.status)))
-                                .child(div().flex_1().min_w_0().child(step.text.clone()))
-                        }))
-                })
+                                .child(count),
+                        ),
+                )
                 .into_any_element(),
         )
     }

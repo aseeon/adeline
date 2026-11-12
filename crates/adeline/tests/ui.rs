@@ -237,6 +237,20 @@ fn unavailable(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn unavailable_beside_a_remote(cx: &mut TestAppContext) {
+    let live = Live::new("unavailable-remote");
+    live.remotes();
+    live.save_machines(&[("m-away", "Away", &["down-away"], None)]);
+    std::fs::write(live.path().join(".config/adeline/engine"), "not a folder").unwrap();
+    let mut ui = Ui::open(cx, false, false);
+    ui.wait("the local engine's banner", WAIT, |ui| {
+        ui.find(|l| l.ends_with(": Conversation engine unavailable"))
+            .is_some()
+    });
+    ui.named("Retry");
+}
+
+#[gpui_kit::test]
 fn fork(cx: &mut TestAppContext) {
     let _live = Live::new("fork");
     let mut ui = open(cx);
@@ -274,6 +288,27 @@ fn chat_from_another_client(cx: &mut TestAppContext, second: &mut TestAppContext
     });
     let open = ui.read(|app, _| app.open_chat().map(str::to_owned));
     assert_eq!(open.as_deref(), Some("hello"));
+}
+
+#[gpui_kit::test]
+fn startup_requests_reach_a_running_engine(cx: &mut TestAppContext, second: &mut TestAppContext) {
+    let live = Live::new("startup-requests");
+    let mut ui = open(cx);
+    send(&mut ui, "SLOW 3");
+    wait_processing(&mut ui, live.path());
+    ui.press("secondary-n");
+    let conversation = common::conversations(live.path(), common::PROJECT)
+        .pop()
+        .unwrap();
+    let transcript = || common::transcript(live.path(), common::PROJECT, &conversation);
+    ui.wait("the unread reply", WAIT, |_| {
+        transcript().contains("turn_finished")
+    });
+    assert!(!transcript().contains("message_read"), "{}", transcript());
+    let mut other = open(second);
+    other.wait("the reopened chat marked read", WAIT, |_| {
+        transcript().contains("message_read")
+    });
 }
 
 #[gpui_kit::test]
@@ -390,6 +425,37 @@ fn docs_conflict_blocks_save(cx: &mut TestAppContext) {
     ui.wait("my version saved", WAIT, |_| {
         std::fs::read_to_string(&doc).unwrap() == "mine one\n"
     });
+}
+
+#[gpui_kit::test]
+fn a_cancelled_quit_still_guards_later_doc_edits(cx: &mut TestAppContext) {
+    let live = Live::new("docs-quit-cancelled");
+    std::fs::write(live.path().join("work/a.md"), "one\n").unwrap();
+    let mut ui = open(cx);
+    send(&mut ui, "SLOW 30");
+    wait_processing(&mut ui, live.path());
+    ui.press("ctrl-2");
+    ui.wait_named("a.md", WAIT);
+    ui.press("ctrl-p");
+    ui.input("a.md");
+    ui.press("down enter");
+    ui.wait_named("a.md, Viewer", WAIT);
+    ui.press("ctrl-shift-v");
+    ui.wait_named("a.md, Editor", WAIT);
+    ui.input("x");
+    ui.wait_named("a.md, unsaved", WAIT);
+    ui.quit();
+    ui.wait_named("Save changes to 1 doc?", WAIT);
+    ui.click("Save all");
+    ui.wait_named("Finish in background", WAIT);
+    ui.click("Cancel");
+    ui.wait_gone("Finish in background", WAIT);
+    ui.click("a.md, Editor");
+    ui.input("y");
+    ui.wait_named("a.md, unsaved", WAIT);
+    ui.quit();
+    ui.wait_named("Save changes to 1 doc?", WAIT);
+    assert!(ui.is_open(), "the quit skipped the unsaved doc");
 }
 
 const LONG: Duration = Duration::from_secs(90);

@@ -158,11 +158,14 @@ async fn attempt(
         if status.protocol > PROTOCOL {
             return Err(Failure::LocalUpdate(status.version));
         }
-        if !upgrade || round > 0 {
+        if !upgrade {
             return Err(Failure::Upgrade {
                 version: status.version,
                 active: status.conversations.len(),
             });
+        }
+        if round > 0 {
+            break;
         }
         let installed = probe.version.trim();
         if installed != VERSION && !crate::harness::newer(installed, VERSION) {
@@ -715,5 +718,58 @@ mod tests {
             classify("Connection timed out"),
             Failure::Network(_)
         ));
+    }
+
+    #[expect(unsafe_code, reason = "ssh reads its command line from ADELINE_SSH")]
+    #[tokio::test]
+    async fn an_old_engine_that_survives_a_consented_upgrade_is_a_network_failure() {
+        let dir = crate::files::TempDir::new("old-engine");
+        let welcome = serde_json::to_string(&EngineMessage::Welcome {
+            status: Status {
+                protocol: PROTOCOL - 1,
+                version: "0.1.0".into(),
+                ..Status::default()
+            },
+        })
+        .unwrap();
+        let script = dir.join("ssh.py");
+        std::fs::write(
+            &script,
+            format!(
+                "import sys\nif 'adeline bridge' in sys.argv[-1]:\n    sys.stdin.readline()\n    print(r'''{welcome}''', flush=True)\n    sys.stdin.readline()\nelse:\n    print('{MARKER}\\nLinux x86_64\\n\\n99.0.0')\n"
+            ),
+        )
+        .unwrap();
+        let mut python = None;
+        for name in ["python3", "python"] {
+            let found = tokio::process::Command::new(name)
+                .arg("--version")
+                .output()
+                .await;
+            if found.is_ok_and(|output| output.status.success()) {
+                python = Some(name);
+                break;
+            }
+        }
+        let python = python.expect("Python 3 on PATH");
+        // SAFETY: nextest runs each test in its own process, and no other test here spawns ssh.
+        unsafe { std::env::set_var("ADELINE_SSH", format!("{python} {}", script.display())) };
+        let machine = crate::machines::Machine {
+            id: "m-old".into(),
+            name: "Old".into(),
+            destinations: vec!["old".into()],
+            engine: None,
+        };
+        let hello = ClientMessage::Hello {
+            protocol: PROTOCOL,
+            cli: false,
+            resume: None,
+        };
+        let askpass = Askpass {
+            address: String::new(),
+            machine: machine.id.clone(),
+        };
+        let failure = connect(&machine, &hello, true, &askpass).await.unwrap_err();
+        assert!(matches!(failure, Failure::Network(_)), "{failure:?}");
     }
 }

@@ -31,7 +31,7 @@ use crate::{
     card::Card,
     conversation::{
         AgentCommand, Attachment, AuthMethod, Category, Features, McpServer, MessageRole,
-        PermissionOption, SessionOption, ThreadStatus, TodoStep, TrafficEntry, TurnState,
+        PermissionOption, SessionOption, ThreadStatus, TodoStep, TrafficEntry,
     },
     data::{Message, Thread, ToolReport, Workspace},
     harness, install,
@@ -43,7 +43,7 @@ use std::{
     path::PathBuf,
 };
 
-pub const PROTOCOL: u32 = 6;
+pub const PROTOCOL: u32 = 7;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probed {
@@ -387,7 +387,6 @@ pub struct Live {
     pub commands: Vec<AgentCommand>,
     pub features: Features,
     pub todo: Vec<TodoStep>,
-    pub turn: TurnState,
     pub queued: Vec<Queued>,
     pub quiet_since: Option<u64>,
     pub auth_required: bool,

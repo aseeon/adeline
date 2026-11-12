@@ -49,6 +49,7 @@ impl Home {
             .env("HOME", &self.root)
             .env("USERPROFILE", &self.root)
             .env("ADELINE_FAKE_STATE", self.root.join("fake-state"))
+            .env("ADELINE_FAKE_PIDS", self.root.join("fake-pids"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -94,15 +95,7 @@ impl Home {
         let Some(pid) = self.engine.take() else {
             return;
         };
-        #[cfg(windows)]
-        let killed = Process::new("taskkill")
-            .args(["/F", "/T", "/PID", &pid.to_string()])
-            .output();
-        #[cfg(not(windows))]
-        let killed = Process::new("kill")
-            .args(["-KILL", &pid.to_string()])
-            .output();
-        killed.unwrap();
+        kill(pid);
         #[cfg(windows)]
         {
             let deadline = Instant::now() + WAIT;
@@ -113,15 +106,33 @@ impl Home {
         std::thread::sleep(Duration::from_millis(500));
     }
 
-    fn sent(&self, conversation: &str, method: &str) -> Vec<Value> {
-        let path = self
-            .root
+    fn kill_agent(&self) {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            let pid = fs::read_dir(self.root.join("fake-pids"))
+                .into_iter()
+                .flatten()
+                .flatten()
+                .find_map(|entry| entry.file_name().to_str()?.parse().ok());
+            if let Some(pid) = pid {
+                return kill(pid);
+            }
+            assert!(Instant::now() < deadline, "no agent started");
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
+    fn transcript(&self, conversation: &str) -> PathBuf {
+        self.root
             .join(".config/adeline/projects")
             .join(PROJECT)
             .join("conversations")
             .join(conversation)
-            .join("transcript.jsonl");
-        fs::read_to_string(path)
+            .join("transcript.jsonl")
+    }
+
+    fn sent(&self, conversation: &str, method: &str) -> Vec<Value> {
+        fs::read_to_string(self.transcript(conversation))
             .unwrap_or_default()
             .lines()
             .filter_map(|line| serde_json::from_str::<Value>(line).ok())
@@ -153,6 +164,18 @@ impl Drop for Home {
         self.kill_engine();
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+fn kill(pid: u32) {
+    #[cfg(windows)]
+    let killed = Process::new("taskkill")
+        .args(["/F", "/T", "/PID", &pid.to_string()])
+        .output();
+    #[cfg(not(windows))]
+    let killed = Process::new("kill")
+        .args(["-KILL", &pid.to_string()])
+        .output();
+    killed.unwrap();
 }
 
 #[cfg(windows)]
@@ -513,6 +536,134 @@ fn a_lost_session_waits_for_consent_and_the_replacement_carries_the_history() {
     assert!(text.contains("remember the parrot"), "{text}");
 }
 
+#[test]
+fn a_replacement_approved_after_its_agent_stopped_runs_the_turn_to_its_end() {
+    let mut home = Home::new("replace-later");
+    let mut client = home.connect();
+    let id = client.send(None, "LOSE_SESSION remember the parrot");
+    client.wait_turn(&id);
+    home.kill_engine();
+    drop(client);
+    let mut client = home.connect();
+    client.send(Some(&id), "what did I ask you to remember?");
+    client.wait_live(&id, |live| live.replacement);
+    drop(client);
+    let deadline = Instant::now() + WAIT;
+    let mut client = loop {
+        let client = home.connect();
+        if !client.live(&id).running {
+            break client;
+        }
+        assert!(Instant::now() < deadline, "the idle agent kept running");
+        drop(client);
+        std::thread::sleep(Duration::from_millis(500));
+    };
+    client
+        .call(Command::ReplaceSession { id: id.clone() })
+        .unwrap();
+    let live = client.wait_live(&id, |live| !live.replacement && !live.processing);
+    assert_eq!(live.error, None);
+    let prompts = home.wait_sent(&id, "session/prompt", 2);
+    let text = prompts[1]["params"]["prompt"][0]["text"].as_str().unwrap();
+    assert!(text.contains("remember the parrot"), "{text}");
+}
+
+#[test]
+fn a_turn_that_fails_while_storage_recovers_lets_the_next_message_send() {
+    let mut home = Home::new("recovering");
+    let mut client = home.connect();
+    let id = client.send(None, "SILENT");
+    client.wait_delta(|delta| delta["delta"] == "text" && delta["id"] == id.as_str());
+    let transcript = home.transcript(&id);
+    let writable = fs::metadata(&transcript).unwrap().permissions();
+    let mut read_only = writable.clone();
+    read_only.set_readonly(true);
+    fs::set_permissions(&transcript, read_only).unwrap();
+    client
+        .call(Command::MarkRead {
+            id: id.clone(),
+            through: 0,
+        })
+        .unwrap();
+    client.wait_live(&id, |live| live.storage_failed);
+    fs::set_permissions(&transcript, writable).unwrap();
+    client
+        .call(Command::RetryStorage { id: id.clone() })
+        .unwrap();
+    client.wait_live(&id, |live| live.recovering_storage);
+    home.kill_agent();
+    let live = client.wait_live(&id, |live| !live.processing);
+    assert!(!live.recovering_storage);
+    client.send(Some(&id), "are you back?");
+}
+
+#[test]
+fn a_force_stopped_turn_leaves_the_conversation_idle() {
+    let mut home = Home::new("force-stop");
+    let mut client = home.connect();
+    let id = client.send(None, "SILENT");
+    client.wait_live(&id, |live| live.processing);
+    client.call(Command::ForceStop { id: id.clone() }).unwrap();
+    let live = client.wait_live(&id, |live| !live.running);
+    assert!(!live.processing && !live.shutting_down);
+    assert_eq!(home.connect().thread_status(&id), "idle");
+}
+
+#[test]
+fn stop_all_mid_turn_marks_the_turn_interrupted_and_retry_continues_it() {
+    let mut home = Home::new("stop-all");
+    let mut client = home.connect();
+    let id = client.send(None, "SLOW 30");
+    client.wait_delta(|delta| delta["delta"] == "text" && delta["id"] == id.as_str());
+    client.call(Command::StopAll).unwrap();
+    let live = client.live(&id);
+    assert!(!live.running && !live.processing && !live.shutting_down);
+    let error = live.error.unwrap_or_default();
+    assert!(error.contains("interrupted"), "{error:?}");
+    assert_eq!(home.connect().thread_status(&id), "blocked");
+    client.call(Command::Retry { id: id.clone() }).unwrap();
+    assert_eq!(client.wait_turn(&id).error, None);
+}
+
+#[test]
+fn a_send_now_on_an_idle_conversation_waits_and_a_later_stop_does_not_send_it() {
+    let mut home = Home::new("send-now-idle");
+    let mut client = home.connect();
+    let id = client.send(None, "SLOW 30");
+    client.wait_live(&id, |live| live.processing);
+    client.send(Some(&id), "queued");
+    client.wait_live(&id, |live| live.queued.len() == 1);
+    client.call(Command::Stop { id: id.clone() }).unwrap();
+    let queued = client.wait_live(&id, |live| !live.processing).queued[0].id;
+    client
+        .call(Command::SendQueuedNow {
+            id: id.clone(),
+            queued,
+        })
+        .unwrap();
+    client.send(Some(&id), "SLOW 30");
+    client.wait_live(&id, |live| live.processing);
+    client.call(Command::Stop { id: id.clone() }).unwrap();
+    let live = client.wait_live(&id, |live| !live.processing);
+    assert_eq!(live.queued.len(), 1, "the stop sent the queue");
+}
+
+#[test]
+fn a_retry_notice_clears_once_the_retried_attempt_streams() {
+    let mut home = Home::new("retry-notice");
+    let mut client = home.connect();
+    let id = client.send(None, "FAIL 1 SLOW 2");
+    client.wait_live(&id, |live| {
+        live.progress
+            .as_deref()
+            .is_some_and(|progress| progress.starts_with("Retry 1 of"))
+    });
+    let status = client.call(Command::Status).unwrap();
+    assert_eq!(status["conversations"][0]["state"], "retrying");
+    let live = client.wait_live(&id, |live| live.progress.is_none() || !live.processing);
+    assert!(live.processing, "the notice stayed for the whole turn");
+}
+
 impl Client {
     fn wait_delta(&mut self, test: impl Fn(&Value) -> bool) -> Value {
         let deadline = Instant::now() + WAIT;
@@ -527,6 +678,16 @@ impl Client {
                 .expect("the delta never came");
             self.handle(&message);
         }
+    }
+
+    fn thread_status(&self, conversation: &str) -> Value {
+        self.snapshot.as_ref().unwrap()["projects"][0]["threads"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|thread| thread["id"] == conversation)
+            .map(|thread| thread["status"].clone())
+            .unwrap()
     }
 
     fn cards(&self, conversation: &str) -> Vec<Value> {

@@ -25,9 +25,12 @@ impl Worker {
     }
 
     pub(super) fn configure_next(&mut self) {
+        let Some(Setup::Configuring(mut step)) = self.setup() else {
+            return;
+        };
         let steps = self.selection_steps();
-        while let Some((category, id, mut value)) = steps.get(self.config_step).cloned() {
-            self.config_step += 1;
+        while let Some((category, id, mut value)) = steps.get(step).cloned() {
+            step += 1;
             if self.probing && category == Category::Model && value.is_empty() {
                 value = adeline_core::conversation::option(&self.options, Category::Model)
                     .map(SessionOption::current)
@@ -45,6 +48,7 @@ impl Worker {
             };
             let Some(option) = option else {
                 if matches!(category, Category::Model | Category::Effort) {
+                    self.set_setup(Setup::Initialized);
                     self.fail(format!("Agent does not expose required {label} configuration; saved settings cannot be honored. Log in with the configured agent or choose one that offers this option."), FailureKind::Configuration);
                     return;
                 }
@@ -52,6 +56,7 @@ impl Worker {
             };
             if !option.offers(&value) && !profiles::is_plan_mode(self.profile, &value) {
                 if matches!(category, Category::Model | Category::Effort) {
+                    self.set_setup(Setup::Initialized);
                     self.fail(format!("Agent does not offer saved {label} value '{value}'. Choose a supported setting for this conversation or in the agent definition."), FailureKind::Configuration);
                     return;
                 }
@@ -60,6 +65,7 @@ impl Worker {
             if category != Category::Model && option.current() == value {
                 continue;
             }
+            self.set_setup(Setup::Configuring(step));
             self.set_option(&option, &value, Request::Config);
             return;
         }
@@ -67,7 +73,7 @@ impl Worker {
     }
 
     fn set_option(&mut self, option: &SessionOption, value: &str, request: Request) {
-        let Some(session) = self.session_id.clone() else {
+        let Some(session) = self.session_id().map(str::to_owned) else {
             return;
         };
         let outgoing = if option.id == MODE_OPTION {
@@ -102,33 +108,26 @@ impl Worker {
     }
 
     fn configured(&mut self) {
-        self.configured = true;
+        self.set_setup(Setup::Ready);
         if self.probing {
             self.emit(EventKind::Probed);
             return;
         }
-        if self.replacing {
-            self.replacing = false;
-            let context = self.replacement.take().unwrap_or_default();
-            if !context.trim().is_empty() {
-                if let Some(turn) = &mut self.active {
-                    turn.prompt = vec![Part::Text(format!(
-                        "Saved conversation context follows. Treat it as history, not a new user request. Do not repeat completed tool actions.\n\n{context}\n\nContinue the interrupted turn from where it stopped; do not repeat completed work."
-                    ))];
-                    turn.attempt = 0;
-                } else {
-                    self.pending_context = Some(context);
-                }
-            }
+        let Some(turn) = &mut self.active else {
+            return;
+        };
+        if let Some(context) = turn.replacement.take() {
+            turn.prompt = vec![Part::Text(format!(
+                "Saved conversation context follows. Treat it as history, not a new user request. Do not repeat completed tool actions.\n\n{context}\n\nContinue the interrupted turn from where it stopped; do not repeat completed work."
+            ))];
+            turn.attempt = 0;
         }
-        if self.active.is_some() {
-            self.send_prompt();
-        }
+        self.send_prompt();
     }
 
     pub(super) fn switch(&mut self, category: Category, id: &str, value: &str) {
         self.config.selections.set(category, id, value);
-        if !self.configured || self.active.is_some() || self.link.is_none() {
+        if self.setup() != Some(Setup::Ready) || self.active.is_some() {
             return;
         }
         let option = self.find_option(category, id);

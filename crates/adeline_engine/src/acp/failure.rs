@@ -3,10 +3,22 @@
 use super::*;
 
 impl Worker {
+    fn step_back(&mut self, request: Request) {
+        let back = match (request, self.setup()) {
+            (Request::Initialize, Some(Setup::Initializing)) => Setup::Uninitialized,
+            (Request::Setup, Some(Setup::Opening { .. }))
+            | (Request::Config, Some(Setup::Configuring(_))) => Setup::Initialized,
+            _ => return,
+        };
+        self.set_setup(back);
+    }
+
     pub(super) fn failed(&mut self, request: Request, error: &sdk::Error) {
+        let forked =
+            request == Request::Setup && self.setup() == Some(Setup::Opening { fork: true });
+        self.step_back(request);
         if sdk::is_incoming_transport_closed(error) {
             match request {
-                Request::Setup => self.setup = None,
                 Request::Steer => self.emit(EventKind::Steered { delivered: false }),
                 Request::Authenticate | Request::Logout => {
                     self.emit(EventKind::Auth(Err("The agent stopped.".into())));
@@ -15,8 +27,7 @@ impl Worker {
             }
             return;
         }
-        if request == Request::Setup && self.forking {
-            self.setup = None;
+        if forked {
             if let Some((session, _)) = &mut self.fork {
                 *session = None;
             }
@@ -51,7 +62,7 @@ impl Worker {
                 classify_error(&text, Some(code))
             };
         if request == Request::Setup
-            && self.session_id.is_some()
+            && self.session_id().is_some()
             && kind != FailureKind::Authentication
             && (code == -32601
                 || [
@@ -64,41 +75,31 @@ impl Worker {
                 .iter()
                 .any(|needle| contains_ascii(&text, needle)))
         {
-            self.setup = None;
             self.restore_failed(&format!("Cannot restore the saved agent session: {text}"));
         } else if request == Request::Close {
             self.emit(EventKind::Error {
                 message: format!("Closing the agent session failed: {text}"),
                 kind,
             });
-            self.shutdown_deadline
-                .get_or_insert_with(|| Instant::now() + SHUTDOWN_GRACE);
+            self.exit = Exit::Closing;
+            self.watch.arm();
         } else {
-            if request == Request::Setup {
-                self.setup = None;
-            }
             self.fail(format!("ACP {request:?} failed: {text}"), kind);
         }
     }
 
     pub(super) fn fail(&mut self, message: String, kind: FailureKind) {
-        let message = if kind == FailureKind::Authentication {
-            format!("{message} Log in, then retry.")
-        } else {
-            message
-        };
         if kind == FailureKind::Temporary
-            && !self.closing
+            && self.exit == Exit::Running
             && let Some(turn) = &mut self.active
-            && !turn.cancelled
+            && !matches!(turn.step, Step::Cancelling(_))
             && !turn.denied
             && turn.attempt < turn.retries
         {
             turn.attempt += 1;
             let attempt = turn.attempt;
             let limit = turn.retries;
-            turn.prompt_request = None;
-            turn.retry_at = Some(
+            turn.step = Step::Backoff(
                 Instant::now() + Duration::from_secs(u64::from(attempt.min(MAX_RETRY_DELAY_SECS))),
             );
             self.emit(EventKind::Retrying {
@@ -108,8 +109,17 @@ impl Worker {
             });
             return;
         }
+        self.give_up(message, kind);
+    }
+
+    pub(super) fn give_up(&mut self, message: String, kind: FailureKind) {
+        let message = if kind == FailureKind::Authentication {
+            format!("{message} Log in, then retry.")
+        } else {
+            message
+        };
         self.emit(EventKind::Error { message, kind });
-        self.active = None;
+        self.end_turn();
         self.cancel_permissions();
     }
 
@@ -117,33 +127,27 @@ impl Worker {
         let Some(turn) = &mut self.active else {
             return;
         };
-        turn.retry_at = None;
-        if turn.worked {
+        turn.step = Step::Waiting;
+        let worked = turn.worked;
+        if worked {
             turn.prompt = vec![Part::Text(CONTINUE_TURN.into())];
-            if self.child.is_none() {
-                self.start();
-            } else {
-                self.setup_session();
-            }
-        } else if self.child.is_none() {
-            self.start();
-        } else if !self.configured {
-            if self.features.is_none() {
-                self.initialize();
-            } else {
-                self.setup_session();
-            }
-        } else {
-            self.send_prompt();
+        }
+        match self.setup() {
+            _ if matches!(self.connection, Connection::Down) => self.start(),
+            Some(Setup::Ready) if !worked => self.send_prompt(),
+            setup if worked || setup.is_some_and(Setup::initialized) => self.setup_session(),
+            _ => self.initialize(),
         }
     }
 
     pub(super) fn restore_failed(&mut self, reason: &str) {
-        self.restore_required = true;
+        if let AgentSession::Saved(id) = &self.session {
+            self.session = AgentSession::Unrestorable(id.clone());
+        }
+        self.set_setup(Setup::Initialized);
         self.emit(EventKind::ReplacementRequired(format!("{reason} You can start a replacement session with saved conversation content after confirming.")));
         if let Some(turn) = &mut self.active {
-            turn.prompt_request = None;
-            turn.retry_at = None;
+            turn.step = Step::Parked;
         }
     }
 
@@ -158,38 +162,78 @@ impl Worker {
         self.pending.clear();
     }
 
+    pub(super) fn initializing(&self) -> bool {
+        match &self.connection {
+            Connection::Connecting => true,
+            Connection::Up(_, setup) => !setup.initialized(),
+            Connection::Lost(lost) => lost.initializing,
+            Connection::Down | Connection::Dropped => false,
+        }
+    }
+
     pub(super) fn lost(&mut self, message: String) {
-        let initializing = self.lost_during_initialize
-            || self
-                .pending
-                .values()
-                .any(|request| *request == Request::Initialize);
-        self.lost_during_initialize = initializing;
-        let invalid_initialize =
-            !self.closing && initializing && message.starts_with("ACP connection failed");
-        self.link = None;
-        self.connecting = false;
+        let initializing = self.initializing();
+        let reported = matches!(&self.connection, Connection::Lost(lost) if lost.reported);
+        let invalid_initialize = self.exit == Exit::Running
+            && initializing
+            && message.starts_with("ACP connection failed");
+        self.connection = Connection::Lost(Lost {
+            error: message.clone(),
+            at: Instant::now(),
+            initializing,
+            reported: reported || invalid_initialize,
+        });
         self.clear_pending();
         self.cancel_permissions();
-        self.setup = None;
-        self.configured = false;
         self.handshake = None;
-        self.lost_pending = Some(message.clone());
-        self.lost_at = Some(Instant::now());
-        self.shutdown_deadline
-            .get_or_insert_with(|| Instant::now() + SHUTDOWN_GRACE);
+        self.watch.arm();
         if invalid_initialize && self.config.harness == harness::OMP {
-            self.timeout_reported = true;
             self.fail(
                 format!("{message} The configured OMP Arguments must include `acp`."),
                 FailureKind::Configuration,
             );
         } else if invalid_initialize {
-            self.timeout_reported = true;
             self.fail(message, FailureKind::Configuration);
-        } else if self.child.is_none() && !self.closing {
+        } else if self.child.is_none() && self.exit == Exit::Running {
             self.fail(message, FailureKind::Temporary);
         }
+    }
+
+    pub(super) fn exited(&mut self, status: std::process::ExitStatus) -> bool {
+        let Connection::Lost(lost) = std::mem::replace(&mut self.connection, Connection::Down)
+        else {
+            return false;
+        };
+        let stderr = self.stderr.make_contiguous().join("\n");
+        self.child = None;
+        self.clear_pending();
+        self.handshake = None;
+        self.cancel_permissions();
+        self.epoch += 1;
+        self.watch = ExitWatch::Idle;
+        if self.exit != Exit::Running {
+            self.emit(EventKind::ShutdownComplete);
+            return true;
+        }
+        if !lost.reported {
+            if !stderr.is_empty() {
+                self.emit(EventKind::Crashed(stderr));
+            }
+            let error = format!("{} Agent exited: {status}.", lost.error);
+            let kind = classify_error(&error, None);
+            if lost.initializing
+                && kind == FailureKind::Temporary
+                && self.config.harness == harness::OMP
+            {
+                self.fail(
+                    format!("{error} The configured OMP Arguments must include `acp`."),
+                    FailureKind::Configuration,
+                );
+            } else {
+                self.fail(error, kind);
+            }
+        }
+        false
     }
 }
 

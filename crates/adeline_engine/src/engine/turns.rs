@@ -1,5 +1,7 @@
 //! Turns: sending, queueing, starting, stopping and retrying prompts.
-use super::{ALREADY_PROCESSING, Engine, history_text, live_for};
+use super::{
+    ALREADY_PROCESSING, After, Engine, Stop, history_text, lifecycle_for, live_for, phase,
+};
 use crate::acp;
 use adeline_core::{
     conversation::{self, Attachment, MessageRole, ThreadStatus},
@@ -51,14 +53,15 @@ impl Engine {
             if thread.status == ThreadStatus::Archived {
                 return Err("This conversation is archived.".into());
             }
-            let live = self.live_mut(&id);
-            if live.storage_failed || live.recovering_storage {
+            let lifecycle = self.lifecycle(&id);
+            if lifecycle.storage_failed || lifecycle.recovering() {
                 return Err("Retry storage before sending.".into());
             }
-            if live.replacement {
+            if lifecycle.after() == Some(After::Replacement) {
                 return Err("Start a replacement session before sending.".into());
             }
-            if live.processing {
+            let closing = lifecycle.closing().is_some();
+            if lifecycle.processing() {
                 if now {
                     self.send_now(&id, prompt, attachments);
                 } else {
@@ -67,7 +70,7 @@ impl Engine {
                 self.send_live(&id);
                 return Ok(id);
             }
-            if live.shutting_down {
+            if closing {
                 return Err("Wait for the agent to stop before sending.".into());
             }
             id
@@ -84,16 +87,17 @@ impl Engine {
             servers.extend(agent.mcp_servers.iter().cloned());
             let title = conversation::title_from(&prompt);
             let store = &mut self.store;
-            let (id, thread, live) = block_in_place(|| {
+            let (id, thread, live, lifecycle) = block_in_place(|| {
                 let id = store
                     .create_conversation(project_id, &agent, launch, servers, &title)
                     .map_err(|e| format!("{e:#}"))?;
                 let saved = store
                     .conversation(&id)
                     .ok_or_else(|| "Created conversation is missing.".to_owned())?;
-                Ok::<_, String>((id, saved.to_thread(), live_for(saved)))
+                Ok::<_, String>((id, saved.to_thread(), live_for(saved), lifecycle_for(saved)))
             })?;
             self.live.insert(id.clone(), live);
+            self.lifecycles.insert(id.clone(), lifecycle);
             self.broadcast(Delta::Thread {
                 project_id: project_id.to_owned(),
                 thread,
@@ -135,24 +139,25 @@ impl Engine {
     }
 
     pub(super) fn send_now(&mut self, id: &str, text: String, files: Vec<Attachment>) {
-        let steering = self
-            .live
-            .get(id)
-            .is_some_and(|live| live.features.steering && live.processing);
+        let steering = self.live.get(id).is_some_and(|live| live.features.steering);
         if steering
-            && !self.steering.contains_key(id)
-            && let Some(slot) = self.drivers.get(id)
+            && let Some(phase::Phase::Turn { agent, turn }) = self
+                .lifecycles
+                .get_mut(id)
+                .map(|lifecycle| &mut lifecycle.phase)
+            && turn.stop.is_none()
+            && agent.steering.is_none()
+            && agent.closing.is_none()
         {
             let mut prompt = vec![acp::Part::Text(text.clone())];
             prompt.extend(files.iter().cloned().map(acp::Part::File));
-            if slot.driver.send(acp::Command::Steer { prompt }).is_ok() {
-                self.steering.insert(id.to_owned(), (text, files));
+            if agent.driver.send(acp::Command::Steer { prompt }).is_ok() {
+                agent.steering = Some((text, files));
                 return;
             }
         }
         self.queue(id, text, files, true);
-        self.send_after_stop.insert(id.to_owned());
-        self.stop(id);
+        self.stop(id, Stop::SendQueued);
     }
 
     pub(super) fn send_queued_now(&mut self, id: &str, queued: u64) -> Result<Value, String> {
@@ -163,15 +168,21 @@ impl Engine {
     }
 
     pub(super) fn steered(&mut self, id: &str, delivered: bool) {
-        if let Some((text, files)) = self.steering.remove(id) {
-            if delivered {
-                self.live_mut(id).assistant = None;
-                self.user_message(id, text, files);
-            } else {
-                self.queue(id, text, files, true);
-                if !self.live.get(id).is_some_and(|live| live.processing) {
-                    self.send_queue(id);
-                }
+        let Some((text, files)) = self
+            .lifecycle(id)
+            .phase
+            .agent_mut()
+            .and_then(|agent| agent.steering.take())
+        else {
+            return;
+        };
+        if delivered {
+            self.live_mut(id).assistant = None;
+            self.user_message(id, text, files);
+        } else {
+            self.queue(id, text, files, true);
+            if !self.processing(id) {
+                self.send_queue(id);
             }
         }
     }
@@ -249,15 +260,14 @@ impl Engine {
         attachments: Vec<Attachment>,
         retry: bool,
     ) {
-        if self.cannot_start(id).is_some() || !self.set_runtime_status(id, ThreadStatus::Processing)
-        {
+        if self.cannot_start(id).is_some() || self.lifecycle(id).storage_failed {
             return;
         }
         if !self.ensure_driver(id) {
             let error = "Could not load this conversation's saved agent settings.".to_owned();
             self.record_visible(id, "error", json!({"message":error}));
             self.live_mut(id).error = Some(error);
-            self.set_runtime_status(id, ThreadStatus::Blocked);
+            self.lifecycle(id).block(After::Blocked);
             return;
         }
         if retry
@@ -269,18 +279,15 @@ impl Engine {
         {
             return;
         }
-        let live = self.live_mut(id);
-        if live.storage_failed {
+        let lifecycle = self.lifecycle(id);
+        if lifecycle.storage_failed || !lifecycle.start() {
             return;
         }
-        live.processing = true;
+        let live = self.live_mut(id);
         live.error = None;
         live.stderr.clear();
-        live.auth_required = false;
-        live.progress = None;
         live.assistant = None;
         live.quiet_since = None;
-        live.permission.clear();
         if !retry {
             live.worked = false;
             live.last_prompt.clone_from(&prompt);
@@ -288,9 +295,9 @@ impl Engine {
         self.last_traffic
             .insert(id.to_owned(), adeline_core::recency::now_ms());
         if let Some((session, context)) = self.fork_history(id)
-            && let Some(slot) = self.drivers.get(id)
+            && let Some(agent) = self.agent(id)
         {
-            let _ = slot.driver.send(acp::Command::Fork { session, context });
+            let _ = agent.driver.send(acp::Command::Fork { session, context });
         }
         let retries = u32::try_from(self.settings.retry_limit).unwrap_or(u32::MAX);
         let mut parts = Vec::new();
@@ -298,38 +305,30 @@ impl Engine {
             parts.push(acp::Part::Text(prompt));
         }
         parts.extend(attachments.into_iter().map(acp::Part::File));
-        let Some(slot) = self.drivers.get_mut(id) else {
+        let Some(agent) = self.agent(id) else {
             return;
         };
-        if let Err(error) = slot.driver.send(acp::Command::Prompt {
+        if let Err(error) = agent.driver.send(acp::Command::Prompt {
             prompt: parts,
             retries,
         }) {
-            self.drivers.remove(id);
-            let live = self.live_mut(id);
-            live.processing = false;
-            live.error = Some(error.clone());
+            let lifecycle = self.lifecycle(id);
+            lifecycle.gone();
+            lifecycle.block(After::Blocked);
+            self.live_mut(id).error = Some(error.clone());
             self.record_visible(id, "error", json!({"message":error}));
-            self.set_runtime_status(id, ThreadStatus::Blocked);
         }
     }
 
-    pub(super) fn stop(&mut self, id: &str) {
-        let Some(live) = self.live.get_mut(id) else {
+    pub(super) fn stop(&mut self, id: &str, reason: Stop) {
+        let Some(driver) = self.lifecycle(id).stop(reason) else {
             return;
         };
-        if !live.processing {
-            return;
-        }
-        live.permission.clear();
-        live.progress = Some("Stopping…".into());
-        if let Some(slot) = self.drivers.get(id) {
-            let _ = slot.driver.send(acp::Command::Cancel);
-        }
+        let _ = driver.send(acp::Command::Cancel);
         self.send_live(id);
     }
 
-    fn cannot_turn(&self, id: &str) -> Option<String> {
+    pub(super) fn cannot_turn(&self, id: &str) -> Option<String> {
         if self.stop_all.is_some() {
             return Some("The conversation engine is stopping its agents.".into());
         }
@@ -350,13 +349,14 @@ impl Engine {
         if let Some(error) = self.cannot_turn(id) {
             return Err(error);
         }
-        let live = self.live_mut(id);
-        if live.processing {
+        let lifecycle = self.lifecycle(id);
+        if lifecycle.processing() {
             return Err(ALREADY_PROCESSING.into());
         }
-        if live.storage_failed || live.recovering_storage || live.replacement {
+        if lifecycle.storage_failed || lifecycle.after() == Some(After::Replacement) {
             return Err("This conversation can't retry right now.".into());
         }
+        let live = self.live_mut(id);
         let worked = live.worked;
         let prompt = if worked {
             acp::CONTINUE_TURN.to_owned()
@@ -374,22 +374,19 @@ impl Engine {
         if let Some(error) = self.cannot_start(id) {
             return Err(error);
         }
-        let live = self.live_mut(id);
-        if live.shutting_down && !live.shutdown_stuck {
-            live.processing = true;
-            live.progress = Some("Restarting the agent…".into());
-            self.restart_prompt.insert(id.to_owned(), prompt);
-        } else if live.shutting_down {
-            return Err("Agent shutdown is stuck. Use Force Stop first.".into());
-        } else {
-            self.start_prompt(id, prompt, files, true);
+        match self.lifecycle(id).closing().map(|closing| closing.stuck) {
+            Some(false) => {
+                self.lifecycle(id).restart(prompt);
+            }
+            Some(true) => return Err("Agent shutdown is stuck. Use Force Stop first.".into()),
+            None => self.start_prompt(id, prompt, files, true),
         }
         self.send_live(id);
         Ok(Value::Null)
     }
 
     pub(super) fn retry_storage(&mut self, id: &str) -> Result<Value, String> {
-        if self.live.get(id).is_none_or(|live| !live.storage_failed) {
+        if self.lifecycles.get(id).is_none_or(|l| !l.storage_failed) {
             return Err("History is already saved.".into());
         }
         let store = &mut self.store;
@@ -429,25 +426,21 @@ impl Engine {
         if let Some(project_id) = self.project_of(id) {
             self.broadcast(Delta::Thread { project_id, thread });
         }
+        let lifecycle = self.lifecycle(id);
+        lifecycle.storage_failed = false;
+        let recovering = lifecycle.recovering();
+        if lifecycle.after() == Some(After::Done) {
+            lifecycle.block(After::Blocked);
+        }
         let live = self.live_mut(id);
-        live.storage_failed = false;
         live.worked |= recovered_work;
-        live.recovering_storage = live.processing;
-        live.error = if live.recovering_storage {
+        live.error = if recovering {
             Some("History is saved. Waiting for the stopped turn to settle.".into())
         } else if !settings.status.closed() && !live.last_prompt.is_empty() {
             Some("History is saved. Retry to continue the interrupted turn.".into())
         } else {
             None
         };
-        if !self.drivers.contains_key(id) {
-            let live = self.live_mut(id);
-            live.processing = false;
-            live.recovering_storage = false;
-        }
-        if !settings.status.closed() {
-            self.set_runtime_status(id, ThreadStatus::Blocked);
-        }
         self.send_live(id);
         Ok(Value::Null)
     }
@@ -456,23 +449,20 @@ impl Engine {
         if let Some(error) = self.cannot_turn(id) {
             return Err(error);
         }
-        if !self
-            .live
-            .get(id)
-            .is_some_and(|live| live.replacement && !live.storage_failed && !live.shutting_down)
+        let lifecycle = self.lifecycle(id);
+        if lifecycle.after() != Some(After::Replacement)
+            || lifecycle.storage_failed
+            || lifecycle.closing().is_some()
         {
             return Err("This conversation doesn't need a replacement session.".into());
         }
+        let parked = lifecycle.phase.agent().is_some();
         let context = self
             .locate(id)
             .map(|thread| history_text(&thread.messages))
             .unwrap_or_default();
-        if !self.set_runtime_status(id, ThreadStatus::Processing) {
-            self.send_live(id);
-            return Err("History could not be saved.".into());
-        }
         if !self.ensure_driver(id) {
-            self.set_runtime_status(id, ThreadStatus::Blocked);
+            self.send_live(id);
             return Err("Could not load this conversation's saved agent settings.".into());
         }
         if !self.record_visible(
@@ -483,19 +473,31 @@ impl Engine {
             self.send_live(id);
             return Err("History could not be saved.".into());
         }
-        if let Some(slot) = self.drivers.get(id)
-            && let Err(error) = slot.driver.send(acp::Command::ReplaceSession { context })
-        {
-            self.drivers.remove(id);
+        let retries = u32::try_from(self.settings.retry_limit).unwrap_or(u32::MAX);
+        let sent = self.agent(id).map_or_else(
+            || Err("Agent worker has stopped.".to_owned()),
+            |agent| {
+                agent
+                    .driver
+                    .send(acp::Command::ReplaceSession { context })?;
+                if parked {
+                    return Ok(());
+                }
+                agent.driver.send(acp::Command::Prompt {
+                    prompt: vec![acp::Part::Text(acp::CONTINUE_TURN.into())],
+                    retries,
+                })
+            },
+        );
+        if let Err(error) = sent {
+            self.lifecycle(id).gone();
             self.live_mut(id).error = Some(error.clone());
-            self.set_runtime_status(id, ThreadStatus::Blocked);
             self.send_live(id);
             return Err(error);
         }
+        self.lifecycle(id).start();
         let live = self.live_mut(id);
-        live.replacement = false;
         live.error = None;
-        live.processing = true;
         live.assistant = None;
         self.send_live(id);
         Ok(Value::Null)

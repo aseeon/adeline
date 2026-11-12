@@ -47,7 +47,7 @@ impl Adeline {
 }
 
 fn failing(state: &client::State) -> bool {
-    !state.usable() && !matches!(state, client::State::Connecting | client::State::Starting)
+    !state.usable() && !matches!(state, client::State::Connecting { .. })
 }
 
 fn machine_rows(owner: &WeakEntity<Adeline>, cx: &App) -> AnyElement {
@@ -99,14 +99,14 @@ fn machine_row(
 ) -> impl IntoElement {
     let theme = cx.theme();
     let name = machines::name(&machine);
-    let state = client::state(&machine, cx).cloned();
-    let status = match &state {
+    let state = client::state(&machine, cx);
+    let status = match state {
         Some(state) => state.label().to_owned(),
         None if on => "Connecting…".to_owned(),
         None => "Not checked".to_owned(),
     };
-    let detail = state.as_ref().and_then(client::State::detail);
-    let action = match &state {
+    let detail = state.and_then(client::State::detail);
+    let action = match state {
         Some(client::State::UpgradeNeeded { .. }) => {
             Some(("Upgrade", Action::MachineUpgrade(machine.clone())))
         }
@@ -114,7 +114,7 @@ fn machine_row(
             if failing(state)
                 && !matches!(
                     state,
-                    client::State::Waiting | client::State::Unsupported(_)
+                    client::State::Waiting(_) | client::State::Unsupported(_)
                 ) =>
         {
             Some(("Retry", Action::MachineRetry(machine.clone())))
@@ -123,9 +123,7 @@ fn machine_row(
     };
     let toggle_owner = owner.clone();
     let toggle = machine.clone();
-    let failed = state
-        .as_ref()
-        .is_some_and(|s| failing(s) && !matches!(s, client::State::Waiting));
+    let failed = state.is_some_and(|s| failing(s) && !matches!(s, client::State::Waiting(_)));
     col()
         .id(("machine-row", ix))
         .test_support()

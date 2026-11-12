@@ -1,5 +1,5 @@
 //! Handling events from agent workers.
-use super::{Engine, PERMISSION_STOPPED, end_turn};
+use super::{After, Engine, INTERRUPTED, PERMISSION_STOPPED, Stop, phase};
 use crate::{acp, storage};
 use adeline_core::{
     conversation::{PermissionOption, StopReason, ThreadStatus},
@@ -32,15 +32,20 @@ impl Engine {
             self.traffic(&id, &entry);
             return;
         }
-        let Some(slot) = self.drivers.get_mut(&id) else {
+        let Some(agent) = self
+            .lifecycles
+            .get_mut(&id)
+            .and_then(|lifecycle| lifecycle.phase.agent_mut())
+        else {
             return;
         };
-        if event.turn < slot.turn {
+        if event.turn < agent.turn {
             return;
         }
-        slot.turn = event.turn;
-        let was_processing = self.live.get(&id).is_some_and(|l| l.processing);
-        let closing = self.live.get(&id).is_some_and(|l| l.shutting_down)
+        agent.turn = event.turn;
+        let agent_closing = agent.closing.is_some();
+        let was_processing = self.processing(&id);
+        let closing = agent_closing
             || self.stop_all.is_some()
             || self.status_of(&id).is_some_and(ThreadStatus::closed);
         match event.kind {
@@ -97,7 +102,7 @@ impl Engine {
                 attempt,
                 limit,
                 error,
-            } => self.retrying(&id, attempt, limit, &error),
+            } => self.retrying(&id, attempt, limit, error),
             acp::EventKind::Error { message, kind } => {
                 self.turn_failed(&id, message, kind, closing);
             }
@@ -114,8 +119,7 @@ impl Engine {
             acp::EventKind::ReplacementRequired(error) => self.replacement_required(&id, &error),
         }
         self.send_live(&id);
-        let processing = self.live.get(&id).is_some_and(|l| l.processing);
-        if was_processing && !processing && self.subscribers() == 0 && !self.daemon() {
+        if was_processing && !self.processing(&id) && self.subscribers() == 0 && !self.daemon() {
             self.shutdown_conversation(&id);
             self.send_live(&id);
         }
@@ -139,6 +143,19 @@ impl Engine {
     }
 
     fn agent_output(&mut self, id: String, kind: acp::EventKind) {
+        if matches!(
+            kind,
+            acp::EventKind::Text { .. }
+                | acp::EventKind::Thought { .. }
+                | acp::EventKind::Tool { .. }
+        ) && self
+            .lifecycle(&id)
+            .phase
+            .turn_mut()
+            .is_some_and(|turn| turn.retry.take().is_some())
+        {
+            self.send_live(&id);
+        }
         match kind {
             acp::EventKind::Title(title) => {
                 self.save_session_state(&id, |settings| title.clone_into(&mut settings.title));
@@ -206,13 +223,16 @@ impl Engine {
     }
 
     fn shutdown_stuck(&mut self, id: &str) {
-        let live = self.live_mut(id);
-        live.shutdown_stuck = true;
-        live.error = Some("Agent shutdown is stuck. Force Stop terminates this process.".into());
+        self.shutdown_conversation(id);
+        if let Some(agent) = self.lifecycle(id).phase.agent_mut() {
+            agent.closing.get_or_insert_default().stuck = true;
+        }
+        self.live_mut(id).error =
+            Some("Agent shutdown is stuck. Force Stop terminates this process.".into());
     }
 
     fn text_copy(&mut self, id: &str) {
-        self.text_copy_pending.insert(id.to_owned());
+        self.lifecycle(id).text_copy = true;
         if self.record_visible(id, "fork_text_copy", json!({})) {
             self.broadcast_thread(id);
         }
@@ -231,25 +251,29 @@ impl Engine {
         self.broadcast_thread(id);
     }
 
-    fn retrying(&mut self, id: &str, attempt: u32, limit: u32, error: &str) {
+    fn retrying(&mut self, id: &str, attempt: u32, limit: u32, error: String) {
         if self.record_visible(
             id,
             "error",
             json!({"message":error,"attempt":attempt,"limit":limit}),
-        ) {
-            self.live_mut(id).progress = Some(format!("Retry {attempt} of {limit}: {error}"));
+        ) && let Some(turn) = self.lifecycle(id).phase.turn_mut()
+        {
+            turn.retry = Some(phase::Retry {
+                attempt,
+                limit,
+                error,
+            });
         }
     }
 
     fn replacement_required(&mut self, id: &str, error: &str) {
         if self.record_visible(id, "error", json!({"message":error,"restoration":false})) {
-            let live = self.live_mut(id);
-            live.replacement = true;
-            live.processing = false;
-            live.error = Some(format!(
+            let lifecycle = self.lifecycle(id);
+            lifecycle.end();
+            lifecycle.block(After::Replacement);
+            self.live_mut(id).error = Some(format!(
                 "{error} Start a new session using saved messages only if you want to continue."
             ));
-            self.set_runtime_status(id, ThreadStatus::Blocked);
         }
     }
 
@@ -260,24 +284,31 @@ impl Engine {
         title: String,
         options: Vec<PermissionOption>,
     ) {
-        if self.record_visible(
-            id,
-            "permission_request",
-            json!({"request_id":request_id,"title":title,"options":options}),
-        ) {
-            self.live
-                .entry(id.to_owned())
-                .or_default()
-                .permission
-                .push(PendingPermission {
-                    request_id,
-                    title,
-                    options,
-                });
-            self.set_runtime_status(id, ThreadStatus::Blocked);
-            if self.subscribers() == 0 {
-                self.stop_for_permission(id);
-            }
+        let asking = |engine: &Self| {
+            engine
+                .lifecycles
+                .get(id)
+                .and_then(|lifecycle| lifecycle.phase.turn())
+                .is_some_and(|turn| turn.stop.is_none())
+        };
+        if !asking(self)
+            || !self.record_visible(
+                id,
+                "permission_request",
+                json!({"request_id":request_id,"title":title,"options":options}),
+            )
+        {
+            return;
+        }
+        if let Some(turn) = self.lifecycle(id).phase.turn_mut() {
+            turn.permission.push(PendingPermission {
+                request_id,
+                title,
+                options,
+            });
+        }
+        if self.subscribers() == 0 {
+            self.stop_for_permission(id);
         }
     }
 
@@ -287,98 +318,111 @@ impl Engine {
             "error",
             json!({"message":message,"kind":format!("{kind:?}")}),
         );
-        let live = self.live_mut(id);
-        end_turn(live);
-        live.auth_required = kind == acp::FailureKind::Authentication;
-        if saved {
-            live.error = Some(message);
-            if !closing {
-                self.set_runtime_status(id, ThreadStatus::Blocked);
-            }
+        let lifecycle = self.lifecycle(id);
+        if lifecycle.end().is_some() || !closing {
+            lifecycle.block(if kind == acp::FailureKind::Authentication {
+                After::LoginRequired
+            } else {
+                After::Blocked
+            });
         }
-        if self.text_copy_pending.remove(id) {
+        if saved {
+            self.live_mut(id).error = Some(message);
+        }
+        if std::mem::take(&mut self.lifecycle(id).text_copy) {
             self.drop_undelivered_fork_session(id);
         }
     }
 
     fn turn_finished(&mut self, id: &str, stop_reason: StopReason, closing: bool) {
-        self.text_copy_pending.remove(id);
+        self.lifecycle(id).text_copy = false;
         self.record_visible(
             id,
             "lifecycle",
             json!({"event":"turn_finished","reason":stop_reason}),
         );
-        let live = self.live_mut(id);
-        end_turn(live);
-        if !closing && !live.storage_failed {
-            self.set_runtime_status(id, ThreadStatus::Idle);
+        let lifecycle = self.lifecycle(id);
+        let recovered = lifecycle.recovering();
+        lifecycle.end();
+        if recovered {
+            self.live_mut(id).error = None;
+        }
+        if !closing && !self.lifecycle(id).storage_failed {
             self.send_queue(id);
         }
     }
 
     fn turn_stopped(&mut self, id: &str, closing: bool) {
         let saved = self.record_visible(id, "lifecycle", json!({"event":"turn_cancelled"}));
-        let for_permission = self.permission_stopped.remove(id);
+        let Some(turn) = self.lifecycle(id).end() else {
+            return;
+        };
+        let stop = turn.stop.unwrap_or(Stop::User);
+        self.turn_cut(id, stop, saved, false);
+        if stop == Stop::SendQueued && saved && !closing && !self.lifecycle(id).storage_failed {
+            self.send_queue(id);
+        }
+    }
+
+    fn turn_cut(&mut self, id: &str, stop: Stop, saved: bool, gone: bool) {
+        let closed = self.status_of(id).is_some_and(ThreadStatus::closed);
+        let lifecycle = self.lifecycle(id);
+        let recovered = saved && !lifecycle.storage_failed;
+        if !matches!(stop, Stop::User | Stop::SendQueued) {
+            lifecycle.block(After::Blocked);
+        }
         let live = self.live_mut(id);
-        end_turn(live);
-        if for_permission {
-            live.worked = true;
-            live.error = Some(PERMISSION_STOPPED.into());
-            if !closing && !live.storage_failed {
-                self.set_runtime_status(id, ThreadStatus::Blocked);
+        match stop {
+            Stop::Permission => {
+                live.worked = true;
+                live.error = Some(PERMISSION_STOPPED.into());
             }
-        } else if live.recovering_storage {
-            live.recovering_storage = false;
-            if saved {
+            Stop::Storage if recovered && gone && !closed => {
+                live.error =
+                    Some("Agent stopped. Retry to continue from the saved session.".into());
+            }
+            Stop::Storage if recovered && !gone => {
                 live.error = (!live.last_prompt.is_empty())
                     .then(|| "History is saved. Retry to continue the interrupted turn.".into());
-                if !closing && !live.storage_failed {
-                    self.set_runtime_status(id, ThreadStatus::Blocked);
-                }
             }
-        } else if saved && !closing && !live.storage_failed {
-            self.set_runtime_status(id, ThreadStatus::Idle);
-            if self.send_after_stop.remove(id) {
-                self.send_queue(id);
-            }
+            Stop::Shutdown if !closed => live.error = Some(INTERRUPTED.into()),
+            _ => {}
         }
     }
 
     fn shutdown_complete(&mut self, id: &str) {
         let saved = self.record_visible(id, "lifecycle", json!({"event":"process_stopped"}));
-        self.drivers.remove(id);
-        if let Some((text, files)) = self.steering.remove(id) {
-            self.queue(id, text, files, true);
-        }
-        self.last_traffic.remove(id);
-        let finished = self.status_of(id).is_some_and(ThreadStatus::closed);
-        let live = self.live_mut(id);
-        live.processing = false;
-        live.shutting_down = false;
-        live.quiet_since = None;
-        if live.shutdown_stuck && saved && !live.storage_failed {
-            live.error = None;
-        }
-        live.shutdown_stuck = false;
-        live.permission.clear();
-        if live.recovering_storage {
-            live.recovering_storage = false;
-            if saved && !live.storage_failed && !finished {
-                live.error =
-                    Some("Agent stopped. Retry to continue from the saved session.".into());
-            }
-        }
-        if let Some(prompt) = self.restart_prompt.remove(id)
-            && self.stop_all.is_none()
-        {
-            let files = self.attachments.get(id).cloned().unwrap_or_default();
-            self.start_prompt(id, prompt, files, true);
-        } else if self.send_after_stop.remove(id) && self.stop_all.is_none() {
-            self.send_queue(id);
-        }
+        self.agent_gone(id, saved);
         self.send_live(id);
         self.finish_deletions();
         self.finish_stop_all();
+    }
+
+    pub(super) fn agent_gone(&mut self, id: &str, saved: bool) {
+        let Some((agent, turn)) = self.lifecycle(id).gone() else {
+            return;
+        };
+        if let Some((text, files)) = agent.steering {
+            self.queue(id, text, files, true);
+        }
+        self.last_traffic.remove(id);
+        let closing = agent.closing.unwrap_or_default();
+        if closing.stuck && saved && !self.lifecycle(id).storage_failed {
+            self.live_mut(id).error = None;
+        }
+        let stop = turn.map(|turn| turn.stop.unwrap_or(Stop::Shutdown));
+        if let Some(stop) = stop {
+            self.turn_cut(id, stop, saved, true);
+        }
+        if self.cannot_turn(id).is_some() || self.lifecycle(id).storage_failed {
+            return;
+        }
+        if let Some(prompt) = closing.restart {
+            let files = self.attachments.get(id).cloned().unwrap_or_default();
+            self.start_prompt(id, prompt, files, true);
+        } else if stop == Some(Stop::SendQueued) {
+            self.send_queue(id);
+        }
     }
 
     fn traffic(&mut self, id: &str, entry: &adeline_core::conversation::TrafficEntry) {
@@ -416,29 +460,25 @@ impl Engine {
     }
 
     pub(super) fn stop_for_permission(&mut self, id: &str) {
-        let Some(live) = self.live.get_mut(id) else {
-            return;
-        };
-        if live.permission.is_empty() {
+        if self
+            .lifecycles
+            .get(id)
+            .and_then(|lifecycle| lifecycle.phase.turn())
+            .is_none_or(|turn| turn.permission.is_empty())
+        {
             return;
         }
-        live.permission.clear();
-        live.progress = Some("Stopping…".into());
         tracing::event!(
             name: "engine.permission.unanswerable",
             tracing::Level::INFO,
             conversation.id = id,
             "Stopping conversation {{conversation.id}}: it needs a permission and no client is connected"
         );
-        self.permission_stopped.insert(id.to_owned());
         self.record_visible(
             id,
             "error",
             json!({"message":PERMISSION_STOPPED,"permission":true}),
         );
-        if let Some(slot) = self.drivers.get(id) {
-            let _ = slot.driver.send(acp::Command::Cancel);
-        }
-        self.send_live(id);
+        self.stop(id, Stop::Permission);
     }
 }

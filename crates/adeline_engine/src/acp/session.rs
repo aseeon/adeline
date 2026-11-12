@@ -4,7 +4,7 @@ use super::*;
 
 impl Worker {
     pub(super) fn start(&mut self) {
-        if self.closing {
+        if self.exit != Exit::Running {
             return;
         }
         if !self.config.directory.is_absolute() || !self.config.directory.is_dir() {
@@ -51,14 +51,11 @@ impl Worker {
         };
         match block_in_place(|| adeline_core::platform::spawn_piped(&mut process, true)) {
             Ok((child, stdin, stdout, stderr)) => {
-                self.configured = false;
                 self.features = None;
                 self.raw_options.clear();
                 self.modes = None;
                 self.options.clear();
                 self.handshake = None;
-                self.timeout_reported = false;
-                self.lost_during_initialize = true;
                 self.epoch += 1;
                 self.stderr.clear();
                 match tokio::process::ChildStdin::from_std(stdin) {
@@ -68,7 +65,7 @@ impl Worker {
                             self.read_stderr(stderr);
                         }
                         self.child = Some(child);
-                        self.connecting = true;
+                        self.connection = Connection::Connecting;
                     }
                     Err(error) => {
                         let mut child = child;
@@ -232,7 +229,12 @@ impl Worker {
                 wire::Implementation::new("adeline", env!("CARGO_PKG_VERSION"))
                     .title("Adeline".to_owned()),
             );
-        self.request(Outgoing::Initialize(request), Request::Initialize);
+        if self
+            .request(Outgoing::Initialize(request), Request::Initialize)
+            .is_some()
+        {
+            self.set_setup(Setup::Initializing);
+        }
     }
 
     pub(super) fn handshake_timeout(&mut self) {
@@ -240,7 +242,6 @@ impl Worker {
             return;
         };
         self.pending.remove(&id);
-        self.setup = None;
         let (message, kind) = if request == Request::Initialize {
             ("Agent did not respond to ACP initialize. Check that its configured Arguments include `acp` and that the command supports ACP.".to_owned(), FailureKind::Configuration)
         } else {
@@ -251,11 +252,13 @@ impl Worker {
                 FailureKind::Temporary,
             )
         };
-        self.timeout_reported = true;
-        self.close_link();
-        self.lost_pending = Some(message.clone());
-        self.lost_at = Some(Instant::now());
-        self.shutdown_deadline = Some(Instant::now() + SHUTDOWN_GRACE);
+        self.connection = Connection::Lost(Lost {
+            error: message.clone(),
+            at: Instant::now(),
+            initializing: self.initializing(),
+            reported: true,
+        });
+        self.watch.restart();
         self.fail(message, kind);
     }
 
@@ -313,23 +316,21 @@ impl Worker {
     }
 
     pub(super) fn setup_session(&mut self) {
-        self.configured = false;
-        self.config_step = 0;
-        self.forking = false;
         let features = self.features.clone().unwrap_or_default();
         let cwd = self.config.directory.clone();
         let servers = self.mcp_servers();
         let meta = self.session_meta();
-        let outgoing = if let Some(id) = &self.session_id {
+        let mut fork = false;
+        let outgoing = if let Some(id) = self.session_id().map(str::to_owned) {
             if features.resume {
                 Outgoing::Resume(
-                    wire::ResumeSessionRequest::new(id.clone(), cwd)
+                    wire::ResumeSessionRequest::new(id, cwd)
                         .mcp_servers(servers)
                         .meta(meta),
                 )
             } else if features.load {
                 Outgoing::Load(
-                    wire::LoadSessionRequest::new(id.clone(), cwd)
+                    wire::LoadSessionRequest::new(id, cwd)
                         .mcp_servers(servers)
                         .meta(meta),
                 )
@@ -340,7 +341,7 @@ impl Worker {
         } else if let Some((Some(source), _)) = &self.fork
             && features.fork
         {
-            self.forking = true;
+            fork = true;
             Outgoing::Fork(
                 wire::ForkSessionRequest::new(source.clone(), cwd)
                     .mcp_servers(servers)
@@ -354,13 +355,13 @@ impl Worker {
             )
         };
         if self.request(outgoing, Request::Setup).is_some() {
-            self.setup = Some(Request::Setup);
+            self.set_setup(Setup::Opening { fork });
         }
     }
 
     pub(super) fn initialized(&mut self, response: &wire::InitializeResponse) {
-        self.lost_during_initialize = false;
         if response.protocol_version != ProtocolVersion::V1 {
+            self.set_setup(Setup::Uninitialized);
             let name = &self.config.name;
             self.fail(
                 format!(
@@ -400,12 +401,13 @@ impl Worker {
             .map(|info| (info.name.clone(), info.version.clone()))
             .unwrap_or_default();
         self.features = Some(features.clone());
+        self.set_setup(Setup::Initialized);
         self.emit(EventKind::Agent {
             name,
             version,
             features,
         });
-        if self.closing && !self.probing {
+        if self.exit != Exit::Running {
             self.close_link();
             return;
         }
@@ -413,32 +415,33 @@ impl Worker {
             self.send_auth(method);
             return;
         }
-        if self.active.is_some() || self.probing || self.replacing {
+        if self.active.is_some() || self.probing || matches!(self.session, AgentSession::Replacing)
+        {
             self.setup_session();
         }
     }
 
     pub(super) fn session_ready(&mut self, session: SessionReply) {
-        self.restore_required = false;
-        self.setup = None;
-        let session_id = if let Some(id) = &self.session_id {
-            id.clone()
-        } else if let Some(id) = session.session_id {
-            id
-        } else {
-            self.fail(
-                "ACP session/new returned no session ID.".into(),
-                FailureKind::Configuration,
-            );
-            return;
+        let native_fork = self.setup() == Some(Setup::Opening { fork: true });
+        let session_id = match (self.session_id(), session.session_id) {
+            (Some(id), _) => id.to_owned(),
+            (None, Some(id)) => id,
+            (None, None) => {
+                self.set_setup(Setup::Initialized);
+                self.fail(
+                    "ACP session/new returned no session ID.".into(),
+                    FailureKind::Configuration,
+                );
+                return;
+            }
         };
-        let was_replacement = self.replacing;
-        self.session_id = Some(session_id.clone());
+        self.set_setup(Setup::Configuring(0));
+        let was_replacement = matches!(self.session, AgentSession::Replacing);
+        self.session = AgentSession::Saved(session_id.clone());
         self.raw_options = session.options.unwrap_or_default();
         self.modes = session.modes;
-        self.previous_session.take();
         if let Some((_, context)) = self.fork.take()
-            && !std::mem::take(&mut self.forking)
+            && !native_fork
         {
             if let Some(turn) = &mut self.active {
                 turn.prompt = prefixed(&turn.prompt, |text| with_context(&context, text));
@@ -452,19 +455,53 @@ impl Worker {
             replaced: was_replacement,
         });
         self.refresh_options();
-        if self.closing && !self.probing {
+        if self.exit != Exit::Running {
             self.close_session();
             return;
         }
         self.configure_next();
     }
 
+    pub(super) fn replace_session(&mut self, context: String) {
+        if self.exit != Exit::Running {
+            return;
+        }
+        if self.stopped_talking() {
+            self.emit(EventKind::Error {
+                message: "Agent communication stopped. Use Force Stop before starting a replacement session.".into(),
+                kind: FailureKind::Temporary,
+            });
+            return;
+        }
+        let context = Some(context).filter(|context| !context.trim().is_empty());
+        match &mut self.active {
+            Some(turn) if matches!(turn.step, Step::Prompting(_) | Step::Cancelling(_)) => return,
+            Some(turn) => {
+                turn.replacement = context;
+                if let Step::Parked = turn.step {
+                    turn.step = Step::Waiting;
+                }
+            }
+            None => {
+                if context.is_some() {
+                    self.pending_context = context;
+                }
+            }
+        }
+        self.session = AgentSession::Replacing;
+        match self.connection {
+            Connection::Down => self.start(),
+            Connection::Up(..) => self.setup_session(),
+            _ => {}
+        }
+    }
+
     pub(super) fn authenticate(&mut self, method: Option<String>) {
-        if self.link.is_some() && self.features.is_some() {
+        if matches!(&self.connection, Connection::Up(_, setup) if setup.initialized()) {
             self.send_auth(method);
         } else {
             self.auth = Some(method);
-            if self.child.is_none() {
+            if let Connection::Down = self.connection {
                 self.start();
             }
         }
@@ -487,46 +524,68 @@ impl Worker {
     }
 
     pub(super) fn shutdown(&mut self) {
-        if self.closing {
+        if self.exit != Exit::Running {
             return;
         }
-        self.closing = true;
-        self.probing = false;
-        self.replacement = None;
+        self.exit = Exit::Closing;
         self.cancel();
-        self.shutdown_deadline = Some(Instant::now() + SHUTDOWN_GRACE);
+        self.watch.restart();
         if self.active.is_none() {
             self.close_session();
         }
     }
 
+    pub(super) fn force_stop(&mut self) {
+        self.exit = Exit::Closing;
+        self.watch.restart();
+        self.active = None;
+        self.clear_pending();
+        self.cancel_permissions();
+        if let Some(child) = &mut self.child {
+            let killed = block_in_place(|| adeline_core::platform::kill_tree(child));
+            self.killed(killed);
+        }
+    }
+
+    pub(super) fn killed(&mut self, result: std::io::Result<()>) {
+        match result {
+            Ok(()) => self.exit = Exit::Forced,
+            Err(error) => {
+                self.emit(EventKind::Error {
+                    message: format!("Force stopping agent failed: {error}"),
+                    kind: FailureKind::Temporary,
+                });
+                self.close_link();
+            }
+        }
+    }
+
     pub(super) fn close_session(&mut self) {
-        if self
-            .pending
-            .values()
-            .any(|request| *request == Request::Close)
-        {
+        if self.exit == Exit::CloseSent {
             return;
         }
-        if let Some(session_id) = self.session_id.clone()
+        if let Some(session_id) = self.session_id().map(str::to_owned)
             && self
                 .features
                 .as_ref()
                 .is_some_and(|features| features.close)
-            && self.link.is_some()
+            && self
+                .request(
+                    Outgoing::Close(wire::CloseSessionRequest::new(session_id)),
+                    Request::Close,
+                )
+                .is_some()
         {
-            self.request(
-                Outgoing::Close(wire::CloseSessionRequest::new(session_id)),
-                Request::Close,
-            );
+            self.exit = Exit::CloseSent;
             return;
         }
         self.close_link();
     }
 
     pub(super) fn close_link(&mut self) {
-        self.link = None;
-        self.connecting = false;
+        if let Connection::Connecting | Connection::Up(..) = self.connection {
+            self.connection = Connection::Dropped;
+        }
     }
 }
 

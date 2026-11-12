@@ -38,6 +38,19 @@ fn plan_tab_toggles(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn escape_hides_slash_commands_until_the_text_changes(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.open_chat(RUNNING_CHAT);
+    ui.press("ctrl-l");
+    ui.input("/re");
+    ui.named("Commands");
+    ui.press("escape");
+    ui.gone("Commands");
+    ui.input("v");
+    ui.named("Commands");
+}
+
+#[gpui_kit::test]
 fn queued_messages_show(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
     ui.open_chat(RUNNING_CHAT);

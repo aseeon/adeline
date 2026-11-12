@@ -2,6 +2,13 @@
 //! as a GPUI global. The local engine is reached through its pipe or socket,
 //! remote ones over SSH (`remote.rs`). Each connection's changes arrive in
 //! order on its own channel; replies run their callbacks in that order.
+//!
+//! A connection's `State` is its whole phase, and only the phases with an open
+//! link hold its `Link`. `dial` starts `Connecting`. The snapshot or `Resumed`
+//! moves it to `Connected` (`go_live`, which sends the requests queued until
+//! then), an older local engine to `Mismatch` and, once the user picks, to
+//! `Waiting` until it exits. Closing, failing or `Bye` end in the other states;
+//! a lost remote waits out its delay in `Disconnected` and dials again.
 use super::{Adeline, Harnesses};
 use adeline_core::{
     askpass, harness, ipc,
@@ -19,16 +26,17 @@ use std::{
     sync::OnceLock,
     time::{Duration, Instant},
 };
-use tokio::{io::AsyncWriteExt as _, sync::mpsc};
+use tokio::{
+    io::AsyncWriteExt as _,
+    sync::{mpsc, oneshot},
+};
 
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum State {
     Demo,
-    Connecting,
-    Starting,
-    Connected,
-    Mismatch(Status),
-    Waiting,
+    Connecting { link: Link, retries: u32 },
+    Connected(Link),
+    Mismatch { status: Status, link: Link },
+    Waiting(Link),
     Stopped { unexpected: bool },
     Unavailable(String),
     Disconnected(String),
@@ -38,12 +46,17 @@ pub enum State {
     Unsupported(String),
 }
 
+pub struct Link {
+    sender: mpsc::UnboundedSender<String>,
+    _cancel: oneshot::Sender<()>,
+}
+
 impl State {
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Demo | Self::Connected => "Connected",
-            Self::Connecting | Self::Starting | Self::Waiting => "Connecting…",
-            Self::Mismatch(_)
+            Self::Demo | Self::Connected(_) => "Connected",
+            Self::Connecting { .. } | Self::Waiting(_) => "Connecting…",
+            Self::Mismatch { .. }
             | Self::Stopped { .. }
             | Self::Unavailable(_)
             | Self::Disconnected(_) => "Disconnected",
@@ -60,7 +73,7 @@ impl State {
             | Self::Disconnected(error)
             | Self::SignInFailed(error)
             | Self::Unsupported(error) => Some(error.clone()),
-            Self::Mismatch(status) => Some(format!(
+            Self::Mismatch { status, .. } => Some(format!(
                 "An older engine (version {}) is still running.",
                 status.version
             )),
@@ -77,7 +90,11 @@ impl State {
     }
 
     pub fn usable(&self) -> bool {
-        matches!(self, Self::Demo | Self::Connected)
+        matches!(self, Self::Demo | Self::Connected(_))
+    }
+
+    pub fn connected(&self) -> bool {
+        matches!(self, Self::Connected(_))
     }
 }
 
@@ -90,59 +107,72 @@ pub struct Connection {
     pub status_at: Instant,
     pub settings: EngineSettings,
     pub harnesses: harness::Catalog,
-    pub loaded: bool,
     pub destination: Option<String>,
-    sender: Option<mpsc::UnboundedSender<String>>,
-    inbox: Option<async_channel::Receiver<Incoming>>,
+    stream: Option<Resume>,
     next: u64,
     pending: HashMap<u64, Callback>,
     outputs: HashMap<u64, Box<dyn FnMut(String, &mut App)>>,
     queued: Vec<(u64, Command)>,
     epoch: u64,
-    bye: bool,
-    stream: Option<Resume>,
-    cancel: Option<tokio::sync::oneshot::Sender<()>>,
-    retries: u32,
-    upgrade: bool,
 }
 
 impl Connection {
     fn new(machine: &str) -> Self {
         Self {
             machine: machine.to_owned(),
-            state: State::Connecting,
+            state: State::Stopped { unexpected: false },
             status: Status::default(),
             status_at: Instant::now(),
             settings: EngineSettings::default(),
             harnesses: harness::Catalog::default(),
-            loaded: false,
             destination: None,
-            sender: None,
-            inbox: None,
+            stream: None,
             next: 0,
             pending: HashMap::new(),
             outputs: HashMap::new(),
             queued: Vec::new(),
             epoch: 0,
-            bye: false,
-            stream: None,
-            cancel: None,
-            retries: 0,
-            upgrade: false,
         }
     }
 
     fn demo(machine: &str, harnesses: harness::Catalog) -> Self {
         Self {
             state: State::Demo,
-            loaded: true,
+            stream: Some(Resume::default()),
             harnesses,
             ..Self::new(machine)
         }
     }
 
+    pub fn loaded(&self) -> bool {
+        self.stream.is_some()
+    }
+
     fn local(&self) -> bool {
         self.machine == LOCAL
+    }
+
+    fn take(&mut self) -> State {
+        std::mem::replace(&mut self.state, State::Demo)
+    }
+
+    fn go_live(&mut self) {
+        self.state = match self.take() {
+            State::Connecting { link, .. } => {
+                for (id, command) in self.queued.drain(..) {
+                    send_line(&link.sender, id, command);
+                }
+                State::Connected(link)
+            }
+            state => state,
+        };
+    }
+
+    fn mismatch(&mut self, status: Status) {
+        self.state = match self.take() {
+            State::Connecting { link, .. } => State::Mismatch { status, link },
+            state => state,
+        };
     }
 }
 
@@ -169,14 +199,17 @@ impl Global for Connections {}
     reason = "each message is moved once, straight to its handler"
 )]
 enum Incoming {
-    Starting,
-    Ready(mpsc::UnboundedSender<String>),
     Linked { destination: String, status: Status },
     Message(EngineMessage),
     Closed,
     Failed(String),
     Remote(remote::Failure),
-    OldGone,
+}
+
+struct Wire {
+    incoming: async_channel::Sender<Incoming>,
+    outgoing: mpsc::UnboundedReceiver<String>,
+    cancelled: oneshot::Receiver<()>,
 }
 
 pub(crate) fn runtime() -> &'static tokio::runtime::Runtime {
@@ -292,32 +325,33 @@ pub fn init(demo: bool, initial: Option<Initial>, snapshot: Option<&Snapshot>, c
     if !machines::is_checked(LOCAL) {
         return;
     }
+    let Some(Initial {
+        reader,
+        writer,
+        status,
+        ..
+    }) = initial
+    else {
+        connect(LOCAL, cx);
+        return;
+    };
+    let wire = attach(LOCAL, 0, cx).expect("local connection");
+    set_status(LOCAL, status.clone(), cx);
     let local = get_mut(LOCAL, cx).expect("local connection");
-    if let Some(initial) = &initial {
-        local.status = initial.status.clone();
-        if let Some(snapshot) = snapshot {
-            local.state = State::Connected;
-            local.loaded = true;
-            local.settings = snapshot.settings.clone();
-            local.harnesses = snapshot.harnesses.clone();
-            local.stream = Some(Resume {
-                epoch: snapshot.epoch.clone(),
-                seq: snapshot.seq,
-            });
-            harness::set_icons(&snapshot.icons);
-            cx.set_global(Harnesses(snapshot.harnesses.clone()));
-        } else {
-            local.state = State::Mismatch(initial.status.clone());
-        }
+    if let Some(snapshot) = snapshot {
+        local.settings = snapshot.settings.clone();
+        local.harnesses = snapshot.harnesses.clone();
+        local.stream = Some(Resume {
+            epoch: snapshot.epoch.clone(),
+            seq: snapshot.seq,
+        });
+        local.go_live();
+        harness::set_icons(&snapshot.icons);
+        cx.set_global(Harnesses(snapshot.harnesses.clone()));
+    } else {
+        local.mismatch(status);
     }
-    match initial {
-        Some(Initial { reader, writer, .. }) => {
-            let (incoming, epoch, cancel) = open_inbox(LOCAL, cx);
-            runtime().spawn(run_io(reader, writer, incoming, cancel, None));
-            listen(LOCAL, epoch, cx);
-        }
-        None => connect(LOCAL, cx),
-    }
+    runtime().spawn(run_io(reader, writer, wire, None));
 }
 
 pub fn set_owner(owner: WeakEntity<Adeline>, cx: &mut App) {
@@ -362,16 +396,13 @@ fn sync_now(cx: &mut App) {
         .filter(|machine| !checked.contains(machine))
         .collect();
     for machine in &gone {
-        if let Some(connection) = get_mut(machine, cx) {
-            connection.epoch += 1;
-            connection.cancel = None;
-            connection.sender = None;
+        let connections = cx.global_mut::<Connections>();
+        connections.secrets.remove(machine);
+        let at = connections.list.iter().position(|c| c.machine == *machine);
+        let removed = connections.list.remove(at.expect("connection"));
+        for done in removed.pending.into_values() {
+            done(Err("The machine was unchecked.".into()), cx);
         }
-        fail_pending(machine, "The machine was unchecked.", cx);
-        cx.global_mut::<Connections>()
-            .list
-            .retain(|c| c.machine != *machine);
-        cx.global_mut::<Connections>().secrets.remove(machine);
         let machine = machine.clone();
         update_owner(cx, move |app, cx| app.machine_unchecked(&machine, cx));
     }
@@ -399,29 +430,20 @@ fn sync_now(cx: &mut App) {
     cx.refresh_windows();
 }
 
-fn open_inbox(
-    machine: &str,
-    cx: &mut App,
-) -> (
-    async_channel::Sender<Incoming>,
-    u64,
-    tokio::sync::oneshot::Receiver<()>,
-) {
-    let (sender, receiver) = async_channel::unbounded();
-    let (cancel, cancelled) = tokio::sync::oneshot::channel();
-    let connection = get_mut(machine, cx).expect("connection");
+fn attach(machine: &str, retries: u32, cx: &mut App) -> Option<Wire> {
+    let (sender, outgoing) = mpsc::unbounded_channel();
+    let (cancel, cancelled) = oneshot::channel();
+    let (incoming, inbox) = async_channel::unbounded();
+    let connection = get_mut(machine, cx)?;
     connection.epoch += 1;
-    connection.inbox = Some(receiver);
-    connection.sender = None;
-    connection.bye = false;
-    connection.cancel = Some(cancel);
-    (sender, connection.epoch, cancelled)
-}
-
-fn listen(machine: &str, epoch: u64, cx: &mut App) {
-    let Some(inbox) = get(machine, cx).and_then(|c| c.inbox.clone()) else {
-        return;
+    connection.state = State::Connecting {
+        link: Link {
+            sender,
+            _cancel: cancel,
+        },
+        retries,
     };
+    let epoch = connection.epoch;
     let machine = machine.to_owned();
     cx.spawn(async move |cx| {
         while let Ok(incoming) = inbox.recv().await {
@@ -429,90 +451,91 @@ fn listen(machine: &str, epoch: u64, cx: &mut App) {
         }
     })
     .detach();
+    Some(Wire {
+        incoming,
+        outgoing,
+        cancelled,
+    })
 }
 
 pub fn connect(machine: &str, cx: &mut App) {
+    dial(machine, 0, false, cx);
+}
+
+pub fn retry(machine: &str, cx: &mut App) {
+    connect(machine, cx);
+}
+
+pub fn upgrade(machine: &str, cx: &mut App) {
+    dial(machine, 0, true, cx);
+}
+
+fn dial(machine: &str, retries: u32, replace: bool, cx: &mut App) {
     if get(machine, cx).is_none() || cx.global::<Connections>().demo {
         return;
     }
-    let (incoming, epoch, cancel) = open_inbox(machine, cx);
-    let connection = get_mut(machine, cx).expect("connection");
-    connection.state = State::Connecting;
     if machine == LOCAL {
-        runtime().spawn(async move {
-            let connection = if let Ok(connection) = ipc::connect().await {
-                Ok(connection)
-            } else {
-                let _ = incoming.send(Incoming::Starting).await;
-                ipc::connect_or_start(false).await
-            };
-            match connection {
-                Ok((reader, mut writer)) => match ipc::send(&mut writer, &hello(None)).await {
-                    Ok(()) => run_io(reader, writer, incoming, cancel, None).await,
-                    Err(error) => {
-                        let _ = incoming.send(Incoming::Failed(error.to_string())).await;
-                    }
-                },
-                Err(error) => {
-                    let _ = incoming.send(Incoming::Failed(format!("{error:#}"))).await;
-                }
-            }
-        });
+        let wire = attach(machine, retries, cx).expect("connection");
+        runtime().spawn(dial_local(wire, replace));
     } else {
         let Some(saved) = machines::remote(machine) else {
+            unavailable(machine, "This machine is no longer saved.", cx);
             return;
         };
-        let resume = connection.stream.clone().filter(|_| connection.loaded);
-        let upgrade = std::mem::take(&mut connection.upgrade);
+        let resume = get(machine, cx).and_then(|c| c.stream.clone());
         let askpass = remote::Askpass {
             address: cx.global::<Connections>().askpass.clone(),
             machine: machine.to_owned(),
         };
+        let wire = attach(machine, retries, cx).expect("connection");
         runtime().spawn(async move {
-            match remote::connect(&saved, &hello(resume), upgrade, &askpass).await {
-                Ok(link) => {
+            match remote::connect(&saved, &hello(resume), replace, &askpass).await {
+                Ok(found) => {
                     let linked = Incoming::Linked {
-                        destination: link.destination,
-                        status: link.status,
+                        destination: found.destination,
+                        status: found.status,
                     };
-                    if incoming.send(linked).await.is_ok() {
-                        run_io(link.reader, link.writer, incoming, cancel, Some(link.child)).await;
+                    if wire.incoming.send(linked).await.is_ok() {
+                        run_io(found.reader, found.writer, wire, Some(found.child)).await;
                     }
                 }
                 Err(failure) => {
-                    let _ = incoming.send(Incoming::Remote(failure)).await;
+                    let _ = wire.incoming.send(Incoming::Remote(failure)).await;
                 }
             }
         });
     }
-    listen(machine, epoch, cx);
     cx.refresh_windows();
 }
 
-pub fn retry(machine: &str, cx: &mut App) {
-    if let Some(connection) = get_mut(machine, cx) {
-        connection.retries = 0;
-        connect(machine, cx);
+async fn dial_local(mut wire: Wire, replace: bool) {
+    while replace && ipc::connect().await.is_ok() {
+        if wire.cancelled.try_recv() != Err(oneshot::error::TryRecvError::Empty) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
-}
-
-pub fn upgrade(machine: &str, cx: &mut App) {
-    if let Some(connection) = get_mut(machine, cx) {
-        connection.upgrade = true;
-        connection.retries = 0;
-        connect(machine, cx);
-    }
+    let error = match ipc::connect_or_start(false).await {
+        Ok((reader, mut writer)) => match ipc::send(&mut writer, &hello(None)).await {
+            Ok(()) => return run_io(reader, writer, wire, None).await,
+            Err(error) => error.to_string(),
+        },
+        Err(error) => format!("{error:#}"),
+    };
+    let _ = wire.incoming.send(Incoming::Failed(error)).await;
 }
 
 async fn run_io(
     mut reader: ipc::Reader,
     mut writer: ipc::Writer,
-    incoming: async_channel::Sender<Incoming>,
-    cancel: tokio::sync::oneshot::Receiver<()>,
+    wire: Wire,
     _child: Option<tokio::process::Child>,
 ) {
-    let (sender, mut outgoing) = mpsc::unbounded_channel::<String>();
-    let _ = incoming.send(Incoming::Ready(sender)).await;
+    let Wire {
+        incoming,
+        mut outgoing,
+        cancelled,
+    } = wire;
     tokio::spawn(async move {
         while let Some(line) = outgoing.recv().await {
             if writer.write_all(line.as_bytes()).await.is_err() || writer.flush().await.is_err() {
@@ -535,7 +558,7 @@ async fn run_io(
         closed = read => if closed {
             let _ = incoming.send(Incoming::Closed).await;
         },
-        _ = cancel => {}
+        _ = cancelled => {}
     }
 }
 
@@ -560,22 +583,14 @@ fn fail_pending(machine: &str, error: &str, cx: &mut App) {
     }
 }
 
-fn flush_queued(machine: &str, cx: &mut App) {
-    if let Some(connection) = get_mut(machine, cx)
-        && let Some(sender) = &connection.sender
-    {
-        for (id, command) in connection.queued.drain(..) {
-            send_line(sender, id, command);
-        }
-    }
-}
-
-fn schedule_retry(machine: &str, cx: &mut App) {
-    let Some(connection) = get_mut(machine, cx) else {
-        return;
+fn lose(machine: &str, error: String, cx: &mut App) {
+    let connection = get_mut(machine, cx).expect("connection");
+    let retries = match connection.state {
+        State::Connecting { retries, .. } => retries + 1,
+        _ => 1,
     };
-    connection.retries += 1;
-    let delay = Duration::from_secs(1 << connection.retries.min(5)).min(Duration::from_secs(30));
+    connection.state = State::Disconnected(error);
+    let delay = Duration::from_secs(1 << retries.min(5)).min(Duration::from_secs(30));
     let epoch = connection.epoch;
     let machine = machine.to_owned();
     cx.spawn(async move |cx| {
@@ -584,37 +599,42 @@ fn schedule_retry(machine: &str, cx: &mut App) {
             if get(&machine, cx)
                 .is_some_and(|c| c.epoch == epoch && matches!(c.state, State::Disconnected(_)))
             {
-                connect(&machine, cx);
+                dial(&machine, retries, false, cx);
             }
         });
     })
     .detach();
 }
 
-fn connection_closed(machine: &str, cx: &mut App) {
-    let connection = get_mut(machine, cx).expect("connection");
-    connection.sender = None;
-    connection.cancel = None;
-    if matches!(connection.state, State::Waiting | State::Mismatch(_)) {
-        return;
-    }
-    if machine != LOCAL && !connection.bye {
-        connection.state = State::Disconnected("The connection was lost.".into());
-        let error = format!("{} disconnected.", machines::name(machine));
-        fail_pending(machine, &error, cx);
-        schedule_retry(machine, cx);
-        update_owner(cx, |app, cx| app.refresh_runtime_views(cx));
-        cx.refresh_windows();
-        return;
-    }
-    let unexpected = !connection.bye;
-    connection.state = State::Stopped { unexpected };
+fn stopped(machine: &str, unexpected: bool, cx: &mut App) {
+    get_mut(machine, cx).expect("connection").state = State::Stopped { unexpected };
     fail_pending(machine, "The conversation engine stopped.", cx);
     let target = machine.to_owned();
     update_owner(cx, move |app, cx| {
         app.engine_stopped(&target, unexpected, cx);
     });
     cx.refresh_windows();
+}
+
+fn unavailable(machine: &str, error: &str, cx: &mut App) {
+    get_mut(machine, cx).expect("connection").state = State::Unavailable(error.to_owned());
+    fail_pending(machine, error, cx);
+    cx.refresh_windows();
+}
+
+fn connection_closed(machine: &str, cx: &mut App) {
+    match state(machine, cx) {
+        Some(State::Mismatch { .. } | State::Waiting(_)) => dial(LOCAL, 0, true, cx),
+        Some(State::Connecting { .. } | State::Connected(_)) if machine != LOCAL => {
+            lose(machine, "The connection was lost.".into(), cx);
+            let error = format!("{} disconnected.", machines::name(machine));
+            fail_pending(machine, &error, cx);
+            update_owner(cx, |app, cx| app.refresh_runtime_views(cx));
+            cx.refresh_windows();
+        }
+        Some(State::Connecting { .. } | State::Connected(_)) => stopped(machine, true, cx),
+        _ => {}
+    }
 }
 
 fn adopt_engine(machine: &str, engine: &str, cx: &mut App) -> anyhow::Result<()> {
@@ -658,20 +678,14 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
         return;
     }
     match incoming {
-        Incoming::Starting => {
-            get_mut(machine, cx).expect("connection").state = State::Starting;
-            cx.refresh_windows();
-        }
-        Incoming::Ready(sender) => get_mut(machine, cx).expect("connection").sender = Some(sender),
         Incoming::Linked {
             destination,
             status,
         } => linked(machine, destination, status, cx),
         Incoming::Message(EngineMessage::Welcome { status }) => {
-            let mismatch = status.protocol != PROTOCOL;
             set_status(machine, status.clone(), cx);
-            if mismatch {
-                get_mut(machine, cx).expect("connection").state = State::Mismatch(status);
+            if status.protocol != PROTOCOL {
+                get_mut(machine, cx).expect("connection").mismatch(status);
                 cx.refresh_windows();
             }
         }
@@ -694,17 +708,10 @@ fn handle(machine: &str, epoch: u64, incoming: Incoming, cx: &mut App) {
         Incoming::Message(EngineMessage::Traffic { id, entry }) => {
             update_owner(cx, move |app, cx| app.traffic_arrived(&id, entry, cx));
         }
-        Incoming::Message(EngineMessage::Bye) => {
-            get_mut(machine, cx).expect("connection").bye = true;
-        }
+        Incoming::Message(EngineMessage::Bye) => stopped(machine, false, cx),
         Incoming::Closed => connection_closed(machine, cx),
-        Incoming::Failed(error) => {
-            get_mut(machine, cx).expect("connection").state = State::Unavailable(error.clone());
-            fail_pending(machine, &error, cx);
-            cx.refresh_windows();
-        }
+        Incoming::Failed(error) => unavailable(machine, &error, cx),
         Incoming::Remote(failure) => remote_failed(machine, failure, cx),
-        Incoming::OldGone => connect(LOCAL, cx),
     }
 }
 
@@ -714,7 +721,6 @@ fn linked(machine: &str, destination: String, status: Status, cx: &mut App) {
         let error = format!("{error:#}");
         let connection = get_mut(machine, cx).expect("connection");
         connection.epoch += 1;
-        connection.cancel = None;
         connection.state = State::Unavailable(error.clone());
         let _ = machines::remove(machine);
         update_owner(cx, move |app, cx| app.notify_toast(&error, cx));
@@ -728,14 +734,12 @@ fn linked(machine: &str, destination: String, status: Status, cx: &mut App) {
 
 fn snapshot_arrived(machine: &str, snapshot: Snapshot, cx: &mut App) {
     let connection = get_mut(machine, cx).expect("connection");
-    connection.state = State::Connected;
-    connection.loaded = true;
-    connection.retries = 0;
     connection.settings = snapshot.settings.clone();
     connection.stream = Some(Resume {
         epoch: snapshot.epoch.clone(),
         seq: snapshot.seq,
     });
+    connection.go_live();
     set_status(machine, snapshot.status.clone(), cx);
     harness::set_icons(&snapshot.icons);
     set_harnesses(machine, snapshot.harnesses.clone(), cx);
@@ -744,15 +748,11 @@ fn snapshot_arrived(machine: &str, snapshot: Snapshot, cx: &mut App) {
         app.apply_snapshot(&target, snapshot, cx);
         app.docs_connected(&target, cx);
     });
-    flush_queued(machine, cx);
     cx.refresh_windows();
 }
 
 fn resumed(machine: &str, cx: &mut App) {
-    let connection = get_mut(machine, cx).expect("connection");
-    connection.state = State::Connected;
-    connection.retries = 0;
-    flush_queued(machine, cx);
+    get_mut(machine, cx).expect("connection").go_live();
     let target = machine.to_owned();
     update_owner(cx, move |app, cx| {
         app.refresh_runtime_views(cx);
@@ -804,22 +804,25 @@ fn output_arrived(machine: &str, request: u64, line: String, cx: &mut App) {
 
 fn remote_failed(machine: &str, failure: remote::Failure, cx: &mut App) {
     cx.global_mut::<Connections>().secrets.remove(machine);
-    let retry = matches!(failure, remote::Failure::Network(_));
     let upgrade = matches!(failure, remote::Failure::Upgrade { .. });
     let state = match failure {
-        remote::Failure::Network(error) => State::Disconnected(error),
-        remote::Failure::SignIn(error) => State::SignInFailed(error),
-        remote::Failure::Fatal(error) => State::Unavailable(error),
-        remote::Failure::Unsupported(error) => State::Unsupported(error),
-        remote::Failure::LocalUpdate(version) => State::LocalUpdateNeeded(version),
-        remote::Failure::Upgrade { version, active } => State::UpgradeNeeded { version, active },
+        remote::Failure::Network(error) => {
+            lose(machine, error, cx);
+            None
+        }
+        remote::Failure::SignIn(error) => Some(State::SignInFailed(error)),
+        remote::Failure::Fatal(error) => Some(State::Unavailable(error)),
+        remote::Failure::Unsupported(error) => Some(State::Unsupported(error)),
+        remote::Failure::LocalUpdate(version) => Some(State::LocalUpdateNeeded(version)),
+        remote::Failure::Upgrade { version, active } => {
+            Some(State::UpgradeNeeded { version, active })
+        }
     };
-    get_mut(machine, cx).expect("connection").state = state;
+    if let Some(state) = state {
+        get_mut(machine, cx).expect("connection").state = state;
+    }
     let error = format!("{} is not connected.", machines::name(machine));
     fail_pending(machine, &error, cx);
-    if retry {
-        schedule_retry(machine, cx);
-    }
     let target = machine.to_owned();
     update_owner(cx, move |app, cx| {
         if upgrade {
@@ -840,11 +843,12 @@ fn send_line(sender: &mpsc::UnboundedSender<String>, id: u64, command: Command) 
 fn refusal(connection: &Connection) -> Option<String> {
     let name = machines::name(&connection.machine);
     match &connection.state {
+        State::Connecting { .. } | State::Connected(_) | State::Stopped { .. } => None,
         State::Demo => Some("Demo mode doesn't run the conversation engine.".to_owned()),
         State::Unavailable(error) if connection.local() => {
             Some(format!("The conversation engine is unavailable: {error}"))
         }
-        State::Mismatch(_) | State::Waiting => {
+        State::Mismatch { .. } | State::Waiting(_) => {
             Some("An older conversation engine is still running.".to_owned())
         }
         State::Unavailable(_)
@@ -853,7 +857,6 @@ fn refusal(connection: &Connection) -> Option<String> {
         | State::UpgradeNeeded { .. }
         | State::LocalUpdateNeeded(_)
         | State::Unsupported(_) => Some(format!("{name} is not connected.")),
-        _ => None,
     }
 }
 
@@ -874,9 +877,9 @@ fn send_request(machine: &str, command: Command, done: Callback, cx: &mut App) -
     connection.next += 1;
     let id = connection.next;
     connection.pending.insert(id, done);
-    match (&connection.state, &connection.sender) {
-        (State::Connected, Some(sender)) => send_line(sender, id, command),
-        (State::Stopped { .. }, _) => {
+    match &connection.state {
+        State::Connected(link) => send_line(&link.sender, id, command),
+        State::Stopped { .. } => {
             connection.queued.push((id, command));
             connect(machine, cx);
         }
@@ -903,27 +906,15 @@ pub fn replace_old(stop: bool, cx: &mut App) {
     let Some(connection) = get_mut(LOCAL, cx) else {
         return;
     };
-    if stop && let Some(sender) = &connection.sender {
-        send_line(sender, 0, Command::Shutdown);
-    }
-    connection.state = State::Waiting;
-    let epoch = connection.epoch;
-    let (gone, inbox) = async_channel::unbounded();
-    runtime().spawn(async move {
-        loop {
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            if ipc::connect().await.is_err() {
-                let _ = gone.send(Incoming::OldGone).await;
-                return;
+    connection.state = match connection.take() {
+        State::Mismatch { link, .. } | State::Waiting(link) => {
+            if stop {
+                send_line(&link.sender, 0, Command::Shutdown);
             }
+            State::Waiting(link)
         }
-    });
-    cx.spawn(async move |cx| {
-        if let Ok(incoming) = inbox.recv().await {
-            cx.update(|cx| handle(LOCAL, epoch, incoming, cx));
-        }
-    })
-    .detach();
+        state => state,
+    };
     cx.refresh_windows();
 }
 
@@ -934,7 +925,7 @@ pub fn ensure(machine: &str, cx: &mut App) {
 }
 
 pub fn refresh_harnesses(machine: &str, fetch: bool, cx: &mut App) {
-    if matches!(state(machine, cx), Some(State::Connected)) {
+    if state(machine, cx).is_some_and(State::connected) {
         request(
             machine,
             Command::RefreshHarnesses { fetch },
@@ -1032,7 +1023,11 @@ pub fn probe(
     let (probe, sender) = match get_mut(machine, cx) {
         Some(connection) => {
             connection.next += 1;
-            (connection.next, connection.sender.clone())
+            let sender = match &connection.state {
+                State::Connected(link) => Some(link.sender.clone()),
+                _ => None,
+            };
+            (connection.next, sender)
         }
         None => (0, None),
     };

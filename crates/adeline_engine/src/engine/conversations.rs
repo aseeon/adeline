@@ -35,7 +35,7 @@ impl Engine {
                 conversation(self, &id).and_then(|()| self.send_queued_now(&id, queued))
             }
             Command::Stop { id } => conversation(self, &id).map(|()| {
-                self.stop(&id);
+                self.stop(&id, Stop::User);
                 Value::Null
             }),
             Command::ForceStop { id } => conversation(self, &id).map(|()| {
@@ -89,7 +89,7 @@ impl Engine {
     }
 
     pub(super) fn ensure_driver(&mut self, id: &str) -> bool {
-        if self.drivers.contains_key(id) {
+        if self.agent(id).is_some() {
             return true;
         }
         let Some(settings) = self.conversation_settings(id) else {
@@ -101,8 +101,12 @@ impl Engine {
             settings.session_id,
             self.events.clone(),
         );
-        self.drivers.insert(id.to_owned(), Slot { driver, turn: 0 });
-        self.live_mut(id).running = true;
+        self.lifecycle(id).spawned(phase::Agent {
+            driver,
+            turn: 0,
+            steering: None,
+            closing: None,
+        });
         true
     }
 
@@ -158,16 +162,11 @@ impl Engine {
     }
 
     pub(super) fn shutdown_conversation(&mut self, id: &str) {
-        let live = self.live.entry(id.to_owned()).or_default();
-        live.permission.clear();
-        live.progress = None;
-        if let Some(slot) = self.drivers.get(id)
-            && !live.shutting_down
-        {
-            live.shutting_down = true;
-            if let Err(error) = slot.driver.send(acp::Command::Shutdown) {
-                live.error = Some(error);
-            }
+        let Some(driver) = self.lifecycle(id).close() else {
+            return;
+        };
+        if let Err(error) = driver.send(acp::Command::Shutdown) {
+            self.live_mut(id).error = Some(error);
         }
     }
 
@@ -178,7 +177,7 @@ impl Engine {
         {
             return Err("This project is being deleted.".into());
         }
-        let running = self.live.get(id).is_some_and(|live| live.processing)
+        let running = self.processing(id)
             && self.locate(id).is_some_and(|thread| {
                 thread
                     .messages
@@ -190,15 +189,18 @@ impl Engine {
             return Err("Wait for this reply to finish before forking.".into());
         }
         let store = &mut self.store;
-        let (fork, live) = block_in_place(|| {
+        let (fork, live, lifecycle) = block_in_place(|| {
             let fork = store
                 .fork_conversation(id, message)
                 .map_err(|e| format!("{e:#}"))?;
-            let live = store.conversation(&fork).map(live_for).unwrap_or_default();
-            Ok::<_, String>((fork, live))
+            let saved = store.conversation(&fork);
+            let live = saved.map(live_for).unwrap_or_default();
+            let lifecycle = saved.map(lifecycle_for).unwrap_or_default();
+            Ok::<_, String>((fork, live, lifecycle))
         })?;
         self.touched.insert(fork.clone(), Instant::now());
         self.live.insert(fork.clone(), live);
+        self.lifecycles.insert(fork.clone(), lifecycle);
         self.broadcast_thread(&fork);
         self.send_live(&fork);
         Ok(Value::String(fork))
@@ -212,7 +214,7 @@ impl Engine {
         let origin = settings.forked_from?;
         let context = history_text(self.locate(id)?.messages.get(..=origin.message)?);
         let source = &origin.conversation_id;
-        let unchanged = self.live.get(source).is_none_or(|live| !live.processing)
+        let unchanged = !self.processing(source)
             && self
                 .locate(source)
                 .is_some_and(|thread| thread.messages.len() == origin.message + 1);
@@ -230,7 +232,7 @@ impl Engine {
         option: &str,
         value: String,
     ) -> Result<Value, String> {
-        if self.live.get(id).is_some_and(|l| l.processing) {
+        if self.processing(id) {
             return Err("Switch after this turn finishes.".into());
         }
         let mut settings = self
@@ -248,8 +250,8 @@ impl Engine {
             json!({"event":"setting_switched","category":category,"option":option,"value":value}),
         );
         self.live_mut(id).execution = Some(execution);
-        if let Some(slot) = self.drivers.get(id) {
-            let _ = slot.driver.send(acp::Command::SetOption {
+        if let Some(agent) = self.agent(id) {
+            let _ = agent.driver.send(acp::Command::SetOption {
                 category,
                 id: option.to_owned(),
                 value,
@@ -265,12 +267,17 @@ impl Engine {
         request_id: u64,
         option: &str,
     ) -> Result<Value, String> {
-        let Some((index, request)) = self.live.get(id).and_then(|live| {
-            live.permission
-                .iter()
-                .enumerate()
-                .find(|(_, request)| request.request_id == request_id)
-        }) else {
+        let Some((index, request)) = self
+            .lifecycles
+            .get(id)
+            .and_then(|lifecycle| lifecycle.phase.turn())
+            .and_then(|turn| {
+                turn.permission
+                    .iter()
+                    .enumerate()
+                    .find(|(_, request)| request.request_id == request_id)
+            })
+        else {
             return Err("Permission already answered".into());
         };
         let Some(choice) = request.options.iter().find(|choice| choice.id == option) else {
@@ -283,29 +290,25 @@ impl Engine {
             return Err("History could not be saved.".into());
         }
         let result = self
-            .drivers
-            .get(id)
+            .agent(id)
             .ok_or_else(|| "Agent is no longer running.".to_owned())
-            .and_then(|slot| {
-                slot.driver.send(acp::Command::Permission {
+            .and_then(|agent| {
+                agent.driver.send(acp::Command::Permission {
                     request_id,
                     option_id: option.to_owned(),
                 })
             });
         if let Err(error) = result {
-            self.drivers.remove(id);
-            let live = self.live_mut(id);
-            end_turn(live);
-            live.error = Some(error.clone());
+            let lifecycle = self.lifecycle(id);
+            lifecycle.gone();
+            lifecycle.block(After::Blocked);
+            self.live_mut(id).error = Some(error.clone());
             self.record_visible(id, "error", json!({"message":error}));
-            self.set_runtime_status(id, ThreadStatus::Blocked);
             self.send_live(id);
             return Err(error);
         }
-        let live = self.live_mut(id);
-        live.permission.remove(index);
-        if live.permission.is_empty() {
-            self.set_runtime_status(id, ThreadStatus::Processing);
+        if let Some(turn) = self.lifecycle(id).phase.turn_mut() {
+            turn.permission.remove(index);
         }
         self.send_live(id);
         Ok(Value::Null)

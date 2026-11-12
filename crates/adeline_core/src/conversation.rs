@@ -284,15 +284,6 @@ pub enum StopReason {
     Signal,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum TurnState {
-    #[default]
-    Idle,
-    Running,
-    NeedsAction,
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthMethod {
     pub id: String,

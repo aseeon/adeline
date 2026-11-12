@@ -1,5 +1,5 @@
 //! Projects, the agent catalog, harness commands, engine settings and the watched files.
-use super::{Engine, Input, TRAFFIC_BACKLOG, disk_icons, live_for, settings_path};
+use super::{Engine, Input, TRAFFIC_BACKLOG, disk_icons, lifecycle_for, live_for, settings_path};
 use crate::{
     acp,
     storage::{self, ProjectStore},
@@ -72,7 +72,7 @@ impl Engine {
             }
         }
         self.attachments.remove(id);
-        self.steering.remove(id);
+        self.lifecycles.remove(id);
     }
 
     pub(super) fn finish_deletions(&mut self) {
@@ -82,7 +82,7 @@ impl Engine {
             .filter(|id| {
                 self.project_conversations(id)
                     .iter()
-                    .all(|c| !self.drivers.contains_key(c))
+                    .all(|c| self.agent(c).is_none())
             })
             .cloned()
             .collect();
@@ -282,15 +282,12 @@ impl Engine {
     }
 
     pub(super) fn restart(&mut self, id: &str) {
-        if self.force_stop(id) {
-            let live = self.live_mut(id);
-            live.shutting_down = true;
-            live.progress = Some("Restarting the agent…".into());
-            live.quiet_since = None;
-            self.restart_prompt
-                .insert(id.to_owned(), acp::CONTINUE_TURN.into());
-            self.send_live(id);
-        }
+        let Some(driver) = self.lifecycle(id).restart(acp::CONTINUE_TURN.into()) else {
+            return;
+        };
+        let _ = driver.send(acp::Command::ForceStop);
+        self.live_mut(id).quiet_since = None;
+        self.send_live(id);
     }
 
     pub(super) fn begin_delete_project(
@@ -368,8 +365,8 @@ impl Engine {
         .map_err(|e| format!("{e:#}"))?;
         self.settings = settings;
         let retries = u32::try_from(self.settings.retry_limit).unwrap_or(u32::MAX);
-        for slot in self.drivers.values() {
-            let _ = slot.driver.send(acp::Command::SetRetries(retries));
+        for agent in self.lifecycles.values().filter_map(|l| l.phase.agent()) {
+            let _ = agent.driver.send(acp::Command::SetRetries(retries));
         }
         self.broadcast(Delta::Settings(self.settings.clone()));
         Ok(Value::Null)
@@ -428,7 +425,7 @@ impl Engine {
                 _ => None,
             };
             conversation.is_none_or(|id| {
-                !self.drivers.contains_key(id.as_ref())
+                self.agent(id.as_ref()).is_none()
                     && self
                         .touched
                         .get(id.as_ref())
@@ -447,9 +444,8 @@ impl Engine {
 
     pub(super) fn reconcile(&mut self, fresh: ProjectStore, started: Instant) {
         let busy: HashSet<String> = self
-            .drivers
-            .keys()
-            .cloned()
+            .agent_ids()
+            .into_iter()
             .chain(
                 self.touched
                     .iter()
@@ -489,9 +485,10 @@ impl Engine {
             let Some((project_id, thread)) = self.thread_from_store(&id) else {
                 continue;
             };
-            let live = self.store.conversation(&id).map(live_for);
-            if let Some(live) = live {
+            if let Some(conversation) = self.store.conversation(&id) {
+                let (live, lifecycle) = (live_for(conversation), lifecycle_for(conversation));
                 self.live.insert(id.clone(), live);
+                self.lifecycles.insert(id.clone(), lifecycle);
             }
             self.broadcast(Delta::Thread { project_id, thread });
             self.send_live(&id);
