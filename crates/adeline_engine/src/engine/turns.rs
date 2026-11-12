@@ -162,7 +162,24 @@ impl Engine {
 
     pub(super) fn send_queued_now(&mut self, id: &str, queued: u64) -> Result<Value, String> {
         let (text, files) = self.take_queued_parts(id, queued)?;
-        self.send_now(id, text, files);
+        if self.processing(id) {
+            self.send_now(id, text, files);
+        } else {
+            let project = self.project_of(id).unwrap_or_default();
+            let sent = self.send(
+                &project,
+                Some(id.to_owned()),
+                None,
+                &text,
+                files.clone(),
+                false,
+            );
+            if let Err(error) = sent {
+                self.queue(id, text, files, true);
+                self.send_live(id);
+                return Err(error);
+            }
+        }
         self.send_live(id);
         Ok(Value::Null)
     }

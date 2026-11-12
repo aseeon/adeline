@@ -45,7 +45,7 @@ Registered with both the Ctrl and the Cmd form on every OS (`bind_keys`, `crates
 | Alt+P / Cmd+Shift+P | Open More options |
 | Ctrl+Shift+A / Cmd+Shift+A | Attach files |
 | Ctrl+Shift+L / Cmd+Shift+L | Show the ACP traffic tab of the side panel (with `--verbose`) |
-| Ctrl+Shift+T / Cmd+Shift+T | Show or hide the Plan tab of the side panel |
+| Ctrl+Shift+T / Cmd+Shift+T | Show or hide the Plan tab of the side panel. In Docs, show or hide the plan list |
 | Ctrl+Shift+I / Cmd+Shift+I | Show or hide the Activity tab of the side panel |
 | Ctrl+L / Cmd+L | Focus the message box |
 | Ctrl+Shift+D / Cmd+Shift+D | Dismiss the errors under the chat |

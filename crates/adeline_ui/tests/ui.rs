@@ -38,6 +38,19 @@ fn plan_tab_toggles(cx: &mut TestAppContext) {
 }
 
 #[gpui_kit::test]
+fn the_todo_button_shows_the_plan_in_docs(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.open_chat(RUNNING_CHAT);
+    ui.press("ctrl-2");
+    ui.named("Docs tree");
+    ui.press("ctrl-shift-t");
+    ui.named("Plan steps");
+    ui.press("escape");
+    ui.gone("Plan steps");
+    no_engine();
+}
+
+#[gpui_kit::test]
 fn escape_hides_slash_commands_until_the_text_changes(cx: &mut TestAppContext) {
     let mut ui = Ui::demo(cx, false);
     ui.open_chat(RUNNING_CHAT);

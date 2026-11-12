@@ -334,6 +334,10 @@ impl Adeline {
             }
             Action::TrafficView => self.show_traffic(cx),
             Action::PanelTab(tab) => self.toggle_side_tab(*tab, cx),
+            Action::TodoList if self.section == Section::Docs => {
+                self.menu = (self.menu != Some("todo")).then_some("todo");
+                self.chat_header.update(cx, |_, cx| cx.notify());
+            }
             Action::TodoList => self.toggle_side_tab(panes::SideTab::Plan, cx),
             Action::CopyTraffic => {
                 cx.write_to_clipboard(ClipboardItem::new_string(self.traffic_text()));

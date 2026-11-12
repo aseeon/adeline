@@ -1416,6 +1416,7 @@ impl Adeline {
         }
         if closing.is_none() || self.docs.shown.as_ref().map(|(k, _)| k) == closing.as_ref() {
             self.docs.shown = None;
+            self.docs_show(window, cx);
         }
         self.docs_continue(window, cx);
     }

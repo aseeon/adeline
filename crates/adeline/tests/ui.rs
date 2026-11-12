@@ -90,13 +90,17 @@ impl Drop for Live {
 
 fn open(cx: &mut TestAppContext) -> Ui<'_> {
     let mut ui = Ui::open(cx, false, false);
+    wait_project(&mut ui);
+    ui
+}
+
+fn wait_project(ui: &mut Ui) {
     let local = format!("{} · ", common::PROJECT);
     ui.wait("the demo tab", WAIT, |ui| {
         ui.tabs()
             .iter()
             .any(|t| t == common::PROJECT || t.starts_with(&local))
     });
-    ui
 }
 
 fn send(ui: &mut Ui, prompt: &str) {
@@ -456,6 +460,77 @@ fn a_cancelled_quit_still_guards_later_doc_edits(cx: &mut TestAppContext) {
     ui.quit();
     ui.wait_named("Save changes to 1 doc?", WAIT);
     assert!(ui.is_open(), "the quit skipped the unsaved doc");
+}
+
+#[gpui_kit::test]
+fn a_doc_edited_after_a_discarded_quit_is_unsaved(cx: &mut TestAppContext) {
+    let live = Live::new("docs-quit-discarded");
+    std::fs::write(
+        live.path().join("work/a.md"),
+        "one
+",
+    )
+    .unwrap();
+    let mut ui = open(cx);
+    send(&mut ui, "SLOW 30");
+    wait_processing(&mut ui, live.path());
+    ui.press("ctrl-2");
+    ui.wait_named("a.md", WAIT);
+    ui.press("ctrl-p");
+    ui.input("a.md");
+    ui.press("down enter");
+    ui.wait_named("a.md, Viewer", WAIT);
+    ui.press("ctrl-shift-v");
+    ui.wait_named("a.md, Editor", WAIT);
+    ui.input("x");
+    ui.wait_named("a.md, unsaved", WAIT);
+    ui.quit();
+    ui.wait_named("Save changes to 1 doc?", WAIT);
+    ui.click("Discard");
+    ui.wait_named("Finish in background", WAIT);
+    ui.click("Cancel");
+    ui.wait_gone("Finish in background", WAIT);
+    ui.wait_gone("a.md, unsaved", WAIT);
+    ui.click("a.md, Editor");
+    ui.input("y");
+    ui.wait_named("a.md, unsaved", WAIT);
+}
+
+#[gpui_kit::test]
+fn an_older_engine_is_stopped_and_replaced(cx: &mut TestAppContext) {
+    use adeline_core::{ipc, protocol};
+    let _live = Live::new("old-engine");
+    std::fs::create_dir_all(ipc::engine_dir().unwrap()).unwrap();
+    let (bound, ready) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let mut listener = ipc::Listener::bind().unwrap();
+            bound.send(()).unwrap();
+            let (mut reader, mut writer) = listener.accept().await.unwrap();
+            reader.next_line().await.unwrap();
+            let status = protocol::Status {
+                version: "0.0.1".into(),
+                daemon: true,
+                ..Default::default()
+            };
+            let welcome = protocol::EngineMessage::Welcome { status };
+            ipc::send(&mut writer, &welcome).await.unwrap();
+            while let Ok(Some(line)) = reader.next_line().await {
+                if line.contains("shutdown") {
+                    break;
+                }
+            }
+        });
+    });
+    ready.recv().unwrap();
+    let mut ui = Ui::open(cx, false, false);
+    ui.wait_named("Restart engine", WAIT);
+    ui.click("Restart engine");
+    wait_project(&mut ui);
 }
 
 const LONG: Duration = Duration::from_secs(90);

@@ -626,7 +626,7 @@ fn stop_all_mid_turn_marks_the_turn_interrupted_and_retry_continues_it() {
 }
 
 #[test]
-fn a_send_now_on_an_idle_conversation_waits_and_a_later_stop_does_not_send_it() {
+fn a_send_now_on_an_idle_conversation_sends_it_and_a_later_stop_sends_nothing() {
     let mut home = Home::new("send-now-idle");
     let mut client = home.connect();
     let id = client.send(None, "SLOW 30");
@@ -641,8 +641,12 @@ fn a_send_now_on_an_idle_conversation_waits_and_a_later_stop_does_not_send_it() 
             queued,
         })
         .unwrap();
+    let live = client.wait_live(&id, |live| live.queued.is_empty() && !live.processing);
+    assert_eq!(live.last_prompt, "queued");
     client.send(Some(&id), "SLOW 30");
     client.wait_live(&id, |live| live.processing);
+    client.send(Some(&id), "queued again");
+    client.wait_live(&id, |live| live.queued.len() == 1);
     client.call(Command::Stop { id: id.clone() }).unwrap();
     let live = client.wait_live(&id, |live| !live.processing);
     assert_eq!(live.queued.len(), 1, "the stop sent the queue");

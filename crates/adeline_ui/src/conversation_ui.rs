@@ -868,32 +868,49 @@ impl Adeline {
             format!("{} of {}", done + 1, steps.len())
         };
         let label = current.map_or_else(|| "All steps done".to_owned(), |step| step.text.clone());
+        let owner = cx.weak_entity();
         Some(
-            Button::new("chat-todo")
-                .ghost()
-                .small()
-                .flex_shrink_0()
-                .accessibility_label(format!("TODO: {label}, {count}"))
-                .tooltip(format!("{label} ({})", shortcut("Ctrl+Shift+T")))
-                .on_click(cx.listener(|app, _, window, cx| {
-                    app.act(Action::TodoList, window, cx);
-                }))
-                .child(
-                    row()
-                        .gap_1p5()
-                        .text_size(panes::dp(theme::T_UI))
-                        .child(step_glyph(
-                            current.map_or(StepStatus::Completed, |s| s.status),
-                            theme.muted_foreground,
-                        ))
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .text_color(theme.muted_foreground)
-                                .child(count),
-                        ),
-                )
-                .into_any_element(),
+            self.menu_popover(
+                "todo",
+                Button::new("chat-todo")
+                    .ghost()
+                    .small()
+                    .flex_shrink_0()
+                    .accessibility_label(format!("TODO: {label}, {count}"))
+                    .tooltip(format!("{label} ({})", shortcut("Ctrl+Shift+T")))
+                    .child(
+                        row()
+                            .gap_1p5()
+                            .text_size(panes::dp(theme::T_UI))
+                            .child(step_glyph(
+                                current.map_or(StepStatus::Completed, |s| s.status),
+                                theme.muted_foreground,
+                            ))
+                            .child(
+                                div()
+                                    .flex_shrink_0()
+                                    .text_color(theme.muted_foreground)
+                                    .child(count),
+                            ),
+                    ),
+                Anchor::TopRight,
+                None,
+                cx,
+            )
+            .on_open_change(move |open, window, cx| {
+                let _ = owner.update(cx, |app, cx| {
+                    if *open != (app.menu == Some("todo")) {
+                        app.act(Action::TodoList, window, cx);
+                    }
+                });
+            })
+            .content(move |_, _, cx| {
+                plan_list(&steps, cx)
+                    .w(rems(22.))
+                    .max_h(rems(24.))
+                    .py(panes::dp(10.))
+            })
+            .into_any_element(),
         )
     }
 
@@ -967,54 +984,11 @@ impl Adeline {
     }
 
     fn plan_panel(&self, cx: &Context<Self>) -> AnyElement {
-        let isl = theme::islands(cx);
         let steps = self
             .current_live()
             .map(|live| live.todo.clone())
             .unwrap_or_default();
-        let done = steps
-            .iter()
-            .filter(|s| s.status == StepStatus::Completed)
-            .count();
-        let glyph = move |status| step_glyph(status, isl.fg3);
-        col()
-            .id("todo-list")
-            .test_support()
-            .role(Role::List)
-            .aria_label("Plan steps")
-            .size_full()
-            .overflow_y_scroll()
-            .px(panes::dp(16.))
-            .gap(panes::dp(2.))
-            .text_size(panes::dp(theme::T_UI))
-            .when(steps.is_empty(), |list| {
-                list.child(
-                    div()
-                        .text_color(isl.fg3)
-                        .child("The agent's plan shows here once it makes one."),
-                )
-            })
-            .when(!steps.is_empty(), |list| {
-                list.child(
-                    row()
-                        .pb(panes::dp(6.))
-                        .text_size(panes::dp(theme::T_CAPTION))
-                        .text_color(isl.fg3)
-                        .child(div().flex_1().child("Steps"))
-                        .child(format!("{done} of {}", steps.len())),
-                )
-            })
-            .children(steps.iter().map(|step| {
-                let finished = step.status == StepStatus::Completed;
-                row()
-                    .items_start()
-                    .gap(panes::dp(10.))
-                    .py(panes::dp(5.))
-                    .text_color(if finished { isl.fg2 } else { isl.fg })
-                    .child(div().pt(panes::dp(2.)).child(glyph(step.status)))
-                    .child(div().flex_1().min_w_0().child(step.text.clone()))
-            }))
-            .into_any_element()
+        plan_list(&steps, cx).size_full().into_any_element()
     }
 
     fn traffic_panel(&self, cx: &Context<Self>) -> AnyElement {
@@ -1192,4 +1166,49 @@ fn traffic_row(
                 }),
             )
         })
+}
+
+fn plan_list(steps: &[conversation::TodoStep], cx: &App) -> impl IntoElement + Styled + use<> {
+    let isl = theme::islands(cx);
+    let done = steps
+        .iter()
+        .filter(|s| s.status == StepStatus::Completed)
+        .count();
+    let glyph = move |status| step_glyph(status, isl.fg3);
+    col()
+        .id("todo-list")
+        .test_support()
+        .role(Role::List)
+        .aria_label("Plan steps")
+        .overflow_y_scroll()
+        .px(panes::dp(16.))
+        .gap(panes::dp(2.))
+        .text_size(panes::dp(theme::T_UI))
+        .when(steps.is_empty(), |list| {
+            list.child(
+                div()
+                    .text_color(isl.fg3)
+                    .child("The agent's plan shows here once it makes one."),
+            )
+        })
+        .when(!steps.is_empty(), |list| {
+            list.child(
+                row()
+                    .pb(panes::dp(6.))
+                    .text_size(panes::dp(theme::T_CAPTION))
+                    .text_color(isl.fg3)
+                    .child(div().flex_1().child("Steps"))
+                    .child(format!("{done} of {}", steps.len())),
+            )
+        })
+        .children(steps.iter().map(|step| {
+            let finished = step.status == StepStatus::Completed;
+            row()
+                .items_start()
+                .gap(panes::dp(10.))
+                .py(panes::dp(5.))
+                .text_color(if finished { isl.fg2 } else { isl.fg })
+                .child(div().pt(panes::dp(2.)).child(glyph(step.status)))
+                .child(div().flex_1().min_w_0().child(step.text.clone()))
+        }))
 }

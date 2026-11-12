@@ -55,7 +55,7 @@ impl Worker {
                 self.raw_options.clear();
                 self.modes = None;
                 self.options.clear();
-                self.handshake = None;
+                self.handshake.clear();
                 self.epoch += 1;
                 self.stderr.clear();
                 match tokio::process::ChildStdin::from_std(stdin) {
@@ -237,10 +237,8 @@ impl Worker {
         }
     }
 
-    pub(super) fn handshake_timeout(&mut self) {
-        let Some((id, request, _)) = self.handshake.take() else {
-            return;
-        };
+    pub(super) fn handshake_timeout(&mut self, id: u64, request: Request) {
+        self.handshake.clear();
         self.pending.remove(&id);
         let (message, kind) = if request == Request::Initialize {
             ("Agent did not respond to ACP initialize. Check that its configured Arguments include `acp` and that the command supports ACP.".to_owned(), FailureKind::Configuration)

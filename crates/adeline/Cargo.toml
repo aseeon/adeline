@@ -36,6 +36,7 @@ ignored = ["gpui-kit"]
 
 [dev-dependencies]
 serde_json.workspace = true
+tokio = { workspace = true, features = ["rt", "io-util"] }
 
 [build-dependencies]
 embed-resource.workspace = true

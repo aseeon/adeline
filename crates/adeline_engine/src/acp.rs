@@ -565,7 +565,7 @@ struct Worker {
     next_request: u64,
     next_permission: u64,
     pending: HashMap<u64, Request>,
-    handshake: Option<(u64, Request, Instant)>,
+    handshake: Vec<(u64, Request, Instant)>,
     permissions: HashMap<u64, PendingPermission>,
     features: Option<Features>,
     raw_options: Vec<wire::SessionConfigOption>,
@@ -611,7 +611,7 @@ impl Worker {
             next_request: 0,
             next_permission: 0,
             pending: HashMap::new(),
-            handshake: None,
+            handshake: Vec::new(),
             permissions: HashMap::new(),
             features: None,
             raw_options: Vec::new(),
@@ -762,11 +762,12 @@ impl Worker {
             self.watch = ExitWatch::Stuck;
             self.emit(EventKind::ShutdownStuck);
         }
-        if self
+        if let Some(&(id, request, _)) = self
             .handshake
-            .is_some_and(|(_, _, deadline)| Instant::now() >= deadline)
+            .iter()
+            .find(|(_, _, deadline)| Instant::now() >= *deadline)
         {
-            self.handshake_timeout();
+            self.handshake_timeout(id, request);
         }
         if self.exit == Exit::Running
             && !self.stopped_talking()
@@ -859,7 +860,8 @@ impl Worker {
             request,
             Request::Prompt | Request::Close | Request::Steer | Request::Authenticate
         ) {
-            self.handshake = Some((id, request, Instant::now() + HANDSHAKE_TIMEOUT));
+            self.handshake
+                .push((id, request, Instant::now() + HANDSHAKE_TIMEOUT));
         }
         Some(id)
     }
@@ -868,14 +870,14 @@ impl Worker {
         let Some(request) = self.pending.remove(&id) else {
             return;
         };
-        if self
-            .handshake
-            .is_some_and(|(expected, _, _)| expected == id)
-        {
-            self.handshake = None;
-        }
+        self.handshake.retain(|(timed, _, _)| *timed != id);
         match result {
             Ok(reply) => self.succeeded(id, request, reply),
+            Err(_)
+                if request == Request::Prompt
+                    && !self.active.as_ref().is_some_and(|turn| {
+                        matches!(turn.step, Step::Prompting(sent) | Step::Cancelling(sent) if sent == id)
+                    }) => {}
             Err(error) => self.failed(request, &error),
         }
     }

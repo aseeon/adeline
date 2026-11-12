@@ -903,3 +903,34 @@ fn a_broken_pipe_counts_as_the_agent_closing() {
     let other = std::io::Error::from_raw_os_error(2);
     assert!(!broken_pipe(&sdk::Error::into_internal_error(other)));
 }
+
+#[test]
+fn a_late_error_to_an_old_prompt_leaves_the_next_turn_running() {
+    let (mut worker, received, _) = worker();
+    worker.pending.insert(1, Request::Prompt);
+    worker.active = Some(Turn::new(vec![Part::Text("next".into())], 0));
+    worker.active.as_mut().unwrap().step = Step::Prompting(2);
+    worker.reply(1, Err(error(-32603, "too late")));
+    assert!(
+        worker.active.is_some(),
+        "an old turn's error ended the new turn"
+    );
+    assert!(events(&received).is_empty());
+}
+
+#[test]
+fn a_timed_request_keeps_its_deadline_when_a_later_one_is_answered() {
+    let (mut worker, received, _) = worker();
+    let logout = || Outgoing::Logout(wire::LogoutRequest::new());
+    let first = worker.request(logout(), Request::Logout).unwrap();
+    let second = worker.request(logout(), Request::Logout).unwrap();
+    worker.reply(second, Ok(Reply::Empty));
+    events(&received);
+    worker.handshake[0].2 = Instant::now();
+    worker.tick();
+    assert!(!worker.pending.contains_key(&first));
+    assert!(
+        matches!(&*events(&received), [EventKind::Error { message, .. }, ..]
+        if message.contains("did not respond to ACP Logout"))
+    );
+}

@@ -185,7 +185,7 @@ impl Worker {
         });
         self.clear_pending();
         self.cancel_permissions();
-        self.handshake = None;
+        self.handshake.clear();
         self.watch.arm();
         if invalid_initialize && self.config.harness == harness::OMP {
             self.fail(
@@ -207,7 +207,7 @@ impl Worker {
         let stderr = self.stderr.make_contiguous().join("\n");
         self.child = None;
         self.clear_pending();
-        self.handshake = None;
+        self.handshake.clear();
         self.cancel_permissions();
         self.epoch += 1;
         self.watch = ExitWatch::Idle;
