@@ -16,7 +16,7 @@ Current behavior:
 - The composer is one input with one attachment list, shared by all chats (`crates/adeline_ui/src/lib.rs`, `Adeline::composer`, `Adeline::attachments`). Neither survives a restart.
 - The Activity panel (`crates/adeline_ui/src/activity.rs`, `ActivityPanel`) lists what the open chat's agent did.
 - Adeline has no git code today.
-- Diff and code views come from Ely, which `docs/scope-ely-components.md` brings in first: `DiffViewer` in `ely-git`, and `CodeEditor` with a read-only mode in `ely-editor`.
+- Diff and code views come from GPUI Kit 0.9.1, which `docs/scope-ely-components.md` brings in first. Its `diff` module (`Diff`, `DiffState`, `DiffFile`) shows a read-only patch, unified or split (`DiffMode`), with gutter markers, line decorations, line selection and conflicts. Its `Editor` has a read-only mode (`Editor::readonly`).
 
 ## Requirements
 
@@ -49,8 +49,8 @@ Current behavior:
 
 ### Main pane
 
-- R16. A changed file shows its diff in Ely's `DiffViewer`, unified by default, with a switch to side by side. The choice is remembered.
-- R17. An unchanged file shows its content in Ely's `CodeEditor` in read-only mode, syntax highlighted.
+- R16. A changed file shows its diff in GPUI Kit's `Diff`, unified by default, with a switch to side by side. The choice is remembered.
+- R17. An unchanged file shows its content in GPUI Kit's `Editor` in read-only mode, syntax highlighted.
 - R18. A deleted file shows its old content as removed lines.
 - R19. A binary file shows "Binary file changed" with no diff.
 - R20. A diff too large to show says "Diff too large" with the file's counts.
@@ -96,7 +96,8 @@ Current behavior:
 - Comparing only what the open chat's agent changed. With one shared branch, Adeline can't tell which chat made an edit.
 - Sending each comment as its own draft right away, as Docs notes do. Comments collect as cards and go out together.
 - Comments after the typed text. The comments come first.
-- Building the diff view in Adeline. It comes from Ely's `DiffViewer`.
+- Building the diff view in Adeline. It comes from GPUI Kit's `Diff`.
+- Ely's `DiffViewer` and `CodeEditor`. GPUI Kit 0.9.1 has a diff view and a better editor, and Adeline already uses Kit.
 
 ## Domain and data
 
@@ -109,13 +110,13 @@ Current behavior:
 
 - The UI never runs git or reads files itself. The engine lists the changes, reads a file's old and new content, and watches for changes, for a client, through new protocol commands and deltas. This changes the protocol's shape, so `PROTOCOL` is bumped.
 - The engine uses the `git` command line on the project's machine.
-- Ely's `DiffViewer` and `CodeEditor` draw the main pane. `docs/scope-ely-components.md` must ship first.
+- GPUI Kit's `Diff` and `Editor` draw the main pane. They need Kit 0.9.1, so the Kit upgrade in `docs/scope-ely-components.md` must ship first.
 - `docs/architecture.md` gets a Changes mode section.
 
 ## Constraints and quality requirements
 
 - R34. Every element a test finds has an accessibility label, as the UI tests require.
-- R35. Ely views sit inside Ely's `FocusScope` and follow Adeline's theme, as `docs/scope-ely-components.md` R5 and R7 require.
+- R35. The diff and the editor follow Adeline's theme, light and dark, like the rest of the Kit views.
 
 ## Failure and edge cases
 
@@ -150,7 +151,7 @@ Current behavior:
 - AC20 (R31). An agent's edit to a file updates the tree, the diff, the counts and the summary without user action. A commit made in a terminal clears the committed changes.
 - AC21 (R32). After an edit moves or rewrites commented lines, the card and marker say the lines changed, and the sent message still quotes the original lines.
 - AC22 (R33). Each listed action works by its shortcut alone, and `docs/shortcuts.md` lists them.
-- AC23 (R34, R35). UI tests find the tree, the diff, the comment box and the cards by label. An Ely view changes colors with the theme.
+- AC23 (R34, R35). UI tests find the tree, the diff, the comment box and the cards by label. The diff and the editor change colors with the theme.
 - AC24 (R36). A non-git project and a machine without git each show their message in the main pane.
 - AC25 (R37, R38, R39). A repository with no commits shows all files as added. A conflicted file shows its markers. A submodule shows one commit line.
 - AC26 (R40, R41). Disconnecting a remote machine shows its offline state and keeps the cards. An unreadable file shows a message while the tree keeps working.
@@ -159,7 +160,7 @@ Current behavior:
 
 - The base is `HEAD` on the current branch, so the mode works on `main` with no worktrees.
 - The `git` command line, run by the engine, finds changes and old content. It follows the user's git config, adds no C library, and its absence is easy to report (R36).
-- Ely's `DiffViewer` for changed files and `CodeEditor` read-only for unchanged ones, so Adeline doesn't build its own diff view.
+- GPUI Kit's `Diff` for changed files and its `Editor` read-only for unchanged ones, so Adeline doesn't build its own diff view and adds no UI library beside Kit.
 - Comments come first and the typed text last, so the agent reads the context before the request.
 - Comments carry the lines they cover, so the agent sees what the user saw even after the file changes.
 - The Activity summary counts the whole project, since edits can't be traced to a chat.
