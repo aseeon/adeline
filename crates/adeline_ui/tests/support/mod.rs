@@ -12,9 +12,9 @@
 use adeline_ui::control;
 use gpui_kit::base::test_support::{ElementSnapshot, snapshots};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext, Bounds, ClipboardItem, Entity, KeyDownEvent, KeyUpEvent,
-    Keystroke, Modifiers, MouseButton, Pixels, Point, TestAppContext, VisualTestContext, Window,
-    WindowBounds, WindowOptions, point, px, size,
+    AnyWindowHandle, App, AppContext, Bounds, ClipboardItem, ElementId, Entity, KeyDownEvent,
+    KeyUpEvent, Keystroke, Modifiers, MouseButton, Pixels, Point, TestAppContext,
+    VisualTestContext, Window, WindowBounds, WindowOptions, point, px, size,
 };
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -245,12 +245,27 @@ impl<'a> Ui<'a> {
         loop {
             self.tick();
             let now = self.unique(label);
-            if now.bounds() == element.bounds() || Instant::now() > deadline {
+            let settled = now.bounds() == element.bounds() && !self.covered(&now);
+            if settled || Instant::now() > deadline {
                 break;
             }
             element = now;
         }
         self.click_element(&element);
+    }
+
+    // A Kit dialog stays mounted while it fades out, and its focus trap keeps a
+    // click outside it from moving focus until then.
+    fn covered(&mut self, element: &ElementSnapshot) -> bool {
+        let dialog = |path: &[ElementId]| {
+            path.iter()
+                .find(|id| matches!(id, ElementId::NamedInteger(name, _) if name == "dialog-instance"))
+                .cloned()
+        };
+        let target = dialog(element.path());
+        self.elements()
+            .iter()
+            .any(|other| dialog(other.path()).is_some_and(|open| Some(open) != target))
     }
 
     pub fn click_element(&mut self, element: &ElementSnapshot) {

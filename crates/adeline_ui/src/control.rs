@@ -112,8 +112,8 @@ pub fn click(window: &mut Window, cx: &mut App, position: Point<Pixels>) {
 
 pub fn press(window: &mut Window, cx: &mut App, keys: &str) -> Result<()> {
     for key in keys.split_whitespace() {
-        let keystroke =
-            Keystroke::parse(key).map_err(|error| anyhow::anyhow!("{key:?}: {error}"))?;
+        let keystroke = Keystroke::parse_with_os(key, cx.platform_info().os)
+            .map_err(|error| anyhow::anyhow!("{key:?}: {error}"))?;
         window.dispatch_keystroke(keystroke, cx);
     }
     Ok(())
@@ -122,7 +122,7 @@ pub fn press(window: &mut Window, cx: &mut App, keys: &str) -> Result<()> {
 pub fn type_text(window: &mut Window, cx: &mut App, text: &str) {
     for character in text.chars() {
         let text = character.to_string();
-        let Ok(mut keystroke) = Keystroke::parse(&text) else {
+        let Ok(mut keystroke) = Keystroke::parse_with_os(&text, cx.platform_info().os) else {
             continue;
         };
         keystroke.key_char = Some(text);

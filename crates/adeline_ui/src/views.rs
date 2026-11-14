@@ -435,7 +435,9 @@ impl Adeline {
         cx.notify();
     }
 
-    pub(super) fn open_modal(&self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(super) fn open_modal(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.modals_opened += 1;
+        let opened = self.modals_opened;
         let owner = cx.entity();
         let weak = owner.downgrade();
         let content = cx.new(|cx| {
@@ -447,6 +449,7 @@ impl Adeline {
             });
             ModalContent {
                 owner: weak.clone(),
+                opened,
                 _subscription: subscription,
             }
         });
@@ -610,14 +613,19 @@ impl Adeline {
     }
 }
 
+// Kit keeps a closed dialog drawn while it fades out. A newer modal may be open by
+// then, so a stale dialog draws nothing in place of the newer modal's content.
 struct ModalContent {
     owner: WeakEntity<Adeline>,
+    opened: usize,
     _subscription: Subscription,
 }
 impl Render for ModalContent {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let opened = self.opened;
         self.owner
             .update(cx, |app, cx| match app.modal {
+                _ if app.modals_opened != opened => div().into_any_element(),
                 Some("about") => col()
                     .text_sm()
                     .child(

@@ -69,7 +69,7 @@ actions!(
     ]
 );
 
-pub(crate) fn key_bindings() -> Vec<KeyBinding> {
+pub(crate) fn key_bindings(cx: &App) -> Vec<KeyBinding> {
     let mut bindings = vec![
         KeyBinding::new("pageup", ViewerPageUp, None),
         KeyBinding::new("pagedown", ViewerPageDown, None),
@@ -77,22 +77,23 @@ pub(crate) fn key_bindings() -> Vec<KeyBinding> {
     for modifier in ["ctrl", "cmd"] {
         let key = |rest: &str| format!("{modifier}-{rest}");
         for index in 0..9 {
-            bindings.push(KeyBinding::new(
+            bindings.push(key_binding(
                 &key(&(index + 1).to_string()),
                 SwitchMode { index },
                 None,
+                cx,
             ));
         }
         bindings.extend([
-            KeyBinding::new(&key("shift-v"), ToggleDocView, None),
-            KeyBinding::new(&key("s"), SaveDoc, None),
-            KeyBinding::new(&key("shift-k"), ChooseChat, None),
-            KeyBinding::new(&key("shift-n"), NoteOnSelection, None),
-            KeyBinding::new(&key("alt-n"), NewDoc, None),
+            key_binding(&key("shift-v"), ToggleDocView, None, cx),
+            key_binding(&key("s"), SaveDoc, None, cx),
+            key_binding(&key("shift-k"), ChooseChat, None, cx),
+            key_binding(&key("shift-n"), NoteOnSelection, None, cx),
+            key_binding(&key("alt-n"), NewDoc, None, cx),
         ]);
         let editor = Some("DocsEditor");
         let format = |keys: &str, format: Format| {
-            KeyBinding::new(&key(keys), ApplyFormat { format }, editor)
+            key_binding(&key(keys), ApplyFormat { format }, editor, cx)
         };
         bindings.extend([
             format("b", Format::Bold),

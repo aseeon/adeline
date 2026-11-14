@@ -491,6 +491,7 @@ pub struct Adeline {
     composer: Entity<TextareaState>,
     name_input: Entity<InputState>,
     modal: Option<&'static str>,
+    modals_opened: usize,
     menu: Option<&'static str>,
     command_popup: Option<Entity<component::command::CommandState>>,
     speed: usize,
@@ -719,6 +720,7 @@ impl Adeline {
             composer,
             name_input: cx.new(|cx| InputState::new(window, cx).placeholder("Project name")),
             modal: None,
+            modals_opened: 0,
             menu: None,
             command_popup: None,
             speed: 0,
@@ -1348,20 +1350,25 @@ fn default_tint(ix: usize) -> usize {
     [0, 2, 3][ix.min(2)]
 }
 
+fn key_binding<A: gpui_kit::Action>(
+    keys: &str,
+    action: A,
+    context: Option<&str>,
+    cx: &App,
+) -> KeyBinding {
+    let context = context.map(|context| {
+        std::rc::Rc::new(KeyBindingContextPredicate::parse(context).expect("key context"))
+    });
+    KeyBinding::load(keys, Box::new(action), context, false, None, cx).expect("built-in shortcut")
+}
+
 fn bind_keys(cx: &mut App) {
     let keys = config::current().general.keymap;
     let mut bindings = Vec::new();
     macro_rules! bind {
         ($keys:expr, $action:expr) => {
             for key in &$keys {
-                match KeyBinding::load(
-                    key,
-                    Box::new($action),
-                    None,
-                    false,
-                    None,
-                    &gpui_kit::DummyKeyboardMapper,
-                ) {
+                match KeyBinding::load(key, Box::new($action), None, false, None, cx) {
                     Ok(binding) => bindings.push(binding),
                     Err(error) => config::set_error(format!("Invalid shortcut {key}: {error}")),
                 }
@@ -1379,23 +1386,23 @@ fn bind_keys(cx: &mut App) {
     for modifier in ["ctrl", "cmd"] {
         let key = |rest: &str| format!("{modifier}-{rest}");
         bindings.extend([
-            KeyBinding::new(&key("shift-enter"), SendNow, None),
-            KeyBinding::new(&key("."), StopTurn, None),
-            KeyBinding::new(&key("shift-r"), RestartAgent, None),
-            KeyBinding::new(&key("shift-a"), AttachFile, None),
-            KeyBinding::new(&key("shift-l"), TrafficView, None),
-            KeyBinding::new(&key("shift-t"), TodoList, None),
-            KeyBinding::new(&key("shift-i"), ActivityTab, None),
-            KeyBinding::new(&key("w"), CloseProjectTab, None),
-            KeyBinding::new(&key("o"), OpenFolder, None),
-            KeyBinding::new(&key("l"), FocusMessage, None),
-            KeyBinding::new(&key("shift-d"), DismissErrors, None),
-            KeyBinding::new(&key("shift-f"), ForkChat, None),
-            KeyBinding::new(&key("shift-g"), ForkSource, None),
-            KeyBinding::new(&key("shift-c"), CopyCode, None),
-            KeyBinding::new(&key("b"), ToggleChatList, None),
-            KeyBinding::new(&key("shift-b"), ToggleSidePane, None),
-            KeyBinding::new(&key("p"), ProjectPalette, None),
+            key_binding(&key("shift-enter"), SendNow, None, cx),
+            key_binding(&key("."), StopTurn, None, cx),
+            key_binding(&key("shift-r"), RestartAgent, None, cx),
+            key_binding(&key("shift-a"), AttachFile, None, cx),
+            key_binding(&key("shift-l"), TrafficView, None, cx),
+            key_binding(&key("shift-t"), TodoList, None, cx),
+            key_binding(&key("shift-i"), ActivityTab, None, cx),
+            key_binding(&key("w"), CloseProjectTab, None, cx),
+            key_binding(&key("o"), OpenFolder, None, cx),
+            key_binding(&key("l"), FocusMessage, None, cx),
+            key_binding(&key("shift-d"), DismissErrors, None, cx),
+            key_binding(&key("shift-f"), ForkChat, None, cx),
+            key_binding(&key("shift-g"), ForkSource, None, cx),
+            key_binding(&key("shift-c"), CopyCode, None, cx),
+            key_binding(&key("b"), ToggleChatList, None, cx),
+            key_binding(&key("shift-b"), ToggleSidePane, None, cx),
+            key_binding(&key("p"), ProjectPalette, None, cx),
         ]);
     }
     bindings.extend([
@@ -1410,13 +1417,13 @@ fn bind_keys(cx: &mut App) {
         }
     };
     bindings.extend([
-        KeyBinding::new(&menu("m"), ModelMenu, None),
-        KeyBinding::new(&menu("e"), EffortMenu, None),
-        KeyBinding::new(&menu("o"), ModeMenu, None),
-        KeyBinding::new(&menu("p"), MoreMenu, None),
-        KeyBinding::new(&menu("h"), MachinesMenu, None),
-        KeyBinding::new(&menu("s"), MainMenu, None),
+        key_binding(&menu("m"), ModelMenu, None, cx),
+        key_binding(&menu("e"), EffortMenu, None, cx),
+        key_binding(&menu("o"), ModeMenu, None, cx),
+        key_binding(&menu("p"), MoreMenu, None, cx),
+        key_binding(&menu("h"), MachinesMenu, None, cx),
+        key_binding(&menu("s"), MainMenu, None, cx),
     ]);
-    bindings.extend(docs::key_bindings());
+    bindings.extend(docs::key_bindings(cx));
     cx.bind_keys(bindings);
 }
