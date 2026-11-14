@@ -7,11 +7,13 @@ use std::fmt::Write as _;
 
 impl Adeline {
     fn switch_project(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
-        let docs = self.section == Section::Docs;
+        let section = self.section;
+        let docs = matches!(section, Section::Docs | Section::Changes);
         let same = self.project == ix && self.open_projects[ix];
         let switched = self.project != ix;
         if !same {
             self.docs_leave(window, cx);
+            self.changes_leave(window, cx);
         }
         self.open_projects[ix] = true;
         if self.project != ix {
@@ -30,7 +32,11 @@ impl Adeline {
         window.set_window_title(&format!("{} · Adeline", self.workspace().config.name));
         self.record_project_opened(ix, window, cx);
         if docs && !same {
-            self.docs_enter(None, window, cx);
+            if section == Section::Changes {
+                self.changes_enter(None, None, window, cx);
+            } else {
+                self.docs_enter(None, window, cx);
+            }
         }
         if switched {
             self.open_last_active_chat(window, cx);
@@ -44,6 +50,7 @@ impl Adeline {
             }
         } else {
             self.docs_leave(window, cx);
+            self.changes_leave(window, cx);
             self.selected = None;
             self.section = Section::Chats;
             clear_input(&self.composer, window, cx);
@@ -276,6 +283,7 @@ impl Adeline {
                 self.pick_attachment(matches!(action, Action::AddDirectory), window, cx);
             }
             Action::Docs(act) => self.docs_act(act, window, cx),
+            Action::Changes(act) => self.changes_act(act, window, cx),
             Action::OpenCard { route, chat } => self.open_route(&route, Some(chat), window, cx),
             _ => unreachable!("Action::area routes only chat actions here"),
         }
@@ -334,7 +342,7 @@ impl Adeline {
             }
             Action::TrafficView => self.show_traffic(cx),
             Action::PanelTab(tab) => self.toggle_side_tab(*tab, cx),
-            Action::TodoList if self.section == Section::Docs => {
+            Action::TodoList if self.side_chat() => {
                 self.menu = (self.menu != Some("todo")).then_some("todo");
                 self.chat_header.update(cx, |_, cx| cx.notify());
             }
@@ -371,6 +379,10 @@ impl Adeline {
     fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_project_delete(cx);
         self.docs_cancel();
+        if self.changes_cancel() {
+            window.focus(&self.changes.diff.focus_handle(cx), cx);
+            return;
+        }
         if self.menu.take().is_some() {
             self.refocus_after_menu(window, cx);
         }
@@ -407,11 +419,18 @@ impl Adeline {
     fn switch_section(&mut self, section: Section, window: &mut Window, cx: &mut Context<Self>) {
         if section != Section::Docs {
             self.docs_leave(window, cx);
+        }
+        if section != Section::Changes {
+            self.changes_leave(window, cx);
+        }
+        if !matches!(section, Section::Docs | Section::Changes) {
             self.section = section;
         }
         clear_input(&self.query, window, cx);
         if section == Section::Docs {
             self.docs_enter(None, window, cx);
+        } else if section == Section::Changes {
+            self.changes_enter(None, None, window, cx);
         }
     }
 
@@ -426,7 +445,7 @@ impl Adeline {
     }
 
     fn new_chat(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.section != Section::Docs {
+        if !self.side_chat() {
             self.section = Section::Chats;
         }
         self.selected = None;
@@ -514,6 +533,7 @@ impl Adeline {
         }
         if !config::current().general.features.enabled(self.section) {
             self.docs_leave(window, cx);
+            self.changes_leave(window, cx);
             self.section = Section::Chats;
         }
         if section == Section::Docs {
@@ -615,17 +635,25 @@ impl Adeline {
     }
 
     fn send(&mut self, now: bool, window: &mut Window, cx: &mut Context<Self>) {
-        if !matches!(self.section, Section::Chats | Section::Docs) {
+        if !matches!(
+            self.section,
+            Section::Chats | Section::Docs | Section::Changes
+        ) {
             return;
         }
         if !self.demo_mode {
             self.send_real(now, window, cx);
             return;
         }
-        let prompt = self.composer.read(cx).value().trim().to_owned();
+        let sent: Vec<u64> = self.changes.comments.iter().map(|c| c.id).collect();
+        let prompt = changes::prompt(
+            &self.changes.comments,
+            self.composer.read(cx).value().trim(),
+        );
         if prompt.is_empty() {
             return;
         }
+        self.changes_sent(&sent, cx);
         let ix = if let Some(ix) = self.selected {
             ix
         } else {

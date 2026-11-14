@@ -218,27 +218,31 @@ impl Adeline {
     }
 
     fn attachment_strip(&self, cx: &Context<Self>) -> Option<Div> {
-        (!self.attachments.is_empty() || self.attachment_error.is_some()).then(|| {
-            col()
-                .w_full()
-                .gap_1()
-                .mb_2()
-                .when(!self.attachments.is_empty(), |column| {
-                    column.child(self.attachment_chips(&self.attachments, None, cx))
-                })
-                .when_some(self.attachment_error.clone(), |column, error| {
-                    column.child(
-                        div()
-                            .text_size(dp(theme::T_UI))
-                            .text_color(cx.theme().danger)
-                            .child(error),
-                    )
-                })
-        })
+        let comments = self.comment_cards(cx);
+        (!self.attachments.is_empty() || self.attachment_error.is_some() || comments.is_some())
+            .then(|| {
+                col()
+                    .w_full()
+                    .gap_1()
+                    .mb_2()
+                    .children(comments)
+                    .when(!self.attachments.is_empty(), |column| {
+                        column.child(self.attachment_chips(&self.attachments, None, cx))
+                    })
+                    .when_some(self.attachment_error.clone(), |column, error| {
+                        column.child(
+                            div()
+                                .text_size(dp(theme::T_UI))
+                                .text_color(cx.theme().danger)
+                                .child(error),
+                        )
+                    })
+            })
     }
 
     fn send_controls(&self, no_agents: bool, processing: bool, cx: &Context<Self>) -> AnyElement {
         let can_send = !self.attachments.is_empty()
+            || !self.changes.comments.is_empty()
             || self
                 .composer
                 .read(cx)

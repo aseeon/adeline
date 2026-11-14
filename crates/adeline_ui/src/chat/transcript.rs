@@ -203,7 +203,7 @@ impl Adeline {
         cx: &Context<Self>,
     ) -> Div {
         let user = message.role == MessageRole::User;
-        let panel = if self.section == Section::Docs {
+        let panel = if matches!(self.section, Section::Docs | Section::Changes) {
             panes::DOCS_CHAT
         } else {
             panes::CHATS_MAIN
@@ -732,7 +732,7 @@ impl Render for Transcript {
         let docs = self
             .owner
             .upgrade()
-            .is_some_and(|owner| owner.read(cx).section == Section::Docs);
+            .is_some_and(|owner| owner.read(cx).side_chat());
         let top = if docs { dp(PANE_HEADER) + gap } else { gap };
         let bottom = self.composer_height.get() + gap;
         if self.selected.is_none() {

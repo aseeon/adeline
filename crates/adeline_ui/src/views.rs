@@ -129,7 +129,7 @@ impl Adeline {
                 let _ = owner.update(cx, |_, cx| cx.notify());
             }
         });
-        let header = (self.section == Section::Docs).then(|| {
+        let header = self.side_chat().then(|| {
             div()
                 .absolute()
                 .top_0()

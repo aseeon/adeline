@@ -104,9 +104,10 @@ const ENGINE_STATUS: [&str; 8] = [
     "Stop engine",
     "Start engine",
 ];
-const MODES: [(Section, &str); 7] = [
+const MODES: [(Section, &str); 8] = [
     (Section::Chats, "Chats"),
     (Section::Docs, "Docs"),
+    (Section::Changes, "Changes"),
     (Section::Workflows, "Workflows"),
     (Section::Services, "Services"),
     (Section::Groupchats, "Groupchats"),

@@ -67,3 +67,8 @@
 {"type":"request","id":46,"command":{"op":"watch_docs","project_id":"p"}}
 {"type":"delta","delta":"card","id":"c","card":{"entity":"adeline://docs/notes/plan.md","title":"plan.md","subtitle":"notes/plan.md","turn":0,"edited":1,"gone":false}}
 {"type":"delta","delta":"docs","project_id":"p","changes":[{"path":"a.md","modified":1}],"relist":false}
+{"type":"request","id":47,"command":{"op":"list_files","project_id":"p"}}
+{"type":"request","id":48,"command":{"op":"list_changes","project_id":"p"}}
+{"type":"request","id":49,"command":{"op":"read_change","project_id":"p","path":"src/a.rs"}}
+{"type":"request","id":50,"command":{"op":"watch_changes","project_id":"p"}}
+{"type":"delta","delta":"changes","project_id":"p","changes":{"repo":"git","changes":[{"path":"src/b.rs","old_path":"src/a.rs","status":"renamed","added":2,"removed":1}]},"files":["src/b.rs"]}

@@ -10,7 +10,7 @@ mod text;
 mod tree;
 
 pub use files::{
-    check_name, file_name, has_doc_extension, is_doc, is_markdown, join, list, parent,
+    check_name, file_name, has_doc_extension, is_doc, is_markdown, join, list, list_files, parent,
     project_path, resolve,
 };
 pub use format::{Edit, Format, apply};

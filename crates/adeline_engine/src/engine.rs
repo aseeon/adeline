@@ -28,6 +28,7 @@ use std::{
 };
 use tokio::{sync::mpsc, task::block_in_place};
 
+mod changes;
 mod cli;
 mod conversations;
 mod docs;
@@ -124,6 +125,11 @@ enum Input {
     },
     Watch(Vec<PathBuf>),
     Docs(Vec<PathBuf>),
+    Changes {
+        project_id: String,
+        generation: u64,
+        found: Result<(protocol::Changes, Vec<String>), String>,
+    },
     ProjectsLoaded {
         store: ProjectStore,
         started: Instant,
@@ -204,6 +210,9 @@ struct Engine {
     docs_watcher: Option<notify::RecommendedWatcher>,
     doc_events: Vec<PathBuf>,
     docs_due: Option<Instant>,
+    changes_watching: HashMap<u64, String>,
+    changes_generation: HashMap<String, u64>,
+    changes_last: HashMap<String, (protocol::Changes, Vec<String>)>,
     status: Status,
     exit: bool,
     identity: String,
@@ -404,6 +413,9 @@ impl Engine {
             docs_watcher: None,
             doc_events: Vec::new(),
             docs_due: None,
+            changes_watching: HashMap::new(),
+            changes_generation: HashMap::new(),
+            changes_last: HashMap::new(),
             status: Status::default(),
             exit: false,
             identity: ipc::engine_id().unwrap_or_else(|error| {
@@ -623,7 +635,8 @@ impl Engine {
                 self.probes.retain(|(owner, _), _| *owner != client);
                 self.logins.retain(|(owner, _), _| *owner != client);
                 self.watching.remove(&client);
-                if self.docs_watching.remove(&client).is_some() {
+                let docs = self.docs_watching.remove(&client).is_some();
+                if self.changes_watching.remove(&client).is_some() || docs {
                     self.watch_docs();
                 }
                 if self.clients.remove(&client).is_some_and(|c| c.subscribed) {
@@ -641,6 +654,11 @@ impl Engine {
                 self.watch_due = Some(Instant::now() + WATCH_SETTLE);
             }
             Input::Docs(paths) => self.doc_events(paths),
+            Input::Changes {
+                project_id,
+                generation,
+                found,
+            } => self.changes_found(project_id, generation, found),
             Input::ProjectsLoaded { store, started } => self.reconcile(store, started),
             Input::Harnesses(catalog) => {
                 self.harnesses = catalog;
@@ -823,6 +841,12 @@ impl Engine {
             | Command::DeleteDoc { .. }
             | Command::ReadImage { .. }
             | Command::WatchDocs { .. }) => self.docs_command(client, command),
+            command @ (Command::ListFiles { .. }
+            | Command::ListChanges { .. }
+            | Command::ReadChange { .. }
+            | Command::WatchChanges { .. }) => {
+                return self.changes_command(client, request, command);
+            }
             Command::StopAll => {
                 self.begin_stop_all(Some((client, request)), false);
                 return None;

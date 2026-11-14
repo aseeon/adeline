@@ -11,6 +11,7 @@ use std::{
 pub enum Section {
     Chats,
     Docs,
+    Changes,
     Workflows,
     Services,
     Groupchats,
@@ -39,6 +40,7 @@ pub struct General {
 #[serde(default)]
 pub struct Features {
     pub docs: bool,
+    pub changes: bool,
     pub workflows: bool,
     pub services: bool,
     pub groupchats: bool,
@@ -49,6 +51,7 @@ impl Default for Features {
     fn default() -> Self {
         Self {
             docs: true,
+            changes: true,
             workflows: false,
             services: false,
             groupchats: true,
@@ -62,6 +65,7 @@ impl Features {
         match section {
             Section::Chats => true,
             Section::Docs => self.docs,
+            Section::Changes => self.changes,
             Section::Workflows => self.workflows,
             Section::Services => self.services,
             Section::Groupchats => self.groupchats,
@@ -78,6 +82,7 @@ impl Features {
             | Section::Browser
             | Section::Usage => return,
             Section::Docs => &mut self.docs,
+            Section::Changes => &mut self.changes,
             Section::Workflows => &mut self.workflows,
             Section::Services => &mut self.services,
             Section::Groupchats => &mut self.groupchats,
@@ -139,6 +144,7 @@ impl Default for Keymap {
 pub struct Modes {
     pub chats: Chats,
     pub docs: Docs,
+    pub changes: ChangesMode,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -226,6 +232,22 @@ impl Default for Docs {
             show_left_panel: true,
             show_conversation_panel: true,
             open_in: DocView::Viewer,
+        }
+    }
+}
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(default)]
+pub struct ChangesMode {
+    pub show_left_panel: bool,
+    pub show_conversation_panel: bool,
+    pub side_by_side: bool,
+}
+impl Default for ChangesMode {
+    fn default() -> Self {
+        Self {
+            show_left_panel: true,
+            show_conversation_panel: true,
+            side_by_side: false,
         }
     }
 }

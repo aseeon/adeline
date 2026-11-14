@@ -845,3 +845,67 @@ fn watching_clients_see_disk_changes_and_doc_commands_never_overwrite() {
     });
     assert_eq!(change["project_id"], PROJECT);
 }
+
+fn git(work: &std::path::Path, args: &[&str]) {
+    let status = Process::new("git")
+        .args(args)
+        .current_dir(work)
+        .stdout(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success(), "git {args:?}");
+}
+
+#[test]
+fn watched_changes_follow_an_edit_and_clear_on_a_commit_made_elsewhere() {
+    let mut home = Home::new("changes-watch");
+    let work = home.root.join("work");
+    for args in [
+        &["init", "-q"][..],
+        &["config", "user.email", "test@example.com"],
+        &["config", "user.name", "Test"],
+        &["config", "core.autocrlf", "false"],
+    ] {
+        git(&work, args);
+    }
+    fs::write(work.join("a.txt"), "one\n").unwrap();
+    git(&work, &["add", "."]);
+    git(&work, &["commit", "-qm", "first"]);
+    let mut client = home.connect();
+    let project = || PROJECT.to_owned();
+    client
+        .call(Command::WatchChanges {
+            project_id: Some(project()),
+        })
+        .unwrap();
+    let listed = client
+        .call(Command::ListChanges {
+            project_id: project(),
+        })
+        .unwrap();
+    assert_eq!(listed, json!({"repo": "git", "changes": []}));
+
+    fs::write(work.join("a.txt"), "one\ntwo\n").unwrap();
+    let changed = client.wait_delta(|delta| {
+        delta["delta"] == "changes" && delta["changes"]["changes"][0]["path"] == "a.txt"
+    });
+    assert_eq!(changed["changes"]["changes"][0]["added"], 1);
+    let file = client
+        .call(Command::ReadChange {
+            project_id: project(),
+            path: "a.txt".into(),
+        })
+        .unwrap();
+    assert!(
+        file["patch"].as_str().is_some_and(|p| p.contains("+two")),
+        "{file}"
+    );
+
+    git(&work, &["commit", "-qam", "second"]);
+    client.wait_delta(|delta| {
+        delta["delta"] == "changes"
+            && delta["changes"]["changes"]
+                .as_array()
+                .is_some_and(Vec::is_empty)
+    });
+}

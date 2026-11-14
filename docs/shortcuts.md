@@ -10,7 +10,7 @@ Set in `general.keymap` in `settings.yml` (defaults in `Keymap::default`, `crate
 |---|---|---|
 | Ctrl+, / Cmd+, | Open Settings | `open_settings` |
 | Ctrl+N / Cmd+N | New chat | `new_chat` |
-| Ctrl+F / Cmd+F | Search chats (Chats mode with a project open), search docs (Docs mode, outside the Editor), otherwise open the projects menu | `focus_search` |
+| Ctrl+F / Cmd+F | Search chats (Chats mode with a project open), search docs (Docs mode, outside the Editor), search files (Changes mode), otherwise open the projects menu | `focus_search` |
 | Ctrl+Enter / Cmd+Enter | Send message | `send_message` |
 | Escape | Close the open dialog, popup or menu; in Settings and the agent form, leave (asks about unsaved changes) | `close_dialog_or_popup` |
 | Tab | Move focus to the next control | `next_control` |
@@ -59,7 +59,7 @@ Registered with both the Ctrl and the Cmd form on every OS, not in the keymap se
 
 | Shortcut | Action |
 |---|---|
-| Ctrl+P / Cmd+P | Open the projects menu (in Docs mode, search docs) |
+| Ctrl+P / Cmd+P | Open the projects menu (in Docs mode, search docs; in Changes mode, search files) |
 | Ctrl+Tab / Ctrl+Shift+Tab | Switch to the next / previous open project, wrapping at the ends |
 | Ctrl+W / Cmd+W | Close the project |
 | Ctrl+O / Cmd+O | Open a folder as a project (asks for the machine when several are checked) |
@@ -75,8 +75,8 @@ Registered with both the Ctrl and the Cmd form on every OS, not in the keymap se
 | Shortcut | Action |
 |---|---|
 | Ctrl+1 … Ctrl+9 / Cmd+1 … Cmd+9 | Switch to the mode at that position on the mode rail (enabled modes only) |
-| Ctrl+B / Cmd+B | Show or hide the chat list (in Docs mode, the tree). In the Editor it stays Bold |
-| Ctrl+Shift+B / Cmd+Shift+B | Show or hide the side panel (in Docs mode, the conversation panel) |
+| Ctrl+B / Cmd+B | Show or hide the chat list (in Docs and Changes mode, the tree). In the Editor it stays Bold |
+| Ctrl+Shift+B / Cmd+Shift+B | Show or hide the side panel (in Docs and Changes mode, the conversation panel) |
 
 ## Docs
 
@@ -122,6 +122,27 @@ In the Editor (the toolbar's tools):
 | Ctrl+Z / Cmd+Z, Ctrl+Y / Cmd+Shift+Z | Undo, redo (from GPUI Kit) |
 | Ctrl+F / Cmd+F | Find in the doc (from GPUI Kit) |
 | Ctrl+H / Cmd+H | Find and replace (from GPUI Kit) |
+
+## Changes
+
+Registered with both the Ctrl and the Cmd form on every OS (`changes::key_bindings`, `crates/adeline_ui/src/changes.rs`), not in the keymap setting. They work while Changes mode shows. Ctrl+1 … Ctrl+9 reaches the mode by its place on the rail (Ctrl+3 with the default modes).
+
+| Shortcut | Action |
+|---|---|
+| F8 / Shift+F8 | Open the next / previous changed file, in tree order, and focus its diff |
+| F7 / Shift+F7 | Move to the next / previous hunk |
+| Ctrl+F or Ctrl+P / Cmd+F or Cmd+P | Search files (focus the tree's search field) |
+| Ctrl+Alt+C / Cmd+Alt+C | Show only changed files, or every file |
+| Ctrl+Shift+V / Cmd+Shift+V | Switch the diff between unified and side by side |
+| Ctrl+Shift+N / Cmd+Shift+N | Comment on the selected lines |
+| Ctrl+Alt+M / Cmd+Alt+M | Comment on the selected file |
+| Ctrl+Shift+K / Cmd+Shift+K | Choose the conversation on the right |
+
+With the diff focused (from GPUI Kit): Shift+Down / Shift+Up select lines, starting at the first line, Up / Down / Page Up / Page Down / Home / End scroll, and Ctrl+C / Cmd+C copies the selection. In the comment box, Enter saves, Shift+Enter starts a new line and Escape closes it.
+
+In the tree search field, Down moves into the tree. With the tree focused, no modifier: Up / Down, Home / End move, Right / Left expand or collapse a folder, and Enter or Space opens a file or toggles a folder. Double-clicking a file, or its right-click "Comment on file", also starts a whole-file comment.
+
+Comment cards in the message box and the Changes summary in the Activity panel are buttons: Tab reaches them, and Enter opens the comment, its remove button, or Changes mode.
 
 In the Viewer, Tab moves to a task's checkbox, and Space or Enter ticks or clears it.
 

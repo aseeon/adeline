@@ -4,7 +4,7 @@ Status: Confirmed
 
 ## Purpose and context
 
-Changes mode (`docs/scope-changes-mode.md`) needs a diff viewer and a read-only code viewer. Ely's `ely-git` crate has `DiffViewer`, and `ely-editor` has `CodeEditor` with a read-only mode. Ely runs beside GPUI Kit in one window only when both build on the same `gpui-pre`, and Adeline's GPUI is older than Ely's. This scope moves Adeline to Ely's GPUI and starts Ely's components next to Kit's, with no change a user can see. Changes mode then uses them.
+Changes mode (`docs/archive/scope-changes-mode.md`) needs a diff viewer and a read-only code viewer. Ely's `ely-git` crate has `DiffViewer`, and `ely-editor` has `CodeEditor` with a read-only mode. Ely runs beside GPUI Kit in one window only when both build on the same `gpui-pre`, and Adeline's GPUI is older than Ely's. This scope moves Adeline to Ely's GPUI and starts Ely's components next to Kit's, with no change a user can see. Changes mode then uses them.
 
 Current behavior:
 

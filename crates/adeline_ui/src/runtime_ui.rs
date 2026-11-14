@@ -141,7 +141,9 @@ impl Adeline {
         if !self.has_open_project() {
             return;
         }
-        let prompt = self.composer.read(cx).value().trim().to_owned();
+        let typed = self.composer.read(cx).value().trim().to_owned();
+        let comments: Vec<u64> = self.changes.comments.iter().map(|c| c.id).collect();
+        let prompt = changes::prompt(&self.changes.comments, &typed);
         let attachments = self.attachments.clone();
         if prompt.is_empty() && attachments.is_empty() {
             if now
@@ -179,7 +181,7 @@ impl Adeline {
             project_id,
             conversation_id,
             agent_id,
-            prompt: prompt.clone(),
+            prompt,
             attachments,
             now,
         };
@@ -192,9 +194,10 @@ impl Adeline {
                         .iter()
                         .position(|thread| Some(thread.id.as_str()) == id.as_str());
                 }
-                if app.composer.read(cx).value().trim() == prompt {
+                if app.composer.read(cx).value().trim() == typed {
                     clear_input(&app.composer, window, cx);
                 }
+                app.changes_sent(&comments, cx);
                 app.attachments.retain(|file| !sent.contains(file));
                 app.attachment_error = None;
                 app.refresh_runtime_views(cx);
@@ -848,6 +851,14 @@ impl Adeline {
                 relist,
             } => {
                 self.docs_changed(machine, &project_id, changes, relist, cx);
+                return;
+            }
+            Delta::Changes {
+                project_id,
+                changes,
+                files,
+            } => {
+                self.changes_delta(machine, &project_id, changes, files, cx);
                 return;
             }
             Delta::Notice { message } => {

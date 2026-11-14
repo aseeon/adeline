@@ -31,7 +31,7 @@ pub(super) fn json(value: impl serde::Serialize) -> Result<Value, String> {
     serde_json::to_value(value).map_err(|e| e.to_string())
 }
 
-fn io_error(path: &str, error: &std::io::Error) -> String {
+pub(super) fn io_error(path: &str, error: &std::io::Error) -> String {
     if error.kind() == std::io::ErrorKind::NotFound {
         format!("{path} no longer exists.")
     } else {
@@ -131,7 +131,7 @@ fn image(root: &Path, path: &str) -> Result<String, String> {
 }
 
 impl Engine {
-    fn project_root(&self, project_id: &str) -> Result<PathBuf, String> {
+    pub(super) fn project_root(&self, project_id: &str) -> Result<PathBuf, String> {
         self.projects
             .iter()
             .find(|project| project.config.id == project_id)
@@ -203,6 +203,7 @@ impl Engine {
         let wanted: HashSet<PathBuf> = self
             .docs_watching
             .values()
+            .chain(self.changes_watching.values())
             .filter_map(|id| self.project_root(id).ok())
             .collect();
         if wanted.is_empty() {
@@ -253,6 +254,7 @@ impl Engine {
 
     pub(super) fn docs_settled(&mut self) {
         let paths = std::mem::take(&mut self.doc_events);
+        self.changes_settled(&paths);
         let respect = self.settings.docs.respect_gitignore;
         let watched: HashSet<String> = self.docs_watching.values().cloned().collect();
         for project_id in watched {

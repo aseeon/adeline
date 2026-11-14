@@ -19,11 +19,18 @@
 //! without a path), `WatchTraffic` the traffic recorded so far, `ListDocs` the
 //! project's doc paths, `ReadDoc` a `DocFile`, `WriteDoc` the saved file's
 //! modification time and `ReadImage` the image's bytes in base64.
+//! `ListFiles` gives every project file's path, `ListChanges` a `Changes`
+//! and `ReadChange` a `ChangeFile`.
 //!
 //! Doc paths are relative to the project root with `/` separators. While a
 //! client watches a project's docs (`WatchDocs`), `Delta::Docs` reports docs
 //! created, changed or removed on disk; `relist` means a folder changed, so
 //! the client lists the docs again.
+//!
+//! Changes compare the working tree with `HEAD`. While a client watches a
+//! project's changes (`WatchChanges`), `Delta::Changes` sends them again after
+//! they change on disk or in git, with `files` when the project's file list
+//! changed too.
 //! `DeleteProject`, `StopAll`, `Shutdown` and `Login` reply once done, and
 //! `Install` streams `Output` lines first.
 use crate::{
@@ -43,7 +50,7 @@ use std::{
     path::PathBuf,
 };
 
-pub const PROTOCOL: u32 = 7;
+pub const PROTOCOL: u32 = 8;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probed {
@@ -261,6 +268,19 @@ pub enum Command {
     WatchDocs {
         project_id: Option<String>,
     },
+    ListFiles {
+        project_id: String,
+    },
+    ListChanges {
+        project_id: String,
+    },
+    ReadChange {
+        project_id: String,
+        path: String,
+    },
+    WatchChanges {
+        project_id: Option<String>,
+    },
     Status,
     StopAll,
     Shutdown,
@@ -303,6 +323,48 @@ pub struct DocFile {
 pub struct DocChange {
     pub path: String,
     pub modified: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Changes {
+    pub repo: Repo,
+    pub changes: Vec<Change>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Repo {
+    #[default]
+    Git,
+    NotGit,
+    NoGit,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Change {
+    pub path: String,
+    pub old_path: Option<String>,
+    pub status: ChangeStatus,
+    pub added: usize,
+    pub removed: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChangeStatus {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Untracked,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ChangeFile {
+    pub patch: Option<String>,
+    pub text: Option<String>,
+    pub binary: bool,
+    pub too_large: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -496,6 +558,11 @@ pub enum Delta {
         project_id: String,
         changes: Vec<DocChange>,
         relist: bool,
+    },
+    Changes {
+        project_id: String,
+        changes: Changes,
+        files: Option<Vec<String>>,
     },
     OpenUrl {
         url: String,

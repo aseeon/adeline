@@ -736,3 +736,76 @@ fn edit_an_agent_opens_the_open_chats_agent(cx: &mut TestAppContext) {
     ui.press("ctrl-n");
     assert_eq!(edit_agent(&mut ui).as_deref(), Some("Claude Code"));
 }
+
+#[gpui_kit::test]
+fn changes_comments_collect_as_cards_and_go_out_before_the_text(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.press("ctrl-shift-i");
+    ui.activate("Changes +34 −6");
+    ui.named("Files tree");
+    ui.named("docs/old-notes.md, diff");
+    ui.named("old-notes.md, deleted, +0 −3");
+    ui.press("f8 f8");
+    ui.named("src/app.rs, diff");
+    ui.press("shift-down shift-down shift-down ctrl-shift-n");
+    ui.named("Comment box");
+    ui.input("this retries forever, cap it at 3");
+    ui.press("enter");
+    ui.gone("Comment box");
+    ui.named("Comment on src/app.rs, lines 1–3: this retries forever, cap it at 3");
+    ui.named("Comment: this retries forever, cap it at 3");
+    ui.press("f8 f8");
+    ui.named("README.md, diff");
+    ui.press("ctrl-alt-m");
+    ui.input("mention the cache here");
+    ui.press("enter");
+    ui.named("Comment on README.md: mention the cache here");
+    ui.activate("Comment on src/app.rs, lines 1–3: this retries forever, cap it at 3");
+    ui.named("Comment box");
+    ui.named("src/app.rs, diff");
+    ui.press("escape");
+    ui.gone("Comment box");
+
+    ui.press("ctrl-shift-k");
+    ui.named("Search conversations");
+    ui.input("Keep search text");
+    ui.press("enter");
+    ui.named("Comment on README.md: mention the cache here");
+    ui.press("ctrl-l");
+    ui.input("Fix these two");
+    ui.press("enter");
+    let sent = ui
+        .read(|app, _| app.last_prompt().map(str::to_owned))
+        .unwrap_or_default();
+    assert!(
+        sent.starts_with("`src/app.rs`, lines 1–3:\n```diff\n use crate::cache::Cache;\n"),
+        "{sent:?}"
+    );
+    assert!(
+        sent.ends_with("this retries forever, cap it at 3\n\n`README.md`:\nmention the cache here\n\nFix these two"),
+        "{sent:?}"
+    );
+    ui.gone("Comment on README.md: mention the cache here");
+    ui.gone("Comment: this retries forever, cap it at 3");
+    no_engine();
+}
+
+#[gpui_kit::test]
+fn changes_tree_shows_every_file_and_filters_to_changed_ones(cx: &mut TestAppContext) {
+    let mut ui = Ui::demo(cx, false);
+    ui.press("ctrl-3");
+    ui.named("Files tree");
+    ui.named("README.md, modified, +2 −0");
+    ui.named("config");
+    ui.press("ctrl-alt-c");
+    ui.gone("config");
+    ui.named("cache.rs, untracked, +16 −0");
+    ui.named("client.rs, renamed, +1 −1, from src/client.rs");
+    ui.press("ctrl-alt-c ctrl-f");
+    ui.input("standup");
+    ui.press("down down enter");
+    ui.named("notes/standup.txt, diff");
+    ui.press("ctrl-shift-v");
+    ui.named("notes/standup.txt, diff");
+    no_engine();
+}

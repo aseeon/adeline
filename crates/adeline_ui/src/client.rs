@@ -747,6 +747,7 @@ fn snapshot_arrived(machine: &str, snapshot: Snapshot, cx: &mut App) {
     update_owner(cx, move |app, cx| {
         app.apply_snapshot(&target, snapshot, cx);
         app.docs_connected(&target, cx);
+        app.changes_connected(&target);
     });
     cx.refresh_windows();
 }
@@ -757,6 +758,7 @@ fn resumed(machine: &str, cx: &mut App) {
     update_owner(cx, move |app, cx| {
         app.refresh_runtime_views(cx);
         app.docs_connected(&target, cx);
+        app.changes_connected(&target);
     });
     cx.refresh_windows();
 }

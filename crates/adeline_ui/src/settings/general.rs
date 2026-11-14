@@ -35,7 +35,7 @@ impl SettingsWindow {
         for (section, name) in MODES
             .into_iter()
             .skip(1)
-            .filter(|(section, _)| self.demo || *section == Section::Docs)
+            .filter(|(section, _)| self.demo || matches!(section, Section::Docs | Section::Changes))
         {
             if matches_query(
                 query,

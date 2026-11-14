@@ -1,4 +1,4 @@
-Status: Confirmed
+Status: Implemented in v0.4.0. This scope is history. Where it and the code differ, the code is right.
 
 # Changes mode
 

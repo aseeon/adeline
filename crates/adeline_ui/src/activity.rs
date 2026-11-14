@@ -261,7 +261,8 @@ impl Adeline {
             .aria_label("Agent activity panel")
             .relative()
             .size_full()
-            .text_color(theme::islands(cx).fg2);
+            .text_color(theme::islands(cx).fg2)
+            .children(self.changes_summary(cx));
         let Some(thread) = self.selected.map(|ix| &self.workspace().threads[ix]) else {
             return panel.child(
                 div()

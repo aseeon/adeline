@@ -36,6 +36,7 @@ See `PHOSPHOR-LICENSE.txt` for the original MIT license.
 | `floppy-disk.svg` | `floppy-disk.svg` |
 | `folder.svg` | `folder.svg` |
 | `fork.svg` | `arrows-split.svg`, turned 90° counter-clockwise |
+| `git-diff.svg` | `git-diff.svg` |
 | `info.svg` | `info.svg` |
 | `lightbulb.svg` | `lightbulb.svg` |
 | `link.svg` | `link.svg` |

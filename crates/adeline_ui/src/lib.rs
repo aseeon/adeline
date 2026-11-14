@@ -9,6 +9,7 @@
 //! assistive technology is connected nothing is cached.
 mod activity;
 mod agent_form;
+mod changes;
 mod chat;
 mod client;
 #[cfg(feature = "control")]
@@ -209,6 +210,7 @@ enum Action {
     AddDirectory,
     Tint(usize),
     Docs(docs::Act),
+    Changes(changes::Act),
     OpenCard {
         route: adeline_core::card::EntityRef,
         chat: String,
@@ -323,6 +325,7 @@ impl Action {
             | Self::AttachFile
             | Self::AddDirectory
             | Self::Docs(..)
+            | Self::Changes(..)
             | Self::OpenCard { .. } => Area::Chat,
         }
     }
@@ -409,6 +412,7 @@ impl Action {
                         | docs::Act::ChatPanel
                         | docs::Act::OpenIn
                 )
+                | Self::Changes(changes::Act::LeftPanel | changes::Act::ChatPanel)
         )
     }
 }
@@ -520,6 +524,7 @@ pub struct Adeline {
     side_panel: Entity<conversation_ui::SidePanel>,
     chat_header: Entity<views::ChatHeader>,
     docs: docs::Docs,
+    changes: changes::Changes,
 }
 impl std::fmt::Debug for Adeline {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -562,6 +567,7 @@ impl Adeline {
         project_search: &Entity<InputState>,
         composer: &Entity<TextareaState>,
         docs: &docs::Docs,
+        changes: &changes::Changes,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Vec<Subscription> {
@@ -623,6 +629,28 @@ impl Adeline {
                 }
             }),
         );
+        subscriptions.push(
+            cx.subscribe(&changes.search, |app, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    app.changes_refresh_rows(cx);
+                }
+            }),
+        );
+        subscriptions.push(cx.subscribe_in(
+            &changes.comment,
+            window,
+            |app, _, event: &InputEvent, window, cx| {
+                if matches!(
+                    event,
+                    InputEvent::PressEnter {
+                        secondary: false,
+                        shift: false
+                    }
+                ) {
+                    app.act(Action::Changes(changes::Act::SaveComment), window, cx);
+                }
+            },
+        ));
         subscriptions
     }
 
@@ -746,6 +774,7 @@ impl Adeline {
             side_panel: cx.new(|_| conversation_ui::SidePanel(owner.clone())),
             chat_header: cx.new(|_| views::ChatHeader(owner.clone())),
             docs: docs::Docs::new(window, cx),
+            changes: changes::Changes::new(window, cx),
         }
         .setup(local_loaded, &snapshot.errors, window, cx)
     }
@@ -765,6 +794,7 @@ impl Adeline {
             &self.project_search,
             &self.composer,
             &self.docs,
+            &self.changes,
             window,
             cx,
         );
@@ -858,6 +888,10 @@ impl Adeline {
         self.chat_header.update(cx, |_, cx| cx.notify());
     }
 
+    fn side_chat(&self) -> bool {
+        matches!(self.section, Section::Docs | Section::Changes)
+    }
+
     fn has_open_project(&self) -> bool {
         self.open_projects
             .get(self.project)
@@ -868,6 +902,14 @@ impl Adeline {
         self.selected
             .and_then(|i| self.workspace().threads.get(i))
             .map(|thread| thread.title.as_str())
+    }
+    pub fn last_prompt(&self) -> Option<&str> {
+        let thread = self.workspace().threads.get(self.selected?)?;
+        thread
+            .messages
+            .iter()
+            .rfind(|message| message.role == conversation::MessageRole::User)
+            .map(|message| message.text.as_str())
     }
     pub fn chat_option(&self, category: conversation::Category) -> Option<String> {
         let live = self.runtime.conversations.get(&self.current_id()?)?;
@@ -1022,7 +1064,9 @@ impl Adeline {
     }
 
     fn on_search(&mut self, _: &Search, window: &mut Window, cx: &mut Context<Self>) {
-        if self.has_open_project() && self.section == Section::Docs {
+        if self.has_open_project() && self.section == Section::Changes {
+            window.focus(&self.changes.search.focus_handle(cx), cx);
+        } else if self.has_open_project() && self.section == Section::Docs {
             window.focus(&self.docs.search.focus_handle(cx), cx);
         } else if self.has_open_project() && self.section == Section::Chats {
             self.focus_chat_search(window, cx);
@@ -1088,6 +1132,8 @@ impl Adeline {
     ) {
         let action = if self.section == Section::Docs {
             Action::Docs(docs::Act::LeftPanel)
+        } else if self.section == Section::Changes {
+            Action::Changes(changes::Act::LeftPanel)
         } else {
             Action::ToggleLeftPanel
         };
@@ -1102,6 +1148,8 @@ impl Adeline {
     ) {
         let action = if self.section == Section::Docs {
             Action::Docs(docs::Act::ChatPanel)
+        } else if self.section == Section::Changes {
+            Action::Changes(changes::Act::ChatPanel)
         } else {
             Action::ToggleSidePanel
         };
@@ -1116,6 +1164,8 @@ impl Adeline {
     ) {
         if self.has_open_project() && self.section == Section::Docs {
             window.focus(&self.docs.search.focus_handle(cx), cx);
+        } else if self.has_open_project() && self.section == Section::Changes {
+            window.focus(&self.changes.search.focus_handle(cx), cx);
         } else {
             self.act(Action::Projects, window, cx);
         }
@@ -1134,6 +1184,7 @@ impl Adeline {
 }
 impl Render for Adeline {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.changes_follow(cx);
         let body = if let Some(screen) = self.engine_screen(cx) {
             screen
         } else if !self.has_open_project() {
@@ -1143,6 +1194,8 @@ impl Render for Adeline {
         } else if self.section == Section::Docs {
             self.docs_load_images(cx);
             self.docs_card(cx)
+        } else if self.section == Section::Changes {
+            self.changes_card(window, cx)
         } else {
             div().size_full().into_any_element()
         };
@@ -1158,6 +1211,10 @@ impl Render for Adeline {
             .when(
                 self.section == Section::Docs && self.has_open_project(),
                 |content| self.docs_actions(content, cx),
+            )
+            .when(
+                self.section == Section::Changes && self.has_open_project(),
+                |content| self.changes_actions(content, cx),
             )
             .child(self.header_region.clone())
             .children(self.engine_banner(cx))
@@ -1425,5 +1482,6 @@ fn bind_keys(cx: &mut App) {
         key_binding(&menu("s"), MainMenu, None, cx),
     ]);
     bindings.extend(docs::key_bindings(cx));
+    bindings.extend(changes::key_bindings(cx));
     cx.bind_keys(bindings);
 }

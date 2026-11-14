@@ -54,7 +54,13 @@ fn relative(root: &Path, path: &Path) -> Option<String> {
 }
 
 pub fn list(root: &Path, respect_gitignore: bool) -> Vec<String> {
-    let mut docs: Vec<String> = WalkBuilder::new(root)
+    let mut docs = list_files(root, respect_gitignore);
+    docs.retain(|path| has_doc_extension(path));
+    docs
+}
+
+pub fn list_files(root: &Path, respect_gitignore: bool) -> Vec<String> {
+    let mut files: Vec<String> = WalkBuilder::new(root)
         .standard_filters(false)
         .git_ignore(respect_gitignore)
         .git_exclude(respect_gitignore)
@@ -68,10 +74,9 @@ pub fn list(root: &Path, respect_gitignore: bool) -> Vec<String> {
         .flatten()
         .filter(|entry| entry.file_type().is_some_and(|kind| kind.is_file()))
         .filter_map(|entry| relative(root, entry.path()))
-        .filter(|path| has_doc_extension(path))
         .collect();
-    docs.sort();
-    docs
+    files.sort();
+    files
 }
 
 fn matcher(folder: &Path, file: &Path) -> Option<Gitignore> {

@@ -1621,10 +1621,14 @@ impl Adeline {
         self.menu = None;
         self.docs_select_chat(id, window, cx);
         let chat = self.current_id();
-        if let Some(project) = self.docs.projects.get_mut(&self.workspace().key()) {
-            project.chat = chat;
+        if self.section == Section::Changes {
+            self.changes_chat_picked(chat);
+        } else {
+            if let Some(project) = self.docs.projects.get_mut(&self.workspace().key()) {
+                project.chat = chat;
+            }
+            self.docs_record(cx);
         }
-        self.docs_record(cx);
         window.focus(&self.composer.focus_handle(cx), cx);
     }
 

@@ -151,10 +151,14 @@ fn pinned_toggle(
 ) -> AnyElement {
     let icon = Icon::default().path("panel-left.svg");
     let tooltip = match action {
-        Action::ToggleLeftPanel | Action::Docs(docs::Act::LeftPanel) => {
+        Action::ToggleLeftPanel
+        | Action::Docs(docs::Act::LeftPanel)
+        | Action::Changes(changes::Act::LeftPanel) => {
             format!("{label} ({})", conversation_ui::shortcut("Ctrl+B"))
         }
-        Action::ToggleSidePanel | Action::Docs(docs::Act::ChatPanel) => {
+        Action::ToggleSidePanel
+        | Action::Docs(docs::Act::ChatPanel)
+        | Action::Changes(changes::Act::ChatPanel) => {
             format!("{label} ({})", conversation_ui::shortcut("Ctrl+Shift+B"))
         }
         _ => label.to_owned(),
@@ -203,6 +207,7 @@ impl Adeline {
         match self.section {
             Section::Chats => self.left_panel_open,
             Section::Docs => config::current().modes.docs.show_left_panel,
+            Section::Changes => config::current().modes.changes.show_left_panel,
             _ => false,
         }
     }
@@ -210,6 +215,7 @@ impl Adeline {
         match self.section {
             Section::Chats => self.side_panel_open,
             Section::Docs => config::current().modes.docs.show_conversation_panel,
+            Section::Changes => config::current().modes.changes.show_conversation_panel,
             _ => false,
         }
     }
@@ -220,6 +226,9 @@ impl Adeline {
             Section::Docs => self
                 .docs_open_doc()
                 .map(|(path, _)| path.rsplit('/').next().unwrap_or(path).to_owned()),
+            Section::Changes => self
+                .changes_open_path()
+                .map(|path| path.rsplit('/').next().unwrap_or(path).to_owned()),
             _ => Some(self.selected.map_or_else(
                 || "New chat".to_owned(),
                 |ix| self.workspace().threads[ix].title.clone(),
@@ -295,7 +304,7 @@ impl Adeline {
     fn island_widths(&self, window: &Window) -> (f32, f32) {
         let chats = self.section == Section::Chats && self.has_open_project();
         let left = self.left_width();
-        let docs = self.section == Section::Docs && self.has_open_project();
+        let docs = self.side_chat() && self.has_open_project();
         let right = if chats || docs {
             RAIL + if self.side_panel_is_open() {
                 self.pane_width(window)
@@ -315,7 +324,7 @@ impl Adeline {
         cx: &mut Context<Self>,
     ) -> Div {
         let chats = self.section == Section::Chats && self.has_open_project();
-        let docs = self.section == Section::Docs && self.has_open_project();
+        let docs = self.side_chat() && self.has_open_project();
         let isl = *theme::islands(cx);
         let list_open = self.left_panel_is_open() && self.has_open_project();
         let mut left = island(cx).child(
@@ -330,7 +339,9 @@ impl Adeline {
                     .aria_label("Conversation list panel")
                     .w(dp(LIST))
                     .h_full()
-                    .child(if docs {
+                    .child(if self.section == Section::Changes {
+                        panel_area("changes-tree", self.changes_sidebar(window, cx), cx)
+                    } else if docs {
                         panel_area("docs-tree", self.docs_sidebar(window, cx), cx)
                     } else {
                         panel_area("list", self.chat_list.clone(), cx)
@@ -505,6 +516,12 @@ impl Adeline {
 
     fn docs_rail(&self, cx: &Context<Self>) -> Div {
         let open = self.side_panel_is_open();
+        let toggle = if self.section == Section::Changes {
+            Action::Changes(changes::Act::ChatPanel)
+        } else {
+            Action::Docs(docs::Act::ChatPanel)
+        };
+        let reopen = toggle.clone();
         let chat = rail_button(
             "docs-chat-tab",
             "Chat",
@@ -515,7 +532,7 @@ impl Adeline {
         )
         .on_click(cx.listener(move |app, _, window, cx| {
             if !app.side_panel_is_open() {
-                app.act(Action::Docs(docs::Act::ChatPanel), window, cx);
+                app.act(reopen.clone(), window, cx);
             }
         }));
         rail(
@@ -528,7 +545,7 @@ impl Adeline {
                 "Conversation panel",
                 open,
                 true,
-                Action::Docs(docs::Act::ChatPanel),
+                toggle,
                 cx,
             ),
             cx,
@@ -536,7 +553,16 @@ impl Adeline {
     }
 
     pub(super) fn mode_rail_toggle(&self, cx: &Context<Self>) -> AnyElement {
-        if self.section == Section::Docs {
+        if self.section == Section::Changes {
+            pinned_toggle(
+                "changes-left-panel",
+                "Files tree",
+                config::current().modes.changes.show_left_panel,
+                false,
+                Action::Changes(changes::Act::LeftPanel),
+                cx,
+            )
+        } else if self.section == Section::Docs {
             pinned_toggle(
                 "docs-left-panel",
                 "Docs tree",
