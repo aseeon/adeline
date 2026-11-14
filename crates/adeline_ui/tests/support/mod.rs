@@ -241,15 +241,18 @@ impl<'a> Ui<'a> {
 
     pub fn click(&mut self, label: &str) {
         let mut element = self.unique(label);
-        let deadline = Instant::now() + Duration::from_secs(2);
+        let start = Instant::now();
         loop {
             self.tick();
             let now = self.unique(label);
-            let settled = now.bounds() == element.bounds() && !self.covered(&now);
-            if settled || Instant::now() > deadline {
+            let moving =
+                now.bounds() != element.bounds() && start.elapsed() < Duration::from_secs(2);
+            // A fade advances per tick, and a slow runner ticks less often.
+            let covered = self.covered(&now) && start.elapsed() < Duration::from_secs(10);
+            element = now;
+            if !moving && !covered {
                 break;
             }
-            element = now;
         }
         self.click_element(&element);
     }
