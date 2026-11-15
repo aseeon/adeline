@@ -137,7 +137,7 @@ Registered with both the Ctrl and the Cmd form on every OS (`changes::key_bindin
 | F7 / Shift+F7 | Move to the next / previous hunk |
 | Ctrl+F or Ctrl+P / Cmd+F or Cmd+P | Search files (focus the tree's search field) |
 | Ctrl+Alt+C / Cmd+Alt+C | Show only changed files, or every file |
-| Ctrl+Shift+V / Cmd+Shift+V | Switch the diff between unified and side by side |
+| Ctrl+Shift+V / Cmd+Shift+V | Turn line wrapping in the diff on or off |
 | Ctrl+Shift+N / Cmd+Shift+N | Comment on the selected lines |
 | Ctrl+Alt+M / Cmd+Alt+M | Comment on the selected file |
 | Ctrl+Shift+K / Cmd+Shift+K | Choose the conversation on the right |

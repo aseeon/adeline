@@ -593,7 +593,7 @@ impl Adeline {
 
     fn changes_toolbar(&self, path: &str, change: Option<&Change>, cx: &Context<Self>) -> Div {
         let isl = theme::islands(cx);
-        let split = config::with(|s| s.modes.changes.side_by_side);
+        let wrap = config::with(|s| s.modes.changes.wrap);
         row()
             .flex_shrink_0()
             .h(panes::dp(44.))
@@ -639,14 +639,14 @@ impl Adeline {
             )
             .child(
                 self.button(
-                    "changes-side-by-side",
-                    "Side by side",
-                    Action::Changes(Act::SideBySide),
+                    "changes-wrap",
+                    "Line wrapping",
+                    Action::Changes(Act::Wrap),
                     cx,
                 )
                 .ghost()
-                .toggled(split)
-                .tooltip("Side by side (Ctrl+Shift+V)"),
+                .toggled(wrap)
+                .tooltip("Line wrapping (Ctrl+Shift+V)"),
             )
     }
 
@@ -719,6 +719,7 @@ impl Adeline {
                 Diff::new(&self.changes.diff)
                     .size_full()
                     .header_visible(false)
+                    .soft_wrap(config::with(|s| s.modes.changes.wrap))
                     .annotations(annotation)
                     .render_annotation(move |_, _, cx| {
                         comment_box(&comment, &box_owner, existing, cx)

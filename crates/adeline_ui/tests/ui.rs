@@ -805,8 +805,13 @@ fn changes_tree_shows_every_file_and_filters_to_changed_ones(cx: &mut TestAppCon
     ui.input("standup");
     ui.press("down down enter");
     ui.named("notes/standup.txt, diff");
+    let wrap = || adeline_core::config::current().modes.changes.wrap;
+    assert!(!wrap());
     ui.press("ctrl-shift-v");
+    assert!(wrap());
     ui.named("notes/standup.txt, diff");
+    ui.press("ctrl-shift-v");
+    assert!(!wrap());
     no_engine();
 }
 

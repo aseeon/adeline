@@ -12,7 +12,7 @@
 use super::*;
 use adeline_core::protocol::{Change, ChangeFile, Changes as Listed, Command, Repo};
 use adeline_docs::{Row, Tree};
-use gpui_kit::component::diff::{DiffFile, DiffLineRange, DiffMode, DiffSide, DiffState};
+use gpui_kit::component::diff::{DiffFile, DiffLineRange, DiffSide, DiffState};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -53,7 +53,7 @@ pub(crate) enum Act {
     Folder(String),
     FromSummary,
     ChangedOnly,
-    SideBySide,
+    Wrap,
     Step { file: bool, forward: bool },
     CommentSelection,
     CommentFile(Option<String>),
@@ -324,16 +324,9 @@ pub(crate) struct Changes {
 
 impl Changes {
     pub(super) fn new(window: &mut Window, cx: &mut Context<Adeline>) -> Self {
-        let side_by_side = config::with(|s| s.modes.changes.side_by_side);
         Self {
             search: cx.new(|cx| InputState::new(window, cx).placeholder("Search files")),
-            diff: cx.new(|cx| {
-                DiffState::new([], cx).with_mode(if side_by_side {
-                    DiffMode::Split
-                } else {
-                    DiffMode::Unified
-                })
-            }),
+            diff: cx.new(|cx| DiffState::new([], cx)),
             comment: cx.new(|cx| {
                 TextareaState::new(window, cx)
                     .auto_grow(2, 8)
@@ -1022,22 +1015,12 @@ impl Adeline {
                 Act::ChatPanel => {
                     changes.show_conversation_panel = !changes.show_conversation_panel;
                 }
-                Act::SideBySide => changes.side_by_side = !changes.side_by_side,
+                Act::Wrap => changes.wrap = !changes.wrap,
                 _ => {}
             }
         });
         if let Err(error) = result {
             window.push_notification(toast(format!("Could not save settings: {error:#}")), cx);
-        }
-        if matches!(act, Act::SideBySide) {
-            let mode = if config::with(|s| s.modes.changes.side_by_side) {
-                DiffMode::Split
-            } else {
-                DiffMode::Unified
-            };
-            self.changes
-                .diff
-                .update(cx, |state, cx| state.set_mode(mode, cx));
         }
         cx.refresh_windows();
     }
@@ -1107,7 +1090,7 @@ impl Adeline {
                 }
                 self.composer_region.update(cx, |_, cx| cx.notify());
             }
-            Act::SideBySide | Act::LeftPanel | Act::ChatPanel => {
+            Act::Wrap | Act::LeftPanel | Act::ChatPanel => {
                 self.changes_setting(&act, window, cx);
             }
         }
@@ -1134,7 +1117,7 @@ impl Adeline {
                 cx,
             ))
             .on_action(act_on::<docs::ToggleDocView>(
-                Action::Changes(Act::SideBySide),
+                Action::Changes(Act::Wrap),
                 cx,
             ))
             .on_action(act_on::<docs::ChooseChat>(

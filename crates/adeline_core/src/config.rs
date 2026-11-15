@@ -240,14 +240,14 @@ impl Default for Docs {
 pub struct ChangesMode {
     pub show_left_panel: bool,
     pub show_conversation_panel: bool,
-    pub side_by_side: bool,
+    pub wrap: bool,
 }
 impl Default for ChangesMode {
     fn default() -> Self {
         Self {
             show_left_panel: true,
             show_conversation_panel: true,
-            side_by_side: false,
+            wrap: false,
         }
     }
 }
