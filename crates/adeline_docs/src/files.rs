@@ -88,17 +88,18 @@ fn matcher(folder: &Path, file: &Path) -> Option<Gitignore> {
     builder.build().ok()
 }
 
-fn ignored(root: &Path, path: &str) -> bool {
-    let decide = |levels: &[Gitignore], path: &Path, is_dir: bool| {
-        for matcher in levels.iter().rev() {
-            match matcher.matched(path, is_dir) {
-                Match::Ignore(_) => return true,
-                Match::Whitelist(_) => return false,
-                Match::None => {}
-            }
+fn decide(levels: &[Gitignore], path: &Path, is_dir: bool) -> bool {
+    for matcher in levels.iter().rev() {
+        match matcher.matched(path, is_dir) {
+            Match::Ignore(_) => return true,
+            Match::Whitelist(_) => return false,
+            Match::None => {}
         }
-        false
-    };
+    }
+    false
+}
+
+fn folder_levels(root: &Path, folder: &Path) -> Option<Vec<Gitignore>> {
     let mut levels: Vec<Gitignore> = [
         root.join(".git").join("info").join("exclude"),
         root.join(".gitignore"),
@@ -106,15 +107,24 @@ fn ignored(root: &Path, path: &str) -> bool {
     .iter()
     .filter_map(|file| matcher(root, file))
     .collect();
-    let mut folder = root.to_path_buf();
-    for part in parent(path).split('/').filter(|part| !part.is_empty()) {
-        folder.push(part);
-        if decide(&levels, &folder, true) {
-            return true;
+    let mut at = root.to_path_buf();
+    for part in folder {
+        at.push(part);
+        if decide(&levels, &at, true) {
+            return None;
         }
-        levels.extend(matcher(&folder, &folder.join(".gitignore")));
+        levels.extend(matcher(&at, &at.join(".gitignore")));
     }
-    decide(&levels, &root.join(path), false)
+    Some(levels)
+}
+
+pub fn ignored_folder(root: &Path, folder: &Path) -> bool {
+    folder_levels(root, folder).is_none()
+}
+
+fn ignored(root: &Path, path: &str) -> bool {
+    folder_levels(root, Path::new(parent(path)))
+        .is_none_or(|levels| decide(&levels, &root.join(path), false))
 }
 
 pub fn is_doc(root: &Path, path: &str, respect_gitignore: bool) -> bool {

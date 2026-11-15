@@ -756,12 +756,13 @@ impl Adeline {
     }
 
     pub(crate) fn comment_cards(&self, cx: &Context<Self>) -> Option<Div> {
-        if self.changes.comments.is_empty() {
+        let pending = self.changes_pending();
+        if pending.is_empty() {
             return None;
         }
         let theme = cx.theme();
         let mut chips = row().flex_wrap().gap_1p5();
-        for comment in &self.changes.comments {
+        for comment in pending {
             let id = comment.id;
             let label = card_label(comment);
             let mut title = adeline_docs::file_name(&comment.path).to_owned();

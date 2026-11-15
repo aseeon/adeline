@@ -379,12 +379,11 @@ impl Adeline {
     fn close_overlays(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.cancel_project_delete(cx);
         self.docs_cancel();
-        if self.changes_cancel() {
-            window.focus(&self.changes.diff.focus_handle(cx), cx);
-            return;
-        }
         if self.menu.take().is_some() {
             self.refocus_after_menu(window, cx);
+        } else if self.section == Section::Changes && self.changes_cancel() {
+            window.focus(&self.changes.diff.focus_handle(cx), cx);
+            return;
         }
         self.modal = None;
         window.close_dialog(cx);
@@ -645,11 +644,9 @@ impl Adeline {
             self.send_real(now, window, cx);
             return;
         }
-        let sent: Vec<u64> = self.changes.comments.iter().map(|c| c.id).collect();
-        let prompt = changes::prompt(
-            &self.changes.comments,
-            self.composer.read(cx).value().trim(),
-        );
+        let pending = self.changes_pending();
+        let sent: Vec<u64> = pending.iter().map(|c| c.id).collect();
+        let prompt = changes::prompt(&pending, self.composer.read(cx).value().trim());
         if prompt.is_empty() {
             return;
         }

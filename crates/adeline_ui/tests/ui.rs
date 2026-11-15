@@ -809,3 +809,33 @@ fn changes_tree_shows_every_file_and_filters_to_changed_ones(cx: &mut TestAppCon
     ui.named("notes/standup.txt, diff");
     no_engine();
 }
+
+#[gpui_kit::test]
+fn a_comment_stays_with_its_project_and_its_draft_survives_escape_elsewhere(
+    cx: &mut TestAppContext,
+) {
+    let mut ui = Ui::demo(cx, false);
+    let tabs = ui.tabs();
+    let home = tabs.iter().find(|t| t.starts_with("ade-project")).unwrap();
+    let other = tabs.iter().find(|t| t.contains("· Matrix")).unwrap();
+    ui.press("ctrl-3 f8 ctrl-alt-m");
+    ui.named("Comment box");
+    ui.press("ctrl-1 escape ctrl-3");
+    ui.named("Comment box");
+    ui.press("ctrl-alt-m");
+    ui.input("say why this went away");
+    ui.press("enter");
+    let card = "Comment on docs/old-notes.md: say why this went away";
+    ui.named(card);
+
+    ui.open_tab(other);
+    ui.gone(card);
+    ui.press("ctrl-l");
+    ui.input("Unrelated");
+    ui.press("enter");
+    let sent = ui.read(|app, _| app.last_prompt().map(str::to_owned));
+    assert_eq!(sent.as_deref(), Some("Unrelated"));
+    ui.open_tab(home);
+    ui.named(card);
+    no_engine();
+}

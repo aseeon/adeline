@@ -242,7 +242,7 @@ impl Adeline {
 
     fn send_controls(&self, no_agents: bool, processing: bool, cx: &Context<Self>) -> AnyElement {
         let can_send = !self.attachments.is_empty()
-            || !self.changes.comments.is_empty()
+            || !self.changes_pending().is_empty()
             || self
                 .composer
                 .read(cx)

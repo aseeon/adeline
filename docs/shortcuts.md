@@ -123,6 +123,10 @@ In the Editor (the toolbar's tools):
 | Ctrl+F / Cmd+F | Find in the doc (from GPUI Kit) |
 | Ctrl+H / Cmd+H | Find and replace (from GPUI Kit) |
 
+In the Viewer, Tab moves to a task's checkbox, and Space or Enter ticks or clears it.
+
+Doc cards come and go with the replies, so they get no shortcut of their own. Tab moves to a card's Open button or to its "+N more docs" button, and Enter presses it.
+
 ## Changes
 
 Registered with both the Ctrl and the Cmd form on every OS (`changes::key_bindings`, `crates/adeline_ui/src/changes.rs`), not in the keymap setting. They work while Changes mode shows. Ctrl+1 … Ctrl+9 reaches the mode by its place on the rail (Ctrl+3 with the default modes).
@@ -143,10 +147,6 @@ With the diff focused (from GPUI Kit): Shift+Down / Shift+Up select lines, start
 In the tree search field, Down moves into the tree. With the tree focused, no modifier: Up / Down, Home / End move, Right / Left expand or collapse a folder, and Enter or Space opens a file or toggles a folder. Double-clicking a file, or its right-click "Comment on file", also starts a whole-file comment.
 
 Comment cards in the message box and the Changes summary in the Activity panel are buttons: Tab reaches them, and Enter opens the comment, its remove button, or Changes mode.
-
-In the Viewer, Tab moves to a task's checkbox, and Space or Enter ticks or clears it.
-
-Doc cards come and go with the replies, so they get no shortcut of their own. Tab moves to a card's Open button or to its "+N more docs" button, and Enter presses it.
 
 ## Chat list
 

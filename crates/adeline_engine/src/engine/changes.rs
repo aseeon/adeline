@@ -23,7 +23,7 @@ const BINARY_PROBE: usize = 8000;
 fn git(root: &Path, args: &[&str]) -> io::Result<Output> {
     let mut command = std::process::Command::new("git");
     command
-        .args(["-c", "core.quotepath=false"])
+        .args(["-c", "core.quotepath=false", "--literal-pathspecs"])
         .args(args)
         .current_dir(root)
         .env("GIT_OPTIONAL_LOCKS", "0")
@@ -46,6 +46,9 @@ fn run(root: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
 }
 
 fn base(root: &Path) -> Result<Option<String>, String> {
+    if !root.is_dir() {
+        return Err(format!("The folder {} no longer exists.", root.display()));
+    }
     match git(root, &["rev-parse", "--is-inside-work-tree"]) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("git: {error}")),
@@ -84,9 +87,15 @@ fn is_binary(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(BINARY_PROBE)].contains(&0)
 }
 
-fn tracked(root: &Path, base: &str) -> Result<Vec<Change>, String> {
+fn read_capped(path: &Path) -> io::Result<Option<Vec<u8>>> {
+    if std::fs::metadata(path)?.len() > LIMIT as u64 {
+        return Ok(None);
+    }
+    std::fs::read(path).map(Some)
+}
+
+fn statuses(root: &Path, base: &str) -> Result<Vec<Change>, String> {
     let statuses = fields(&run(root, &diff_args(base, &["--name-status", "-z"]))?);
-    let counts = fields(&run(root, &diff_args(base, &["--numstat", "-z"]))?);
     let mut changes = Vec::new();
     let mut at = 0;
     while at < statuses.len() {
@@ -112,6 +121,12 @@ fn tracked(root: &Path, base: &str) -> Result<Vec<Change>, String> {
             removed: 0,
         });
     }
+    Ok(changes)
+}
+
+fn tracked(root: &Path, base: &str) -> Result<Vec<Change>, String> {
+    let mut changes = statuses(root, base)?;
+    let counts = fields(&run(root, &diff_args(base, &["--numstat", "-z"]))?);
     let mut at = 0;
     while at < counts.len() {
         let mut parts = counts[at].splitn(3, '\t');
@@ -144,11 +159,11 @@ fn untracked(root: &Path) -> Result<Vec<Change>, String> {
         .into_iter()
         .filter(|path| !path.ends_with('/'))
         .map(|path| {
-            let bytes = std::fs::read(root.join(&path)).unwrap_or_default();
-            let added = if is_binary(&bytes) {
-                0
-            } else {
-                String::from_utf8_lossy(&bytes).lines().count()
+            let added = match read_capped(&root.join(&path)) {
+                Ok(Some(bytes)) if !is_binary(&bytes) => {
+                    String::from_utf8_lossy(&bytes).lines().count()
+                }
+                _ => 0,
             };
             Change {
                 path,
@@ -224,15 +239,33 @@ fn binary() -> ChangeFile {
 
 pub(super) fn read(root: &Path, path: &str) -> Result<ChangeFile, String> {
     let full = adeline_docs::resolve(root, path)?;
-    let listed = changes(root)?;
-    let change = listed.changes.iter().find(|change| change.path == path);
-    let Some(change) = change else {
-        let bytes = std::fs::read(&full).map_err(|e| super::docs::io_error(path, &e))?;
-        if bytes.len() > LIMIT {
+    let base = base(root)?.filter(|base| !base.is_empty());
+    let change = match &base {
+        Some(base) => statuses(root, base)?
+            .into_iter()
+            .find(|change| change.path == path),
+        None => None,
+    };
+    let (Some(base), Some(change)) = (&base, &change) else {
+        let Some(bytes) = read_capped(&full).map_err(|e| super::docs::io_error(path, &e))? else {
             return Ok(too_large());
-        }
+        };
         if is_binary(&bytes) {
             return Ok(binary());
+        }
+        let others = [
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            "-z",
+            "--",
+            path,
+        ];
+        if base.is_some() && !run(root, &others)?.is_empty() {
+            return Ok(ChangeFile {
+                patch: Some(added_patch(path, &String::from_utf8_lossy(&bytes))),
+                ..ChangeFile::default()
+            });
         }
         let (text, _) = adeline_docs::decode(bytes);
         return Ok(ChangeFile {
@@ -240,21 +273,7 @@ pub(super) fn read(root: &Path, path: &str) -> Result<ChangeFile, String> {
             ..ChangeFile::default()
         });
     };
-    if change.status == ChangeStatus::Untracked {
-        let bytes = std::fs::read(&full).map_err(|e| super::docs::io_error(path, &e))?;
-        if bytes.len() > LIMIT {
-            return Ok(too_large());
-        }
-        if is_binary(&bytes) {
-            return Ok(binary());
-        }
-        return Ok(ChangeFile {
-            patch: Some(added_patch(path, &String::from_utf8_lossy(&bytes))),
-            ..ChangeFile::default()
-        });
-    }
-    let base = base(root)?.unwrap_or_default();
-    let mut args = diff_args(&base, &["--unified=1000000", "--"]);
+    let mut args = diff_args(base, &["--unified=1000000", "--"]);
     args.extend(change.old_path.as_deref());
     args.push(path);
     let patch = run(root, &args)?;
@@ -329,6 +348,16 @@ impl Engine {
         None
     }
 
+    pub(super) fn changes_forget_unwatched(&mut self) {
+        let watched: std::collections::HashSet<&String> = self.changes_watching.values().collect();
+        self.changes_last.retain(|id, _| watched.contains(id));
+        for (id, generation) in &mut self.changes_generation {
+            if !watched.contains(id) {
+                *generation += 1;
+            }
+        }
+    }
+
     pub(super) fn changes_settled(&mut self, paths: &[PathBuf]) {
         let watched: std::collections::HashSet<String> =
             self.changes_watching.values().cloned().collect();
@@ -338,10 +367,22 @@ impl Engine {
                 continue;
             };
             let real = root.canonicalize().unwrap_or_else(|_| root.clone());
-            if !paths
-                .iter()
-                .any(|path| path.starts_with(&root) || path.starts_with(&real))
-            {
+            let mut folders = std::collections::HashSet::new();
+            let touched = tokio::task::block_in_place(|| {
+                paths.iter().any(|path| {
+                    let Ok(inside) = path
+                        .strip_prefix(&root)
+                        .or_else(|_| path.strip_prefix(&real))
+                    else {
+                        return false;
+                    };
+                    let folder = inside.parent().unwrap_or(Path::new(""));
+                    !respect
+                        || folders.insert(folder.to_path_buf())
+                            && !adeline_docs::ignored_folder(&root, folder)
+                })
+            });
+            if !touched {
                 continue;
             }
             let generation = self
@@ -472,7 +513,13 @@ mod tests {
     fn a_folder_outside_git_says_so_and_binary_files_have_no_patch() {
         let plain = TempDir::new("adeline-changes-plain");
         assert_eq!(changes(&plain).unwrap().repo, Repo::NotGit);
+        let gone = changes(&plain.join("gone")).unwrap_err();
+        assert!(gone.contains("no longer exists"), "{gone}");
         let root = repo("adeline-changes-binary");
+        std::fs::write(root.join("big.txt"), vec![b'a'; LIMIT + 1]).unwrap();
+        assert!(read(&root, "big.txt").unwrap().too_large);
+        assert_eq!(status(&changes(&root).unwrap(), "big.txt").1, 0);
+        std::fs::remove_file(root.join("big.txt")).unwrap();
         std::fs::write(root.join("blob.bin"), [0u8, 1, 2, 0]).unwrap();
         assert!(read(&root, "blob.bin").unwrap().binary);
         sh(&root, &["add", "."]);

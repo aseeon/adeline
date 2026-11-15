@@ -142,8 +142,9 @@ impl Adeline {
             return;
         }
         let typed = self.composer.read(cx).value().trim().to_owned();
-        let comments: Vec<u64> = self.changes.comments.iter().map(|c| c.id).collect();
-        let prompt = changes::prompt(&self.changes.comments, &typed);
+        let pending = self.changes_pending();
+        let comments: Vec<u64> = pending.iter().map(|c| c.id).collect();
+        let prompt = changes::prompt(&pending, &typed);
         let attachments = self.attachments.clone();
         if prompt.is_empty() && attachments.is_empty() {
             if now

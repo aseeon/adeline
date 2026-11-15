@@ -226,8 +226,8 @@ impl Comment {
     }
 }
 
-pub(crate) fn prompt(comments: &[Comment], typed: &str) -> String {
-    let mut parts: Vec<String> = comments.iter().map(Comment::message).collect();
+pub(crate) fn prompt(comments: &[&Comment], typed: &str) -> String {
+    let mut parts: Vec<String> = comments.iter().map(|comment| comment.message()).collect();
     if !typed.is_empty() {
         parts.push(typed.to_owned());
     }
@@ -270,6 +270,9 @@ pub(crate) struct Project {
     body: Option<(String, Body)>,
     chat: Option<String>,
     cursor: Option<String>,
+    listing: u64,
+    changed_since: bool,
+    reading: HashMap<String, u64>,
 }
 
 impl Project {
@@ -390,6 +393,15 @@ impl Adeline {
         self.changes_current()?.open.as_deref()
     }
 
+    pub(super) fn changes_pending(&self) -> Vec<&Comment> {
+        let key = self.changes_key();
+        self.changes
+            .comments
+            .iter()
+            .filter(|comment| comment.key == key)
+            .collect()
+    }
+
     fn changes_request(
         &mut self,
         machine: &str,
@@ -504,6 +516,17 @@ impl Adeline {
             self.workspace().machine.clone(),
             self.workspace().config.id.clone(),
         );
+        let project = self.changes_project();
+        project.error = None;
+        project.changed_since = false;
+        project.listing += 1;
+        let listing = project.listing;
+        let current = move |app: &Self, key: &str| {
+            app.changes
+                .projects
+                .get(key)
+                .is_some_and(|project| project.listing == listing && !project.changed_since)
+        };
         self.changes_request(
             &machine,
             &id,
@@ -514,6 +537,9 @@ impl Adeline {
             {
                 let key = key.clone();
                 move |app, result, _, cx| {
+                    if !current(app, &key) {
+                        return;
+                    }
                     if let Some(project) = app.changes.projects.get_mut(&key) {
                         match parse(result) {
                             Ok(files) => project.files = files,
@@ -532,6 +558,14 @@ impl Adeline {
             },
             cx,
             move |app, result, _, cx| {
+                if !current(app, &key) {
+                    let again = app.changes_key() == key
+                        && app.changes_current().is_some_and(|p| p.listing == listing);
+                    if again {
+                        app.changes_list(cx);
+                    }
+                    return;
+                }
                 if let Some(project) = app.changes.projects.get_mut(&key) {
                     match parse(result) {
                         Ok(listed) => {
@@ -561,6 +595,8 @@ impl Adeline {
         };
         project.listed = listed;
         project.loaded = true;
+        project.error = None;
+        project.changed_since = true;
         if let Some(files) = files {
             project.files = files;
         }
@@ -657,10 +693,13 @@ impl Adeline {
     }
 
     fn changes_load(&mut self, key: &str, path: &str, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(project) = self.changes.projects.get(key) else {
+        let Some(project) = self.changes.projects.get_mut(key) else {
             return;
         };
         let (machine, id) = (project.machine.clone(), project.id.clone());
+        let reading = project.reading.entry(path.to_owned()).or_default();
+        *reading += 1;
+        let reading = *reading;
         let (key, path) = (key.to_owned(), path.to_owned());
         self.changes_request(
             &machine,
@@ -671,6 +710,14 @@ impl Adeline {
             },
             cx,
             move |app, result, _, cx| {
+                let latest = app
+                    .changes
+                    .projects
+                    .get(&key)
+                    .and_then(|p| p.reading.get(&path));
+                if latest != Some(&reading) {
+                    return;
+                }
                 let body = match parse::<ChangeFile>(result) {
                     Ok(file) if file.too_large => Body::TooLarge,
                     Ok(file) if file.binary => Body::Binary,
@@ -1132,7 +1179,7 @@ mod tests {
         };
         assert_eq!(line.span(), "2–3");
         assert_eq!(
-            prompt(&[line, file], "Fix these two"),
+            prompt(&[&line, &file], "Fix these two"),
             "`src/app.rs`, lines 2–3:\n```diff\n-    retry();\n+    retry_forever();\n     done();\n```\ncap it at 3\n\n`README.md`:\nmention the cache\n\nFix these two"
         );
     }

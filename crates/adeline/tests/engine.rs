@@ -908,4 +908,23 @@ fn watched_changes_follow_an_edit_and_clear_on_a_commit_made_elsewhere() {
                 .as_array()
                 .is_some_and(Vec::is_empty)
     });
+
+    let edited = |delta: &Value| {
+        delta["delta"] == "changes" && delta["changes"]["changes"][0]["path"] == "a.txt"
+    };
+    client.deltas.clear();
+    fs::write(work.join("a.txt"), "one\ntwo\nthree\n").unwrap();
+    client.wait_delta(edited);
+    client
+        .call(Command::WatchChanges { project_id: None })
+        .unwrap();
+    git(&work, &["commit", "-qam", "third"]);
+    client
+        .call(Command::WatchChanges {
+            project_id: Some(project()),
+        })
+        .unwrap();
+    client.deltas.clear();
+    fs::write(work.join("a.txt"), "one\ntwo\nthree\nfour\n").unwrap();
+    client.wait_delta(edited);
 }

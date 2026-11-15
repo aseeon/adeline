@@ -200,6 +200,7 @@ impl Engine {
 
     pub(super) fn watch_docs(&mut self) {
         use notify::Watcher as _;
+        self.changes_forget_unwatched();
         let wanted: HashSet<PathBuf> = self
             .docs_watching
             .values()
