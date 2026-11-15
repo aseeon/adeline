@@ -283,6 +283,15 @@ impl Project {
             .find(|change| change.path == path)
     }
 
+    fn holds_change(&self, folder: &str) -> bool {
+        self.listed.changes.iter().any(|change| {
+            change
+                .path
+                .strip_prefix(folder)
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+    }
+
     fn changed_in_order(&self) -> Vec<String> {
         let tree = Tree::new(self.listed.changes.iter().map(|c| c.path.clone()).collect());
         let all: HashSet<String> = tree.folders().into_iter().collect();

@@ -21,12 +21,12 @@ fn status_name(status: ChangeStatus) -> &'static str {
 }
 
 fn status_color(status: ChangeStatus, cx: &App) -> Hsla {
-    let theme = cx.theme();
+    let isl = theme::islands(cx);
     match status {
-        ChangeStatus::Added | ChangeStatus::Untracked => theme.success,
-        ChangeStatus::Modified => theme.warning,
-        ChangeStatus::Deleted => theme.danger,
-        ChangeStatus::Renamed => theme.info,
+        ChangeStatus::Added | ChangeStatus::Untracked => isl.ok,
+        ChangeStatus::Modified => isl.accent,
+        ChangeStatus::Deleted => isl.err,
+        ChangeStatus::Renamed => cx.theme().info,
     }
 }
 
@@ -305,9 +305,12 @@ impl Adeline {
         } else {
             div().w(panes::dp(12.)).flex_shrink_0().into_any_element()
         };
-        let color = change.map_or(if open { isl.fg } else { isl.fg2 }, |c| {
-            status_color(c.status, cx)
-        });
+        let color = match change {
+            Some(c) => status_color(c.status, cx),
+            None if folder && project.holds_change(&path) => isl.accent,
+            None if open => isl.fg,
+            None => isl.fg2,
+        };
         let act = if folder {
             Act::Folder(path.clone())
         } else {
@@ -612,14 +615,13 @@ impl Adeline {
                     .child(path.to_owned()),
             )
             .children(change.map(|c| {
-                div()
+                row()
                     .flex_shrink_0()
-                    .text_color(status_color(c.status, cx))
-                    .child(format!(
-                        "{} {}",
-                        status_name(c.status),
-                        counts(c.added, c.removed)
-                    ))
+                    .gap(panes::dp(4.))
+                    .text_color(isl.fg)
+                    .child(status_name(c.status))
+                    .child(div().text_color(isl.ok).child(format!("+{}", c.added)))
+                    .child(div().text_color(isl.err).child(format!("−{}", c.removed)))
             }))
             .child(
                 panes::icon_button(
