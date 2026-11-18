@@ -316,6 +316,54 @@ fn an_engine_killed_mid_turn_marks_the_turn_interrupted_and_retry_finishes_it() 
 }
 
 #[test]
+fn a_retry_after_an_engine_restart_resends_a_prompt_the_agent_never_got() {
+    let mut home = Home::new("retry-undelivered");
+    let exit = home.root.join("fake-state/exit-on-start");
+    fs::create_dir_all(exit.parent().unwrap()).unwrap();
+    fs::write(&exit, "").unwrap();
+    let mut client = home.connect();
+    client
+        .call(Command::SetSettings {
+            settings: EngineSettings {
+                retry_limit: 0,
+                ..EngineSettings::default()
+            },
+        })
+        .unwrap();
+    let file = Attachment {
+        name: "note.txt".into(),
+        mime: "text/plain".into(),
+        size: 2,
+        data: adeline_core::conversation::base64(b"hi"),
+        path: None,
+    };
+    let id = client
+        .call(Command::Send {
+            project_id: PROJECT.into(),
+            conversation_id: None,
+            agent_id: Some("fake".into()),
+            prompt: "read the note".into(),
+            attachments: vec![file],
+            now: false,
+        })
+        .unwrap()
+        .as_str()
+        .unwrap()
+        .to_owned();
+    client.wait_live(&id, |live| live.error.is_some() && !live.processing);
+    home.kill_engine();
+    drop(client);
+    fs::remove_file(&exit).unwrap();
+    let mut client = home.connect();
+    client.call(Command::Retry { id: id.clone() }).unwrap();
+    let prompts = home.wait_sent(&id, "session/prompt", 1);
+    let parts = &prompts[0]["params"]["prompt"];
+    assert_eq!(parts[0]["text"], "read the note", "{parts}");
+    assert_eq!(parts[1]["name"], "note.txt", "{parts}");
+    assert_eq!(client.wait_live(&id, |live| !live.processing).error, None);
+}
+
+#[test]
 fn a_permission_answered_from_two_windows_counts_once() {
     let mut home = Home::new("permission-race");
     let mut first = home.connect();
@@ -335,6 +383,30 @@ fn a_permission_answered_from_two_windows_counts_once() {
         Err("Permission already answered".into())
     );
     assert_eq!(first.wait_live(&id, |live| !live.processing).error, None);
+}
+
+#[test]
+fn an_answer_to_a_replaced_agents_request_leaves_the_new_request_pending() {
+    let mut home = Home::new("permission-replaced");
+    let mut client = home.connect();
+    let id = client.send(None, "PERMISSION");
+    let pending = |live: &Live| !live.permission.is_empty();
+    let old = client.wait_live(&id, pending).permission[0].request_id;
+    client.call(Command::ForceStop { id: id.clone() }).unwrap();
+    client.wait_live(&id, |live| !live.processing && !live.running);
+    client.send(Some(&id), "PERMISSION");
+    let new = client.wait_live(&id, pending).permission[0].request_id;
+    let answer = |request_id| Command::AnswerPermission {
+        id: id.clone(),
+        request_id,
+        option_id: "allow".into(),
+    };
+    assert_eq!(
+        client.call(answer(old)),
+        Err("Permission already answered".into())
+    );
+    client.call(answer(new)).unwrap();
+    assert_eq!(client.wait_live(&id, |live| !live.processing).error, None);
 }
 
 #[test]
@@ -808,6 +880,7 @@ fn watching_clients_see_disk_changes_and_doc_commands_never_overwrite() {
             path: "a.md".into(),
             text: "replaced".into(),
             create: true,
+            modified: None,
         })
         .unwrap_err();
     assert!(error.contains("already exists"), "{error}");
@@ -844,6 +917,42 @@ fn watching_clients_see_disk_changes_and_doc_commands_never_overwrite() {
                 .is_some_and(|changes| changes.iter().any(|c| c["path"] == "outside-change.md"))
     });
     assert_eq!(change["project_id"], PROJECT);
+}
+
+#[test]
+fn a_save_from_a_stale_read_fails_and_keeps_the_newer_edit() {
+    let mut home = Home::new("doc-stale-save");
+    let work = home.root.join("work");
+    fs::write(work.join("a.md"), "one\n").unwrap();
+    let mut first = home.connect();
+    let mut second = home.connect();
+    let read = |client: &mut Client| {
+        client
+            .call(Command::ReadDoc {
+                project_id: PROJECT.into(),
+                path: "a.md".into(),
+            })
+            .unwrap()["modified"]
+            .as_u64()
+    };
+    let save = |client: &mut Client, text: &str, modified| {
+        client.call(Command::WriteDoc {
+            project_id: PROJECT.into(),
+            path: "a.md".into(),
+            text: text.into(),
+            create: false,
+            modified,
+        })
+    };
+    let opened = read(&mut first);
+    assert_eq!(read(&mut second), opened);
+    save(&mut first, "first\n", opened).unwrap();
+    let error = save(&mut second, "second\n", opened).unwrap_err();
+    assert!(error.contains("changed on disk"), "{error}");
+    assert_eq!(fs::read_to_string(work.join("a.md")).unwrap(), "first\n");
+    let reread = read(&mut second);
+    save(&mut second, "second\n", reread).unwrap();
+    assert_eq!(fs::read_to_string(work.join("a.md")).unwrap(), "second\n");
 }
 
 fn git(work: &std::path::Path, args: &[&str]) {
@@ -900,6 +1009,14 @@ fn watched_changes_follow_an_edit_and_clear_on_a_commit_made_elsewhere() {
         file["patch"].as_str().is_some_and(|p| p.contains("+two")),
         "{file}"
     );
+
+    client.settle();
+    client.deltas.clear();
+    fs::write(work.join("a.txt"), "one\nthree\n").unwrap();
+    let same_counts = client.wait_delta(|delta| {
+        delta["delta"] == "changes" && delta["changes"]["changes"][0]["path"] == "a.txt"
+    });
+    assert_eq!(same_counts["changes"], changed["changes"]);
 
     git(&work, &["commit", "-qam", "second"]);
     client.wait_delta(|delta| {

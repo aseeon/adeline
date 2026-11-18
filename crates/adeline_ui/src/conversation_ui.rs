@@ -114,7 +114,7 @@ impl Adeline {
             content = content.child(self.queued_entries(live, cx));
         }
         if let Some(request) = live.permission.first() {
-            content = content.child(self.permission_card(request, cx));
+            content = content.child(self.permission_card(&thread.id, request, cx));
         }
         if live.auth_required {
             let name = live
@@ -397,6 +397,7 @@ impl Adeline {
 
     fn permission_card(
         &self,
+        conversation: &str,
         request: &protocol::PendingPermission,
         cx: &Context<Self>,
     ) -> Stateful<Div> {
@@ -408,7 +409,11 @@ impl Adeline {
             )
         });
         for (ix, option) in request.options.iter().enumerate() {
-            let action = Action::PermissionResponse(option.id.clone());
+            let action = Action::PermissionResponse {
+                conversation: conversation.to_owned(),
+                request: request.request_id,
+                option: option.id.clone(),
+            };
             let button = Button::new(SharedString::from(format!("permission-{}", option.id)))
                 .small()
                 .label(option.name.clone())

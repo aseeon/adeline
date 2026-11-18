@@ -212,7 +212,7 @@ struct Engine {
     docs_due: Option<Instant>,
     changes_watching: HashMap<u64, String>,
     changes_generation: HashMap<String, u64>,
-    changes_last: HashMap<String, (protocol::Changes, Vec<String>)>,
+    changes_files: HashMap<String, Vec<String>>,
     status: Status,
     exit: bool,
     identity: String,
@@ -232,18 +232,44 @@ fn lifecycle_for(conversation: &storage::StoredConversation) -> Lifecycle {
     )
 }
 
-fn live_for(conversation: &storage::StoredConversation) -> Live {
-    let thread = conversation.to_thread();
+fn last_user(conversation: &storage::StoredConversation, thread: &Thread) -> Option<usize> {
     let copied = conversation
         .settings
         .forked_from
         .as_ref()
         .map_or(0, |origin| origin.message + 1);
-    let last_user = thread
+    thread
         .messages
         .iter()
         .rposition(|m| m.role == MessageRole::User)
-        .filter(|&i| i >= copied);
+        .filter(|&i| i >= copied)
+}
+
+fn worked_since_prompt(conversation: &storage::StoredConversation) -> bool {
+    conversation
+        .events
+        .iter()
+        .chain(&conversation.unsaved_events)
+        .rev()
+        .take_while(|event| event.kind != "message" || event.data["role"] != "user")
+        .any(|event| {
+            matches!(
+                event.kind.as_str(),
+                "assistant_chunk" | "tool" | "message_update"
+            ) || (event.kind == "message" && event.data["role"] == "assistant")
+        })
+}
+
+fn prompt_files(conversation: &storage::StoredConversation) -> Vec<Attachment> {
+    let thread = conversation.to_thread();
+    last_user(conversation, &thread)
+        .map(|i| thread.messages[i].attachments.clone())
+        .unwrap_or_default()
+}
+
+fn live_for(conversation: &storage::StoredConversation) -> Live {
+    let thread = conversation.to_thread();
+    let last_user = last_user(conversation, &thread);
     let interrupted = conversation.settings.status.live();
     let last_error = conversation
         .events
@@ -276,7 +302,8 @@ fn live_for(conversation: &storage::StoredConversation) -> Live {
         last_prompt: last_user
             .map(|i| thread.messages[i].text.clone())
             .unwrap_or_default(),
-        worked: interrupted || last_user.is_some_and(|i| i + 1 < thread.messages.len()),
+        worked: last_user.is_some()
+            && (conversation.interrupted || worked_since_prompt(conversation)),
         ..Default::default()
     }
 }
@@ -415,7 +442,7 @@ impl Engine {
             docs_due: None,
             changes_watching: HashMap::new(),
             changes_generation: HashMap::new(),
-            changes_last: HashMap::new(),
+            changes_files: HashMap::new(),
             status: Status::default(),
             exit: false,
             identity: ipc::engine_id().unwrap_or_else(|error| {

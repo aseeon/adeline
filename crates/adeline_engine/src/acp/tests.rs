@@ -817,6 +817,70 @@ async fn steering_is_read_from_meta_and_session_state_is_reported_outside_a_turn
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn the_agent_gets_mcp_secrets_that_traffic_hides() {
+    use adeline_core::conversation::{McpServer, McpTransport};
+    let (mut worker, received, mut from_worker, to_worker) = connected();
+    worker.config.mcp_servers = vec![
+        McpServer {
+            name: "tools".into(),
+            transport: McpTransport::Stdio {
+                command: "tools".into(),
+                arguments: Vec::new(),
+                environment: vec![("API_KEY".into(), "env-secret".into())],
+            },
+        },
+        McpServer {
+            name: "web".into(),
+            transport: McpTransport::Http {
+                url: "https://example.com/mcp".into(),
+                headers: vec![("Authorization".into(), "Bearer header-secret".into())],
+            },
+        },
+    ];
+    let commands = worker.sender.clone();
+    tokio::spawn(worker.run());
+    commands.send(Input::Command(Command::Probe)).unwrap();
+    let (id, _) = next_request(&mut from_worker).await;
+    answer(
+        &to_worker,
+        &id,
+        &json!({"protocolVersion":1,"agentCapabilities":{"mcpCapabilities":{"http":true}},
+        "authMethods":[]}),
+    );
+    let (id, message) = next_request(&mut from_worker).await;
+    let servers = message["params"]["mcpServers"].to_string();
+    assert!(
+        servers.contains("env-secret") && servers.contains("header-secret"),
+        "{servers}"
+    );
+    answer(&to_worker, &id, &json!({"sessionId":"s1"}));
+    let mut seen = Vec::new();
+    wait_for(&received, &mut seen, |kind| {
+        matches!(kind, EventKind::Probed)
+    })
+    .await;
+    let traffic: Vec<&str> = seen
+        .iter()
+        .filter_map(|kind| match kind {
+            EventKind::Traffic(entry) => Some(entry.text.as_str()),
+            _ => None,
+        })
+        .collect();
+    let setup = traffic
+        .iter()
+        .find(|text| text.contains("session/new"))
+        .expect("session/new in traffic");
+    assert!(
+        setup.contains("API_KEY") && setup.contains("Authorization"),
+        "{setup}"
+    );
+    assert!(
+        !traffic.iter().any(|text| text.contains("secret")),
+        "{traffic:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn an_agent_on_another_protocol_version_gets_a_version_error() {
     let (worker, received, mut from_worker, to_worker) = connected();
     let commands = worker.sender.clone();

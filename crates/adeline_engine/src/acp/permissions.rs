@@ -1,5 +1,10 @@
-//! Permission requests from the agent and the user's answers.
+//! Permission requests from the agent and the user's answers. Request IDs are
+//! unique across workers, so an answer to a request from a worker that has
+//! since been replaced can't answer the new worker's request.
 use super::*;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static NEXT_REQUEST: AtomicU64 = AtomicU64::new(1);
 
 impl Worker {
     pub(super) fn permission_request(
@@ -54,8 +59,7 @@ impl Worker {
             use std::fmt::Write as _;
             let _ = write!(title, "\nInput: {input}");
         }
-        self.next_permission += 1;
-        let request_id = self.next_permission;
+        let request_id = NEXT_REQUEST.fetch_add(1, Ordering::Relaxed);
         self.permissions.insert(
             request_id,
             PendingPermission {

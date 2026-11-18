@@ -18,7 +18,9 @@
 //! `Vec<install::Planned>`, `ListDirectory` a `Listing` (of the home folder
 //! without a path), `WatchTraffic` the traffic recorded so far, `ListDocs` the
 //! project's doc paths, `ReadDoc` a `DocFile`, `WriteDoc` the saved file's
-//! modification time and `ReadImage` the image's bytes in base64.
+//! modification time and `ReadImage` the image's bytes in base64. `WriteDoc`
+//! with `modified` fails when the file on disk has another modification time,
+//! so a save can't replace an edit the client hasn't read.
 //! `ListFiles` gives every project file's path, `ListChanges` a `Changes`
 //! and `ReadChange` a `ChangeFile`.
 //!
@@ -50,7 +52,7 @@ use std::{
     path::PathBuf,
 };
 
-pub const PROTOCOL: u32 = 8;
+pub const PROTOCOL: u32 = 9;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Probed {
@@ -251,6 +253,7 @@ pub enum Command {
         path: String,
         text: String,
         create: bool,
+        modified: Option<u64>,
     },
     RenameDoc {
         project_id: String,

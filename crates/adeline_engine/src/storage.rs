@@ -109,7 +109,7 @@ pub struct StoredConversation {
     needs_rollback: bool,
     pending_settings: Option<ConversationSettings>,
     load_error: bool,
-    interrupted: bool,
+    pub interrupted: bool,
 }
 
 impl StoredConversation {

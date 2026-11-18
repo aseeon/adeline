@@ -60,7 +60,7 @@
 {"type":"delta","delta":"open_url","url":"https://example.com"}
 {"type":"request","id":40,"command":{"op":"list_docs","project_id":"p"}}
 {"type":"request","id":41,"command":{"op":"read_doc","project_id":"p","path":"docs/a.md"}}
-{"type":"request","id":42,"command":{"op":"write_doc","project_id":"p","path":"docs/a.md","text":"t","create":false}}
+{"type":"request","id":42,"command":{"op":"write_doc","project_id":"p","path":"docs/a.md","text":"t","create":false,"modified":7}}
 {"type":"request","id":43,"command":{"op":"rename_doc","project_id":"p","from":"a.md","to":"b.md"}}
 {"type":"request","id":44,"command":{"op":"delete_doc","project_id":"p","path":"a.md"}}
 {"type":"request","id":45,"command":{"op":"read_image","project_id":"p","path":"img/x.png"}}

@@ -17,7 +17,8 @@ session/cancel and then replies stopReason "cancelled".
 
 Environment:
   ADELINE_FAKE_PIDS   folder; the agent writes an empty file named after its PID
-  ADELINE_FAKE_STATE  folder for FAIL attempt counters (default: next to this script)
+  ADELINE_FAKE_STATE  folder for FAIL attempt counters (default: next to this script);
+                      while it holds an exit-on-start file, the agent exits at once
 """
 import itertools
 import json
@@ -224,6 +225,9 @@ def handle(message):
 
 
 def main():
+    if (state := os.environ.get("ADELINE_FAKE_STATE")) and (Path(state) / "exit-on-start").exists():
+        log("exiting on start on purpose")
+        sys.exit(3)
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8", newline="\n")
     if folder := os.environ.get("ADELINE_FAKE_PIDS"):

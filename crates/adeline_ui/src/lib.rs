@@ -198,7 +198,11 @@ enum Action {
     RetryPrompt,
     RetryStorage,
     ReplaceSession,
-    PermissionResponse(String),
+    PermissionResponse {
+        conversation: String,
+        request: u64,
+        option: String,
+    },
     ToggleTool(String),
     ReplyTo(usize),
     CopyMessage(usize),
@@ -315,7 +319,7 @@ impl Action {
             | Self::RetryPrompt
             | Self::RetryStorage
             | Self::ReplaceSession
-            | Self::PermissionResponse(..)
+            | Self::PermissionResponse { .. }
             | Self::ReplyTo(..)
             | Self::CopyMessage(..)
             | Self::Fork(..)

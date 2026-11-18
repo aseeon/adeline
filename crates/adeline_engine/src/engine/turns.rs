@@ -373,8 +373,13 @@ impl Engine {
         if lifecycle.storage_failed || lifecycle.after() == Some(After::Replacement) {
             return Err("This conversation can't retry right now.".into());
         }
+        let worked = self.live_mut(id).worked;
+        if !worked && !self.attachments.contains_key(id) {
+            let files = self.store.conversation(id).map(super::prompt_files);
+            self.attachments
+                .insert(id.to_owned(), files.unwrap_or_default());
+        }
         let live = self.live_mut(id);
-        let worked = live.worked;
         let prompt = if worked {
             acp::CONTINUE_TURN.to_owned()
         } else {
@@ -412,22 +417,10 @@ impl Engine {
             store
                 .conversation(id)
                 .map(|conversation| {
-                    let worked = conversation
-                        .events
-                        .iter()
-                        .chain(&conversation.unsaved_events)
-                        .rev()
-                        .take_while(|event| event.kind != "message" || event.data["role"] != "user")
-                        .any(|event| {
-                            matches!(
-                                event.kind.as_str(),
-                                "assistant_chunk" | "tool" | "message_update"
-                            ) || (event.kind == "message" && event.data["role"] == "assistant")
-                        });
                     (
                         conversation.settings.clone(),
                         conversation.to_thread(),
-                        worked,
+                        super::worked_since_prompt(conversation),
                     )
                 })
                 .ok_or_else(|| "Conversation is missing from storage.".to_owned())

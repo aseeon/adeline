@@ -195,7 +195,7 @@ impl Worker {
                 kind: EventKind::Traffic(TrafficEntry {
                     at: adeline_core::recency::now_ms(),
                     direction,
-                    text: trimmed_traffic(line),
+                    text: trimmed_traffic(&redacted(line)),
                     note,
                 }),
             });
@@ -673,6 +673,32 @@ fn classify_line(line: &str) -> TrafficNote {
     } else {
         TrafficNote::Unknown
     }
+}
+
+fn redacted(line: &str) -> std::borrow::Cow<'_, str> {
+    if !line.contains("\"mcpServers\"") {
+        return line.into();
+    }
+    let Ok(mut message) = serde_json::from_str::<Value>(line) else {
+        return "[a message with MCP server settings, hidden]".into();
+    };
+    let Some(servers) = message
+        .pointer_mut("/params/mcpServers")
+        .and_then(Value::as_array_mut)
+    else {
+        return line.into();
+    };
+    for server in servers {
+        for list in ["env", "headers"] {
+            let entries = server.get_mut(list).and_then(Value::as_array_mut);
+            for entry in entries.into_iter().flatten() {
+                if let Some(value) = entry.get_mut("value") {
+                    *value = "[hidden]".into();
+                }
+            }
+        }
+    }
+    message.to_string().into()
 }
 
 fn trimmed_traffic(line: &str) -> String {

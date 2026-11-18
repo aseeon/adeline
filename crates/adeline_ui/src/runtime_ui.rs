@@ -760,19 +760,16 @@ impl Adeline {
         }
     }
 
-    pub(super) fn answer_permission(&mut self, option: String, cx: &mut Context<Self>) {
-        let Some(id) = self.current_id() else {
+    pub(super) fn answer_permission(
+        &mut self,
+        id: String,
+        request_id: u64,
+        option: String,
+        cx: &mut Context<Self>,
+    ) {
+        if self.current_id().as_ref() != Some(&id) {
             return;
-        };
-        let Some(request_id) = self
-            .runtime
-            .conversations
-            .get(&id)
-            .and_then(|live| live.permission.first())
-            .map(|request| request.request_id)
-        else {
-            return;
-        };
+        }
         self.command(
             Command::AnswerPermission {
                 id,

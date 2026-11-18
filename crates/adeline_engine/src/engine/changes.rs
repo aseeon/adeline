@@ -350,7 +350,7 @@ impl Engine {
 
     pub(super) fn changes_forget_unwatched(&mut self) {
         let watched: std::collections::HashSet<&String> = self.changes_watching.values().collect();
-        self.changes_last.retain(|id, _| watched.contains(id));
+        self.changes_files.retain(|id, _| watched.contains(id));
         for (id, generation) in &mut self.changes_generation {
             if !watched.contains(id) {
                 *generation += 1;
@@ -418,14 +418,10 @@ impl Engine {
         let Ok((changes, files)) = found else {
             return;
         };
-        let last = self.changes_last.get(&project_id);
-        let same_changes = last.is_some_and(|(c, _)| *c == changes);
-        let same_files = last.is_some_and(|(_, f)| *f == files);
-        if same_changes && same_files {
-            return;
+        let same_files = self.changes_files.get(&project_id) == Some(&files);
+        if !same_files {
+            self.changes_files.insert(project_id.clone(), files.clone());
         }
-        self.changes_last
-            .insert(project_id.clone(), (changes.clone(), files.clone()));
         self.broadcast(Delta::Changes {
             project_id,
             changes,

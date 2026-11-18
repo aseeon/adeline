@@ -260,7 +260,11 @@ impl Adeline {
             Action::RetryPrompt => self.retry_prompt(cx),
             Action::RetryStorage => self.retry_storage(cx),
             Action::ReplaceSession => self.replace_session(cx),
-            Action::PermissionResponse(option) => self.answer_permission(option, cx),
+            Action::PermissionResponse {
+                conversation,
+                request,
+                option,
+            } => self.answer_permission(conversation, request, option, cx),
             Action::ReplyTo(message) => self.reply_to(message, window, cx),
             Action::CopyMessage(message) => {
                 if let Some(text) = self.message_text(message) {

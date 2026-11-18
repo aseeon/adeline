@@ -826,6 +826,7 @@ impl Adeline {
                 path: path.clone(),
                 text: text.clone(),
                 create: false,
+                modified: Some(doc.modified),
             },
             cx,
             move |app, result, window, cx| {
@@ -863,6 +864,7 @@ impl Adeline {
                     }
                     Err(error) => {
                         app.notify_toast(&format!("Could not save {path}: {error}"), cx);
+                        app.docs_reload(&key, path, cx);
                         false
                     }
                 };
@@ -1232,6 +1234,7 @@ impl Adeline {
                 path: path.clone(),
                 text: String::new(),
                 create: true,
+                modified: None,
             },
             cx,
             move |app, result, window, cx| match result {

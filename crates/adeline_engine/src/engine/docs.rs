@@ -73,7 +73,13 @@ fn read(root: &Path, path: &str) -> Result<DocFile, String> {
     })
 }
 
-fn write(root: &Path, path: &str, text: &str, create: bool) -> Result<u64, String> {
+fn write(
+    root: &Path,
+    path: &str,
+    text: &str,
+    create: bool,
+    opened: Option<u64>,
+) -> Result<u64, String> {
     if create || !adeline_docs::resolve(root, path)?.exists() {
         let full = check_new(root, path)?;
         if let Some(folder) = full.parent() {
@@ -85,6 +91,9 @@ fn write(root: &Path, path: &str, text: &str, create: bool) -> Result<u64, Strin
     let full = adeline_docs::resolve(root, path)?
         .canonicalize()
         .map_err(|e| io_error(path, &e))?;
+    if opened.is_some_and(|opened| modified(&full).is_some_and(|now| now != opened)) {
+        return Err(format!("{path} changed on disk since it was opened."));
+    }
     let original = std::fs::read(&full).map_err(|e| io_error(path, &e))?;
     let permissions = std::fs::metadata(&full)
         .map_err(|e| io_error(path, &e))?
@@ -159,9 +168,10 @@ impl Engine {
                 path,
                 text,
                 create,
+                modified,
             } => {
                 let root = self.project_root(&project_id)?;
-                let modified = block_in_place(|| write(&root, &path, &text, create))?;
+                let modified = block_in_place(|| write(&root, &path, &text, create, modified))?;
                 self.doc_cards(&project_id, &path, Some(modified));
                 json(modified)
             }
@@ -426,18 +436,18 @@ mod tests {
     fn a_save_replaces_the_whole_file_and_refuses_what_it_cannot_save() {
         let root = TempDir::new("adeline-docs-write");
         std::fs::write(root.join("a.md"), "one\r\ntwo").unwrap();
-        write(&root, "a.md", "one\nTWO", false).unwrap();
+        write(&root, "a.md", "one\nTWO", false, None).unwrap();
         assert_eq!(std::fs::read(root.join("a.md")).unwrap(), b"one\r\nTWO");
         assert_eq!(std::fs::read_dir(&*root).unwrap().count(), 1);
 
-        write(&root, "gone.md", "text", false).unwrap();
+        write(&root, "gone.md", "text", false, None).unwrap();
         assert_eq!(std::fs::read(root.join("gone.md")).unwrap(), b"text");
         std::fs::remove_file(root.join("gone.md")).unwrap();
 
         let mut permissions = std::fs::metadata(root.join("a.md")).unwrap().permissions();
         permissions.set_readonly(true);
         std::fs::set_permissions(root.join("a.md"), permissions.clone()).unwrap();
-        let error = write(&root, "a.md", "changed", false).unwrap_err();
+        let error = write(&root, "a.md", "changed", false, None).unwrap_err();
         assert!(error.contains("read-only"), "{error}");
         assert_eq!(std::fs::read(root.join("a.md")).unwrap(), b"one\r\nTWO");
         #[expect(
