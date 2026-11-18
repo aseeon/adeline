@@ -11,7 +11,7 @@ doctest = false
 adeline_assets.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 gethostname.workspace = true
 serde = { workspace = true, features = ["derive", "rc"] }
 serde_json.workspace = true

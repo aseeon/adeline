@@ -98,7 +98,7 @@ where
         write!(
             writer,
             "{} [{}] {} {}: ",
-            chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f"),
+            jiff::Zoned::now().strftime("%Y-%m-%d %H:%M:%S%.3f"),
             std::process::id(),
             meta.level(),
             meta.name()

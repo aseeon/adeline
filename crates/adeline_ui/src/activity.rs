@@ -123,10 +123,10 @@ fn duration(ms: u64) -> String {
 pub(super) fn clock(ms: u64) -> String {
     i64::try_from(ms)
         .ok()
-        .and_then(chrono::DateTime::from_timestamp_millis)
+        .and_then(|ms| jiff::Timestamp::from_millisecond(ms).ok())
         .map(|at| {
-            at.with_timezone(&chrono::Local)
-                .format("%-I:%M:%S %p")
+            at.to_zoned(jiff::tz::TimeZone::system())
+                .strftime("%-I:%M:%S %p")
                 .to_string()
         })
         .unwrap_or_default()

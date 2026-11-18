@@ -4,7 +4,7 @@
 //! Calendar days are UTC days, so a chat active shortly after local midnight
 //! can land in the neighbouring day for users far from UTC. `now` is in
 //! seconds and `now_ms` in milliseconds since the Unix epoch.
-use chrono::{DateTime, Datelike as _, NaiveDate, SecondsFormat, Utc};
+use jiff::{Timestamp, civil::Date, tz::TimeZone};
 
 const DAY: i64 = 86_400;
 
@@ -16,11 +16,11 @@ pub enum Period {
 }
 
 pub fn now() -> i64 {
-    Utc::now().timestamp()
+    Timestamp::now().as_second()
 }
 
 pub fn now_ms() -> u64 {
-    u64::try_from(Utc::now().timestamp_millis()).unwrap_or(0)
+    u64::try_from(Timestamp::now().as_millisecond()).unwrap_or(0)
 }
 
 pub fn parse(stamp: &str) -> Option<i64> {
@@ -33,11 +33,11 @@ pub fn parse(stamp: &str) -> Option<i64> {
             value
         });
     }
-    if let Ok(at) = DateTime::parse_from_rfc3339(stamp) {
-        return Some(at.timestamp());
+    if let Ok(at) = stamp.parse::<Timestamp>() {
+        return Some(at.as_second());
     }
-    let date = NaiveDate::parse_from_str(stamp, "%Y-%m-%d").ok()?;
-    Some(date.and_hms_opt(0, 0, 0)?.and_utc().timestamp())
+    let date = Date::strptime("%Y-%m-%d", stamp).ok()?;
+    Some(date.to_zoned(TimeZone::UTC).ok()?.timestamp().as_second())
 }
 
 pub fn period(at: i64, now: i64) -> Period {
@@ -60,21 +60,22 @@ pub fn label(at: i64, now: i64) -> String {
     if days <= 0 {
         return format!("{}h", elapsed / 3600);
     }
-    let Some(date) = DateTime::from_timestamp(at, 0) else {
+    let utc = |at| Timestamp::from_second(at).map(|at| at.to_zoned(TimeZone::UTC));
+    let Ok(date) = utc(at) else {
         return String::new();
     };
     if days < 7 {
-        date.format("%a").to_string()
-    } else if Some(date.year()) == DateTime::from_timestamp(now, 0).map(|d| d.year()) {
-        date.format("%b %-d").to_string()
+        date.strftime("%a").to_string()
+    } else if utc(now).is_ok_and(|now| now.year() == date.year()) {
+        date.strftime("%b %-d").to_string()
     } else {
-        date.format("%b %-d, %Y").to_string()
+        date.strftime("%b %-d, %Y").to_string()
     }
 }
 
 pub fn iso(at: i64) -> String {
-    DateTime::from_timestamp(at, 0)
-        .map(|date| date.to_rfc3339_opts(SecondsFormat::Secs, true))
+    Timestamp::from_second(at)
+        .map(|at| at.to_string())
         .unwrap_or_default()
 }
 

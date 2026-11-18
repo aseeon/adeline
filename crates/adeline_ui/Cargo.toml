@@ -13,7 +13,7 @@ adeline_core.workspace = true
 adeline_docs.workspace = true
 anyhow.workspace = true
 async-channel.workspace = true
-chrono.workspace = true
+jiff.workspace = true
 gpui-kit = { workspace = true, features = ["tree-sitter-markdown", "tree-sitter-yaml", "tree-sitter-toml"] }
 image = { workspace = true, optional = true }
 mermaid-rs-renderer.workspace = true

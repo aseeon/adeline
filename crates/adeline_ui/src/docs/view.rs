@@ -156,10 +156,10 @@ fn prose(cx: &App) -> TextViewStyle {
 fn edited_at(ms: u64) -> String {
     i64::try_from(ms)
         .ok()
-        .and_then(chrono::DateTime::from_timestamp_millis)
+        .and_then(|ms| jiff::Timestamp::from_millisecond(ms).ok())
         .map(|at| {
-            at.with_timezone(&chrono::Local)
-                .format("%b %-d, %H:%M")
+            at.to_zoned(jiff::tz::TimeZone::system())
+                .strftime("%b %-d, %H:%M")
                 .to_string()
         })
         .unwrap_or_default()

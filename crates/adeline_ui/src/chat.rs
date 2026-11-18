@@ -385,18 +385,19 @@ pub(super) fn count(number: usize, noun: &str) -> String {
 }
 
 pub(super) fn message_time(stamp: &str) -> Option<String> {
-    use chrono::Datelike as _;
     let at = recency::parse(stamp)?;
-    let local = chrono::DateTime::from_timestamp(at, 0)?.with_timezone(&chrono::Local);
-    let today = chrono::Local::now().date_naive();
-    let format = if local.date_naive() == today {
+    let local = jiff::Timestamp::from_second(at)
+        .ok()?
+        .to_zoned(jiff::tz::TimeZone::system());
+    let today = jiff::Zoned::now().date();
+    let format = if local.date() == today {
         "%-I:%M %p"
     } else if local.year() == today.year() {
         "%b %-d, %-I:%M %p"
     } else {
         "%b %-d %Y, %-I:%M %p"
     };
-    Some(local.format(format).to_string())
+    Some(local.strftime(format).to_string())
 }
 
 pub(super) fn tool_icon(tool: conversation::ToolKind) -> &'static str {

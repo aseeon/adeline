@@ -19,13 +19,13 @@ adeline_ui = { path = "crates/adeline_ui" }
 agent-client-protocol = "=3.3.0"
 anyhow = "1"
 async-channel = "2"
-chrono = "0.4"
 embed-resource = "3.0"
 futures = "0.3"
 gethostname = "1.1"
 image = { version = "0.25", default-features = false, features = ["png"] }
 gpui-kit = "=0.9.1"
 ignore = "0.4"
+jiff = "0.2"
 mermaid-rs-renderer = { version = "0.3.1", default-features = false }
 mimalloc = "0.1.52"
 notify = "8"
