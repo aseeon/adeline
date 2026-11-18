@@ -1,24 +1,31 @@
 {
-  "version": 1,
+  "version": 2,
   "skills": {
     "gpui-kit": {
       "source": "longbridge/gpui-kit",
       "sourceType": "github",
       "skillPath": "skills/gpui-kit/SKILL.md",
-      "computedHash": "19a49ad2a85829c49446df7b4fbeb77bfcac3d8cfde1a7464bfb0991f18aa345"
+      "computedHash": "753654477463fbebe9633748d5dd8925d785fa84699a575d70de80fefa879f3a"
     },
     "gpui-kit-design-guides": {
       "source": "longbridge/gpui-kit",
       "sourceType": "github",
       "skillPath": "skills/gpui-kit-design-guides/SKILL.md",
-      "computedHash": "1dc12103913002f85e4675635146572516e6a86dc96d0fda1a9f7347b82fec90"
+      "computedHash": "1c38f251f161d2e09b4b830aa48f23db3d5d28214a7cfa73a6a448f1b2c46a8e"
     },
     "ms-rust": {
       "source": "https://gitlab.com/lx-industries/ms-rust-skill.git",
       "sourceUrl": "https://gitlab.com/lx-industries/ms-rust-skill.git",
       "sourceType": "gitlab",
       "skillPath": "SKILL.md",
-      "computedHash": "b431c08947ea07c19008a03db1d9b02538770cde0b0bd4b829477197476e55b1"
+      "computedHash": ""
+    },
+    "prune-tests": {
+      "source": "caldoai/skills",
+      "commit": "bd73b2ea5eb854ab8f0553fb41f77c8786f28f82",
+      "sourceType": "github",
+      "skillPath": "skills/prune-tests/SKILL.md",
+      "computedHash": "5f72196ebe7519a9dded8fb87e4680e0ec3d026ea938fdf692b1e47d43da4459"
     }
   }
 }
