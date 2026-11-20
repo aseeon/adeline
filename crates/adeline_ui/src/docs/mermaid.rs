@@ -1,5 +1,5 @@
 //! Offline Mermaid rendering: `mermaid-rs-renderer` lays the diagram out as
-//! SVG, and resvg rasterizes it to a PNG at 2x for high-DPI screens.
+//! SVG, and resvg rasterizes it to a PNG.
 use std::sync::{Arc, LazyLock};
 
 use gpui_kit::{Image, ImageFormat};

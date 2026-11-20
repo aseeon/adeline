@@ -1,9 +1,7 @@
 //! What this UI remembers for itself and doesn't share with other clients:
 //! when it last opened each project and how it last left Docs mode there, by
 //! machine and project ID, and the widths the user dragged the right island's
-//! panes to. Local projects keep the bare IDs older versions
-//! wrote. `migrated` records that the first local snapshot's times, kept by
-//! older project files, were adopted.
+//! panes to.
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::PathBuf, sync::Mutex};
 

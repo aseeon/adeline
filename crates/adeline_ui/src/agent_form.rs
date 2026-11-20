@@ -1,7 +1,4 @@
-//! The Add Agent and Edit Agent form. Model, effort and mode come from the
-//! agent itself through a background probe, and the last probe's lists stay
-//! while a model change re-probes. Under the harness picker it installs,
-//! updates and logs in supported agents.
+//! The Add Agent and Edit Agent form.
 use super::*;
 use crate::Harnesses;
 use crate::views::text_input;

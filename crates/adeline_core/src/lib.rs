@@ -1,6 +1,6 @@
 //! Everything the engine and the UI share: the conversation model, the
 //! engine ↔ client protocol, agents, settings, machines and the transports
-//! that reach an engine. No GPUI.
+//! that reach an engine.
 pub mod agents;
 pub mod askpass;
 pub mod card;

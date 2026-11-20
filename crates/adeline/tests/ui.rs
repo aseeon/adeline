@@ -1,8 +1,6 @@
 //! Headless UI tests against a live engine: the real `Adeline` window on GPUI's
 //! test platform, in a temporary home where the binary's engine runs
-//! (`ADELINE_EXE`) with the fake agent. Each test runs in its own process under
-//! nextest. Built only with the `test-support` feature, so the headless tests
-//! stay free of GPUI.
+//! (`ADELINE_EXE`) with the fake agent.
 #![expect(
     clippy::disallowed_methods,
     reason = "tests block on processes off any real UI thread"

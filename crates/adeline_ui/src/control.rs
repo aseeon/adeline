@@ -1,15 +1,4 @@
 //! The control endpoint of a control build (`control` feature).
-//!
-//! `adeline --control` listens on its own pipe or socket, and `adeline ui <command>`
-//! sends it one JSON request and prints the reply. Requests run on the UI thread in
-//! arrival order.
-//!
-//! Elements are found by accessibility label, as GPUI Kit observes them. `find`,
-//! `click`, `press` and `type_text` are shared with the UI tests' `Ui` helper and
-//! the pixel tests, so the command line and the tests follow one rule.
-//!
-//! `--hidden` keeps the window off screen. The platform draws no frames for a
-//! hidden window, so each request draws one itself, as the Windows pixel test does.
 use crate::client;
 use adeline_core::{ipc, platform};
 use anyhow::{Context as _, bail};

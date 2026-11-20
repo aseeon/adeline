@@ -1,6 +1,5 @@
 //! What the window shows when an engine isn't usable: the engine and remote
-//! machine screens, and the banner over a read-only machine. With several
-//! machines checked, a local engine that would get a screen gets a banner.
+//! machine screens, and the banner over a read-only machine.
 use super::*;
 
 impl Adeline {

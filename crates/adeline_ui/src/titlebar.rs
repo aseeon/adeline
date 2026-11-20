@@ -1,8 +1,4 @@
 //! Title bars drawn by Adeline: Kit window controls and Adeline's scaled app icon.
-//!
-//! The main window draws its own title bar on every platform. The project tabs share it, so
-//! Windows and Linux put Kit's caption buttons at its right end and macOS keeps its traffic
-//! lights at the left, with the app icon beside them.
 use super::*;
 use gpui_kit::component::GlobalState;
 

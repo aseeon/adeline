@@ -1,8 +1,6 @@
 //! Shared by the UI tests here and in `crates/adeline/tests`: the real `Adeline`
-//! window on GPUI's test platform, found by accessibility labels (the names a user
-//! and UI Automation see) and driven by shortcuts from `docs/shortcuts.md`. Finding,
-//! clicking, pressing and typing go through `adeline_ui::control`, which `adeline ui`
-//! uses too.
+//! window on GPUI's test platform, found by accessibility labels and driven by
+//! shortcuts from `docs/shortcuts.md`.
 #![allow(dead_code, reason = "each test file uses part of it")]
 #![expect(
     clippy::disallowed_methods,
@@ -247,7 +245,6 @@ impl<'a> Ui<'a> {
             let now = self.unique(label);
             let moving =
                 now.bounds() != element.bounds() && start.elapsed() < Duration::from_secs(2);
-            // A fade advances per tick, and a slow runner ticks less often.
             let covered = self.covered(&now) && start.elapsed() < Duration::from_secs(10);
             element = now;
             if !moving && !covered {
@@ -257,8 +254,6 @@ impl<'a> Ui<'a> {
         self.click_element(&element);
     }
 
-    // A Kit dialog stays mounted while it fades out, and its focus trap keeps a
-    // click outside it from moving focus until then.
     fn covered(&mut self, element: &ElementSnapshot) -> bool {
         let dialog = |path: &[ElementId]| {
             path.iter()

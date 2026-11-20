@@ -6,11 +6,9 @@ set -euo pipefail
 
 set -x
 "${CARGO:-cargo}" clippy "$@" --workspace --locked --all-targets --all-features -- --deny warnings
-# The headless build (no `gui` feature, no UI crate).
 "${CARGO:-cargo}" clippy "$@" --workspace --exclude adeline_ui --locked --all-targets --no-default-features -- --deny warnings
 set +x
 
-# If local, run other checks if we have the tools installed.
 if [[ -z "${GITHUB_ACTIONS+x}" ]]; then
     which cargo-shear >/dev/null 2>&1 || exit 0
     cargo shear --locked --deny-warnings --check-test-targets

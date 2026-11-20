@@ -1,10 +1,5 @@
 //! The Markdown toolbar of the doc editor: each tool turns the text and its
-//! selection into one [`Edit`]. Inline styles wrap or unwrap the selection,
-//! line tools set or clear a prefix on every line the selection touches, and
-//! the block tools put a code fence or a table on lines of their own.
-//!
-//! Offsets are UTF-8 byte offsets. A selection past the end or off a char
-//! boundary is clamped, so no input panics. `\r\n` counts as one line end.
+//! selection into one [`Edit`].
 
 use std::ops::Range;
 

@@ -1,7 +1,5 @@
 //! Harnesses Adeline can run: the ACP registry plus built-in OMP, where their
 //! executables are installed and in which version, and whether Node.js is there.
-//!
-//! The engine detects them, on its blocking pool; clients get a copy.
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

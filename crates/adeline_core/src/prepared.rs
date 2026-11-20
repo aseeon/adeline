@@ -1,8 +1,4 @@
 //! Chat search preparation, independent of rendering and safe on a worker thread.
-//!
-//! `Group` is in display order and each group lists its chats newest first. The
-//! agent counts ignore the agent filter itself. Only the latest `Generation` ticket
-//! may publish a result.
 use std::sync::Arc;
 
 pub fn changed_range<T: PartialEq>(

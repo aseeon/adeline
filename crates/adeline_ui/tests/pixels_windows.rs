@@ -1,7 +1,5 @@
 //! The Windows pixel smoke test: the demo in a hidden real window, drawn by
-//! DirectX with DirectWrite text, captured with `Window::render_to_image`. It owns
-//! the real run loop, so it has no test harness and answers nextest's `--list`
-//! itself, like `pixels.rs`. Other OSes run the full suite in `pixels.rs`.
+//! DirectX with DirectWrite text, captured with `Window::render_to_image`.
 #[cfg(windows)]
 #[path = "support/pixels.rs"]
 mod pixels;

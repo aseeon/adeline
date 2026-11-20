@@ -1,14 +1,5 @@
 //! Adeline's own conversation model: what an agent session offers and does,
 //! independent of ACP.
-//!
-//! `acp.rs` translates the protocol to and from it, and the engine↔client protocol,
-//! storage and UI use only these types.
-//!
-//! The TODO list is what ACP calls the `plan`. `StopReason::Signal` ends a turn
-//! on the profile's turn-end signal, without a prompt response. An `Attachment`
-//! carries its bytes base64-encoded, or a `path` on the engine's machine to read
-//! instead, and `read_attachment` reads a local file into one. Traffic times
-//! are epoch milliseconds.
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 

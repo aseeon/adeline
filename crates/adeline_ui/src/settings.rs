@@ -1,7 +1,3 @@
-//! The Settings and agent windows: state, navigation, search, and closing with
-//! unsaved changes. Each page lives in a child module. A remote machine shows
-//! only its Agents and Engine; the rest is this client's. Demo mode adds
-//! General › Features, whose toggles are still stubs.
 use super::*;
 use gpui_kit::AppContext as _;
 use gpui_kit::component::{

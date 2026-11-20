@@ -1,6 +1,5 @@
 //! Profiling builds only (`--features profiler`): with `ADELINE_FRAME_LOG` set to a
-//! file path, every drawn and presented frame is appended to it as a CSV row,
-//! timestamped in Unix milliseconds so a driver script can slice it by scenario.
+//! file path, every drawn and presented frame is appended to it as a CSV row.
 use gpui_kit::{FrameEvent, FrameTimingCollector, set_trace_enabled};
 use std::io::Write;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};

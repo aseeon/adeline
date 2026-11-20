@@ -4,6 +4,8 @@ Implement the minimal code that solves the problem. Prefer composition over inhe
 
 Write sparse comments, at the top of a module. Leave types and functions uncommented, so the code explains itself.
 
+Record the reason behind a non-obvious choice in the `docs/adr/` file for its topic, and add a new numbered file only for a new topic. Read the ADR for the area you change before changing it.
+
 # Navigation
 
 `docs/architecture.md` traces a user action from UI to engine to agent and back, and covers demo mode and assets. Read it before your first code change in a session, or when you need to find where something lives. When a change moves a module or alters a flow it describes, update it in the same commit.
@@ -38,7 +40,7 @@ Changes limited to documentation or agent instructions do not require applicatio
 
 Bump the version in `[workspace.package]` in the root `Cargo.toml` with every impactful change. A user-visible bug fix, behavior change or new feature bumps the patch (third) number. Bump the minor (second) number, resetting the patch to 0, only for a new Mode or a rework the user calls one. Leave the major (first) number unchanged. Documentation, agent-instruction, and internal-only changes keep the current version. Commit the bump with the change it versions, together with the updated `Cargo.lock` (`--locked` builds fail on a stale lock).
 
-Bump `PROTOCOL` in `crates/adeline_core/src/protocol.rs` in the commit that changes the shape of any message between the engine and its clients. A client and an engine work together exactly when their `PROTOCOL` matches, whatever their Adeline versions, so an unbumped shape change breaks remote machines running another version. `crates/adeline_core/tests/protocol.rs` pins every message's shape and fails on such a change; its header says how to record the new shape.
+Bump `PROTOCOL` in `crates/adeline_core/src/protocol.rs` in the commit that changes the shape of any message between the engine and its clients. A client and an engine work together exactly when their `PROTOCOL` matches, whatever their Adeline versions, so an unbumped shape change breaks remote machines running another version. `crates/adeline_core/tests/protocol.rs` pins every message's shape and fails on such a change. `docs/adr/0004-engine-and-protocol.md` says how to record the new shape.
 
 # Testing
 

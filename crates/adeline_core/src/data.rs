@@ -1,8 +1,5 @@
 //! The UI's model of projects, chats, messages and tool activity, plus the bundled
 //! demo workspace (`assets/workspace.json`).
-//!
-//! `u64` times are milliseconds since the epoch and `i64` times seconds. A 0 time
-//! is unknown.
 use crate::conversation::{Attachment, MessageRole, ThreadStatus, ToolKind, ToolStatus};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;

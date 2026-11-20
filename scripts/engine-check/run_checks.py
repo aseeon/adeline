@@ -36,9 +36,6 @@ STATUS_FIELDS = ["PID:", "Version:", "Protocol:", "Daemon mode:", "Uptime:", "Co
 home = config = work = pids = None
 
 
-# ---------------------------------------------------------------------------
-# Processes (Toolhelp snapshot: parent PID and thread count without psutil)
-
 class PROCESSENTRY32W(ctypes.Structure):
     _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD), ("th32ProcessID", wintypes.DWORD),
                 ("th32DefaultHeapID", ctypes.c_size_t), ("th32ModuleID", wintypes.DWORD),
@@ -79,7 +76,7 @@ def ancestors(pid):
 
 def kill(pid):
     try:
-        os.kill(pid, signal.SIGTERM)  # TerminateProcess on Windows.
+        os.kill(pid, signal.SIGTERM)
     except OSError:
         pass
 
@@ -87,9 +84,6 @@ def kill(pid):
 def agent_pids():
     return {int(path.name) for path in pids.iterdir()} if pids.exists() else set()
 
-
-# ---------------------------------------------------------------------------
-# Helpers
 
 class Failed(AssertionError):
     pass
@@ -130,7 +124,6 @@ def start_engine(*flags):
 
 
 def stop_engine():
-    """Shuts the test engine down (killing it if needed) and kills leftover fake agents."""
     pid = running_pid()
     if pid:
         try:
@@ -151,13 +144,11 @@ def send_command(prompt, conversation=None, agent="fake-auto"):
 
 
 def new_conversation(client, prompt, agent="fake-auto"):
-    """Starts a conversation; returns (id, delta mark taken before the send)."""
     mark = client.mark()
     return client.call(send_command(prompt, agent=agent)), mark
 
 
 def wait_turn(client, conversation, after, timeout=20):
-    """Waits for a turn that started after `after` to stop processing; returns the final live state."""
     index, _ = client.wait_live(conversation, lambda live: live["processing"], timeout, after)
     return client.wait_live(conversation, lambda live: not live["processing"], timeout, index)[1]
 
@@ -206,7 +197,6 @@ def lifecycle(events, name):
 
 
 def concurrently(*calls):
-    """Runs the calls at the same moment; returns their results in order."""
     barrier = threading.Barrier(len(calls))
 
     def run(call):
@@ -216,9 +206,6 @@ def concurrently(*calls):
     with ThreadPoolExecutor(len(calls)) as pool:
         return [future.result() for future in [pool.submit(run, call) for call in calls]]
 
-
-# ---------------------------------------------------------------------------
-# Setup
 
 def write_agent(folder, name):
     path = config / "agents" / folder
@@ -244,7 +231,6 @@ def setup():
     config = home / ".config" / "adeline"
     for folder in (work, pids, config):
         folder.mkdir(parents=True)
-    # Inherited by every adeline.exe started here, and by the agents the engine starts.
     os.environ.update(USERPROFILE=str(home), HOME=str(home), ADELINE_FAKE_PIDS=str(pids),
                       ADELINE_FAKE_STATE=str(temp / "fake-state"))
     (config / "settings.yml").write_text("modes:\n  chats:\n    retry_limit: 3\n", encoding="utf-8")
@@ -253,9 +239,6 @@ def setup():
     write_project(PROJECT, PROJECT, work)
     return temp
 
-
-# ---------------------------------------------------------------------------
-# Checks. Each starts and ends with no engine running; a returned string is reported.
 
 CHECKS = []
 
@@ -331,7 +314,6 @@ def check_single_engine():
     stop_engine()
     for log in logs:
         log.close()
-    # `engine start` racing itself: every caller reports the same engine.
     with ThreadPoolExecutor(3) as pool:
         results = list(pool.map(lambda _: adeline("engine", "start"), range(3)))
     reported = {m[1] for r in results if (m := re.search(r"PID (\d+)", r.stdout))}
@@ -512,7 +494,7 @@ def check_permission_without_client():
         conversation, mark = new_conversation(client, prompt, agent="fake")
         if wait_for_request:  # Waiting when the last client leaves.
             client.wait_live(conversation, lambda l: l["permission"], 15, mark)
-        client.close()  # Otherwise the request arrives after it left.
+        client.close()
 
         def stopped():
             events = transcript(conversation)
@@ -654,25 +636,21 @@ def check_fork():
         settings = (config / "projects" / PROJECT / "conversations" / fork / "conversation.yml").read_text()
         expect("(fork)" in settings and "session_id: null" in settings, settings)
         expect(not sent(fork, "initialize"), "forking started an agent")
-        # AC7: the latest reply of an idle source forks natively.
         send_in(client, fork, "third")
         expect(sent(fork, "session/fork") and not text_copy(fork), "latest reply did not fork natively")
         expect(sent(fork, "session/prompt")[0]["params"]["prompt"][0]["text"] == "third",
                "native fork prompt carried the text copy")
-        # AC8: an earlier reply gets the text copy and the note.
         early = client.call({"op": "fork", "id": source, "message": 1})
         send_in(client, early, "again")
         prompt = sent(early, "session/prompt")[0]["params"]["prompt"][0]["text"]
         expect(not sent(early, "session/fork") and text_copy(early), "earlier reply used a native fork")
         expect("user: first" in prompt and "second" not in prompt and prompt.endswith("again"), prompt)
-        # AC9: a failed native fork falls back to the text copy.
         broken, mark = new_conversation(client, "NO_FORK")
         wait_turn(client, broken, mark)
         retry = client.call({"op": "fork", "id": broken, "message": 1})
         send_in(client, retry, "fallback")
         expect(sent(retry, "session/fork") and sent(retry, "session/new") and text_copy(retry),
                "failed native fork did not fall back")
-        # AC6: forking a processing source leaves its turn running.
         mark = client.mark()
         client.call(send_command("SLOW 2", source))
         client.wait_live(source, lambda live: live["processing"], 10, mark)
@@ -720,7 +698,6 @@ def check_resume():
     with Client() as watcher:
         conversation, mark = new_conversation(watcher, "hello")
         wait_turn(watcher, conversation, mark)
-        # A long history, so a full snapshot would be large.
         for _ in range(3):
             mark = watcher.mark()
             watcher.call(send_command("again", conversation))
@@ -737,13 +714,11 @@ def check_resume():
             wait_turn(watcher, conversation, mark)
             back.wait_live(conversation, lambda live: not live["processing"], 10)
             time.sleep(0.5)
-            # Exactly what the watcher saw from the drop point on: nothing earlier, nothing twice.
             since = left_at["seq"] - watcher.snapshot["seq"]
             expected = [json.dumps(d, sort_keys=True) for d in watcher.deltas[since:]]
             got = [json.dumps(d, sort_keys=True) for d in back.deltas]
             expect(got == expected, f"resumed {len(got)} deltas, the live stream had {len(expected)}")
             expect(any('"text"' in d for d in got), "no reply text arrived after the reconnect")
-        # A position from another engine process gets a snapshot.
         with Client(resume={"epoch": "elsewhere", "seq": 3}) as other:
             expect(other.snapshot and not other.resumed, "a foreign position was resumed")
         return f"resumed with {len(got)} deltas instead of a snapshot"
@@ -772,8 +747,6 @@ def check_identity_and_listing():
     return f"engine {first[:8]}…"
 
 
-# ---------------------------------------------------------------------------
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--fast", action="store_true", help="skip the slow checks (about 90 s each)")
@@ -784,7 +757,7 @@ def main():
         sys.exit(f"{EXE} is missing; build it with `cargo build --release --locked`.")
     temp = setup()
     print(f"Temporary home: {home}")
-    try:  # A build without the engine subcommand would open the UI instead.
+    try:
         adeline("engine", "status", timeout=15)
     except subprocess.TimeoutExpired:
         shutil.rmtree(temp, ignore_errors=True)

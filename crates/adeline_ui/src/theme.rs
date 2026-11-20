@@ -1,7 +1,5 @@
-//! Application themes. Twelve-color YAML files (`docs/design/new_color_themes.md`)
-//! project onto Kit's global theme for every window. Borders and hovers are
-//! white ink in dark themes and black ink in light ones. Preferences stay separate from workspace data.
-//! `apply` runs after Kit's initialization and after every appearance change.
+//! Application themes: twelve-color YAML files (`docs/design/new_color_themes.md`)
+//! projected onto Kit's global theme for every window.
 use anyhow::{Context as _, Result, bail};
 use gpui_kit::{
     App, Hsla,

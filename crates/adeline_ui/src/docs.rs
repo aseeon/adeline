@@ -1,13 +1,5 @@
 //! Docs mode: the open project's docs tree, the open doc in the Viewer or the
-//! Editor, and a conversation of the project beside them. Every file read,
-//! write and change notice goes through the project's engine (`--demo`
-//! answers from `assets/demo-docs.json` instead), so remote projects work
-//! like local ones.
-//!
-//! Edits stay in memory until saved. A doc's buffer lives in the shared
-//! Editor state while it is open, and in its `Doc` otherwise. Entering Docs
-//! remembers the Chats selection and leaving restores it. What Docs shows per
-//! project is kept in `ui_state.rs`.
+//! Editor, and a conversation of the project beside them.
 
 use super::*;
 use adeline_core::{

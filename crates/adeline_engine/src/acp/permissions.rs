@@ -1,6 +1,4 @@
-//! Permission requests from the agent and the user's answers. Request IDs are
-//! unique across workers, so an answer to a request from a worker that has
-//! since been replaced can't answer the new worker's request.
+//! Permission requests from the agent and the user's answers.
 use super::*;
 use std::sync::atomic::{AtomicU64, Ordering};
 

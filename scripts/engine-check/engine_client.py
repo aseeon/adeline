@@ -1,8 +1,4 @@
-"""A small client for the conversation engine protocol (crates/adeline_core/src/protocol.rs).
-
-One JSON object per line over the named pipe \\\\.\\pipe\\adeline-engine-<hash>.
-The engine reads USERPROFILE, so set it before connecting to reach a test engine.
-"""
+"""A small client for the conversation engine protocol (crates/adeline_core/src/protocol.rs)."""
 import ctypes
 import itertools
 import json
@@ -13,7 +9,6 @@ import threading
 import time
 from ctypes import wintypes
 
-# Read from protocol.rs so the Rust constant stays the only copy.
 PROTOCOL = int(re.search(r"pub const PROTOCOL: u32 = (\d+);", open(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "crates", "adeline_core", "src", "protocol.rs"),
     encoding="utf-8").read()).group(1))
@@ -23,9 +18,7 @@ _kernel32.PeekNamedPipe.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.D
 
 
 def config_dir(userprofile=None):
-    """`PathBuf::from(USERPROFILE).join(".config/adeline")` on Windows, as a string."""
     base = os.environ["USERPROFILE"] if userprofile is None else userprofile
-    # Path::join adds a separator unless the base is empty, ends in one, or is a bare drive ("C:").
     if not base or base[-1] in "\\/" or (len(base) == 2 and base[1] == ":"):
         return base + ".config/adeline"
     return base + "\\.config/adeline"
@@ -39,7 +32,6 @@ def fnv1a64(data: bytes) -> int:
 
 
 def pipe_name(userprofile=None):
-    """Mirrors `ipc::pipe_name`: FNV-1a 64 over the lowercased config path's UTF-8 bytes."""
     return rf"\\.\pipe\adeline-engine-{fnv1a64(config_dir(userprofile).lower().encode()):016x}"
 
 
@@ -52,8 +44,6 @@ class EngineError(Exception):
 
 
 class Client:
-    """A connection to the engine. A reader thread polls with PeekNamedPipe, so a
-    read never blocks the synchronous pipe handle while another thread writes."""
 
     def __init__(self, hello=True, cli=False, protocol=PROTOCOL, timeout=10, resume=None):
         deadline = time.monotonic() + timeout
@@ -61,7 +51,7 @@ class Client:
             try:
                 self._pipe = open(pipe_name(), "r+b", buffering=0)
                 break
-            except OSError as error:  # 231 = ERROR_PIPE_BUSY: the next instance isn't ready yet.
+            except OSError as error:
                 if getattr(error, "winerror", None) != 231 or time.monotonic() > deadline:
                     raise
                 time.sleep(0.02)
@@ -84,15 +74,13 @@ class Client:
             self._wait(lambda: self.welcome and (self.snapshot or self.resumed or not subscribed),
                        timeout, "welcome")
 
-    # -- transport ---------------------------------------------------------
-
     def _read(self):
         buffer = b""
         available = wintypes.DWORD()
         try:
             while True:
                 if not _kernel32.PeekNamedPipe(self._handle, None, 0, None, ctypes.byref(available), None):
-                    break  # Broken pipe: the engine went away or we closed.
+                    break
                 if not available.value:
                     time.sleep(0.005)
                     continue
@@ -125,7 +113,6 @@ class Client:
             self._changed.notify_all()
 
     def _wait(self, ready, timeout, what):
-        """Waits until `ready()` returns something truthy, and returns it."""
         result = None
 
         def check():
@@ -156,22 +143,16 @@ class Client:
     def __exit__(self, *_):
         self.close()
 
-    # -- requests ----------------------------------------------------------
-
     def request(self, command, timeout=15):
-        """Sends a command such as {"op": "status"}; returns {"Ok": value} or {"Err": reason}."""
         request_id = next(self._ids)
         self.send({"type": "request", "id": request_id, "command": command})
         return self._wait(lambda: self.replies.pop(request_id, None), timeout, f"reply to {command['op']}")
 
     def call(self, command, timeout=15):
-        """Like `request`, but returns the Ok value and raises EngineError on Err."""
         result = self.request(command, timeout)
         if "Err" in result:
             raise EngineError(result["Err"])
         return result["Ok"]
-
-    # -- deltas ------------------------------------------------------------
 
     def position(self):
         """Where this client is in the engine's delta stream, for a later `resume`."""
@@ -184,20 +165,18 @@ class Client:
             return len(self.deltas)
 
     def wait_delta(self, predicate, timeout=10, after=0):
-        """Returns (index, delta) of the first delta from `after` on that matches."""
         start = [after]
 
         def ready():
             for index in range(start[0], len(self.deltas)):
                 if predicate(self.deltas[index]):
                     return index, self.deltas[index]
-            start[0] = max(start[0], len(self.deltas))  # Resume the scan here next time.
+            start[0] = max(start[0], len(self.deltas))
             return None
 
         return self._wait(ready, timeout, "matching delta")
 
     def wait_live(self, conversation, predicate, timeout=10, after=0):
-        """Waits for a `live` delta of one conversation; returns (index, live)."""
         index, delta = self.wait_delta(
             lambda d: d.get("delta") == "live" and d["id"] == conversation and predicate(d["live"]),
             timeout, after)

@@ -1,10 +1,5 @@
 //! The local, same-user transport between the engine and its clients: a named pipe
 //! on Windows, a Unix socket elsewhere.
-//!
-//! Messages are JSON lines. `connect` fails with `NotFound` when no engine runs.
-//! `engine/id` is the engine's lasting identity: remote clients read it over SSH to
-//! tell engines apart. A UI started with `--control` listens on its own pipe or
-//! socket, named after its process ID (`control_address`).
 use anyhow::{Context as _, Result, bail};
 use serde::Serialize;
 use std::{io, path::PathBuf, time::Duration};

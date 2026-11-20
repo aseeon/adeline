@@ -1,10 +1,4 @@
-//! The macOS menu bar. Other platforms store the menus and never show them, so this runs
-//! everywhere and the app's own menus stay the same on each platform.
-//!
-//! Menu items dispatch GPUI actions, which reach the focused element first. The app-wide
-//! handlers here catch the ones no element handled, such as with focus in another window.
-//! `init` runs after `bind_keys`, because macOS shows each item's shortcut from the
-//! keymap.
+//! The macOS menu bar.
 use super::*;
 use gpui_kit::base::input;
 

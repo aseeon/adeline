@@ -1,4 +1,3 @@
-# Source: https://github.com/atom/atom/blob/master/packages/one-light-syntax/styles/colors.less
 name: "One Light"
 brightness: Light
 colors:

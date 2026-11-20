@@ -1,6 +1,5 @@
 //! Pixel facts measured inside an element's bounds, shared by the GPU tests in
-//! `pixels.rs` and the Windows smoke test in `pixels_windows.rs`. No golden images:
-//! fonts and antialiasing differ between OSes and drivers.
+//! `pixels.rs` and the Windows smoke test in `pixels_windows.rs`.
 use adeline_ui::control;
 use gpui_kit::base::test_support::ElementSnapshot;
 use gpui_kit::{Hsla, Rgba as Color};

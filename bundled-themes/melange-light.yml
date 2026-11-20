@@ -1,4 +1,3 @@
-# Source: https://github.com/savq/melange-nvim/blob/master/lua/melange/palettes/light.lua
 name: "Melange Light"
 brightness: Light
 colors:

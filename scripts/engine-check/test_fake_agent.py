@@ -36,7 +36,6 @@ class Agent:
         return self.next_id
 
     def until_reply(self, request_id, timeout=10):
-        """Returns (reply, every message seen before it)."""
         seen, deadline = [], time.monotonic() + timeout
         while True:
             message = self.lines.get(timeout=max(0.01, deadline - time.monotonic()))
@@ -106,7 +105,7 @@ def main():
     for attempt in (1, 2):
         reply, _ = agent.until_reply(agent.prompt(sid, "FAIL 2"))
         assert "upstream timeout" in reply["error"]["message"], reply
-    agent.process.kill()  # The counter survives a restart.
+    agent.process.kill()
     agent = Agent(env)
     agent.call("initialize", {"protocolVersion": 1})
     agent.call("session/load", {"sessionId": sid, "cwd": str(temp), "mcpServers": []})

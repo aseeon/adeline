@@ -78,7 +78,6 @@ def main():
         host = alias.read_text().strip()
     home = root / host
     home.mkdir(parents=True, exist_ok=True)
-    # A remote machine has its own environment, not the client's.
     env = {k: v for k, v in os.environ.items() if not k.startswith(("ADELINE_ASKPASS", "ADELINE_EXE", "SSH_ASKPASS"))}
     env.update(USERPROFILE=str(home), HOME=str(home))
     if WINDOWS:
@@ -95,7 +94,6 @@ def main():
             uname.chmod(0o755)
             env["PATH"] = f"{tools}{os.pathsep}{env['PATH']}"
         argv = ["/bin/sh", "-c", command]
-    # Its own process group on Unix, so a test can drop the whole session.
     child = subprocess.Popen(argv, cwd=home, env=env, stdin=sys.stdin, stdout=sys.stdout, stderr=sys.stderr,
                              start_new_session=not WINDOWS)
     record = root / "bridges" / str(os.getpid())

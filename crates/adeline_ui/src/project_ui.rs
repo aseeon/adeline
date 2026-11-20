@@ -1,7 +1,5 @@
 //! Projects from the UI: add, rename, settings, delete with undo, the project
-//! dialog, and browsing a remote machine's folders. The engine deletes a
-//! project everywhere once its agents stop. Closing the stopping dialog
-//! keeps the project, but agents already asked to stop keep stopping.
+//! dialog, and browsing a remote machine's folders.
 use super::*;
 use gpui_kit::component::Disableable as _;
 use std::path::{Path, PathBuf};

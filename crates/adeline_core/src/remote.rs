@@ -1,10 +1,4 @@
 //! Remote machines through the system `ssh`.
-//!
-//! This finds the remote platform and its Adeline, installs this client's version
-//! there, and runs `adeline bridge`, which joins the SSH session to the remote
-//! engine's local pipe or socket. `ssh` runs with the client's `askpass` address, so its prompts reach the UI. The
-//! SSH session starts in the home folder on every platform, so remote paths are
-//! relative to it.
 use crate::{
     ipc,
     machines::split_port,

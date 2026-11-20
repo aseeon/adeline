@@ -1,14 +1,5 @@
 //! The UI's connections to the conversation engine of every checked machine,
-//! as a GPUI global. The local engine is reached through its pipe or socket,
-//! remote ones over SSH (`remote.rs`). Each connection's changes arrive in
-//! order on its own channel; replies run their callbacks in that order.
-//!
-//! A connection's `State` is its whole phase, and only the phases with an open
-//! link hold its `Link`. `dial` starts `Connecting`. The snapshot or `Resumed`
-//! moves it to `Connected` (`go_live`, which sends the requests queued until
-//! then), an older local engine to `Mismatch` and, once the user picks, to
-//! `Waiting` until it exits. Closing, failing or `Bye` end in the other states;
-//! a lost remote waits out its delay in `Disconnected` and dials again.
+//! as a GPUI global.
 use super::{Adeline, Harnesses};
 use adeline_core::{
     askpass, harness, ipc,

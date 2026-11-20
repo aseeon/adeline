@@ -1,8 +1,5 @@
 //! Installing and updating supported agents and Node.js with their standard global
 //! installs, and terminal logins.
-//!
-//! The engine runs these on its own machine and streams the output to the client. A
-//! run stops at its first failed step.
 use crate::profiles::{self, Step};
 use anyhow::{Context as _, Result, anyhow, bail};
 use serde::{Deserialize, Serialize};

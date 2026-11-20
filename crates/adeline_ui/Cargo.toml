@@ -31,14 +31,13 @@ gpui-kit = { workspace = true, features = ["test-support"] }
 # Frame timings for profiling builds, see `frame_log.rs`.
 profiler = ["gpui-kit/profiler"]
 # The control endpoint (`control.rs`) and GPUI's test support, which the UI
-# tests here and in `crates/adeline/tests` use. Never in the dist package.
+# tests here and in `crates/adeline/tests` use.
 control = ["gpui-kit/test-support", "dep:image"]
 
 [[test]]
 name = "ui"
 required-features = ["control"]
 
-# The pixel tests run on the main thread, which the test harness doesn't use.
 [[test]]
 name = "pixels"
 harness = false

@@ -1,7 +1,6 @@
 //! Changes for clients: a project's uncommitted changes against `HEAD`, read
 //! with the `git` command line on the engine's machine, a file's patch or
-//! text, and fresh changes for the clients watching a project. Git runs on a
-//! blocking thread, so a slow repository never holds up the engine's task.
+//! text, and fresh changes for the clients watching a project.
 
 use super::{Engine, Input};
 use adeline_core::protocol::{Change, ChangeFile, ChangeStatus, Changes, Command, Delta, Repo};

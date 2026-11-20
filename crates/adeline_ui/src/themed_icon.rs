@@ -1,5 +1,4 @@
-//! GPUI SVGs require a local color. Resolve inherited text color at paint
-//! time so parent hover/selection styles work without freezing a palette value.
+//! An SVG icon drawn in the text color it inherits.
 use gpui_kit::{
     App, Bounds, ElementId, GlobalElementId, Hsla, InspectorElementId, Interactivity, LayoutId,
     Pixels, StyleRefinement, Svg, Window, prelude::*, svg,

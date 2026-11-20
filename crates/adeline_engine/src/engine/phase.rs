@@ -1,16 +1,6 @@
 //! One conversation's lifecycle, the engine's only record of it: whether its
 //! agent worker runs or shuts down, whether a turn runs and why it stops, and
-//! what the last turn left behind. `Live`'s phase flags (`project`) and the
-//! runtime `ThreadStatus` (`status`) are computed from it. The methods here are
-//! its transitions, called by the engine's handlers in `turns.rs`, `events.rs`,
-//! `conversations.rs` and `projects.rs`.
-//!
-//! Storage failure is a flag beside the phase, since it can strike in any phase
-//! and lasts until Retry storage. A turn that storage stops carries
-//! `Stop::Storage`, and shows as recovering once storage is retried, until that
-//! turn ends. `text_copy` marks a fork whose copied history no turn has
-//! confirmed yet. A stopped turn leaves it set, since a stop can't tell whether
-//! the history reached the agent.
+//! what the last turn left behind.
 use crate::acp;
 use adeline_core::{
     conversation::{Attachment, ThreadStatus},

@@ -94,7 +94,6 @@ def attempts_file(session):
 
 
 def ask_permission(session, cancel):
-    """Returns the chosen optionId, or None when cancelled."""
     request_id = next(request_ids)
     waiter = [threading.Event(), None]
     replies[request_id] = waiter
@@ -119,7 +118,6 @@ def ask_permission(session, cancel):
 
 
 def prompt(message):
-    """Runs one session/prompt on its own thread so cancel and answers keep flowing."""
     params = message["params"]
     session = params["sessionId"]
     text = " ".join(part.get("text", "") for part in params.get("prompt", []))
@@ -177,7 +175,7 @@ def prompt(message):
 
 def handle(message):
     method = message.get("method")
-    if method is None:  # A response to one of our requests.
+    if method is None:
         if waiter := replies.get(message.get("id")):
             waiter[1] = message
             waiter[0].set()
@@ -210,7 +208,6 @@ def handle(message):
                 option["currentValue"] = params.get("value")
             reply({"configOptions": [option]})
         case "session/prompt":
-            # Cleared here, in arrival order, so a cancel right after the prompt isn't lost.
             cancels[params["sessionId"]] = threading.Event()
             threading.Thread(target=prompt, args=(message,), daemon=True).start()
         case "session/cancel":

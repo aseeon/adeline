@@ -1,5 +1,4 @@
 //! User agent definitions, stored under the Adeline configuration directory.
-//! Files older than `VERSION` are left alone and not listed.
 use crate::conversation::{McpServer, Selections};
 use crate::files::{self, checked_id, error as file_error, normalize_name};
 use anyhow::{Context as _, Result, anyhow, bail};

@@ -4,15 +4,11 @@ ignore-files = true
 ignore-hidden = false
 extend-exclude = [
     ".git/",
-    # Generated.
     "Cargo.lock",
     "output/",
-    # The ACP registry copy, spelled as published.
     "assets/registry.json",
-    # Third-party agent skills, kept as published.
     ".agents/skills/",
     ".claude/skills/",
-    # Research notes quote their sources as written.
     "docs/research_notes/",
 ]
 
@@ -20,7 +16,6 @@ extend-exclude = [
 check-filename = true
 
 [default.extend-words]
-# Upstream theme name, spelled as published.
 porfolio = "porfolio"
 hass = "hass"
 damon = "damon"

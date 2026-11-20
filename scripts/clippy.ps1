@@ -6,11 +6,9 @@ $Cargo = if ($env:CARGO) { $env:CARGO } else { 'cargo' }
 
 & $Cargo clippy @args --workspace --locked --all-targets --all-features -- --deny warnings
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-# The headless build (no `gui` feature, no UI crate).
 & $Cargo clippy @args --workspace --exclude adeline_ui --locked --all-targets --no-default-features -- --deny warnings
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# If local, run other checks if we have the tools installed.
 if (-not $env:GITHUB_ACTIONS) {
     if (-not (Get-Command cargo-shear -ErrorAction SilentlyContinue)) { exit 0 }
     cargo shear --locked --deny-warnings --check-test-targets

@@ -1,6 +1,4 @@
 //! The engine's log file, rotated at `LOG_CAP` and kept to three old copies.
-//! Code logs through `tracing` events with dot-separated names and named fields;
-//! a process that never calls `open` drops them.
 use std::{
     fmt,
     fs::File,

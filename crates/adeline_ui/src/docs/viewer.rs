@@ -1,10 +1,6 @@
 //! The Markdown Viewer: the Kit's text view with front matter as a table,
 //! GitHub alerts, task checkboxes that edit the file, mermaid diagrams,
 //! project images read through the engine, and remote images shown as links.
-//! Alert and task bodies are views of their own with the same extensions.
-//!
-//! Renderers run outside the app's entities, so clicks reach `Adeline` as
-//! actions carrying the byte offsets of the doc's source they act on.
 
 use super::{NoteRange, OpenLink, ToggleTask};
 use gpui_kit::base::text::{

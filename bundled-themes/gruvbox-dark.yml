@@ -1,4 +1,3 @@
-# Source: https://github.com/sainnhe/gruvbox-material/blob/master/autoload/gruvbox_material.vim
 name: "Gruvbox Dark"
 brightness: Dark
 colors:

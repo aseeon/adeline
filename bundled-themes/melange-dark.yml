@@ -1,4 +1,3 @@
-# Source: https://github.com/savq/melange-nvim/blob/master/lua/melange/palettes/dark.lua
 name: "Melange Dark"
 brightness: Dark
 colors:

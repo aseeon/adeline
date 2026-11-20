@@ -1,5 +1,4 @@
-//! Path checks that keep project storage safe: working directories outside it,
-//! and real directories and files, not links, before anything is read or deleted.
+//! Path checks that keep project storage safe.
 use super::*;
 
 pub(super) fn outside_project_storage(directory: &Path, root: &Path) -> Result<()> {

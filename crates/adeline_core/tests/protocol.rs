@@ -1,11 +1,4 @@
 //! Pins the shape of every message between the engine and its clients.
-//! `tests/wire/<PROTOCOL>.jsonl` holds a sample of each message, and each must
-//! read back unchanged, so a renamed, added, removed or retyped field fails here.
-//!
-//! When this fails, the change breaks engines and clients on other machines:
-//! bump `PROTOCOL` in `protocol.rs`, rename the samples file to the new number,
-//! and replace the failing lines with what the failure says they now read as.
-//! Collections hold one entry, so a sample pins each element's shape too.
 
 use adeline_core::protocol::{ClientMessage, Command, Delta, EngineMessage, PROTOCOL};
 use serde::de::DeserializeOwned;

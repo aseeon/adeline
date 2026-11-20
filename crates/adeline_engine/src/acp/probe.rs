@@ -1,5 +1,5 @@
 //! Probes and logins: short-lived sessions that ask an agent what it offers or
-//! log it in. Dropping their `Session` stops the agent.
+//! log it in.
 use super::*;
 
 #[derive(Debug)]

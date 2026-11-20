@@ -613,8 +613,6 @@ impl Adeline {
     }
 }
 
-// Kit keeps a closed dialog drawn while it fades out. A newer modal may be open by
-// then, so a stale dialog draws nothing in place of the newer modal's content.
 struct ModalContent {
     owner: WeakEntity<Adeline>,
     opened: usize,

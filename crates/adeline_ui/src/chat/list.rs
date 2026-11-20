@@ -1,6 +1,5 @@
 //! The chat list: the project switcher, search, sections with stacked labels,
-//! rows and the sidebar around them. Each row is a cached `ChatCard` view, and
-//! the list notifies every card whenever it is notified itself.
+//! rows and the sidebar around them.
 use super::*;
 
 impl Adeline {

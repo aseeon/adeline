@@ -1,4 +1,3 @@
-# Source: https://github.com/rose-pine/neovim/blob/main/lua/rose-pine/palette.lua
 name: "Rosé Pine Dawn"
 brightness: Light
 colors:

@@ -1,7 +1,6 @@
 //! The Islands layout (docs/design/DESIGN.md): the window header, the left
 //! island (mode rail and chat list), the main area, and the right island (the
-//! side pane and its rail). Both rails share `rail` and `rail_button`, so they
-//! look and behave the same.
+//! side pane and its rail).
 use super::*;
 use adeline_core::conversation::ThreadStatus;
 use std::cell::RefCell;

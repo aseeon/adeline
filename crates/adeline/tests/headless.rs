@@ -1,5 +1,4 @@
-//! The headless build's command line. Runs in the headless test step
-//! (`--no-default-features`), where `CARGO_BIN_EXE_adeline` is that build.
+//! The headless build's command line.
 #![cfg(not(feature = "gui"))]
 #![expect(
     clippy::disallowed_methods,

@@ -1,10 +1,4 @@
 //! The `SSH_ASKPASS` helper.
-//!
-//! `ssh` runs this executable with `ADELINE_ASKPASS` set, and `askpass_main` hands
-//! the prompt to the client that started `ssh`. The client listens on an owner-only
-//! named pipe (Windows) or a 0600 Unix socket, so only the same user can ask or
-//! read answers. One JSON line goes each way: the `Ask`, then the answer, `null`
-//! when the user cancels.
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt as _, AsyncRead, AsyncWriteExt as _, BufReader};

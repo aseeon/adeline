@@ -1,10 +1,5 @@
 //! OS glue for the engine: process containment, detached and piped spawning,
 //! console attachment and owner-only IPC pipes.
-//!
-//! All unsafe code lives here. Every process the engine starts dies with it, even
-//! when it is killed: a job object on Windows. On Unix each agent leads a process
-//! group listed in a file, which `stop_children` and the next engine kill. Piped
-//! readers are driven by the reactor (IOCP or epoll), so no thread waits on them.
 #![cfg_attr(
     windows,
     expect(

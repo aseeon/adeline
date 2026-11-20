@@ -1,5 +1,4 @@
-//! Human-editable application preferences. Missing files are seeded, never replaced.
-//! Render paths read through `with`, which doesn't clone the settings.
+//! Human-editable application preferences.
 use anyhow::Context as _;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::{

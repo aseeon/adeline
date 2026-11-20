@@ -1,40 +1,5 @@
 //! Messages between the conversation engine and its clients, one JSON object
-//! per line. Nothing here assumes the client shares the engine's machine.
-//!
-//! Bump `PROTOCOL` whenever a message changes shape. `hello`, `welcome`,
-//! `status`, `stop_all` and `shutdown` must keep working across versions.
-//! Fields added later default, so older engines send `at: 0` and no `headless`.
-//! Times are epoch milliseconds.
-//!
-//! A CLI `Hello` doesn't count as a connected client. With `resume`, the engine
-//! answers `Resumed` and the missed deltas while it still holds them, else a
-//! full snapshot. `apply` runs in the engine and every client alike, so all
-//! hold the same state.
-//!
-//! Replies other than `null`: `Send` and `Fork` give a conversation ID,
-//! `SaveProject` a project ID, `SaveAgent` an agent ID, `TakeQueued` the
-//! message's text and attachments as `(String, Vec<Attachment>)`, `Probe` a
-//! `Result<Probed, ProbeError>`, `PlanInstall` a
-//! `Vec<install::Planned>`, `ListDirectory` a `Listing` (of the home folder
-//! without a path), `WatchTraffic` the traffic recorded so far, `ListDocs` the
-//! project's doc paths, `ReadDoc` a `DocFile`, `WriteDoc` the saved file's
-//! modification time and `ReadImage` the image's bytes in base64. `WriteDoc`
-//! with `modified` fails when the file on disk has another modification time,
-//! so a save can't replace an edit the client hasn't read.
-//! `ListFiles` gives every project file's path, `ListChanges` a `Changes`
-//! and `ReadChange` a `ChangeFile`.
-//!
-//! Doc paths are relative to the project root with `/` separators. While a
-//! client watches a project's docs (`WatchDocs`), `Delta::Docs` reports docs
-//! created, changed or removed on disk; `relist` means a folder changed, so
-//! the client lists the docs again.
-//!
-//! Changes compare the working tree with `HEAD`. While a client watches a
-//! project's changes (`WatchChanges`), `Delta::Changes` sends them again after
-//! they change on disk or in git, with `files` when the project's file list
-//! changed too.
-//! `DeleteProject`, `StopAll`, `Shutdown` and `Login` reply once done, and
-//! `Install` streams `Output` lines first.
+//! per line.
 use crate::{
     agents::{AgentDefinition, AgentEntry, ExecutionConfig},
     card::Card,

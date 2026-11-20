@@ -1,10 +1,5 @@
 //! The machines this client knows: the local machine and the remote machines saved
 //! here, which ones are checked, and which one "Open folder…" used last.
-//!
-//! Kept in `machines.yml`; other clients never see it. Demo mode keeps fake
-//! machines in memory and never touches the file. The last checked machine can't be
-//! unchecked, and removing a machine leaves its engine and data untouched. A file
-//! that can't be read or parsed is never overwritten.
 use anyhow::{Context as _, bail};
 use serde::{Deserialize, Serialize};
 use std::{

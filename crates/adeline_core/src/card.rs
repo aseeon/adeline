@@ -1,10 +1,4 @@
 //! Cards: a chat reply's links to what a mode shows, such as written docs.
-//!
-//! The engine makes them from agent output it has checked, and they carry no
-//! commands: a client can only open the card's route or copy its path.
-//!
-//! A route is `adeline://<mode>/<path>`, relative to the chat's project. A
-//! chat holds one card per route, so a later change updates the card in place.
 
 use serde::{Deserialize, Serialize};
 

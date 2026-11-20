@@ -1,19 +1,5 @@
 //! One ACP agent process per conversation, spoken to through the official
 //! `agent-client-protocol` SDK and its typed v1 messages.
-//!
-//! This is the only module that knows ACP: it translates the protocol to and from
-//! Adeline's own model (`conversation.rs`). Probes and logins are short-lived
-//! sessions through the same client; dropping their `Session` stops the agent.
-//!
-//! Every line both ways, and the agent's stderr, becomes traffic; lines that
-//! aren't JSON are kept as traffic and skipped. Session modes offered through
-//! `session/set_mode` rather than as a config option appear as `MODE_OPTION`.
-//! Usage is in tokens.
-//!
-//! The `Worker` is three state machines side by side: `Connection` (the process,
-//! its link and the handshake, with `AgentSession` for which session to open),
-//! `Step` (the active turn) and `Exit` (shutdown, with `ExitWatch` for an exit
-//! that is overdue).
 use adeline_core::agents::ExecutionConfig;
 use adeline_core::{
     agents::InstructionsMode,

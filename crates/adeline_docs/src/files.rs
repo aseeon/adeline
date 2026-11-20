@@ -1,9 +1,5 @@
 //! Which files in a project are docs, and turning the paths clients and agents
 //! name into checked paths inside the project.
-//!
-//! With `respect_gitignore`, files the project's `.gitignore` files (and
-//! `.git/info/exclude`) ignore and files in hidden folders are not docs.
-//! `.git` itself never holds docs.
 
 use ignore::{
     Match, WalkBuilder,

@@ -1,6 +1,4 @@
-//! Doc text as read from disk and as saved: a file that is too large, binary
-//! UTF-16 or not UTF-8 opens read-only, and a save keeps the file's line endings and
-//! its trailing newline, or lack of one.
+//! Doc text as read from disk and as saved.
 
 pub const MAX_EDITABLE: usize = 10 * 1024 * 1024;
 

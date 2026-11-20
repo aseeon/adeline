@@ -1,6 +1,5 @@
 //! Agent profiles: everything Adeline knows about one supported agent beyond
-//! generic ACP. Agents without a profile, including Custom agents
-//! and other registry agents, get generic behavior.
+//! generic ACP.
 
 pub const CUSTOM: &str = "custom";
 

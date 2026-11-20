@@ -1,12 +1,6 @@
 //! Pixel tests: the real `Adeline` view in demo mode on GPUI's test platform, with
 //! the platform's real text system and a real GPU renderer (Metal on macOS, wgpu on
-//! Linux), at a fixed size and scale. Each test checks what a user would notice
-//! inside an element's bounds, and a failure saves its frame under
-//! `target/pixel-failures`. Windows has no headless renderer, so these tests pass
-//! there without checking, and `pixels_windows.rs` covers DirectX instead.
-//!
-//! macOS builds its text system on the main thread, so this binary has no test
-//! harness: `main` answers nextest's `--list` and runs the test it names.
+//! Linux), at a fixed size and scale.
 #[path = "support/pixels.rs"]
 mod pixels;
 mod support;

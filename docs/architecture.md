@@ -1,6 +1,6 @@
 # Architecture
 
-Every source file opens with a `//!` summary, and `grep -rm1 '^//!' crates` prints the module map. This doc covers what the map can't show: how the modules connect. Paths below are relative to a crate's `src/`.
+Every source file opens with a `//!` summary, and `grep -rm1 '^//!' crates` prints the module map. This doc covers what the map can't show: how the modules connect. The reasons behind the code's choices are in `docs/adr/`, one file per topic. Paths below are relative to a crate's `src/`.
 
 ## One binary, three roles
 

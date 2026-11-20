@@ -1,10 +1,5 @@
 //! The conversation engine: the background process that owns agent processes,
-//! conversation state and every engine-owned file. One runs per OS user.
-//!
-//! Every command and agent event goes through one task, in arrival order, so
-//! commands from several clients can't interleave or deadlock. Every delta it
-//! sends is numbered within this process's `epoch`, and the latest
-//! `RECENT_DELTAS` are kept for clients that reconnect.
+//! conversation state and every engine-owned file.
 use crate::{
     acp,
     storage::{self, ProjectStore},

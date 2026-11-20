@@ -1,13 +1,7 @@
 //! Changes mode: the open project's files tree with its uncommitted changes
 //! against `HEAD`, the selected file's diff (or its whole text, unchanged), a
 //! conversation beside them, and comments on lines or files that collect as
-//! cards in the composer until the message goes out. The engine runs git and
-//! reads the files (`--demo` answers from `assets/demo-changes.json`), so
-//! remote projects work like local ones.
-//!
-//! The open project's changes are watched in every mode while Changes is on,
-//! so the Activity panel can sum them. Entering Changes remembers the Chats
-//! selection and leaving restores it, as in Docs.
+//! cards in the composer until the message goes out.
 
 use super::*;
 use adeline_core::protocol::{Change, ChangeFile, Changes as Listed, Command, Repo};

@@ -1,4 +1,3 @@
-# Source: https://github.com/joshdick/onedark.vim/blob/main/autoload/onedark.vim
 name: "One Dark"
 brightness: Dark
 colors:

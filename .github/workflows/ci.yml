@@ -1,6 +1,3 @@
-# Job layout follows Zed's run_tests workflow: a fast style gate, then clippy
-# and tests on every OS, a dependency check, and one `tests_pass` job to use
-# as the required status check. Actions are pinned to commit SHAs.
 name: CI
 
 env:
@@ -8,8 +5,6 @@ env:
   RUST_BACKTRACE: '1'
   CARGO_INCREMENTAL: '0'
 
-# Pushes that only touch docs or agent skills skip CI. A push with any other
-# file runs it, whatever the commit order, so commits need no `[skip ci]`.
 on:
   push:
     branches:
@@ -39,13 +34,13 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: cargo fmt
         run: cargo fmt --all -- --check
       - name: check-todos
         run: ./scripts/check-todos
       - name: check for typos
-        uses: crate-ci/typos@00f422f3b19c57bc6338715ebfe3316d38768461 # v1.50.3
+        uses: crate-ci/typos@00f422f3b19c57bc6338715ebfe3316d38768461
         with:
           config: ./.config/typos.toml
 
@@ -58,7 +53,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: setup CI cargo config
         shell: bash
         run: |
@@ -67,7 +62,7 @@ jobs:
       - name: install Linux libraries
         if: runner.os == 'Linux'
         run: ./scripts/linux
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - name: clippy
         shell: bash
         run: ./scripts/clippy
@@ -81,7 +76,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: setup CI cargo config
         shell: bash
         run: |
@@ -90,15 +85,13 @@ jobs:
       - name: install Linux libraries
         if: runner.os == 'Linux'
         run: ./scripts/linux
-      # Lavapipe, Mesa's software Vulkan driver, so the pixel tests render on wgpu.
       - name: install lavapipe
         if: runner.os == 'Linux'
         run: sudo apt-get install -y mesa-vulkan-drivers
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172
         with:
           tool: cargo-nextest
-      # The headless build, for the UI test that installs it on a fake remote.
       - name: build headless
         run: cargo build --locked --no-default-features --target-dir target/headless
       - name: cargo nextest
@@ -107,12 +100,11 @@ jobs:
         run: cargo nextest run --locked --workspace --all-features --profile ci --no-tests=warn
       - name: upload pixel failures
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: pixel-failures-${{ runner.os }}
           path: target/pixel-failures
           if-no-files-found: ignore
-      # Tests that download an old release, kept off the main step's network path.
       - name: cargo nextest (ignored)
         run: cargo nextest run --locked --workspace --all-features --profile ci --run-ignored only --no-tests=warn
       - name: cargo nextest (headless)
@@ -122,19 +114,17 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172
         with:
           tool: cargo-shear,cargo-deny
       - name: unused dependencies
         run: cargo shear --locked --deny-warnings --check-test-targets
       - name: Cargo.lock is up to date
         run: cargo update --locked --workspace
-      # Every crate in Cargo.lock against the RustSec advisories, on pushes too.
       - name: vulnerable dependencies
         run: cargo deny --config .config/deny.toml check advisories
 
-  # The full desktop build, zipped as it's released.
   build:
     needs: [clippy, run_tests]
     strategy:
@@ -152,17 +142,16 @@ jobs:
     env:
       ZIP: adeline-${{ matrix.platform }}.zip
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: install Linux libraries
         if: runner.os == 'Linux'
         run: ./scripts/linux
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
       - name: cargo build --profile dist
         run: cargo build --profile dist --locked
       - name: zip (Windows)
         if: runner.os == 'Windows'
         run: Compress-Archive -Path target/dist/adeline.exe -DestinationPath $env:ZIP
-      # Finder runs a bare executable in Terminal, so macOS ships an app bundle.
       - name: zip (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -171,15 +160,12 @@ jobs:
       - name: zip (Linux)
         if: runner.os == 'Linux'
         run: zip -j "$ZIP" target/dist/adeline
-      # Uploaded as is, so the downloaded artifact is the release zip.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           path: ${{ env.ZIP }}
           archive: false
           if-no-files-found: error
 
-  # The headless build (`--no-default-features`), zipped as it's released.
-  # Linux builds are static musl, run in Alpine with no desktop libraries.
   build_headless:
     needs: [clippy, run_tests]
     strategy:
@@ -203,14 +189,13 @@ jobs:
     env:
       ZIP: adeline-headless-${{ matrix.platform }}.zip
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
       - name: add the target
         run: rustup target add ${{ matrix.target }}
-      # mimalloc is C, so a musl build needs musl's C compiler.
       - name: install musl-gcc
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y musl-tools
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:
           key: ${{ matrix.target }}
       - name: cargo build --profile dist --no-default-features
@@ -231,8 +216,7 @@ jobs:
       - name: zip
         if: runner.os != 'Windows'
         run: zip -j "$ZIP" target/${{ matrix.target }}/dist/adeline
-      # Uploaded as is, so the downloaded artifact is the release zip.
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           path: ${{ env.ZIP }}
           archive: false

@@ -1,11 +1,4 @@
 //! Durable project definitions, conversation snapshots and ordered transcript events.
-//!
-//! A conversation's agent and launch settings are fixed at creation; only its
-//! option selections change. Its settings also keep what the agent last offered,
-//! so menus work while the agent is stopped. `queue_event` holds streamed events
-//! for `flush_due` to write within `FLUSH_INTERVAL_MS`; `record_event` writes at
-//! once, with everything queued before it. Event timestamps are epoch
-//! milliseconds, a project's `opened_at` epoch seconds.
 use adeline_core::files::{self, checked_id, error as file_error};
 use adeline_core::{
     agents::{AgentDefinition, ExecutionConfig},
