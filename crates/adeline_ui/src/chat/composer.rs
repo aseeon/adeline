@@ -118,11 +118,11 @@ impl Adeline {
             Vec::new()
         };
         let running = self.current_live().is_some_and(|live| live.running);
-        let selections = bound.map(|definition| &definition.selections);
+        let selections = bound
+            .map(|definition| &definition.selections)
+            .filter(|_| !running);
         let menu = |category, max_chars| {
-            self.option_menu(
-                category, &options, selections, running, processing, max_chars, cx,
-            )
+            self.option_menu(category, &options, selections, processing, max_chars, cx)
         };
         (
             menu(conversation::Category::Model, fit.model),
@@ -343,19 +343,12 @@ impl Adeline {
         category: conversation::Category,
         options: &[conversation::SessionOption],
         selections: Option<&conversation::Selections>,
-        running: bool,
         processing: bool,
         max_chars: usize,
         cx: &Context<Self>,
     ) -> Option<AnyElement> {
         use conversation::Category;
-        let menu = option_menu_name(category);
-        let (id, heading, keys) = match category {
-            Category::Model => ("chat-model", "Model", "Alt+M"),
-            Category::Effort => ("chat-effort", "Effort", "Alt+E"),
-            Category::Mode => ("chat-mode", "Mode", "Alt+O"),
-            Category::Other => ("chat-more-options", "More options", "Alt+P"),
-        };
+        let (id, heading, keys) = option_names(category);
         let shown: Vec<conversation::SessionOption> = match category {
             Category::Other => options
                 .iter()
@@ -373,7 +366,6 @@ impl Adeline {
         let current = |option: &conversation::SessionOption| {
             selections
                 .and_then(|selections| selections.get(option))
-                .filter(|_| !running)
                 .map_or_else(|| option.current(), str::to_owned)
         };
         let shortcut = conversation_ui::shortcut(keys);
@@ -408,19 +400,19 @@ impl Adeline {
             return Some(trigger.into_any_element());
         }
         let currents: Vec<String> = shown.iter().map(current).collect();
-        Some(self.option_popover(menu, trigger, category, heading, shown, currents, cx))
+        Some(self.option_popover(trigger, category, shown, currents, cx))
     }
 
     fn option_popover(
         &self,
-        menu: &'static str,
         trigger: Button,
         category: conversation::Category,
-        heading: &'static str,
         shown: Vec<conversation::SessionOption>,
         currents: Vec<String>,
         cx: &Context<Self>,
     ) -> AnyElement {
+        let menu = option_menu_name(category);
+        let (_, heading, _) = option_names(category);
         let owner = cx.weak_entity();
         let content_owner = owner.clone();
         let state = self.command_popup.clone();
@@ -469,6 +461,16 @@ pub(crate) struct Composer {
 }
 
 type OptionItem = (String, String, String, bool);
+
+fn option_names(category: conversation::Category) -> (&'static str, &'static str, &'static str) {
+    use conversation::Category;
+    match category {
+        Category::Model => ("chat-model", "Model", "Alt+M"),
+        Category::Effort => ("chat-effort", "Effort", "Alt+E"),
+        Category::Mode => ("chat-mode", "Mode", "Alt+O"),
+        Category::Other => ("chat-more-options", "More options", "Alt+P"),
+    }
+}
 
 fn option_groups(
     category: conversation::Category,

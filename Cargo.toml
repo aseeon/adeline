@@ -97,14 +97,11 @@ unneeded_field_pattern = "warn"
 unused_result_ok = "warn"
 too_long_first_doc_paragraph = "warn"
 
-too_many_lines = "allow"         # render functions are long by nature
 unreadable_literal = "allow"
 cast_precision_loss = "allow"
-struct_excessive_bools = "allow" # view state flags
 must_use_candidate = "allow"
 module_name_repetitions = "allow"
 similar_names = "allow"
-too_many_arguments = "allow"     # Zed: splitting args fights the borrow checker
 type_complexity = "allow"
 wildcard_imports = "allow"
 enum_glob_use = "allow"

@@ -835,7 +835,10 @@ impl Engine {
                 command,
                 arguments,
                 model,
-            } => return self.probe(client, request, probe, &harness, &command, arguments, model),
+            } => {
+                let config = self.standalone(&harness, &command, arguments);
+                return self.probe(client, request, probe, config, model);
+            }
             Command::CancelProbe { probe } => {
                 self.probes.remove(&(client, probe));
                 Ok(Value::Null)

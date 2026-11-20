@@ -409,8 +409,8 @@ impl Worker {
             self.close_link();
             return;
         }
-        if let Some(method) = self.auth.take() {
-            self.send_auth(method);
+        if let Some((outgoing, request)) = self.auth.take() {
+            self.send_auth(outgoing, request);
             return;
         }
         if self.active.is_some() || self.probing || matches!(self.session, AgentSession::Replacing)
@@ -494,29 +494,19 @@ impl Worker {
         }
     }
 
-    pub(super) fn authenticate(&mut self, method: Option<String>) {
+    pub(super) fn authenticate(&mut self, outgoing: Outgoing, request: Request) {
         if matches!(&self.connection, Connection::Up(_, setup) if setup.initialized()) {
-            self.send_auth(method);
+            self.send_auth(outgoing, request);
         } else {
-            self.auth = Some(method);
+            self.auth = Some((outgoing, request));
             if let Connection::Down = self.connection {
                 self.start();
             }
         }
     }
 
-    fn send_auth(&mut self, method: Option<String>) {
-        let outgoing = match method {
-            Some(method) => (
-                Outgoing::Authenticate(wire::AuthenticateRequest::new(method)),
-                Request::Authenticate,
-            ),
-            None => (
-                Outgoing::Logout(wire::LogoutRequest::new()),
-                Request::Logout,
-            ),
-        };
-        if self.request(outgoing.0, outgoing.1).is_none() {
+    fn send_auth(&mut self, outgoing: Outgoing, request: Request) {
+        if self.request(outgoing, request).is_none() {
             self.emit(EventKind::Auth(Err("The agent is not running.".into())));
         }
     }

@@ -221,6 +221,7 @@ enum Area {
 }
 
 impl Action {
+    #[expect(clippy::too_many_lines, reason = "one exhaustive arm per action")]
     fn area(&self) -> Area {
         match self {
             Self::AppMenu => Area::Menu("app"),
@@ -449,6 +450,7 @@ actions!(
         ProjectPalette
     ]
 );
+#[expect(clippy::struct_excessive_bools, reason = "independent view toggles")]
 pub struct Adeline {
     main_window: WindowHandle<Root>,
     projects: Vec<Workspace>,

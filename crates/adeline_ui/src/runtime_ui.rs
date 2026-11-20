@@ -21,6 +21,13 @@ pub(super) struct Runtime {
     pub stopping_all: bool,
 }
 
+pub(super) struct AgentSave {
+    pub(super) original: Option<String>,
+    pub(super) definition: agents::AgentDefinition,
+    pub(super) expected: Option<agents::AgentDefinition>,
+    pub(super) overwrite: bool,
+}
+
 impl Adeline {
     pub(super) fn request(
         &self,
@@ -539,17 +546,19 @@ impl Adeline {
         false
     }
 
-    #[expect(clippy::too_many_arguments, reason = "a save carries the whole form")]
     pub(super) fn save_agent(
         entity: &WeakEntity<Self>,
         machine: &str,
-        original: Option<String>,
-        definition: agents::AgentDefinition,
-        expected: Option<agents::AgentDefinition>,
-        overwrite: bool,
+        save: AgentSave,
         cx: &mut App,
         done: impl FnOnce(Result<String>, &mut App) + 'static,
     ) {
+        let AgentSave {
+            original,
+            definition,
+            expected,
+            overwrite,
+        } = save;
         let found = entity.read_with(cx, |app, _| {
             (
                 app.demo_mode,
@@ -863,49 +872,60 @@ impl Adeline {
                 }
             }
             delta => {
-                let id = match &delta {
-                    Delta::Live { id, .. } | Delta::Text { id, .. } | Delta::Thought { id, .. } => {
-                        Some(id.clone())
-                    }
-                    _ => None,
-                };
-                let streamed = matches!(delta, Delta::Text { .. } | Delta::Thought { .. });
-                if matches!(delta, Delta::Card { .. }) {
-                    self.transcript.update(cx, chat::Transcript::refresh_all);
-                }
-                let open = self.current_id();
-                protocol::apply(
-                    &mut self.projects[range],
-                    &mut self.runtime.conversations,
-                    &delta,
-                );
-                if let Some(open) = open {
-                    self.selected = self
-                        .workspace()
-                        .threads
-                        .iter()
-                        .position(|thread| thread.id == open);
-                }
-                if id.is_some() && id == self.current_id() {
-                    if let Some((p, t)) = id.as_deref().and_then(|id| self.locate_conversation(id))
-                    {
-                        self.projects[p].threads[t].mark_read();
-                    }
-                    if id
-                        .as_ref()
-                        .and_then(|id| self.runtime.conversations.get(id))
-                        .is_some_and(|live| !live.processing)
-                    {
-                        self.mark_conversation_read(cx);
-                    }
-                }
-                if streamed && let Some(id) = id {
-                    self.refresh_streamed(&id, cx);
+                if self.conversation_delta(range, &delta, cx) {
                     return;
                 }
             }
         }
         self.refresh_runtime_views(cx);
+    }
+
+    fn conversation_delta(
+        &mut self,
+        range: std::ops::Range<usize>,
+        delta: &Delta,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let id = match delta {
+            Delta::Live { id, .. } | Delta::Text { id, .. } | Delta::Thought { id, .. } => {
+                Some(id.clone())
+            }
+            _ => None,
+        };
+        let streamed = matches!(delta, Delta::Text { .. } | Delta::Thought { .. });
+        if matches!(delta, Delta::Card { .. }) {
+            self.transcript.update(cx, chat::Transcript::refresh_all);
+        }
+        let open = self.current_id();
+        protocol::apply(
+            &mut self.projects[range],
+            &mut self.runtime.conversations,
+            delta,
+        );
+        if let Some(open) = open {
+            self.selected = self
+                .workspace()
+                .threads
+                .iter()
+                .position(|thread| thread.id == open);
+        }
+        if id.is_some() && id == self.current_id() {
+            if let Some((p, t)) = id.as_deref().and_then(|id| self.locate_conversation(id)) {
+                self.projects[p].threads[t].mark_read();
+            }
+            if id
+                .as_ref()
+                .and_then(|id| self.runtime.conversations.get(id))
+                .is_some_and(|live| !live.processing)
+            {
+                self.mark_conversation_read(cx);
+            }
+        }
+        if streamed && let Some(id) = id {
+            self.refresh_streamed(&id, cx);
+            return true;
+        }
+        false
     }
 
     fn refresh_streamed(&self, id: &str, cx: &mut Context<Self>) {

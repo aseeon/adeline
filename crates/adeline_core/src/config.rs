@@ -36,6 +36,7 @@ pub struct General {
     pub keymap: Keymap,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[expect(clippy::struct_excessive_bools, reason = "one settings key per mode")]
 #[serde(default)]
 pub struct Features {
     pub docs: bool,
@@ -186,6 +187,7 @@ fn legacy_value<'de, D: Deserializer<'de>>(
     clippy::struct_field_names,
     reason = "field names are the settings YAML keys"
 )]
+#[expect(clippy::struct_excessive_bools, reason = "each bool is a settings key")]
 #[serde(default, deny_unknown_fields)]
 pub struct Chats {
     pub show_completed_chats: bool,

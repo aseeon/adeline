@@ -292,6 +292,10 @@ pub struct TerminalLogin {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent capabilities the agent reports"
+)]
 #[serde(default)]
 pub struct Features {
     pub images: bool,

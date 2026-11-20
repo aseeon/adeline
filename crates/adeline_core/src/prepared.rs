@@ -28,6 +28,10 @@ impl Generation {
 }
 
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts the chat filters test"
+)]
 pub struct SearchRecord {
     pub id: Arc<str>,
     pub text: Arc<str>,

@@ -159,7 +159,7 @@ impl Engine {
         });
     }
 
-    fn standalone(
+    pub(super) fn standalone(
         &self,
         harness_id: &str,
         command: &str,
@@ -200,12 +200,10 @@ impl Engine {
         client: u64,
         request: u64,
         probe: u64,
-        harness_id: &str,
-        command: &str,
-        arguments: Vec<String>,
+        config: Result<agents::ExecutionConfig, String>,
         model: Option<String>,
     ) -> Option<Result<Value, String>> {
-        let mut config = match self.standalone(harness_id, command, arguments) {
+        let mut config = match config {
             Ok(config) => config,
             Err(message) => {
                 let failed: Result<protocol::Probed, _> = Err(protocol::ProbeError {

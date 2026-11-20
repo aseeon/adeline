@@ -566,11 +566,7 @@ struct Worker {
     fork: Option<(Option<String>, String)>,
     probing: bool,
     attachments: std::cell::OnceCell<tempfile::TempDir>,
-    #[expect(
-        clippy::option_option,
-        reason = "nothing pending, a logout, or a login"
-    )]
-    auth: Option<Option<String>>,
+    auth: Option<(Outgoing, Request)>,
 }
 
 impl Worker {
@@ -808,8 +804,16 @@ impl Worker {
             } => self.switch(category, &id, &value),
             Command::ReplaceSession { context } => self.replace_session(context),
             Command::Fork { session, context } => self.fork = Some((session, context)),
-            Command::Authenticate { method } => self.authenticate(Some(method)),
-            Command::Logout => self.authenticate(None),
+            Command::Authenticate { method } => self.authenticate(
+                Outgoing::Authenticate(wire::AuthenticateRequest::new(method)),
+                Request::Authenticate,
+            ),
+            Command::Logout => {
+                self.authenticate(
+                    Outgoing::Logout(wire::LogoutRequest::new()),
+                    Request::Logout,
+                );
+            }
             Command::Probe => {
                 if self.exit == Exit::Running {
                     self.probing = true;

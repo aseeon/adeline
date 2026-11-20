@@ -12,8 +12,7 @@ const THEMES: &str = "../../bundled-themes";
 fn main() {
     let out_dir = PathBuf::from(env::var("OUT_DIR").unwrap());
     println!("cargo:rerun-if-changed={ASSETS}");
-    let mut source =
-        String::from("pub fn embedded(path: &str) -> Option<&'static [u8]> { match path {\n");
+    let mut source = String::from("static EMBEDDED: &[(&str, &[u8])] = &[\n");
     let svg = fs::read(format!("{ASSETS}/adeline.close.up.svg")).expect("Adeline portrait");
     let tree = resvg::usvg::Tree::from_data(&svg, &resvg::usvg::Options::default())
         .expect("valid Adeline SVG");
@@ -21,7 +20,7 @@ fn main() {
         let name = format!("adeline-titlebar-{size}.png");
         let path = out_dir.join(&name);
         fs::write(&path, render_icon(&tree, size)).unwrap();
-        writeln!(source, "{name:?} => Some(include_bytes!({path:?})),").unwrap();
+        writeln!(source, "({name:?}, include_bytes!({path:?})),").unwrap();
     }
     for entry in fs::read_dir(ASSETS).unwrap() {
         let path = entry.unwrap().path();
@@ -29,13 +28,13 @@ fn main() {
             let name = path.file_name().unwrap().to_str().unwrap();
             writeln!(
                 source,
-                "{name:?} => Some(include_bytes!({:?})),",
+                "({name:?}, include_bytes!({:?})),",
                 fs::canonicalize(&path).unwrap()
             )
             .unwrap();
         }
     }
-    source.push_str("_ => None } }");
+    source.push_str("];\n");
     fs::write(out_dir.join("assets.rs"), source).unwrap();
 
     println!("cargo:rerun-if-changed={THEMES}");

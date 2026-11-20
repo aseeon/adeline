@@ -399,6 +399,10 @@ pub struct Snapshot {
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "wire flags the engine computes from its lifecycle"
+)]
 #[serde(default)]
 pub struct Live {
     pub agent_id: String,

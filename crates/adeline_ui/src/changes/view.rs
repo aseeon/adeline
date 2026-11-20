@@ -275,36 +275,8 @@ impl Adeline {
         let cursor = project.cursor.as_deref() == Some(path.as_str())
             && self.changes.tree_focus.contains_focused(window, cx);
         let change: Option<&Change> = (!folder).then(|| project.change(&path)).flatten();
-        let label = change.map_or_else(
-            || name.clone(),
-            |change| {
-                let from = change
-                    .old_path
-                    .as_ref()
-                    .map(|old| format!(", from {old}"))
-                    .unwrap_or_default();
-                format!(
-                    "{name}, {}, {}{from}",
-                    status_name(change.status),
-                    counts(change.added, change.removed)
-                )
-            },
-        );
-        let chevron = if folder {
-            let chevron = Icon::default()
-                .path("chevron.svg")
-                .size(panes::dp(12.))
-                .text_color(isl.fg3);
-            if row_data.open {
-                chevron.into_any_element()
-            } else {
-                chevron
-                    .rotate(Radians(-std::f32::consts::FRAC_PI_2))
-                    .into_any_element()
-            }
-        } else {
-            div().w(panes::dp(12.)).flex_shrink_0().into_any_element()
-        };
+        let label = change_label(&name, change);
+        let chevron = tree_chevron(folder, row_data.open, isl);
         let color = match change {
             Some(c) => status_color(c.status, cx),
             None if folder && project.holds_change(&path) => isl.accent,
@@ -340,21 +312,7 @@ impl Adeline {
                     .size(panes::dp(14.))
                     .text_color(isl.fg3),
             )
-            .child(
-                row()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(panes::dp(6.))
-                    .child(div().min_w_0().truncate().child(name))
-                    .children(change.and_then(|c| c.old_path.clone()).map(|old| {
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .truncate()
-                            .text_color(isl.fg3)
-                            .child(format!("← {old}"))
-                    })),
-            )
+            .child(file_name(name, change, isl))
             .children(change.map(|c| {
                 div()
                     .flex_shrink_0()
@@ -691,21 +649,7 @@ impl Adeline {
             .editing
             .as_ref()
             .filter(|d| d.path == path && d.key == key);
-        let annotation = draft.map(|draft| match &draft.range {
-            Some(range) => DiffAnnotation::line(
-                "comment-draft",
-                DiffLinePosition::new(
-                    path.to_owned(),
-                    range.end_side(),
-                    if range.side() == range.end_side() {
-                        range.start().max(range.end())
-                    } else {
-                        range.end()
-                    },
-                ),
-            ),
-            None => DiffAnnotation::file("comment-draft", path.to_owned()),
-        });
+        let annotation = draft.map(|draft| draft_annotation(draft, path));
         let existing = draft.and_then(|d| d.existing);
         let comment = self.changes.comment.clone();
         let box_owner = owner.clone();
@@ -890,4 +834,68 @@ impl Adeline {
                 .into_any_element(),
         )
     }
+}
+
+fn change_label(name: &str, change: Option<&Change>) -> String {
+    let Some(change) = change else {
+        return name.to_owned();
+    };
+    let from = change
+        .old_path
+        .as_ref()
+        .map(|old| format!(", from {old}"))
+        .unwrap_or_default();
+    format!(
+        "{name}, {}, {}{from}",
+        status_name(change.status),
+        counts(change.added, change.removed)
+    )
+}
+
+fn tree_chevron(folder: bool, open: bool, isl: &theme::Islands) -> AnyElement {
+    if !folder {
+        return div().w(panes::dp(12.)).flex_shrink_0().into_any_element();
+    }
+    let chevron = Icon::default()
+        .path("chevron.svg")
+        .size(panes::dp(12.))
+        .text_color(isl.fg3);
+    if open {
+        chevron.into_any_element()
+    } else {
+        chevron
+            .rotate(Radians(-std::f32::consts::FRAC_PI_2))
+            .into_any_element()
+    }
+}
+
+fn file_name(name: String, change: Option<&Change>, isl: &theme::Islands) -> Div {
+    row()
+        .flex_1()
+        .min_w_0()
+        .gap(panes::dp(6.))
+        .child(div().min_w_0().truncate().child(name))
+        .children(change.and_then(|c| c.old_path.clone()).map(|old| {
+            div()
+                .flex_1()
+                .min_w_0()
+                .truncate()
+                .text_color(isl.fg3)
+                .child(format!("← {old}"))
+        }))
+}
+
+fn draft_annotation(draft: &super::Draft, path: &str) -> DiffAnnotation {
+    let Some(range) = &draft.range else {
+        return DiffAnnotation::file("comment-draft", path.to_owned());
+    };
+    let line = if range.side() == range.end_side() {
+        range.start().max(range.end())
+    } else {
+        range.end()
+    };
+    DiffAnnotation::line(
+        "comment-draft",
+        DiffLinePosition::new(path.to_owned(), range.end_side(), line),
+    )
 }

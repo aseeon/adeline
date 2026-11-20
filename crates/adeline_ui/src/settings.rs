@@ -443,20 +443,15 @@ fn persist_form(
     if let Err(error) = form.check(cx) {
         return cx.defer(move |cx| done(Err(error), cx));
     }
-    let definition = form.values(cx);
     let original = form.id.clone();
-    let machine = form.machine.clone();
-    let expected = original.as_ref().map(|_| form.original.clone());
-    Adeline::save_agent(
-        &owner.entity,
-        &machine,
+    let save = runtime_ui::AgentSave {
+        definition: form.values(cx),
+        expected: original.as_ref().map(|_| form.original.clone()),
         original,
-        definition,
-        expected,
         overwrite,
-        cx,
-        done,
-    );
+    };
+    let machine = form.machine.clone();
+    Adeline::save_agent(&owner.entity, &machine, save, cx, done);
 }
 
 fn choose(
@@ -527,6 +522,7 @@ enum AfterAgent {
     Delete(String),
     Search(String),
 }
+#[expect(clippy::struct_excessive_bools, reason = "independent window flags")]
 struct SettingsWindow {
     owner: Owner,
     machine: String,
