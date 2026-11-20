@@ -1,9 +1,5 @@
 //! When a chat was last active, in the terms the chat list shows: a period
 //! ("Today", "Last 3 days", "Earlier") and a short label ("5m", "Tue").
-//!
-//! Calendar days are UTC days, so a chat active shortly after local midnight
-//! can land in the neighbouring day for users far from UTC. `now` is in
-//! seconds and `now_ms` in milliseconds since the Unix epoch.
 use jiff::{Timestamp, civil::Date, tz::TimeZone};
 
 const DAY: i64 = 86_400;
@@ -41,16 +37,29 @@ pub fn parse(stamp: &str) -> Option<i64> {
 }
 
 pub fn period(at: i64, now: i64) -> Period {
-    match now.div_euclid(DAY) - at.div_euclid(DAY) {
+    period_in(at, now, &TimeZone::system())
+}
+
+pub fn label(at: i64, now: i64) -> String {
+    label_in(at, now, &TimeZone::system())
+}
+
+fn day(at: i64, zone: &TimeZone) -> i64 {
+    let offset = Timestamp::from_second(at).map_or(0, |at| zone.to_offset(at).seconds());
+    (at + i64::from(offset)).div_euclid(DAY)
+}
+
+fn period_in(at: i64, now: i64, zone: &TimeZone) -> Period {
+    match day(now, zone) - day(at, zone) {
         ..=0 => Period::Today,
         1..=2 => Period::LastThreeDays,
         _ => Period::Earlier,
     }
 }
 
-pub fn label(at: i64, now: i64) -> String {
+fn label_in(at: i64, now: i64, zone: &TimeZone) -> String {
     let elapsed = now - at;
-    let days = now.div_euclid(DAY) - at.div_euclid(DAY);
+    let days = day(now, zone) - day(at, zone);
     if elapsed < 60 {
         return "now".into();
     }
@@ -60,13 +69,13 @@ pub fn label(at: i64, now: i64) -> String {
     if days <= 0 {
         return format!("{}h", elapsed / 3600);
     }
-    let utc = |at| Timestamp::from_second(at).map(|at| at.to_zoned(TimeZone::UTC));
-    let Ok(date) = utc(at) else {
+    let local = |at| Timestamp::from_second(at).map(|at| zone.to_datetime(at));
+    let Ok(date) = local(at) else {
         return String::new();
     };
     if days < 7 {
         date.strftime("%a").to_string()
-    } else if utc(now).is_ok_and(|now| now.year() == date.year()) {
+    } else if local(now).is_ok_and(|now| now.year() == date.year()) {
         date.strftime("%b %-d").to_string()
     } else {
         date.strftime("%b %-d, %Y").to_string()
@@ -101,12 +110,30 @@ mod tests {
 
     #[test]
     fn periods_follow_calendar_days() {
+        let period = |at| period_in(at, NOW, &TimeZone::UTC);
         let midnight = NOW - 12 * 3600;
-        assert_eq!(period(midnight, NOW), Period::Today);
-        assert_eq!(period(midnight - 1, NOW), Period::LastThreeDays);
-        assert_eq!(period(midnight - 2 * DAY, NOW), Period::LastThreeDays);
-        assert_eq!(period(midnight - 2 * DAY - 1, NOW), Period::Earlier);
-        assert_eq!(period(NOW + 90, NOW), Period::Today);
+        assert_eq!(period(midnight), Period::Today);
+        assert_eq!(period(midnight - 1), Period::LastThreeDays);
+        assert_eq!(period(midnight - 2 * DAY), Period::LastThreeDays);
+        assert_eq!(period(midnight - 2 * DAY - 1), Period::Earlier);
+        assert_eq!(period(NOW + 90), Period::Today);
+    }
+
+    #[test]
+    fn days_start_at_local_midnight() {
+        let five_west = TimeZone::fixed(jiff::tz::offset(-5));
+        let local_midnight = NOW - 7 * 3600;
+        assert_eq!(period_in(local_midnight, NOW, &five_west), Period::Today);
+        assert_eq!(
+            period_in(local_midnight - 1, NOW, &five_west),
+            Period::LastThreeDays
+        );
+        assert_eq!(
+            period_in(local_midnight - 1, NOW, &TimeZone::UTC),
+            Period::Today
+        );
+        assert_eq!(label_in(local_midnight - 3600, NOW, &five_west), "Sat");
+        assert_eq!(label_in(NOW - 6 * DAY, NOW, &five_west), "Mon");
     }
 
     #[test]
@@ -122,7 +149,7 @@ mod tests {
             (NOW - 8 * DAY, "Sep 19"),
             (parse("2025-12-31T10:00:00Z").unwrap(), "Dec 31, 2025"),
         ] {
-            assert_eq!(label(at, NOW), expected);
+            assert_eq!(label_in(at, NOW, &TimeZone::UTC), expected);
         }
     }
 }
