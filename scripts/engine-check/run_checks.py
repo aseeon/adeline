@@ -360,9 +360,9 @@ def check_concurrent_send():
         index, _ = a.wait_live(conversation, queued, 10, mark_a)
         b.wait_live(conversation, queued, 10, mark_b)
         a.wait_live(conversation, lambda l: not l["queued"] and not l["processing"], 20, index)
-        time.sleep(0.5)  # The traffic reaches the transcript in batches.
-        prompts = [m["params"]["prompt"][0]["text"] for m in sent(conversation, "session/prompt")]
-        expect(prompts[-2:] == ["SLOW 2", "SLOW 2"], f"prompts sent: {prompts}")
+        prompts = lambda: [m["params"]["prompt"][0]["text"] for m in sent(conversation, "session/prompt")]
+        wait_until(lambda: prompts()[-2:] == ["SLOW 2", "SLOW 2"], 5)
+        expect(prompts()[-2:] == ["SLOW 2", "SLOW 2"], f"prompts sent: {prompts()}")
 
 
 @check("AC11 permission race, repeated Stop, archive racing send")
